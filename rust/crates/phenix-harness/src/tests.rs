@@ -381,11 +381,10 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
     use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
     use phenix_sdk::AgentLoopInterface;
 
-    let mut builder =
-        PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-            BASIC_AGENT_CONFIGURATION.to_owned(),
-        ]))
-        .unwrap();
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
     let owner = plugin("fixture.low-priority-agent");
     builder
         .add_embedded(
@@ -408,14 +407,20 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
     builder.add_component(component);
     builder.bind_provider(AgentLoopInterface::interface_id(), id);
 
-    let mut runtime = builder.build().expect("both loop implementations may coexist");
+    let mut runtime = builder
+        .build()
+        .expect("both loop implementations may coexist");
     let Err(denied) = application::bound_application_agent_plugin(
         runtime.resolved_generation(),
         &Authority::default(),
     ) else {
         panic!("explicit agent binding must not bypass contract export authority");
     };
-    assert!(denied.to_string().contains("requires unavailable authority"));
+    assert!(
+        denied
+            .to_string()
+            .contains("requires unavailable authority")
+    );
     let explicit = application::bound_application_agent_plugin(
         runtime.resolved_generation(),
         &default_suite_authority(),

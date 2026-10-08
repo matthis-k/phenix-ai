@@ -59,12 +59,11 @@ use phenix_provider_sdk::{
 use phenix_sdk::{
     AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
     AgentLoopFailure, AgentLoopInterface, AgentLoopProgress, AgentLoopProgressInterface,
-    AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, AssociationObservationSource, CodeQuery,
-    CodeQueryResult, ContextAnchor, ContextCommand, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextResourceKind, ContextResponse, ExecutionAuthority,
-    ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse,
     MemoryAssociationObservation, MemoryAssociationState, MemoryCommand, MemoryContextAssociation,
@@ -4760,15 +4759,17 @@ fn start_prompt(
             });
         match resolved.and_then(|resolved| {
             let binding = bound_application_agent_plugin(resolved, root.authority())?;
-            let surface =
-                application_model_tool_surface(service, &request.session_id, resolved, root.authority())?;
+            let surface = application_model_tool_surface(
+                service,
+                &request.session_id,
+                resolved,
+                root.authority(),
+            )?;
             Ok((surface, binding))
         }) {
-            Ok((surface, binding)) => Ok((
-                surface,
-                harness.application_agent_tools().clone(),
-                binding,
-            )),
+            Ok((surface, binding)) => {
+                Ok((surface, harness.application_agent_tools().clone(), binding))
+            }
             Err(error) => Err(error),
         }
     };
@@ -5532,16 +5533,19 @@ pub(crate) fn bound_application_agent_plugin(
             message: format!("explicit agent provider {target} has no installed plugin owner"),
         })?;
     if !caller_authority.permits_all(&export.required_authority)
-        || !component.maximum_authority.permits_all(&export.required_authority)
-        || !owner.maximum_authority.permits_all(&export.required_authority)
+        || !component
+            .maximum_authority
+            .permits_all(&export.required_authority)
+        || !owner
+            .maximum_authority
+            .permits_all(&export.required_authority)
     {
         return Err(ApplicationError::Failed {
             message: format!("explicit agent provider {target} requires unavailable authority"),
         });
     }
     if !owner.services.iter().any(|service| {
-        service.service == agent_loop_service()
-            && matches!(service.role, ServiceRole::Terminal)
+        service.service == agent_loop_service() && matches!(service.role, ServiceRole::Terminal)
     }) {
         return Err(ApplicationError::Failed {
             message: format!(
