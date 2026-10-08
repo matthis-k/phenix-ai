@@ -144,6 +144,48 @@ may dynamically acquire additional artifacts through a plugin installer/runtime 
 where deployment policy permits it. Making an artifact available never implicitly
 grants its requested authority or activates it.
 
+### Implemented portable provider-selection frontend (initial subset)
+
+This PR adds **native, Nix-independent provider bindings** to the harness CLI.
+They are a narrow part of the eventual portable configuration model, not a
+second graph resolver or a declaration that the full profile schema exists.
+
+A UTF-8 JSON file can contain:
+
+~~~json
+{
+  "bind": {
+    "phenix.memory@1": "acme.memory.component"
+  },
+  "disable": {
+    "phenix.context@1": ["phenix.context.native"]
+  }
+}
+~~~
+
+The names above are illustrative component/interface identities; actual providers
+must exist in the selected runtime, match their contract schema and pass authority
+validation. Unknown document fields and malformed identities are rejected.
+
+Run with a plain local file, without Nix:
+
+~~~shell
+phenix --provider-policy ./providers.json
+phenix --bind-provider phenix.memory@1=acme.memory.component
+phenix --disable-provider phenix.context@1=phenix.context.native
+~~~
+
+`--provider-policy=FILE`, `--bind-provider=A=B` and
+`--disable-provider=A=B` forms are also supported. CLI bindings apply **after**
+bindings from the file; disabled provider entries accumulate. Resolution, conflict
+checking and generation identities are owned by `PhenixRuntimeBuilder` and Core.
+
+The current file deliberately describes **provider bindings/exclusions only**;
+portable profile inheritance, plugin package installation, Layer policies in
+this same file, validation/plan/apply commands, and merged user configuration
+remain follow-up tasks. Nix may generate the same JSON content and pass its path
+to the executable, with identical semantics.
+
 ### Portable configuration example (illustrative proposed syntax)
 
 ~~~toml
@@ -278,8 +320,9 @@ contract semantics.
 - **Implemented:** Shared SDK-owned agent execution contract, with Basic compatibility exports.
 - **Implemented:** Core's complete resolver path now accepts explicit provider policy alongside Layer policies, durable schemas, process arguments, entry triggers and contributions.
 - **Implemented:** `PhenixRuntimeBuilder::set_provider_policy`, `bind_provider` and `disable_provider` delegate resolution to that canonical path. The builder does not evaluate Nix or implement a separate provider solver.
+- **Implemented:** Minimal native CLI and JSON provider-selection frontend with `--provider-policy`, `--bind-provider`, and `--disable-provider`.
 - **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity of equivalent policies, and failure on invalid provider bindings.
-- **Not yet implemented:** Portable canonical configuration file loading, equivalent CLI/UI commands, Basic/Full policy overlays, stripping inactive default plugin implementations from package closure, or end-to-end external adapter substitution.
+- **Not yet implemented:** Full portable profile/configuration loading, complete CLI/UI management, Basic/Full policy overlays, stripping inactive default plugin implementations from package closure, or end-to-end external adapter substitution.
 - **Verification:** The added tests require Rust CI execution; source-level presence alone is not a passing test result.
 
 ## Executive decision
