@@ -58,6 +58,7 @@ struct Cli {
     mode: Mode,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
+    config_file: Option<PathBuf>,
     provider_policy_file: Option<PathBuf>,
     provider_bindings: Vec<(InterfaceId, ComponentId)>,
     disabled_providers: Vec<(InterfaceId, ComponentId)>,
@@ -78,13 +79,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
         print_help();
         return Ok(());
     }
+    let config_file = cli
+        .config_file
+        .clone()
+        .or_else(|| env::var_os("PHENIX_CONFIG_FILE").map(PathBuf::from));
+    let composition = load_portable_configuration(config_file.as_deref())?;
 
     let state = state_path()?;
     if let Some(parent) = state.parent() {
         fs::create_dir_all(parent)?;
     }
     let persistence = LocalPersistence::open(&state)?;
-    let mut builder = match configured_first_party_plugins(&cli)? {
+    let mut builder = match configured_first_party_plugins(&cli, &composition)? {
         Some(enabled) => PhenixRuntimeBuilder::with_selected_suite(&enabled)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
         None => PhenixRuntimeBuilder::with_default_suite()?,
@@ -92,8 +98,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     for package in configured_plugin_packages()? {
         add_packaged_plugin(&mut builder, &package)?;
     }
-    apply_configured_layer_policy(&mut builder)?;
-    apply_configured_provider_policy(&mut builder, &cli)?;
+    apply_configured_layer_policy(&mut builder, &composition)?;
+    apply_configured_provider_policy(&mut builder, &cli, &composition)?;
     let mut harness = builder.build_with_persistence(persistence)?;
     let process_arguments = resolve_process_arguments(
         &cli.plugin_arguments,
@@ -171,7 +177,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -194,6 +200,22 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     return Err("--mode requires acp or jsonl".into());
                 }
                 cli.mode = Mode::parse(mode)?;
+            }
+            "--config" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--config requires a file path".to_owned())?;
+                if path.is_empty() {
+                    return Err("--config requires a file path".into());
+                }
+                cli.config_file = Some(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--config=") => {
+                let path = argument.strip_prefix("--config=").expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--config requires a file path".into());
+                }
+                cli.config_file = Some(PathBuf::from(path));
             }
             "--provider-policy" => {
                 let path = args
@@ -306,6 +328,7 @@ fn resolve_process_arguments(
         "--mode",
         "--enable-plugin",
         "--disable-plugin",
+        "--config",
         "--provider-policy",
         "--bind-provider",
         "--disable-provider",
@@ -454,13 +477,30 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     plugins
 }
 
-fn configured_first_party_plugins(cli: &Cli) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
+fn configured_first_party_plugins(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
     let configured = env::var_os("PHENIX_ENABLED_PLUGINS");
     let configured = configured
         .map(OsString::into_string)
         .transpose()
         .map_err(|_| "PHENIX_ENABLED_PLUGINS must be valid UTF-8")?;
-    resolve_first_party_plugins(cli, configured.as_deref()).map_err(Into::into)
+    // Deployment environment supplies defaults; portable configuration may
+    // choose a profile. Explicit command-line plugin options win over both.
+    let base = config.profile.as_deref().or(configured.as_deref());
+    let mut selection = Cli::default();
+    selection.enable_plugins = config.plugins.enable.clone();
+    selection.disable_plugins = config.plugins.disable.clone();
+    for id in &cli.enable_plugins {
+        selection.disable_plugins.remove(id);
+        selection.enable_plugins.insert(id.clone());
+    }
+    for id in &cli.disable_plugins {
+        selection.enable_plugins.remove(id);
+        selection.disable_plugins.insert(id.clone());
+    }
+    resolve_first_party_plugins(&selection, base).map_err(Into::into)
 }
 
 fn resolve_first_party_plugins(
@@ -535,6 +575,39 @@ fn resolve_first_party_plugins(
     Ok(Some(enabled))
 }
 
+/// Deployment-independent composition input. This frontend only lowers
+/// selections into the canonical Phenix runtime builder and resolver.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortableCompositionConfig {
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    plugins: PortablePluginSelection,
+    #[serde(default)]
+    providers: PortableProviderPolicy,
+    #[serde(default)]
+    layers: Vec<ConfiguredLayerPolicy>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortablePluginSelection {
+    #[serde(default)]
+    enable: BTreeSet<String>,
+    #[serde(default)]
+    disable: BTreeSet<String>,
+}
+
+fn load_portable_configuration(
+    path: Option<&Path>,
+) -> Result<PortableCompositionConfig, Box<dyn Error>> {
+    match path {
+        Some(path) => Ok(serde_json::from_str(&fs::read_to_string(path)?)?),
+        None => Ok(PortableCompositionConfig::default()),
+    }
+}
+
 /// One portable, intentionally minimal provider-selection document.
 ///
 /// This is not an alternative graph resolver: it only lowers user decisions
@@ -551,7 +624,16 @@ struct PortableProviderPolicy {
 fn apply_configured_provider_policy(
     builder: &mut PhenixRuntimeBuilder,
     cli: &Cli,
+    config: &PortableCompositionConfig,
 ) -> Result<(), Box<dyn Error>> {
+    for (interface, provider) in &config.providers.bind {
+        builder.bind_provider(interface.clone(), provider.clone());
+    }
+    for (interface, providers) in &config.providers.disable {
+        for provider in providers {
+            builder.disable_provider(interface.clone(), provider.clone());
+        }
+    }
     if let Some(path) = &cli.provider_policy_file {
         let source = fs::read_to_string(path)?;
         let configured: PortableProviderPolicy = serde_json::from_str(&source)?;
@@ -574,7 +656,8 @@ fn apply_configured_provider_policy(
     Ok(())
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConfiguredLayerPolicy {
     service: String,
     plugin: String,
@@ -589,27 +672,52 @@ fn default_layer_enabled() -> bool {
     true
 }
 
-fn apply_configured_layer_policy(builder: &mut PhenixRuntimeBuilder) -> Result<(), Box<dyn Error>> {
-    let Some(value) = env::var_os("PHENIX_LAYER_POLICY") else {
-        return Ok(());
-    };
-    let value = value
-        .into_string()
-        .map_err(|_| "PHENIX_LAYER_POLICY must be valid UTF-8")?;
-    let configured: Vec<ConfiguredLayerPolicy> = serde_json::from_str(&value)?;
+fn apply_configured_layer_policy(
+    builder: &mut PhenixRuntimeBuilder,
+    config: &PortableCompositionConfig,
+) -> Result<(), Box<dyn Error>> {
     let mut policies = BTreeMap::<ServiceId, Vec<LayerPolicy>>::new();
-    for layer in configured {
-        let service = ServiceId::parse(layer.service)?;
-        policies.entry(service).or_default().push(LayerPolicy {
-            plugin: PluginId::parse(layer.plugin)?,
-            priority: layer.priority,
-            required: layer.required,
-            enabled: layer.enabled,
-        });
+    if let Some(value) = env::var_os("PHENIX_LAYER_POLICY") {
+        let value = value
+            .into_string()
+            .map_err(|_| "PHENIX_LAYER_POLICY must be valid UTF-8")?;
+        let configured: Vec<ConfiguredLayerPolicy> = serde_json::from_str(&value)?;
+        for layer in configured {
+            add_layer_policy(&mut policies, layer)?;
+        }
     }
+
+    // For a service explicitly configured in the portable file, its Layer
+    // list replaces the deployment-supplied default Layer list.
+    let mut file_policies = BTreeMap::<ServiceId, Vec<LayerPolicy>>::new();
+    for layer in &config.layers {
+        add_layer_policy_values(&mut file_policies, layer)?;
+    }
+    policies.extend(file_policies);
     for (service, layers) in policies {
         builder.set_layer_policy(service, layers);
     }
+    Ok(())
+}
+
+fn add_layer_policy(
+    policies: &mut BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    layer: ConfiguredLayerPolicy,
+) -> Result<(), Box<dyn Error>> {
+    add_layer_policy_values(policies, &layer)
+}
+
+fn add_layer_policy_values(
+    policies: &mut BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    layer: &ConfiguredLayerPolicy,
+) -> Result<(), Box<dyn Error>> {
+    let service = ServiceId::parse(layer.service.clone())?;
+    policies.entry(service).or_default().push(LayerPolicy {
+        plugin: PluginId::parse(layer.plugin.clone())?,
+        priority: layer.priority,
+        required: layer.required,
+        enabled: layer.enabled,
+    });
     Ok(())
 }
 
