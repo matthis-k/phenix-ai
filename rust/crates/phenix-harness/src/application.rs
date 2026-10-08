@@ -58,7 +58,8 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
+    AgentLoopFailure, AgentLoopInterface, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
     AgentToolExecutionRequest, AgentToolExecutionResponse, AssociationObservationSource, CodeQuery,
     CodeQueryResult, ContextAnchor, ContextCommand, ContextInjectionLifetime,
@@ -4758,13 +4759,20 @@ fn start_prompt(
                     })
             });
         match resolved.and_then(|resolved| {
-            application_model_tool_surface(service, &request.session_id, resolved, root.authority())
+            let binding = bound_application_agent_plugin(resolved)?;
+            let surface =
+                application_model_tool_surface(service, &request.session_id, resolved, root.authority())?;
+            Ok((surface, binding))
         }) {
-            Ok(surface) => Ok((surface, harness.application_agent_tools().clone())),
+            Ok((surface, binding)) => Ok((
+                surface,
+                harness.application_agent_tools().clone(),
+                binding,
+            )),
             Err(error) => Err(error),
         }
     };
-    let (tool_surface, adapter) = match tool_surface {
+    let (tool_surface, adapter, agent_binding) = match tool_surface {
         Ok(value) => value,
         Err(error) => {
             invocation.respond(Err(error));
@@ -4827,6 +4835,7 @@ fn start_prompt(
                 AgentExecutionContext {
                     session_id: execution_session,
                     execution_id: runtime_execution_id,
+                    agent_binding,
                     input: model_input,
                     tools,
                     runtime_entry_triggers,
@@ -5191,6 +5200,7 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
 struct AgentExecutionContext {
     session_id: SessionId,
     execution_id: String,
+    agent_binding: Option<PluginId>,
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
     runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
@@ -5210,6 +5220,7 @@ fn run_agent_execution(
     let AgentExecutionContext {
         session_id,
         execution_id,
+        agent_binding,
         input,
         tools,
         runtime_entry_triggers,
@@ -5266,7 +5277,7 @@ fn run_agent_execution(
             }
         })?;
         let output = root
-            .invoke(&agent_loop_service(), &encoded, None)
+            .invoke(&agent_loop_service(), &encoded, agent_binding.as_ref())
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
@@ -5471,6 +5482,61 @@ fn normalize_model_tool_table(
         );
     }
     Ok(PhenixValue::Table(normalized))
+}
+
+/// Resolve an explicit agent provider from the prompt's pinned generation.
+///
+/// The public application must not resolve a new provider after a prompt has
+/// leased its execution generation. Default service routing remains unchanged
+/// when the product declares no explicit agent-loop binding.
+pub(crate) fn bound_application_agent_plugin(
+    resolved: &phenix_core::ResolvedGeneration,
+) -> Result<Option<PluginId>, ApplicationError> {
+    let interface = AgentLoopInterface::interface_id();
+    let policy = resolved.provider_policy();
+    let Some(target) = policy.explicit_binding(&interface) else {
+        return Ok(None);
+    };
+    if !policy.provider_enabled(&interface, target) {
+        return Err(ApplicationError::Failed {
+            message: format!("explicit agent provider {target} is disabled"),
+        });
+    }
+    let component = resolved
+        .components()
+        .iter()
+        .find(|component| &component.id == target)
+        .ok_or_else(|| ApplicationError::Failed {
+            message: format!("explicit agent provider {target} is not installed"),
+        })?;
+    let compatible = component.exports.iter().any(|export| {
+        export.interface == interface
+            && matches!(
+                AgentLoopInterface::schema().accepts_provider(&export.schema),
+                phenix_core::InterfaceCompatibility::Exact
+                    | phenix_core::InterfaceCompatibility::Compatible
+            )
+    });
+    if !compatible {
+        return Err(ApplicationError::Failed {
+            message: format!("explicit agent provider {target} has no compatible agent contract"),
+        });
+    }
+    let terminal = resolved.plugins().iter().any(|plugin| {
+        plugin.id == component.owner
+            && plugin.services.iter().any(|service| {
+                service.service == agent_loop_service()
+                    && matches!(service.role, ServiceRole::Terminal)
+            })
+    });
+    if !terminal {
+        return Err(ApplicationError::Failed {
+            message: format!(
+                "explicit agent provider {target} has no terminal agent execution service"
+            ),
+        });
+    }
+    Ok(Some(component.owner.clone()))
 }
 
 struct ApplicationModelToolSurface {
