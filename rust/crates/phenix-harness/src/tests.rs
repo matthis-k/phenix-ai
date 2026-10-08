@@ -622,6 +622,68 @@ fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
 }
 
 #[test]
+fn partial_foreign_memory_hides_association_without_memory_context() {
+    use phenix_core::{ComponentId, ComponentInterface, EntryTriggerKind};
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::MemoryInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+    ]))
+    .unwrap();
+    let owner = plugin("fixture.partial-memory");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                memory_service(),
+                100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"partial-memory")),
+        )
+        .unwrap();
+    let mut component = memory_component_manifest();
+    component.owner = owner;
+    component.id = ComponentId::parse("fixture.partial-memory.component").unwrap();
+    component.imports.clear();
+    component
+        .exports
+        .retain(|export| export.interface == MemoryInterface::interface_id());
+    builder.add_component(component);
+
+    let runtime = builder
+        .build()
+        .expect("a foreign memory store need not implement memory association");
+    let generation = runtime.resolved_generation();
+    let trigger = |id: &str| {
+        generation
+            .entry_triggers()
+            .iter()
+            .find(|trigger| {
+                matches!(
+                    &trigger.trigger,
+                    EntryTriggerKind::ToolCall { callable_id, .. }
+                        if callable_id.as_str() == id
+                )
+            })
+            .expect("a compatible memory provider registers candidate tools")
+    };
+    for available in ["memory.record", "memory.query", "memory.recall"] {
+        assert!(
+            application::application_tool_trigger_available(generation, trigger(available))
+                .unwrap(),
+            "resolvable foreign memory capability must expose {available}"
+        );
+    }
+    assert!(
+        !application::application_tool_trigger_available(generation, trigger("memory.associate"))
+            .unwrap(),
+        "memory.associate requires memory-context as well as memory storage"
+    );
+}
+
+#[test]
 fn application_tool_triggers_require_resolved_provider_contracts() {
     let selected = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
     let runtime = PhenixRuntimeBuilder::with_selected_suite(&selected)
