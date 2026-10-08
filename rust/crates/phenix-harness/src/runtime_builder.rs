@@ -9,7 +9,7 @@ use phenix_core::{
     ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    AGENT_LOOP_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
+    adapter_acp_factory, adapter_acp_manifest,
     advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
     agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
@@ -247,6 +247,7 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_manifest(),
             benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
+            application::application_agent_tool_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
             planning_manifest(),
@@ -318,29 +319,6 @@ impl PhenixRuntimeBuilder {
         };
         expand_dependencies(&mut enabled, &mut pending)?;
 
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
-            let adapter = application::application_agent_tool_manifest(authority.clone());
-            for dependency in &adapter.dependencies {
-                let dependency = dependency.as_str().to_owned();
-                if !available.contains_key(&dependency) {
-                    return Err(format!(
-                        "first-party plugin {} depends on unavailable first-party plugin {dependency}",
-                        adapter.id
-                    ));
-                }
-                if excluded.contains(&dependency) {
-                    return Err(format!(
-                        "first-party plugin {} requires disabled first-party plugin {dependency}",
-                        adapter.id
-                    ));
-                }
-                if enabled.insert(dependency.clone()) {
-                    pending.push(dependency);
-                }
-            }
-            expand_dependencies(&mut enabled, &mut pending)?;
-        }
-
         let mut builder = Self::new();
         builder.component_authority = authority.clone();
         for manifest in [
@@ -385,7 +363,7 @@ impl PhenixRuntimeBuilder {
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
+        if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             let application_agent_tools = builder.application_agent_tools.clone();
             builder
                 .add_embedded(
@@ -485,7 +463,7 @@ impl PhenixRuntimeBuilder {
                 builder.add_component(component);
             }
         }
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
+        if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
