@@ -46,10 +46,9 @@ use phenix_core::{
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN, SessionCommand, SessionInterface,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, agent_loop_progress_authority,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN,
+    SessionCommand, SessionInterface, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
+    SessionRecord, SessionResponse, SessionTransition, agent_loop_progress_authority,
     execution_review_service, sdk_contribution, session_service, workspace_service,
 };
 use phenix_provider_sdk::{
@@ -64,8 +63,6 @@ use phenix_sdk::{
     AgentToolExecutionRequest, AgentToolExecutionResponse, AssociationObservationSource,
     CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand, ContextInjectionLifetime,
     ContextInjectionRequester, ContextResourceKind, ContextResponse, ExecutionAuthority,
-    agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service,
     ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse,
@@ -76,9 +73,10 @@ use phenix_sdk::{
     ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
     RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, context_service,
-    execution_resource_service, execution_service, model_routing_service, options_service,
-    workspace_context_id,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, agent_loop_control_service,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+    context_service, execution_resource_service, execution_service, model_routing_service,
+    options_service, workspace_context_id,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
