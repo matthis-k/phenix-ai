@@ -44,6 +44,7 @@ pub fn frontend_service() -> ServiceId {
 struct PendingCall {
     connection_id: String,
     descriptor: FrontendProviderDescriptor,
+    execution_root: Option<String>,
 }
 
 #[derive(Default)]
@@ -181,7 +182,11 @@ fn handle(
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::ReleaseRoot { execution_id } => {
-            context.plugin.state.root_routes.remove(&execution_id);
+            let state = &mut context.plugin.state;
+            state.root_routes.remove(&execution_id);
+            state
+                .pending
+                .retain(|_, call| call.execution_root.as_deref() != Some(&execution_id));
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::BeginExecutionCall {
@@ -207,6 +212,7 @@ fn handle(
                 method,
                 params,
                 &BTreeSet::new(),
+                Some(root),
             )
         }
         FrontendCommand::CheckExecutionCapabilities {
@@ -254,6 +260,7 @@ fn handle(
                 method,
                 params,
                 &required_capabilities,
+                Some(root),
             )
         }
         FrontendCommand::BeginDirectCall {
@@ -268,6 +275,7 @@ fn handle(
             method,
             params,
             &BTreeSet::new(),
+            None,
         ),
         FrontendCommand::CompleteCall {
             connection_id,
@@ -314,6 +322,7 @@ fn begin_call(
     method: String,
     params: PhenixValue,
     required_capabilities: &BTreeSet<String>,
+    execution_root: Option<String>,
 ) -> Result<FrontendResponse, String> {
     validate_id("frontend connection id", &connection_id)?;
     validate_id("frontend provider id", &provider)?;
@@ -341,6 +350,7 @@ fn begin_call(
         PendingCall {
             connection_id: connection_id.clone(),
             descriptor,
+            execution_root,
         },
     );
     Ok(FrontendResponse::Request {
