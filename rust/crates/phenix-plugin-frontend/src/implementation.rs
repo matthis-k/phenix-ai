@@ -982,6 +982,103 @@ mod tests {
     }
 
     #[test]
+    fn releasing_root_revokes_only_its_pending_execution_calls() {
+        let mut kernel = kernel();
+        execution(&mut kernel, "root", None);
+        invoke(
+            &mut kernel,
+            FrontendCommand::SetProviders {
+                connection_id: "frontend-a".into(),
+                providers: vec![FrontendProviderDescriptor {
+                    id: "document".into(),
+                    capabilities: BTreeSet::from(["document.v1".into()]),
+                }],
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+
+        let pending_execution = invoke(
+            &mut kernel,
+            FrontendCommand::BeginExecutionCallWithRequirements {
+                execution_id: "root".into(),
+                provider: "document".into(),
+                method: "present".into(),
+                params: serde_json::json!({}).into(),
+                required_capabilities: BTreeSet::from(["document.v1".into()]),
+            },
+        )
+        .unwrap();
+        let pending_direct = invoke(
+            &mut kernel,
+            FrontendCommand::BeginDirectCall {
+                connection_id: "frontend-a".into(),
+                provider: "document".into(),
+                method: "inspect".into(),
+                params: serde_json::json!({}).into(),
+            },
+        )
+        .unwrap();
+        let correlation = |response| match response {
+            FrontendResponse::Request { request } => request.correlation_id,
+            other => panic!("expected request, got {other:?}"),
+        };
+        let execution_id = correlation(pending_execution);
+        let direct_id = correlation(pending_direct);
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::ReleaseRoot {
+                execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: execution_id,
+                    result: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("unknown frontend correlation")
+        );
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: direct_id,
+                    result: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap(),
+            FrontendResponse::Result { .. }
+        ));
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CheckExecutionCapabilities {
+                    execution_id: "root".into(),
+                    provider: "document".into(),
+                    required_capabilities: BTreeSet::from(["document.v1".into()]),
+                },
+            )
+            .unwrap(),
+            FrontendResponse::CapabilityCheck { supported: false }
+        );
+    }
+
+    #[test]
     fn disconnect_removes_provider_catalog_routes_and_pending_calls_without_durable_restore() {
         let mut kernel = kernel();
         execution(&mut kernel, "root", None);
