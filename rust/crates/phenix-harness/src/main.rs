@@ -1361,10 +1361,12 @@ mod tests {
         let disabled = effective_disabled_plugins(&cli, &config);
         let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &disabled)
             .expect("an inherited optional default must be removable");
+        let runtime = builder.build().expect("excluded Full default must resolve");
         assert!(
-            !builder
-                .manifests
-                .iter()
+            !runtime
+                .kernel()
+                .config()
+                .manifests()
                 .any(|plugin| plugin.id.as_str() == "phenix.debug")
         );
     }
