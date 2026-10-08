@@ -570,6 +570,35 @@ impl ResolvedGeneration {
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
     ) -> Result<Self, GenerationResolutionError> {
+        Self::resolve_with_composition_policies(
+            plugin_manifests,
+            component_manifests,
+            durable_schemas,
+            entry_triggers,
+            process_arguments,
+            contributions,
+            layer_policies,
+            ProviderCompositionPolicy::default(),
+            authority_ceiling,
+        )
+    }
+
+    /// Resolve all runtime metadata with explicit provider and service Layer policies.
+    ///
+    /// Both policies are canonical Phenix composition inputs; configuration
+    /// frontends may supply them independently of deployment tooling.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_with_composition_policies(
+        plugin_manifests: impl IntoIterator<Item = PluginManifest>,
+        component_manifests: impl IntoIterator<Item = ComponentManifest>,
+        durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
+        entry_triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
+        process_arguments: impl IntoIterator<Item = ComponentProcessArgument>,
+        contributions: impl IntoIterator<Item = ConfigContribution>,
+        layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
+        provider_policy: ProviderCompositionPolicy,
+        authority_ceiling: &Authority,
+    ) -> Result<Self, GenerationResolutionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -579,7 +608,7 @@ impl ResolvedGeneration {
                 entry_triggers,
                 contributions,
                 layer_policies,
-                ProviderCompositionPolicy::default(),
+                provider_policy,
             )
             .with_process_arguments(process_arguments),
             authority_ceiling,
