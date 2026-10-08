@@ -17,11 +17,11 @@ use phenix_plugin_catalog::{
     basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
     common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
     execution_manifest, expand_profile_defaults, frontend_manifest,
-    full_product_configuration_manifest, hook_manifest,
-    job_manifest, language_manifest, local_environment_manifest, memory_manifest,
-    model_routing_manifest, openai_codex_manifest, options_manifest, planning_manifest,
-    providers_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, step_runner_manifest, workspace_manifest,
+    full_product_configuration_manifest, hook_manifest, job_manifest, language_manifest,
+    local_environment_manifest, memory_manifest, model_routing_manifest, openai_codex_manifest,
+    options_manifest, planning_manifest, providers_manifest, repository_worker_manifest,
+    sdk_manifest, session_manifest, session_tree_manifest, step_runner_manifest,
+    workspace_manifest,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -94,8 +94,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let persistence = LocalPersistence::open(&state)?;
     let excluded_defaults = effective_disabled_plugins(&cli, &composition);
     let mut builder = match configured_first_party_plugins(&cli, &composition)? {
-        Some(enabled) => PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &excluded_defaults)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+        Some(enabled) => {
+            PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &excluded_defaults)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?
+        }
         None => PhenixRuntimeBuilder::with_default_suite()?,
     };
     for package in configured_plugin_packages()? {
@@ -509,10 +511,7 @@ fn configured_first_party_plugins(
     resolve_configured_first_party_plugins(cli, config, configured.as_deref()).map_err(Into::into)
 }
 
-fn effective_disabled_plugins(
-    cli: &Cli,
-    config: &PortableCompositionConfig,
-) -> BTreeSet<String> {
+fn effective_disabled_plugins(cli: &Cli, config: &PortableCompositionConfig) -> BTreeSet<String> {
     let mut disabled = config.plugins.disable.clone();
     for id in &cli.enable_plugins {
         disabled.remove(id);
@@ -1160,11 +1159,9 @@ mod tests {
             .expect("product profile defaults may be excluded before contract resolution")
             .unwrap();
         assert!(!selected.contains(&execution));
-        let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(
-            &selected,
-            &cli.disable_plugins,
-        )
-        .expect("there are no concrete manifest dependencies on this provider");
+        let builder =
+            PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &cli.disable_plugins)
+                .expect("there are no concrete manifest dependencies on this provider");
         let error = builder
             .build()
             .err()
@@ -1353,8 +1350,9 @@ mod tests {
         )
         .unwrap();
         let cli = Cli::default();
-        let enabled =
-            resolve_configured_first_party_plugins(&cli, &config, None).unwrap().unwrap();
+        let enabled = resolve_configured_first_party_plugins(&cli, &config, None)
+            .unwrap()
+            .unwrap();
         assert!(enabled.contains("phenix.product.full"));
         assert!(enabled.contains("phenix.agent.basic"));
         assert!(enabled.contains("phenix.memory"));
@@ -1363,7 +1361,12 @@ mod tests {
         let disabled = effective_disabled_plugins(&cli, &config);
         let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &disabled)
             .expect("an inherited optional default must be removable");
-        assert!(!builder.manifests.iter().any(|plugin| plugin.id.as_str() == "phenix.debug"));
+        assert!(
+            !builder
+                .manifests
+                .iter()
+                .any(|plugin| plugin.id.as_str() == "phenix.debug")
+        );
     }
 
     #[test]
@@ -1376,10 +1379,10 @@ mod tests {
         )
         .unwrap();
         let cli = parse_cli(["--enable-plugin=phenix.debug".into()]).unwrap();
-        let enabled =
-            resolve_configured_first_party_plugins(&cli, &config, None).unwrap().unwrap();
+        let enabled = resolve_configured_first_party_plugins(&cli, &config, None)
+            .unwrap()
+            .unwrap();
         assert!(enabled.contains("phenix.debug"));
         assert!(!effective_disabled_plugins(&cli, &config).contains("phenix.debug"));
     }
-
 }

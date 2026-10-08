@@ -143,7 +143,10 @@ mod tests {
             FULL_PRODUCT_CONFIGURATION,
         ] {
             let manifest = assembly_manifest(profile);
-            assert!(manifest.dependencies.is_empty(), "{profile} must remain replaceable");
+            assert!(
+                manifest.dependencies.is_empty(),
+                "{profile} must remain replaceable"
+            );
             assert!(profile_defaults(profile).is_some());
         }
         assert!(profile_defaults("unrelated.third-party-plugin").is_none());
@@ -209,6 +212,9 @@ mod tests {
     #[test]
     fn arbitrary_third_party_plugins_are_not_expanded_as_profiles() {
         let selected = BTreeSet::from(["acme.agent".to_owned()]);
-        assert_eq!(expand_profile_defaults(&selected, &BTreeSet::new()), selected);
+        assert_eq!(
+            expand_profile_defaults(&selected, &BTreeSet::new()),
+            selected
+        );
     }
 }

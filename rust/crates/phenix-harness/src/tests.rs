@@ -1017,14 +1017,21 @@ fn advanced_profile_can_remove_an_inherited_default_before_activation() {
     assert!(ids.contains(ADVANCED_AGENT_CONFIGURATION));
     assert!(ids.contains(BASIC_AGENT_CONFIGURATION));
     assert!(ids.contains("phenix.agent-loop"));
-    assert!(!ids.contains("phenix.debug"), "excluded default must not activate");
+    assert!(
+        !ids.contains("phenix.debug"),
+        "excluded default must not activate"
+    );
 
-    let resolved = builder.build().expect("optional debug default may be omitted");
-    assert!(!resolved
-        .kernel()
-        .config()
-        .manifests()
-        .any(|manifest| manifest.id.as_str() == "phenix.debug"));
+    let resolved = builder
+        .build()
+        .expect("optional debug default may be omitted");
+    assert!(
+        !resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.debug")
+    );
 }
 
 #[test]
@@ -1044,7 +1051,6 @@ fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
     assert!(!selected.contains("phenix.debug"));
 }
 
-
 #[test]
 fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory() {
     use phenix_core::{ComponentId, ComponentInterface};
@@ -1056,10 +1062,12 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
     let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
         .expect("native memory is a Full default, not a compulsory profile dependency");
 
-    assert!(!builder
-        .manifests
-        .iter()
-        .any(|manifest| manifest.id.as_str() == "phenix.memory"));
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == "phenix.memory")
+    );
 
     let owner = plugin("fixture.external-memory");
     builder
@@ -1088,16 +1096,30 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
     builder.add_component(external);
     builder.bind_provider(MemoryInterface::interface_id(), external_id.clone());
 
-    let resolved = builder.build().expect("Full may resolve against a foreign memory provider");
-    assert!(!resolved.kernel().config().manifests().any(|manifest| {
-        manifest.id.as_str() == "phenix.memory"
-    }));
-    assert!(resolved.kernel().config().manifests().any(|manifest| {
-        manifest.id.as_str() == "fixture.external-memory"
-    }));
-    assert!(resolved.resolved_generation().components().iter().any(|manifest| {
-        manifest.id == external_id
-    }));
+    let resolved = builder
+        .build()
+        .expect("Full may resolve against a foreign memory provider");
+    assert!(
+        !resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| { manifest.id.as_str() == "phenix.memory" })
+    );
+    assert!(
+        resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| { manifest.id.as_str() == "fixture.external-memory" })
+    );
+    assert!(
+        resolved
+            .resolved_generation()
+            .components()
+            .iter()
+            .any(|manifest| { manifest.id == external_id })
+    );
 }
 
 #[test]

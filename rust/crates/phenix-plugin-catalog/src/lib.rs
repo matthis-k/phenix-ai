@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{DurableSchemaRegistration, PluginId, PluginManifest};
-use std::collections::BTreeSet;
 use phenix_sdk::StaticPluginResources;
+use std::collections::BTreeSet;
 
 pub use phenix_adapter_acp::{ACP_ADAPTER_PLUGIN, adapter_acp_factory, adapter_acp_manifest};
 pub use phenix_agent_configurations::{
