@@ -473,13 +473,16 @@ fn product_configurations_resolve_providers_and_frontend_sdk() {
 
 #[test]
 fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
-    let builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         FULL_PRODUCT_CONFIGURATION.to_owned(),
     ]))
-    .unwrap();
+    .unwrap()
+    .build()
+    .expect("Full resolves its tool triggers through selected component exports");
 
-    let callables = builder
-        .entry_triggers
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
         .iter()
         .map(|trigger| match &trigger.trigger {
             phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
@@ -504,6 +507,41 @@ fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
             "full product missed {required}"
         );
     }
+}
+
+#[test]
+fn application_tool_triggers_require_resolved_provider_contracts() {
+    let selected = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .unwrap()
+        .build()
+        .expect("the application adapter can exist without optional tool providers");
+
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .map(|trigger| match &trigger.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+        })
+        .collect::<BTreeSet<_>>();
+
+    for absent in ["bash", "workspace.read", "code.query", "memory.record"] {
+        assert!(
+            !callables.contains(absent),
+            "unresolved optional provider must not publish {absent}"
+        );
+    }
+
+    let selected = BTreeSet::from(["phenix.memory".to_owned()]);
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .unwrap()
+        .build()
+        .expect("standalone memory may resolve without the application adapter");
+    assert!(
+        runtime.resolved_generation().entry_triggers().is_empty(),
+        "memory storage must not implicitly add application entry points"
+    );
 }
 
 #[test]
