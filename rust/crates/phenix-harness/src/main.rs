@@ -486,9 +486,17 @@ fn configured_first_party_plugins(
         .map(OsString::into_string)
         .transpose()
         .map_err(|_| "PHENIX_ENABLED_PLUGINS must be valid UTF-8")?;
+    resolve_configured_first_party_plugins(cli, config, configured.as_deref()).map_err(Into::into)
+}
+
+fn resolve_configured_first_party_plugins(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+    environment_selection: Option<&str>,
+) -> Result<Option<BTreeSet<String>>, String> {
     // Deployment environment supplies defaults; portable configuration may
     // choose a profile. Explicit command-line plugin options win over both.
-    let base = config.profile.as_deref().or(configured.as_deref());
+    let base = config.profile.as_deref().or(environment_selection);
     let mut selection = Cli::default();
     selection.enable_plugins = config.plugins.enable.clone();
     selection.disable_plugins = config.plugins.disable.clone();
@@ -500,7 +508,7 @@ fn configured_first_party_plugins(
         selection.enable_plugins.remove(id);
         selection.disable_plugins.insert(id.clone());
     }
-    resolve_first_party_plugins(&selection, base).map_err(Into::into)
+    resolve_first_party_plugins(&selection, base)
 }
 
 fn resolve_first_party_plugins(
