@@ -11039,7 +11039,8 @@ mod tests {
                 session_id: Some(_),
                 input,
                 ..
-            } = command else {
+            } = command
+            else {
                 return Err("application must send a session-qualified run".into());
             };
             let complete = input
@@ -11058,8 +11059,7 @@ mod tests {
             } else {
                 AgentLoopResponse::Cancelled { usage }
             };
-            serde_json::to_vec(&PhenixValue::from(&response))
-                .map_err(|error| error.to_string())
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
         }
     }
 
