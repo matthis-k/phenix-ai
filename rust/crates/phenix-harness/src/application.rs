@@ -98,7 +98,7 @@ pub const APPLICATION_EVENT_CAPACITY: usize = 256;
 const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
-const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
+pub const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
 const APPLICATION_SHELL_TOOL_SERVICE: &str = "phenix.application-agent-tools.shell@1";
 const APPLICATION_WORKSPACE_READ_TOOL_SERVICE: &str =
@@ -3740,7 +3740,7 @@ impl ApplicationAgentToolRegistry {
 }
 
 #[must_use]
-pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginManifest {
+pub fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginManifest {
     PluginManifest {
         id: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
