@@ -3789,6 +3789,14 @@ pub(crate) fn application_agent_tool_component_manifest(
         owner: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
         imports: vec![
+            // An application prompt consumes the selected agent contract from
+            // its pinned graph. The tool adapter can still run standalone.
+            ComponentImport {
+                interface: AgentLoopInterface::interface_id(),
+                schema: AgentLoopInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
             ComponentImport {
                 interface: WorkspaceInterface::interface_id(),
                 schema: WorkspaceInterface::schema(),
@@ -5485,31 +5493,32 @@ fn normalize_model_tool_table(
     Ok(PhenixValue::Table(normalized))
 }
 
-/// Resolve an explicit agent provider from the prompt's pinned generation.
+/// Choose the agent-loop provider resolved for the application's import in
+/// the prompt's pinned generation, including default and priority selection.
 ///
-/// The public application must not resolve a new provider after a prompt has
-/// leased its execution generation. Default service routing remains unchanged
-/// when the product declares no explicit agent-loop binding.
+/// The application does not resolve a new provider after obtaining its root.
+/// The service bridge is still required until contract-only invocation exists.
 pub(crate) fn bound_application_agent_plugin(
     resolved: &phenix_core::ResolvedGeneration,
     caller_authority: &Authority,
 ) -> Result<Option<PluginId>, ApplicationError> {
     let interface = AgentLoopInterface::interface_id();
-    let policy = resolved.provider_policy();
-    let Some(target) = policy.explicit_binding(&interface) else {
-        return Ok(None);
-    };
-    if !policy.provider_enabled(&interface, target) {
-        return Err(ApplicationError::Failed {
-            message: format!("explicit agent provider {target} is disabled"),
-        });
-    }
+    let binding = resolved
+        .component_graph()
+        .import_handle(&application_agent_tool_component_id(), &interface)
+        .map_err(|error| ApplicationError::Failed {
+            message: format!("cannot resolve application agent import: {error}"),
+        })?
+        .ok_or_else(|| ApplicationError::Failed {
+            message: "application has no resolved agent execution provider".to_owned(),
+        })?;
+    let target = binding.exporter();
     let component = resolved
         .components()
         .iter()
         .find(|component| &component.id == target)
         .ok_or_else(|| ApplicationError::Failed {
-            message: format!("explicit agent provider {target} is not installed"),
+            message: format!("resolved agent provider {target} is not installed"),
         })?;
     let export = component
         .exports
@@ -5523,25 +5532,22 @@ pub(crate) fn bound_application_agent_plugin(
                 )
         })
         .ok_or_else(|| ApplicationError::Failed {
-            message: format!("explicit agent provider {target} has no compatible agent contract"),
+            message: format!("resolved agent provider {target} has no compatible agent contract"),
         })?;
     let owner = resolved
         .plugins()
         .iter()
         .find(|plugin| plugin.id == component.owner)
         .ok_or_else(|| ApplicationError::Failed {
-            message: format!("explicit agent provider {target} has no installed plugin owner"),
+            message: format!("resolved agent provider {target} has no installed plugin owner"),
         })?;
     if !caller_authority.permits_all(&export.required_authority)
-        || !component
-            .maximum_authority
-            .permits_all(&export.required_authority)
-        || !owner
-            .maximum_authority
+        || !binding
+            .effective_authority()
             .permits_all(&export.required_authority)
     {
         return Err(ApplicationError::Failed {
-            message: format!("explicit agent provider {target} requires unavailable authority"),
+            message: format!("resolved agent provider {target} requires unavailable authority"),
         });
     }
     if !owner.services.iter().any(|service| {
@@ -5549,11 +5555,11 @@ pub(crate) fn bound_application_agent_plugin(
     }) {
         return Err(ApplicationError::Failed {
             message: format!(
-                "explicit agent provider {target} has no terminal agent execution service"
+                "resolved agent provider {target} has no terminal agent execution service"
             ),
         });
     }
-    Ok(Some(component.owner.clone()))
+    Ok(Some(binding.owning_plugin().clone()))
 }
 
 struct ApplicationModelToolSurface {
