@@ -544,7 +544,10 @@ fn application_prompt_does_not_use_installed_agent_service_when_contract_disable
         BASIC_AGENT_CONFIGURATION.to_owned(),
     ]))
     .unwrap();
-    builder.disable_provider(AgentLoopInterface::interface_id(), agent_loop_component_id());
+    builder.disable_provider(
+        AgentLoopInterface::interface_id(),
+        agent_loop_component_id(),
+    );
     let runtime = builder
         .build()
         .expect("application agent import is optional until a prompt starts");
