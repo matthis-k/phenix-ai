@@ -1,24 +1,34 @@
+# Keep the legacy PR check name during migration, but do not push fixes to PR branches.
+# CI's Source job owns mandatory formatting and static validation.
 name: Maintenance autofix
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
-  actions: write
-  contents: write
-
-concurrency:
-  group: maintenance-autofix-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
   autofix:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Verify committed diff has no whitespace errors
+        run: |
+          set -euo pipefail
+          git diff --check HEAD^ HEAD
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  # Optional repair aid for changes made by GitHub API or other hookless clients.
+  # Produces a patch to apply to a local candidate; never commits or pushes it.
+  propose-fixes:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
@@ -27,41 +37,23 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      - name: Apply deterministic maintenance fixes
+      - name: Propose deterministic normalization patch
+        id: patch
         run: |
           set -euo pipefail
-          nix flake update phenix-flake-ci
-          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
-          nix eval --raw \
-            ".#packages.$system.phenix-maintenance.phenixMaintenance.ci.github.workflow" \
-            > .github/workflows/ci.yml
-          printf '%s\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
-            nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
-          nix develop --command bash -lc 'cd rust && cargo metadata --format-version 1 >/dev/null'
-          git diff --check
-
-      - name: Commit autofixes
-        id: commit
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          set -euo pipefail
-
-          if test -z "$(git status --porcelain=v1 --untracked-files=all)"; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          printf '%s\n' '{"command":"fix","source":{"type":"maintenance-patch"}}' |
+            nix run --quiet --no-write-lock-file .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
+          git diff --binary > maintenance-fixes.patch
+          if test -s maintenance-fixes.patch; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No mechanical changes needed" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "chore: apply CI autofixes"
-          git push origin "HEAD:$HEAD_REF"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Validate corrected head
-        if: steps.commit.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: gh workflow run ci.yml --ref "$HEAD_REF"
+      - name: Upload proposed patch
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: maintenance-fixes
+          path: maintenance-fixes.patch
+          retention-days: 7
