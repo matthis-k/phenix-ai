@@ -1046,6 +1046,7 @@ fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
         .map(|manifest| manifest.id.as_str())
         .collect::<BTreeSet<_>>();
     assert!(selected.contains(FULL_PRODUCT_CONFIGURATION));
+    assert!(selected.contains("phenix.product.basic"));
     assert!(selected.contains(ADVANCED_AGENT_CONFIGURATION));
     assert!(selected.contains(BASIC_AGENT_CONFIGURATION));
     assert!(!selected.contains("phenix.debug"));
