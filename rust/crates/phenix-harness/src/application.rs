@@ -5003,7 +5003,9 @@ fn finish_prompt(
         execution.prompt.respond(Err(error));
         return;
     }
-    if execution.cancellation.load(Ordering::Acquire) {
+    if execution.cancellation.load(Ordering::Acquire)
+        || matches!(&completion.result, Err(ApplicationError::Cancelled))
+    {
         let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
         let _ = worker.append_execution_change_on(
             root,
@@ -11012,6 +11014,164 @@ mod tests {
             events.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    /// Foreign loops may stop themselves without receiving an application
+    /// Cancel request. This must remain a cancelled session execution.
+    struct ContractCancellingAgent;
+
+    impl PluginInstance for ContractCancellingAgent {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            _service: &ServiceId,
+            _input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            serde_json::to_vec(&PhenixValue::from(&AgentLoopResponse::Cancelled {
+                usage: phenix_sdk::AgentLoopUsage {
+                    model_calls: 0,
+                    tool_calls: 0,
+                },
+            }))
+            .map_err(|error| error.to_string())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreign_agent_self_cancellation_is_a_cancelled_execution() {
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let owner = PluginId::parse("fixture.self-cancelling-agent").unwrap();
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: owner.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: vec![ServiceContribution {
+                        role: ServiceRole::Terminal,
+                        service: agent_loop_service(),
+                        priority: -100,
+                        required_authority: Authority::default(),
+                    }],
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: default_suite_authority(),
+                },
+                || Box::new(ContractCancellingAgent),
+            )
+            .unwrap();
+        let mut component =
+            phenix_plugin_catalog::agent_loop_component_manifest(default_suite_authority());
+        component.id = ComponentId::parse("fixture.self-cancelling-agent.component").unwrap();
+        component.owner = owner;
+        component.imports.clear();
+        let selected = component.id.clone();
+        builder.add_component(component);
+        builder.bind_provider(AgentLoopInterface::interface_id(), selected);
+
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let worker = ApplicationWorker::new(harness).unwrap();
+        let (sdk, generation) = {
+            let harness = worker.harness.lock();
+            (
+                harness
+                    .resolved_generation()
+                    .resolve_sdk_contributions([sdk_contribution()])
+                    .unwrap(),
+                ReferenceGenerationId::from(harness.generation()),
+            )
+        };
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.self-cancelling-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-self-cancelling-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-self-cancelling-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..2 {
+            let prompt = tokio::time::timeout(
+                Duration::from_secs(5),
+                invoke_transport_operation::<Prompt>(
+                    &transport,
+                    PromptInput {
+                        session_id: created.session_id.clone(),
+                        content: vec![Content::Text {
+                            text: "cancel without a caller Cancel request".into(),
+                        }],
+                    },
+                ),
+            )
+            .await
+            .expect("foreign agent must return promptly")
+            .expect("provider-reported cancellation is not a prompt failure");
+            assert_eq!(prompt.stop_reason, StopReason::Cancelled);
+        }
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        let cancelled = resumed.updates.iter().filter(|update| {
+            matches!(
+                update.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Cancelled,
+                    },
+                    ..
+                }
+            )
+        }).count();
+        assert_eq!(cancelled, 2, "both foreign cancellations must be persisted");
+        assert!(!resumed.updates.iter().any(|update| {
+            matches!(
+                update.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Failed { .. },
+                    },
+                    ..
+                }
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
