@@ -206,15 +206,6 @@ impl PhenixRuntimeBuilder {
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
-        for trigger in application::application_workspace_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
-        for trigger in application::application_code_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
-        for trigger in application::application_memory_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
         Ok(builder)
     }
 
@@ -469,21 +460,6 @@ impl PhenixRuntimeBuilder {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
-            if enabled.contains("phenix.workspace") {
-                for trigger in application::application_workspace_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
-            if enabled.contains("phenix.language") {
-                for trigger in application::application_code_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
-            if enabled.contains("phenix.memory") {
-                for trigger in application::application_memory_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
         }
         Ok(builder)
     }
