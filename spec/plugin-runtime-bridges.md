@@ -12,7 +12,7 @@ coverage:
 
 This file describes the **current implemented baseline**: `embedded` is the intrinsic bootstrap and non-embedded plugins use the existing Plugin Runtime Adapter Interface. The proposed migration in [native plugin ABI and guest runtimes](native-plugin-abi-and-guest-runtimes.md) changes that intrinsic loader to a versioned native shared-library ABI.
 
-Under that target, JavaScript, Wasm and other language runtimes are provided by **ordinary native plugins implementing the same ABI**. Guest code uses its own language binding to the selected adapter. It is incorrect to describe the kernel as directly loading a JavaScript or Wasm plugin, or to imply a common Rust SDK crate is itself a stable ABI.
+Under that target, Lua, Wasm and other language runtimes are provided by **ordinary native plugins implementing the same ABI**. The first integration proof uses an independent native Lua adapter and Lua guest. The existing Neovim Lua/ACP client binding is separate from this guest runtime. Guest code uses its own language binding to the selected adapter. It is incorrect to describe the kernel as directly loading Lua or Wasm code, or to imply a common Rust SDK crate is itself a stable ABI.
 
 The target also separates building/staging a candidate from selecting or promoting it. Nothing in this note claims native loading or safe physical unloading is currently implemented.
 
