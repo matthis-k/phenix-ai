@@ -1,6 +1,6 @@
 # Usage-agnostic microkernel and composition roadmap
 
-status: design; implementation is explicitly not claimed by this document
+status: specification-only
 scope: phenix-core, phenix-contract, phenix-sdk, plugins
 
 ## Architectural invariant
