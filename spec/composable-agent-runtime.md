@@ -399,8 +399,8 @@ then closes over true implementation dependencies.
   verifies resolution and package omission, not an external memory backend's
   runtime behavior.
 - An alternative agent loop must still satisfy consumer contracts and the
-  application launch/agent tool wiring is currently coupled to the first-party
-  loop by plugin ID. This remains a separate remediation.
+  application launch still invokes the fixed agent-loop service. The application
+  tool adapter is now selected by its own plugin ID, independent of Basic.
 
 The current composition API is intentionally not a second kernel graph solver:
 profile expansion only adds *candidate plugin IDs*; actual import/export
@@ -446,7 +446,7 @@ Neither forwarding nor replacement grants additional authority.
 | Third-party provider replaceability | clean foundation | `phenix-core/src/third_party_component_regression.rs`, `phenix-plugin-basic-agent/src/component_regression.rs` |
 | Agent contract ownership | finding | `AgentLoopInterface` and wire types lived in the Basic implementation crate. Extract into `phenix-sdk` without changing wire identity. |
 | Application launch coupling | finding | `phenix-harness/src/application.rs` invokes `phenix.agent-loop@1` using a concrete Basic-era request. Contract types are now SDK-owned, but the application should ultimately use configurable capability bindings rather than hard-coded agent implementations. |
-| Harness/plugin wiring | finding | `runtime_builder.rs` conditionally installs application agent-tool adapter and triggers when a specific Basic loop plugin is selected. Derive this from required capabilities, not plugin identity. |
+| Harness/plugin wiring | partially remediated | The Basic profile explicitly selects `phenix.application-agent-tools` as a replaceable default. `runtime_builder.rs` installs it based on its own selection, not the Basic loop ID. Its entry triggers still depend on concrete workspace/language/memory plugin selections, and client capability discovery remains outstanding. |
 | Composition override surface | partially remediated in this PR | Core supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` exposes policy, strict binding, and exclusion. Profile defaults are expanded by Phenix, with explicit exclusion before hard dependency closure; a basic portable JSON/CLI frontend is added. Dynamic package management, full independent components, and capability-based application wiring remain outstanding. |
 | Standalone memory | finding | `phenix.memory` has a required helper-invocation import even for storage/query-only use. Separate the helper-dependent mechanisms. |
 | Standalone context | finding | `phenix.context` requires Phenix execution/resource providers, preventing simple external turn-preparation usage without those services. Expose a provider-neutral preparation boundary. |
@@ -698,7 +698,7 @@ Process-backed plugin runtime adapters remain transport/packaging boundaries, no
 ## Implementation order
 
 1. **This PR:** move agent-loop wire contract/identity into the provider-neutral SDK, preserve original Basic exports, expose kernel-owned provider composition through the product builder, and document the audit and target graph.
-2. Application entry decoupling: configurable agent-execution binding and capability-driven tool wiring.
+2. **Partial:** application tool adapter is selected independently of the Basic loop and has a foreign-loop regression. **Pending:** configurable application agent-execution dispatch, contract-based tool trigger discovery, and authorization/concurrency conformance.
 3. **Initial portion implemented in this PR:** expose `ProviderCompositionPolicy` through the harness runtime builder and add no-Nix graph selection, exclusion, invalid binding and generation-identity regressions. **Still pending:** portable file/CLI/frontend lowering and Full profile substitutions before concrete package activation.
 4. Add genuinely functional deterministic Basic compaction with recoverable tool-history checkpointing.
 5. Full compaction substitution, repeated-checkpoint lineage, enforced token targets and continuation integration.
