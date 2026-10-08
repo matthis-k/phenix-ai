@@ -732,6 +732,137 @@ mod tests {
     }
 
     #[test]
+    fn capability_checks_and_guarded_calls_use_only_the_active_root_owner() {
+        let mut kernel = kernel();
+        execution(&mut kernel, "root", None);
+        execution(&mut kernel, "child", Some("root"));
+        let required = BTreeSet::from(["document.v1".to_owned()]);
+        for (connection, capabilities) in [
+            ("frontend-a", BTreeSet::new()),
+            ("frontend-b", required.clone()),
+        ] {
+            invoke(
+                &mut kernel,
+                FrontendCommand::SetProviders {
+                    connection_id: connection.into(),
+                    providers: vec![FrontendProviderDescriptor {
+                        id: "document".into(),
+                        capabilities,
+                    }],
+                },
+            )
+            .unwrap();
+        }
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+
+        let check = |kernel: &mut Kernel| {
+            invoke(
+                kernel,
+                FrontendCommand::CheckExecutionCapabilities {
+                    execution_id: "child".into(),
+                    provider: "document".into(),
+                    required_capabilities: required.clone(),
+                },
+            )
+        };
+        let begin = |kernel: &mut Kernel| {
+            invoke(
+                kernel,
+                FrontendCommand::BeginExecutionCallWithRequirements {
+                    execution_id: "child".into(),
+                    provider: "document".into(),
+                    method: "present".into(),
+                    params: serde_json::json!({}).into(),
+                    required_capabilities: required.clone(),
+                },
+            )
+        };
+
+        assert_eq!(
+            check(&mut kernel).unwrap(),
+            FrontendResponse::CapabilityCheck { supported: false },
+            "another frontend cannot advertise capabilities for this execution"
+        );
+        assert!(
+            begin(&mut kernel)
+                .unwrap_err()
+                .contains("lacks required capabilities")
+        );
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::SetProviders {
+                connection_id: "frontend-a".into(),
+                providers: vec![FrontendProviderDescriptor {
+                    id: "document".into(),
+                    capabilities: required.clone(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            check(&mut kernel).unwrap(),
+            FrontendResponse::CapabilityCheck { supported: true }
+        );
+        let correlation_id = match begin(&mut kernel).unwrap() {
+            FrontendResponse::Request { request } => {
+                assert_eq!(request.connection_id, "frontend-a");
+                request.correlation_id
+            }
+            other => panic!("expected a request, got {other:?}"),
+        };
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::SetProviders {
+                connection_id: "frontend-a".into(),
+                providers: vec![FrontendProviderDescriptor {
+                    id: "document".into(),
+                    capabilities: BTreeSet::new(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            check(&mut kernel).unwrap(),
+            FrontendResponse::CapabilityCheck { supported: false }
+        );
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id,
+                    result: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("unknown frontend correlation"),
+            "capability withdrawal must revoke pending UI results"
+        );
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::Disconnect {
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            check(&mut kernel).unwrap(),
+            FrontendResponse::CapabilityCheck { supported: false }
+        );
+        assert!(begin(&mut kernel).unwrap_err().contains("no live frontend root route"));
+    }
+
+    #[test]
     fn provider_replacement_revokes_stale_pending_calls_without_affecting_identical_contracts() {
         let mut kernel = kernel();
         execution(&mut kernel, "root", None);
