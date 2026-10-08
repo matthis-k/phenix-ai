@@ -97,6 +97,9 @@ Stage only the files intended for one commit, then run:
 ```sh
 git add -- path/to/changed-file
 maintenance commit "Describe the change"
+
+# Without entering the development shell:
+nix run .#phenix-maintenance -- commit "Describe the change"
 ```
 
 The command runs `maintenance fix` (using the Nix maintenance app outside the development shell), checks the resulting diff, stages only the original candidate paths, and creates one commit with normal Git hooks enabled. It refuses unstaged tracked changes and formatter edits outside the candidate, so it cannot accidentally commit unrelated work. Review and explicitly stage any additional paths before retrying. Ordinary `git commit` still runs the existing pre-commit normalization hook.
