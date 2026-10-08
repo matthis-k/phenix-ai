@@ -5567,6 +5567,50 @@ struct ApplicationModelToolSurface {
     runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
 }
 
+/// A declared application tool is available only when its required imports
+/// resolved in the same generation as the prompt. In particular, an external
+/// memory provider need not implement memory-context association.
+pub(crate) fn application_tool_trigger_available(
+    resolved: &phenix_core::ResolvedGeneration,
+    trigger: &ComponentEntryTrigger,
+) -> Result<bool, ApplicationError> {
+    if trigger.component != application_agent_tool_component_id() {
+        return Ok(true);
+    }
+
+    let dependencies = match trigger.interface.as_str() {
+        APPLICATION_SHELL_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_READ_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_GIT_TOOL_SERVICE => vec![WorkspaceInterface::interface_id()],
+        APPLICATION_CODE_QUERY_TOOL_SERVICE => vec![LanguageInterface::interface_id()],
+        APPLICATION_MEMORY_RECORD_TOOL_SERVICE
+        | APPLICATION_MEMORY_QUERY_TOOL_SERVICE
+        | APPLICATION_MEMORY_RECALL_TOOL_SERVICE => vec![MemoryInterface::interface_id()],
+        APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE => vec![
+            MemoryInterface::interface_id(),
+            MemoryContextInterface::interface_id(),
+        ],
+        _ => Vec::new(),
+    };
+    for interface in dependencies {
+        let binding = resolved
+            .component_graph()
+            .import_handle(&trigger.component, &interface)
+            .map_err(|error| ApplicationError::Failed {
+                message: format!(
+                    "cannot resolve model tool {} dependency {interface}: {error}",
+                    trigger.interface
+                ),
+            })?;
+        if binding.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn application_model_tool_surface(
     service: &SdkApplicationService,
     session_id: &SessionId,
@@ -5577,7 +5621,9 @@ fn application_model_tool_surface(
     let mut graph_tools = Vec::new();
 
     for trigger in resolved.entry_triggers() {
-        if !authority.permits_all(&trigger.required_authority) {
+        if !authority.permits_all(&trigger.required_authority)
+            || !application_tool_trigger_available(resolved, trigger)?
+        {
             continue;
         }
         let EntryTriggerKind::ToolCall {
