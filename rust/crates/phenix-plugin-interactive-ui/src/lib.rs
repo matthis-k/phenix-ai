@@ -481,17 +481,26 @@ mod tests {
         for index in 0..MAX_DOCUMENT_KEYS {
             let mut document = fixture();
             document.document_id = format!("doc-{index}");
-            assert!(store.apply(UiDocumentCommand::Put {
-                document,
-                expected_revision: None,
-            }).is_ok());
+            assert!(
+                store
+                    .apply(UiDocumentCommand::Put {
+                        document,
+                        expected_revision: None,
+                    })
+                    .is_ok()
+            );
         }
         let mut overflow = fixture();
         overflow.document_id = "overflow".into();
-        assert!(store.apply(UiDocumentCommand::Put {
-            document: overflow,
-            expected_revision: None,
-        }).unwrap_err().contains("key limit"));
+        assert!(
+            store
+                .apply(UiDocumentCommand::Put {
+                    document: overflow,
+                    expected_revision: None,
+                })
+                .unwrap_err()
+                .contains("key limit")
+        );
     }
 
     #[test]
