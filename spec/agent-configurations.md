@@ -15,6 +15,7 @@ Agent configurations are resource-only **profile identities**. The associated Ph
 ```text
 phenix.agent.basic
 ├── phenix.agent-loop
+├── phenix.application-agent-tools
 ├── phenix.context
 ├── phenix.execution
 ├── phenix.harness.invocation-defaults
@@ -22,7 +23,7 @@ phenix.agent.basic
 └── phenix.step-runner
 ```
 
-The basic configuration does not depend on `phenix.options`. Invocation defaults use the literal `default` routing profile when no options provider is bound.
+The basic configuration does not depend on `phenix.options`. Invocation defaults use the literal `default` routing profile when no options provider is bound. `phenix.application-agent-tools` is an explicit, independently selectable default. It requires sessions but does not require the Basic loop. A foreign agent can reuse the adapter, or a different adapter can replace it.
 
 `phenix.agent.advanced` extends the basic configuration:
 
@@ -88,7 +89,7 @@ An independent consumer may select memory/context without choosing Basic or Full
 The shared `AgentLoopInterface` contract is owned by `phenix-sdk` rather than by the
 `phenix-plugin-basic-agent` implementation. Basic continues to re-export those symbols
 for compatibility. Contract ownership, initial provider composition APIs and portable JSON/CLI profile selection
-are implemented on the PR branch. Application entry-point decoupling, replacing provider
+are implemented on the PR branch. The adapter is independently selectable and a regression exercises a foreign loop without Basic. Application entry-point contract routing and capability-driven tool exposure, replacing provider
 *implementations* with independently packaged alternatives, deterministic Basic compaction,
 and external forwarding remain outstanding.
 
