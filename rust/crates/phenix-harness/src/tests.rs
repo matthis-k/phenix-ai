@@ -402,13 +402,25 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
     component.id = ComponentId::parse("fixture.low-priority-agent.component").unwrap();
     component.owner = owner.clone();
     component.imports.clear();
+    component.exports[0].required_authority =
+        Authority::new([capability("kernel.persistence.read")]);
     let id = component.id.clone();
     builder.add_component(component);
     builder.bind_provider(AgentLoopInterface::interface_id(), id);
 
     let mut runtime = builder.build().expect("both loop implementations may coexist");
-    let explicit = application::bound_application_agent_plugin(runtime.resolved_generation())
-        .expect("the selected generation has an eligible bound terminal");
+    let Err(denied) = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &Authority::default(),
+    ) else {
+        panic!("explicit agent binding must not bypass contract export authority");
+    };
+    assert!(denied.to_string().contains("requires unavailable authority"));
+    let explicit = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the selected generation has an authorized bound terminal");
     assert_eq!(explicit, Some(owner));
     runtime.activate().unwrap();
     let output = runtime
