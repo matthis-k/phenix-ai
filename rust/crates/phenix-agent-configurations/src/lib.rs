@@ -1,13 +1,18 @@
 #![forbid(unsafe_code)]
 
+//! Declarative reference product profiles. These are defaults, not concrete
+//! package dependencies: selecting a profile must not make its implementations
+//! impossible to replace through the canonical Phenix resolver.
+
 use phenix_core::{Authority, PluginExecution, PluginId, PluginManifest};
+use std::collections::BTreeSet;
 
 pub const BASIC_AGENT_CONFIGURATION: &str = "phenix.agent.basic";
 pub const ADVANCED_AGENT_CONFIGURATION: &str = "phenix.agent.advanced";
 pub const BASIC_PRODUCT_CONFIGURATION: &str = "phenix.product.basic";
 pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
-const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
+const BASIC_AGENT_DEFAULTS: &[&str] = &[
     "phenix.agent-loop",
     "phenix.basic-skills",
     "phenix.context",
@@ -17,7 +22,7 @@ const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.step-runner",
 ];
 
-const BASIC_PRODUCT_DEPENDENCIES: &[&str] = &[
+const BASIC_PRODUCT_DEFAULTS: &[&str] = &[
     BASIC_AGENT_CONFIGURATION,
     "phenix.api",
     "phenix.options",
@@ -25,7 +30,8 @@ const BASIC_PRODUCT_DEPENDENCIES: &[&str] = &[
     "openai-codex",
 ];
 
-const ADVANCED_AGENT_EXTENSIONS: &[&str] = &[
+const ADVANCED_AGENT_DEFAULTS: &[&str] = &[
+    BASIC_AGENT_CONFIGURATION,
     "phenix.api",
     "phenix.artifacts",
     "phenix.command-toolbelt",
@@ -45,42 +51,75 @@ const ADVANCED_AGENT_EXTENSIONS: &[&str] = &[
     "phenix.workspace",
 ];
 
+const FULL_PRODUCT_DEFAULTS: &[&str] = &[
+    ADVANCED_AGENT_CONFIGURATION,
+    "phenix.providers",
+    "openai-codex",
+];
+
+/// Named first-party profile inheritance and default selections.
+///
+/// Unlike PluginManifest.dependencies, these declarations can be overridden
+/// before the actual hard implementation dependency closure is evaluated.
+#[must_use]
+pub fn profile_defaults(id: &str) -> Option<&'static [&'static str]> {
+    match id {
+        BASIC_AGENT_CONFIGURATION => Some(BASIC_AGENT_DEFAULTS),
+        ADVANCED_AGENT_CONFIGURATION => Some(ADVANCED_AGENT_DEFAULTS),
+        BASIC_PRODUCT_CONFIGURATION => Some(BASIC_PRODUCT_DEFAULTS),
+        FULL_PRODUCT_CONFIGURATION => Some(FULL_PRODUCT_DEFAULTS),
+        _ => None,
+    }
+}
+
+/// Expand named profile defaults, excluding providers explicitly disabled by
+/// the caller. Does not resolve plugin manifests or contract bindings.
+/// The latter are always validated by the canonical Phenix resolver.
+#[must_use]
+pub fn expand_profile_defaults(
+    selected: &BTreeSet<String>,
+    excluded: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut expanded = BTreeSet::new();
+    let mut pending = selected.iter().cloned().collect::<Vec<_>>();
+    while let Some(id) = pending.pop() {
+        if excluded.contains(&id) || !expanded.insert(id.clone()) {
+            continue;
+        }
+        if let Some(defaults) = profile_defaults(&id) {
+            pending.extend(defaults.iter().map(|id| (*id).to_owned()));
+        }
+    }
+    expanded
+}
+
 #[must_use]
 pub fn basic_agent_configuration_manifest() -> PluginManifest {
-    assembly_manifest(BASIC_AGENT_CONFIGURATION, BASIC_AGENT_DEPENDENCIES)
+    assembly_manifest(BASIC_AGENT_CONFIGURATION)
 }
 
 #[must_use]
 pub fn basic_product_configuration_manifest() -> PluginManifest {
-    assembly_manifest(BASIC_PRODUCT_CONFIGURATION, BASIC_PRODUCT_DEPENDENCIES)
+    assembly_manifest(BASIC_PRODUCT_CONFIGURATION)
 }
 
 #[must_use]
 pub fn advanced_agent_configuration_manifest() -> PluginManifest {
-    let dependencies = std::iter::once(BASIC_AGENT_CONFIGURATION)
-        .chain(ADVANCED_AGENT_EXTENSIONS.iter().copied())
-        .collect::<Vec<_>>();
-    assembly_manifest(ADVANCED_AGENT_CONFIGURATION, &dependencies)
+    assembly_manifest(ADVANCED_AGENT_CONFIGURATION)
 }
 
 #[must_use]
 pub fn full_product_configuration_manifest() -> PluginManifest {
-    assembly_manifest(
-        FULL_PRODUCT_CONFIGURATION,
-        &[
-            ADVANCED_AGENT_CONFIGURATION,
-            "phenix.providers",
-            "openai-codex",
-        ],
-    )
+    assembly_manifest(FULL_PRODUCT_CONFIGURATION)
 }
 
-fn assembly_manifest(id: &str, dependencies: &[&str]) -> PluginManifest {
+fn assembly_manifest(id: &str) -> PluginManifest {
     PluginManifest {
         id: plugin(id),
         version: 1,
         execution: PluginExecution::ResourceOnly,
-        dependencies: dependencies.iter().copied().map(plugin).collect(),
+        // Product defaults must never masquerade as implementation dependencies.
+        dependencies: Vec::new(),
         services: Vec::new(),
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
@@ -94,19 +133,28 @@ fn plugin(id: &str) -> PluginId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
 
-    fn dependency_ids(manifest: PluginManifest) -> BTreeSet<String> {
-        manifest
-            .dependencies
-            .into_iter()
-            .map(|dependency| dependency.as_str().to_owned())
-            .collect()
+    #[test]
+    fn profiles_contribute_defaults_not_hard_manifest_dependencies() {
+        for profile in [
+            BASIC_AGENT_CONFIGURATION,
+            ADVANCED_AGENT_CONFIGURATION,
+            BASIC_PRODUCT_CONFIGURATION,
+            FULL_PRODUCT_CONFIGURATION,
+        ] {
+            let manifest = assembly_manifest(profile);
+            assert!(manifest.dependencies.is_empty(), "{profile} must remain replaceable");
+            assert!(profile_defaults(profile).is_some());
+        }
+        assert!(profile_defaults("unrelated.third-party-plugin").is_none());
     }
 
     #[test]
     fn basic_agent_is_option_free() {
-        let dependencies = dependency_ids(basic_agent_configuration_manifest());
+        let dependencies = expand_profile_defaults(
+            &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
+            &BTreeSet::new(),
+        );
         assert!(dependencies.contains("phenix.agent-loop"));
         assert!(dependencies.contains("phenix.basic-skills"));
         for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
@@ -115,22 +163,22 @@ mod tests {
     }
 
     #[test]
-    fn advanced_agent_extends_basic_instead_of_copying_it() {
-        let basic = dependency_ids(basic_agent_configuration_manifest());
-        let advanced = dependency_ids(advanced_agent_configuration_manifest());
-
-        assert!(advanced.contains(BASIC_AGENT_CONFIGURATION));
-        for dependency in basic {
-            assert!(
-                !advanced.contains(&dependency),
-                "advanced configuration repeated basic dependency {dependency}"
-            );
-        }
+    fn advanced_agent_inherits_basic_without_repeating_its_implementations() {
+        let advanced = profile_defaults(ADVANCED_AGENT_CONFIGURATION).unwrap();
+        assert!(advanced.contains(&BASIC_AGENT_CONFIGURATION));
+        assert!(!advanced.contains(&"phenix.agent-loop"));
+        let effective = expand_profile_defaults(
+            &BTreeSet::from([ADVANCED_AGENT_CONFIGURATION.to_owned()]),
+            &BTreeSet::new(),
+        );
+        assert!(effective.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(effective.contains("phenix.agent-loop"));
+        assert!(effective.contains("phenix.memory"));
     }
 
     #[test]
-    fn product_configurations_add_frontend_and_provider_capabilities() {
-        let basic = dependency_ids(basic_product_configuration_manifest());
+    fn products_inherit_agent_profiles_and_provider_defaults() {
+        let basic = profile_defaults(BASIC_PRODUCT_CONFIGURATION).unwrap();
         for required in [
             BASIC_AGENT_CONFIGURATION,
             "phenix.api",
@@ -138,31 +186,29 @@ mod tests {
             "phenix.providers",
             "openai-codex",
         ] {
-            assert!(basic.contains(required), "basic product missed {required}");
+            assert!(basic.contains(&required), "basic product missed {required}");
         }
-
-        let full = dependency_ids(full_product_configuration_manifest());
-        assert!(full.contains(ADVANCED_AGENT_CONFIGURATION));
-        assert!(full.contains("phenix.providers"));
-        assert!(full.contains("openai-codex"));
+        let full = profile_defaults(FULL_PRODUCT_CONFIGURATION).unwrap();
+        assert!(full.contains(&ADVANCED_AGENT_CONFIGURATION));
+        assert!(full.contains(&"phenix.providers"));
+        assert!(full.contains(&"openai-codex"));
     }
 
     #[test]
-    fn advanced_agent_adds_optional_agent_services() {
-        let dependencies = dependency_ids(advanced_agent_configuration_manifest());
-        for optional in [
-            "phenix.options",
-            "phenix.memory",
-            "phenix.planning",
-            "phenix.repository-workers",
-            "phenix.session-tree",
-            "phenix.language",
-            "phenix.efficiency-evaluation",
-            "phenix.jobs",
-            "phenix.hooks",
-            "phenix.debug",
-        ] {
-            assert!(dependencies.contains(optional), "missing {optional}");
-        }
+    fn disabling_an_inherited_default_does_not_remove_the_profile() {
+        let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+        let excluded = BTreeSet::from(["phenix.memory".to_owned()]);
+        let expanded = expand_profile_defaults(&selected, &excluded);
+        assert!(expanded.contains(FULL_PRODUCT_CONFIGURATION));
+        assert!(expanded.contains(ADVANCED_AGENT_CONFIGURATION));
+        assert!(expanded.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(!expanded.contains("phenix.memory"));
+        assert!(expanded.contains("phenix.planning"));
+    }
+
+    #[test]
+    fn arbitrary_third_party_plugins_are_not_expanded_as_profiles() {
+        let selected = BTreeSet::from(["acme.agent".to_owned()]);
+        assert_eq!(expand_profile_defaults(&selected, &BTreeSet::new()), selected);
     }
 }
