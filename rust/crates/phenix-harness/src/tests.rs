@@ -535,6 +535,41 @@ fn application_agent_route_obeys_contract_priority_not_service_priority() {
 }
 
 #[test]
+fn application_prompt_does_not_use_installed_agent_service_when_contract_disabled() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::agent_loop_component_id;
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    builder.disable_provider(AgentLoopInterface::interface_id(), agent_loop_component_id());
+    let runtime = builder
+        .build()
+        .expect("application agent import is optional until a prompt starts");
+
+    assert!(
+        runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
+        "native service remains installed to exercise the no-fallback rule"
+    );
+    let error = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect_err("disabled agent contract must deny the prompt");
+    assert!(
+        error
+            .to_string()
+            .contains("no resolved agent execution provider")
+    );
+}
+
+#[test]
 fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
     let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         "phenix.application-agent-tools".to_owned(),
