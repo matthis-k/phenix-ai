@@ -545,6 +545,54 @@ fn application_tool_triggers_require_resolved_provider_contracts() {
 }
 
 #[test]
+fn disabled_memory_contract_is_not_advertised_as_an_application_tool() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::MemoryInterface;
+
+    let selected = BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+        "phenix.memory".to_owned(),
+    ]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
+    builder.disable_provider(
+        MemoryInterface::interface_id(),
+        memory_component_manifest().id,
+    );
+    let runtime = builder
+        .build()
+        .expect("the application memory import is optional");
+
+    assert!(
+        runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.memory"),
+        "the implementation remains installed but its contract is disabled"
+    );
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .map(|trigger| match &trigger.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+        })
+        .collect::<BTreeSet<_>>();
+    for absent in [
+        "memory.record",
+        "memory.associate",
+        "memory.query",
+        "memory.recall",
+    ] {
+        assert!(
+            !callables.contains(absent),
+            "disabled optional memory contract must not advertise {absent}"
+        );
+    }
+}
+
+#[test]
 fn alternate_memory_provider_replaces_default_without_core_changes() {
     let mut builder = PhenixRuntimeBuilder::with_default_suite().unwrap();
     builder
