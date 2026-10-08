@@ -530,6 +530,7 @@
                       bash scripts/check-rust-safety-policy.sh
                       bash scripts/check-spec-lifecycle-fixtures.sh
                       bash scripts/check-spec-lifecycle.sh
+                      bash scripts/test-prepare-commit.sh
                     '';
                   };
 
