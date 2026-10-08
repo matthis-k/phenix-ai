@@ -16,7 +16,8 @@ use phenix_plugin_catalog::{
     basic_context_manifest, basic_model_manifest, basic_product_configuration_manifest,
     basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
     common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, frontend_manifest, full_product_configuration_manifest, hook_manifest,
+    execution_manifest, expand_profile_defaults, frontend_manifest,
+    full_product_configuration_manifest, hook_manifest,
     job_manifest, language_manifest, local_environment_manifest, memory_manifest,
     model_routing_manifest, openai_codex_manifest, options_manifest, planning_manifest,
     providers_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
@@ -91,8 +92,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
     let persistence = LocalPersistence::open(&state)?;
+    let excluded_defaults = effective_disabled_plugins(&cli, &composition);
     let mut builder = match configured_first_party_plugins(&cli, &composition)? {
-        Some(enabled) => PhenixRuntimeBuilder::with_selected_suite(&enabled)
+        Some(enabled) => PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &excluded_defaults)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
         None => PhenixRuntimeBuilder::with_default_suite()?,
     };
@@ -507,6 +509,18 @@ fn configured_first_party_plugins(
     resolve_configured_first_party_plugins(cli, config, configured.as_deref()).map_err(Into::into)
 }
 
+fn effective_disabled_plugins(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> BTreeSet<String> {
+    let mut disabled = config.plugins.disable.clone();
+    for id in &cli.enable_plugins {
+        disabled.remove(id);
+    }
+    disabled.extend(cli.disable_plugins.iter().cloned());
+    disabled
+}
+
 fn resolve_configured_first_party_plugins(
     cli: &Cli,
     config: &PortableCompositionConfig,
@@ -565,6 +579,9 @@ fn resolve_first_party_plugins(
     for plugin in &cli.disable_plugins {
         enabled.remove(plugin);
     }
+    // Profile inheritance contributes replaceable defaults, not hard manifest
+    // dependencies. This is Phenix-native configuration, not Nix expansion.
+    enabled = expand_profile_defaults(&enabled, &cli.disable_plugins);
 
     let unknown = enabled
         .iter()
