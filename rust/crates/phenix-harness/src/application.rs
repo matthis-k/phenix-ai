@@ -13122,6 +13122,56 @@ mod tests {
     }
 
     #[test]
+    fn accepted_prompt_is_journaled_and_published_before_the_prompt_returns() {
+        let (sender, mut events) = mpsc::channel(4);
+        let mut worker = application_worker().with_event_sender(sender);
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let session_id = created.session_id.clone();
+        let content = vec![Content::Text {
+            text: "first admission".into(),
+        }];
+        let result = invoke_operation::<Prompt>(
+            &mut worker,
+            PromptInput {
+                session_id: session_id.clone(),
+                content: content.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.execution_id, "execution-1");
+
+        let event = events.try_recv().expect("persisted admission event");
+        assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
+        let update = SessionUpdate::from_value(&event.payload).expect("typed session update");
+        assert_eq!(update.sequence, 1);
+        assert_eq!(update.session_id, session_id);
+        assert!(matches!(
+            update.update,
+            SessionChange::Message {
+                message: Message {
+                    role: MessageRole::User,
+                    content: projected,
+                }
+            } if projected == content
+        ));
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(
+            worker.projection().state().sessions[session_id.as_str()].through_sequence,
+            1
+        );
+    }
+
+    #[test]
     fn prompt_journal_failure_finishes_prepared_root_execution() {
         let (sender, _events) = mpsc::channel(1);
         let mut worker = application_worker().with_event_sender(sender.clone());
