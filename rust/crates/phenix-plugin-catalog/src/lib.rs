@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{DurableSchemaRegistration, PluginId, PluginManifest};
+use std::collections::BTreeSet;
 use phenix_sdk::StaticPluginResources;
 
 pub use phenix_adapter_acp::{ACP_ADAPTER_PLUGIN, adapter_acp_factory, adapter_acp_manifest};
@@ -8,8 +9,27 @@ pub use phenix_agent_configurations::{
     ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION, BASIC_PRODUCT_CONFIGURATION,
     FULL_PRODUCT_CONFIGURATION, advanced_agent_configuration_manifest,
     basic_agent_configuration_manifest, basic_product_configuration_manifest,
-    expand_profile_defaults, full_product_configuration_manifest, profile_defaults,
+    full_product_configuration_manifest, profile_defaults,
 };
+/// Expand first-party product defaults, including the optional common-model
+/// provider bundle, before validating *actual* manifest dependencies.
+#[must_use]
+pub fn expand_profile_defaults(
+    selected: &BTreeSet<String>,
+    excluded: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut expanded = phenix_agent_configurations::expand_profile_defaults(selected, excluded);
+    if expanded.contains(PROVIDERS_PLUGIN) {
+        for provider in COMMON_PROVIDERS {
+            let id = provider.id();
+            if !excluded.contains(id) {
+                expanded.insert(id.to_owned());
+            }
+        }
+    }
+    expanded
+}
+
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_api::{
     SDK_COMPONENT, SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE,
