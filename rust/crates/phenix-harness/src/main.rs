@@ -1150,15 +1150,29 @@ mod tests {
     }
 
     #[test]
-    fn explicit_disable_blocks_required_dependency() {
+    fn disabling_a_required_contract_provider_fails_core_resolution() {
         let execution = execution_manifest(default_suite_authority())
             .id
             .as_str()
             .to_owned();
         let cli = parse_cli(["--disable-plugin".into(), execution.clone()]).unwrap();
-        let error = resolve_first_party_plugins(&cli, None).unwrap_err();
-        assert!(error.contains(&execution));
-        assert!(error.contains("requires"));
+        let selected = resolve_first_party_plugins(&cli, None)
+            .expect("product profile defaults may be excluded before contract resolution")
+            .unwrap();
+        assert!(!selected.contains(&execution));
+        let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(
+            &selected,
+            &cli.disable_plugins,
+        )
+        .expect("there are no concrete manifest dependencies on this provider");
+        let error = builder
+            .build()
+            .err()
+            .expect("required StepRunner execution contracts must remain satisfiable");
+        assert!(
+            error.to_string().contains("unresolved required import"),
+            "Core should report missing contract capability: {error}"
+        );
     }
 
     #[test]
