@@ -56,6 +56,7 @@ struct Cli {
     help: bool,
     list_services: bool,
     mode: Mode,
+    profile: Option<String>,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
     config_file: Option<PathBuf>,
@@ -177,7 +178,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --profile ID          Select a Phenix product/profile ID\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -200,6 +201,22 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     return Err("--mode requires acp or jsonl".into());
                 }
                 cli.mode = Mode::parse(mode)?;
+            }
+            "--profile" => {
+                let id = args
+                    .next()
+                    .ok_or_else(|| "--profile requires a plugin/profile id".to_owned())?;
+                if id.is_empty() {
+                    return Err("--profile requires a plugin/profile id".into());
+                }
+                cli.profile = Some(id);
+            }
+            _ if argument.starts_with("--profile=") => {
+                let id = argument.strip_prefix("--profile=").expect("prefix checked");
+                if id.is_empty() {
+                    return Err("--profile requires a plugin/profile id".into());
+                }
+                cli.profile = Some(id.to_owned());
             }
             "--config" => {
                 let path = args
@@ -329,6 +346,7 @@ fn resolve_process_arguments(
         "--enable-plugin",
         "--disable-plugin",
         "--config",
+        "--profile",
         "--provider-policy",
         "--bind-provider",
         "--disable-provider",
@@ -496,7 +514,11 @@ fn resolve_configured_first_party_plugins(
 ) -> Result<Option<BTreeSet<String>>, String> {
     // Deployment environment supplies defaults; portable configuration may
     // choose a profile. Explicit command-line plugin options win over both.
-    let base = config.profile.as_deref().or(environment_selection);
+    let base = cli
+        .profile
+        .as_deref()
+        .or(config.profile.as_deref())
+        .or(environment_selection);
     let mut selection = Cli::default();
     selection.enable_plugins = config.plugins.enable.clone();
     selection.disable_plugins = config.plugins.disable.clone();
