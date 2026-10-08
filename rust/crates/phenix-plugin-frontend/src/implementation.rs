@@ -163,17 +163,16 @@ fn handle(
             if !matches!(execution.state, ExecutionState::Active) {
                 return Err("only active root executions may be bound".into());
             }
-            if context
-                .plugin
-                .state
-                .root_routes
-                .insert(execution_id.clone(), connection_id)
-                .is_some()
-            {
+            if context.plugin.state.root_routes.contains_key(&execution_id) {
                 return Err(format!(
                     "root execution already has a frontend route: {execution_id}"
                 ));
             }
+            context
+                .plugin
+                .state
+                .root_routes
+                .insert(execution_id, connection_id);
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::ReleaseRoot { execution_id } => {
