@@ -273,6 +273,15 @@ contract semantics.
 10. Graph changes through a live API produce generation-pinned reconciliation just
     like a subsequent run from the corresponding declarative configuration.
 
+## Implementation status of this PR
+
+- **Implemented:** Shared SDK-owned agent execution contract, with Basic compatibility exports.
+- **Implemented:** Core's complete resolver path now accepts explicit provider policy alongside Layer policies, durable schemas, process arguments, entry triggers and contributions.
+- **Implemented:** `PhenixRuntimeBuilder::set_provider_policy`, `bind_provider` and `disable_provider` delegate resolution to that canonical path. The builder does not evaluate Nix or implement a separate provider solver.
+- **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity of equivalent policies, and failure on invalid provider bindings.
+- **Not yet implemented:** Portable canonical configuration file loading, equivalent CLI/UI commands, Basic/Full policy overlays, stripping inactive default plugin implementations from package closure, or end-to-end external adapter substitution.
+- **Verification:** The added tests require Rust CI execution; source-level presence alone is not a passing test result.
+
 ## Executive decision
 
 The kernel runs a graph of contracts and capability providers. **It does not contain an agent.**
@@ -301,7 +310,7 @@ Neither forwarding nor replacement grants additional authority.
 | Agent contract ownership | finding | `AgentLoopInterface` and wire types lived in the Basic implementation crate. Extract into `phenix-sdk` without changing wire identity. |
 | Application launch coupling | finding | `phenix-harness/src/application.rs` invokes `phenix.agent-loop@1` using a concrete Basic-era request. Contract types are now SDK-owned, but the application should ultimately use configurable capability bindings rather than hard-coded agent implementations. |
 | Harness/plugin wiring | finding | `runtime_builder.rs` conditionally installs application agent-tool adapter and triggers when a specific Basic loop plugin is selected. Derive this from required capabilities, not plugin identity. |
-| Composition override surface | finding | Core supports `ProviderCompositionPolicy`, but `PhenixRuntimeBuilder::build_using` does not expose/pass it. Wire the existing resolver policy through the supported product composition boundary. |
+| Composition override surface | partially remediated in this PR | Core already supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` now exposes policy, explicit binding and exclusion, and forwards policy through full `ResolvedGeneration` resolution. Portable file/CLI/frontend lowering, profile overrides and removal of inactive default packages remain outstanding. |
 | Standalone memory | finding | `phenix.memory` has a required helper-invocation import even for storage/query-only use. Separate the helper-dependent mechanisms. |
 | Standalone context | finding | `phenix.context` requires Phenix execution/resource providers, preventing simple external turn-preparation usage without those services. Expose a provider-neutral preparation boundary. |
 | Basic context compaction | finding | No independent deterministic Basic compaction provider; Full's compaction contract is exported by `phenix.memory`. |
@@ -309,7 +318,7 @@ Neither forwarding nor replacement grants additional authority.
 | Naming | finding | `PhenixRuntimeBuilder::with_basic_suite` is a minimal harness fixture, not the `phenix.agent.basic` agent graph. Document/rename it without breaking consumers unnecessarily. |
 
 This is a source-level architecture audit, not a claim that all integration tests or supported products have run.
-The implementation work remains outstanding except for the contract extraction included in this PR.
+The implementation work remains outstanding except for the provider-neutral contract extraction and builder-to-Core provider-policy plumbing included in this PR. Broader product-profile substitution and portable configuration loading are not yet implemented.
 
 ## Stable contract template
 
@@ -551,9 +560,9 @@ Process-backed plugin runtime adapters remain transport/packaging boundaries, no
 
 ## Implementation order
 
-1. **This PR:** move agent-loop wire contract/identity into the provider-neutral SDK, preserve original Basic exports, document audit and target graph.
+1. **This PR:** move agent-loop wire contract/identity into the provider-neutral SDK, preserve original Basic exports, expose kernel-owned provider composition through the product builder, and document the audit and target graph.
 2. Application entry decoupling: configurable agent-execution binding and capability-driven tool wiring.
-3. Expose `ProviderCompositionPolicy` through harness configuration; graph substitution tests.
+3. **Initial portion implemented in this PR:** expose `ProviderCompositionPolicy` through the harness runtime builder and add no-Nix graph selection, exclusion, invalid binding and generation-identity regressions. **Still pending:** portable file/CLI/frontend lowering and Full profile substitutions before concrete package activation.
 4. Add genuinely functional deterministic Basic compaction with recoverable tool-history checkpointing.
 5. Full compaction substitution, repeated-checkpoint lineage, enforced token targets and continuation integration.
 6. Separate memory storage/query from helper-backed maintenance; standalone graph tests.
