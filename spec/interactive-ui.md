@@ -48,6 +48,8 @@ These strings are scoped to this provider, not global authority tokens. A fronte
 
 The execution's *owning* frontend is the only eligible recipient. An unrelated frontend that advertises UI support must not cause UI tools to appear in this execution. Catalog discovery by itself is not sufficient.
 
+A frontend call requires an active execution and active ancestors through its root. A completed child, failed child, or child of a finished root cannot use a retained root binding. Duplicate binding attempts cannot replace the root's owner, and withdrawn provider capabilities invalidate pending calls.
+
 ## Tool visibility
 
 The plugin declares exact typed tool entrypoints rather than adding model tools from the application executable:
