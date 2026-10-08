@@ -46,14 +46,10 @@ use phenix_core::{
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
+    ExecutionReviewCommand,
     ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN, SessionCommand, SessionInterface,
     SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, agent_loop_control_service, agent_loop_progress_authority,
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+    SessionTransition, agent_loop_progress_authority,
     execution_review_service, sdk_contribution, session_service, workspace_service,
 };
 use phenix_provider_sdk::{
@@ -62,6 +58,11 @@ use phenix_provider_sdk::{
     provider_models_service,
 };
 use phenix_sdk::{
+    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
+    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
+    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
+    AgentToolExecutionRequest, AgentToolExecutionResponse,     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
+    agent_tool_execution_service,
     AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,

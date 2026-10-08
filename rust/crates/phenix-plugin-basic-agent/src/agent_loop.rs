@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
+    ComponentInterface, ComponentManifest, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PermissionId, PluginContext, PluginExecution, PluginHost,
     PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
     ServiceRole, SessionId, SharedPluginInvocation, ValueCodec,
@@ -10,7 +10,6 @@ use phenix_sdk::{
     DefaultInvocationInterface, InvocationRequest, StepRunnerResponse, ToolObservation,
     agent_diagnostic_event_type,
 };
-use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     num::{NonZeroU32, NonZeroU64},
@@ -18,62 +17,18 @@ use std::{
 };
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
-pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
-pub const AGENT_TOOL_EXECUTION_SERVICE: &str = "phenix.agent-tool-execution@1";
-pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
-pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
 
-pub struct AgentLoopInterface;
-
-impl ComponentInterface for AgentLoopInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopCommand, AgentLoopResponse>()
-    }
-}
-
-pub struct AgentLoopControlInterface;
-
-impl ComponentInterface for AgentLoopControlInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_CONTROL_SERVICE)
-            .expect("static agent loop control interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopControlRequest, AgentLoopControlResponse>()
-    }
-}
-
-pub struct AgentToolExecutionInterface;
-
-impl ComponentInterface for AgentToolExecutionInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_TOOL_EXECUTION_SERVICE)
-            .expect("static agent tool execution interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentToolExecutionRequest, AgentToolExecutionResponse>()
-    }
-}
-
-pub struct AgentLoopProgressInterface;
-
-impl ComponentInterface for AgentLoopProgressInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_PROGRESS_SERVICE)
-            .expect("static agent loop progress interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopProgressRecord, AgentLoopProgressResponse>()
-    }
-}
+// Backward-compatible exports; contract ownership belongs to phenix-sdk.
+pub use phenix_sdk::{
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
+    AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
+    AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_control_service,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentLoopPolicy {
@@ -138,128 +93,9 @@ impl Default for AgentLoopPolicy {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopCommand {
-    Run {
-        execution_id: String,
-        session_id: Option<SessionId>,
-        parent_attempt_id: Option<String>,
-        callable_id: Option<CallableId>,
-        input: Bytes,
-        #[serde(default)]
-        tools: Vec<ModelToolDescriptor>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct AgentLoopUsage {
-    pub model_calls: u32,
-    pub tool_calls: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "failure", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopFailure {
-    ModelTurnLimitExceeded { limit: u32 },
-    ToolCallLimitExceeded { limit: u32, actual: u32 },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopResponse {
-    Completed {
-        output: Bytes,
-        usage: AgentLoopUsage,
-    },
-    Cancelled {
-        usage: AgentLoopUsage,
-    },
-    Failed {
-        failure: AgentLoopFailure,
-        usage: AgentLoopUsage,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct AgentLoopControlRequest {
-    pub execution_id: String,
-    pub session_id: Option<SessionId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopControlResponse {
-    Continue,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct AgentToolExecutionRequest {
-    pub execution_id: String,
-    pub session_id: Option<SessionId>,
-    pub call: ModelToolCall,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentToolExecutionResponse {
-    Completed {
-        result: ModelToolResult,
-        #[serde(default)]
-        activated_tools: Vec<ModelToolDescriptor>,
-        #[serde(default)]
-        observation: Option<Box<ToolObservation>>,
-    },
-    Cancelled,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "progress", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopProgress {
-    ToolCall { call: ModelToolCall },
-    ToolResult { result: ModelToolResult },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct AgentLoopProgressRecord {
-    pub execution_id: String,
-    pub session_id: Option<SessionId>,
-    pub progress: AgentLoopProgress,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentLoopProgressResponse {
-    Recorded,
-}
-
 #[must_use]
 pub fn agent_loop_component_id() -> ComponentId {
     ComponentId::parse(AGENT_LOOP_COMPONENT).expect("static agent loop component id is valid")
-}
-
-#[must_use]
-pub fn agent_loop_service() -> ServiceId {
-    ServiceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop service id is valid")
-}
-
-#[must_use]
-pub fn agent_tool_execution_service() -> ServiceId {
-    ServiceId::parse(AGENT_TOOL_EXECUTION_SERVICE)
-        .expect("static agent tool execution service id is valid")
-}
-
-#[must_use]
-pub fn agent_loop_progress_service() -> ServiceId {
-    ServiceId::parse(AGENT_LOOP_PROGRESS_SERVICE)
-        .expect("static agent loop progress service id is valid")
-}
-
-#[must_use]
-pub fn agent_loop_control_service() -> ServiceId {
-    ServiceId::parse(AGENT_LOOP_CONTROL_SERVICE)
-        .expect("static agent loop control service id is valid")
 }
 
 #[must_use]

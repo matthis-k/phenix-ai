@@ -74,3 +74,19 @@ The resolved generation contains both assembly manifests. This keeps the configu
 - advanced resolves basic dependencies transitively
 - advanced adds options, memory, compaction, planning, workers, language support, hooks, diagnostics, and other optional first-party services
 - CLI and environment plugin selection accept both configuration ids
+
+## Architectural direction
+
+Basic is the canonical executable *reference graph*, not a privileged or mandatory agent
+implementation. Full extends its selected capabilities and may replace providers through the
+same graph resolution used for third-party implementations. The kernel remains agent-agnostic.
+An independent consumer may select memory/context without choosing Basic or Full.
+
+The shared `AgentLoopInterface` contract is owned by `phenix-sdk` rather than by the
+`phenix-plugin-basic-agent` implementation. Basic continues to re-export those symbols
+for compatibility. Contract type ownership is the first incremental step; application
+entry-point decoupling, composition policy exposure, deterministic Basic compaction, and
+external forwarding are outstanding.
+
+See [Composable agent runtime](composable-agent-runtime.md) for the source audit, contract
+boundaries, reference graphs and per-slice acceptance tests.
