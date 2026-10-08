@@ -33,11 +33,11 @@ let
       candidate["$path"]=1
     done
 
-    # Preserve pre-existing untracked paths. New files created by normalization
-    # must be explicitly staged in a new candidate, not left behind silently.
+    # A repository-wide formatter can edit already-untracked files too. Keep
+    # their content fingerprints so outside-candidate edits fail closed.
     declare -A untracked_before=()
     while IFS= read -r -d "" path; do
-      untracked_before["$path"]=1
+      untracked_before["$path"]="$(git hash-object --no-filters -- "$path")"
     done < <(git ls-files --others --exclude-standard -z)
 
     ${normalize}
@@ -57,7 +57,17 @@ let
         echo "Review the file and stage it explicitly before retrying." >&2
         exit 1
       fi
+      if [[ "''${untracked_before["$path"]}" != "$(git hash-object --no-filters -- "$path")" ]]; then
+        echo "prepare-commit: normalization changed an untracked file: $path" >&2
+        exit 1
+      fi
     done < <(git ls-files --others --exclude-standard -z)
+    for path in "''${!untracked_before[@]}"; do
+      if [[ ! -e "$path" && ! -L "$path" ]]; then
+        echo "prepare-commit: normalization removed an untracked file: $path" >&2
+        exit 1
+      fi
+    done
 
     git add -A -- "''${candidate_paths[@]}"
     git diff --cached --check
