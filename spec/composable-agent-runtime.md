@@ -109,6 +109,121 @@ In-flight operations remain generation-pinned; new operations resolve through th
 Do not encode dependency on `phenix.agent-loop` as shorthand for availability of tools, session APIs or SDK.
 Tool adapter installation should be based on declared capability requirements.
 
+## Bidirectional substitution and contract adapters
+
+**Symmetry is a product requirement:** Full can retain its in-house loop and use a foreign memory or context provider; an independent harness can retain all its own execution/model/tool mechanisms and consume Phenix memory or context. The implementation path must not require either caller to adopt the other's agent loop.
+
+### First-class provider substitution (same contract)
+
+When two providers implement the *same* versioned contract, use ordinary provider selection. No adapter is needed:
+
+~~~text
+Full agent -> memory.retrieve@1 -> external-memory-provider
+Custom agent -> memory.retrieve@1 -> phenix-memory-provider
+~~~
+
+The first graph may omit Phenix's native memory implementation entirely; the second may omit Phenix's agent loop entirely.
+
+**Composition distinction:** Product "include Basic/Full defaults" must not mean each default implementation is a non-removable hard Plugin dependency. An inherited *default provider selection* is not a required concrete runtime dependency. True implementation dependencies remain hard. Product selection should admit a replacement *before* concrete dependency-closure expansion, or have an equivalent explicit exclusion/substitution lowering with valid required imports. Merely selecting another provider while also activating a memory plugin with independent maintenance side effects is not sufficient to claim replacement.
+
+### Different contracts: adapter as ordinary component
+
+If the consumer requires contract A and an available provider implements contract B, use an independently owned *adapter component*:
+
+~~~text
+Consumer --requires A--> Adapter --requires B--> Provider B
+                         provides A
+~~~
+
+Contract A is the adapter's outward *provided* contract; B is its inward *required* contract. A provider may be a local Phenix component, process-backed guest or external endpoint through its own bridge.
+
+The adapter owns typed translation:
+
+~~~text
+A.Request
+  -> validate caller-visible preconditions
+  -> translate into B.Request
+  -> invoke a resolved B capability (or a typed external endpoint)
+  -> translate B.Response / B.Error into A.Response / A.Error
+~~~
+
+It may require several source contracts if the destination's operations genuinely need them. Chaining A -> B -> C is possible through declared imports and exports. Every edge is resolved and pinned by the existing Graph Generation, and required-import cycles fail resolution.
+
+**Example: external memory provider inside Full**
+
+~~~text
+Full agent
+  -> phenix.memory.retrieve@1 (selected provider)
+      -> adapter.phx-from-foreign
+           provides phenix.memory.retrieve@1
+           requires foreign.vector-search@2
+               -> external search endpoint
+~~~
+
+The adapter converts scope/temporal filters, request budgets, search results and errors into Phenix's contract. It may only advertise full compatibility when it can uphold Phenix's required visibility, freshness and provenance semantics. If the external backend cannot supply exact evidence, use an explicit narrower capability or fail the required operation; do not manufacture source authority.
+
+**Example: an independent harness using Phenix memory**
+
+~~~text
+Foreign agent loop
+  -> foreign-harness memory API
+      -> adapter.foreign-from-phx (foreign process or authorized gateway)
+           exposes foreign.memory@2
+           calls phenix.memory.retrieve@1
+               -> selected Phenix memory provider
+~~~
+
+The foreign loop never needs to import or link the Phenix agent-loop implementation. Its contract adapter may be a thin external client library or a gateway endpoint. An adapter running *outside* the Phenix graph still has to authenticate and receive explicitly scoped Phenix capabilities; it is not privileged by calling itself an adapter.
+
+### Three conversion categories
+
+1. **Structural representation:** Same semantic contract, compatible schema or encoding difference. Existing structural compatibility and transport codecs should be reused; no extra logical provider is necessary when no semantic behavior changes.
+2. **Semantic adaptation:** Distinct contract identities or differing behavior. Use an explicit adapter that implements one contract through required imports or a declared external endpoint. It owns policy-preserving translation.
+3. **Transport bridge:** Identical logical contract over stdio, socket, HTTP, MCP or another protocol. Change the transport at a gateway/runtime-adapter boundary, not by inventing another semantic contract.
+
+A transport bridge may contain semantic adaptation only if that mapping is explicitly declared and tested.
+
+### Adapter discovery, selection and metadata
+
+Do not make Core search arbitrary conversion graphs or infer semantics from similar type shapes. Register adapters as ordinary providers. Existing explicit provider bindings select the adapter just like any terminal implementation.
+
+For inspection and tooling, an adapter may declare **descriptive metadata** (not a second resolver):
+
+- Provided contract identity/version and consumed contract identities/versions.
+- Whether the mapping is exact, partial or intentionally lossy.
+- Which source guarantees are preserved (scope, provenance, revisions, ordering, cancellation).
+- Required authority and external endpoint identity, if applicable.
+- Adapter implementation revision and contract compatibility fixtures.
+
+No global conversion registry, auto-composed shortest-path algorithm or implicit cross-version coercion is necessary initially. If discovery is eventually added, it must generate a deterministic *candidate* graph which the product resolves explicitly, not automatically reroute live requests.
+
+### Failure and lifecycle rules
+
+- Schema compatibility does not prove semantic equivalence. The provider must meet the destination contract's invariants.
+- An adapter cannot widen caller authority, memory scope or workspace access.
+- One outer request retains a correlated identity across translation and nested invocation.
+- Retries are only allowed under the destination/source idempotency contracts and cannot replay tool or storage side effects.
+- Cancellation and bounded execution propagate to the underlying provider.
+- Domain failures remain distinct from transport failures and unsupported operations.
+- Exact source references remain exact; missing revision/history support cannot be synthesized.
+- A forwarding terminal is still terminal-provider **replacement**, not a Layer using one-shot continuation.
+- Avoid recursive same-interface forwarding: provide A, require B with different identities, or use an explicit Layer when intercepting A before a selected A terminal.
+- Every edge follows generation pinning. If external endpoint lifetime differs, the adapter maintains connection-local state without exposing stale authority.
+- If a contract cannot be implemented faithfully, fail graph composition for required capabilities or provide a different explicitly weaker contract; do not silently downgrade safety guarantees.
+
+### Shared conformance fixtures
+
+1. Full + foreign memory: selected foreign adapter satisfies Phenix memory retrieval; Phenix's native memory provider can be absent.
+2. Full + foreign context: adapter satisfies context preparation/compaction contracts while preserving mandatory content and exact references.
+3. Foreign loop + Phenix memory: no Phenix agent-loop plugin installed; external caller records and retrieves authorized memory.
+4. Foreign loop + Phenix context: caller invokes explicit prepare/commit lifecycle and performs repeated compaction/recovery.
+5. A -> B -> C chain resolves deterministically and preserves correlation; a cycle fails before execution.
+6. Lossy/partial mappings cannot advertise stronger guarantees than the source provides.
+7. Unauthorized scope expansion, stale evidence, transport interruption and cancellation fail explicitly.
+8. Swapping from native to adapted provider changes the graph generation while in-flight calls remain pinned.
+9. Adapter errors after a side effect cannot trigger silent provider fallback.
+10. Inspection reports the chosen adapter and its underlying resolved provider and contract versions.
+
 ## External harness interoperability
 
 **Outbound forwarding terminal**
@@ -178,7 +293,7 @@ Process-backed plugin runtime adapters remain transport/packaging boundaries, no
 5. Full compaction substitution, repeated-checkpoint lineage, enforced token targets and continuation integration.
 6. Separate memory storage/query from helper-backed maintenance; standalone graph tests.
 7. Source-resolution, scope enforcement, maintenance and retrieval improvements.
-8. Forwarding terminal + external capability gateway, shared interoperability fixtures.
+8. **Bidirectional contract adapters:** demonstrate Full with foreign memory/context and a foreign loop using Phenix memory/context, with no mandatory Basic loop in either external-only deployment; forwarding terminal + authorized capability gateway, shared interoperability fixtures.
 9. Reproducible cost/quality benchmark variants; do not claim unmeasured superiority.
 
 ## Research and interoperability
