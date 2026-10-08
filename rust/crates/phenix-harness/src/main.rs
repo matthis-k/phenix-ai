@@ -1152,22 +1152,21 @@ mod tests {
 
     #[test]
     fn disabling_a_required_contract_provider_fails_core_resolution() {
-        let execution = execution_manifest(default_suite_authority())
+        let tools = application_agent_tool_manifest(default_suite_authority())
             .id
             .as_str()
             .to_owned();
-        let cli = parse_cli(["--disable-plugin".into(), execution.clone()]).unwrap();
+        let cli = parse_cli(["--disable-plugin".into(), tools.clone()]).unwrap();
         let selected = resolve_first_party_plugins(&cli, None)
             .expect("product profile defaults may be excluded before contract resolution")
             .unwrap();
-        assert!(!selected.contains(&execution));
+        assert!(!selected.contains(&tools));
         let builder =
             PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &cli.disable_plugins)
-                .expect("there are no concrete manifest dependencies on this provider");
-        let error = builder
-            .build()
-            .err()
-            .expect("required StepRunner execution contracts must remain satisfiable");
+                .expect("no hard manifest dependency requires the application tool adapter");
+        let Err(error) = builder.build() else {
+            panic!("the Basic loop's required tool contract must remain satisfiable");
+        };
         assert!(
             error.to_string().contains("unresolved required import"),
             "Core should report missing contract capability: {error}"
