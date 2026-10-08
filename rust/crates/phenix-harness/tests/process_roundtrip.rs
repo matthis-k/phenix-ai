@@ -138,3 +138,74 @@ fn process_roundtrip_routes_and_restores_plugin_owned_state() {
 
     let _ = fs::remove_file(&state);
 }
+
+#[test]
+fn portable_config_file_and_cli_profile_produce_identical_product_graph() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "phenix-config-parity-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    let config = workspace.join("composition.json");
+    fs::write(&config, r#"{"profile":"phenix.product.basic"}"#).unwrap();
+
+    let run = |args: &[&str], config_environment: bool, suffix: &str| -> Value {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_phenix-harness"));
+        process
+            .args(args)
+            .env("PHENIX_STATE_DB", workspace.join(format!("{suffix}.sqlite")))
+            .env_remove("PHENIX_ENABLED_PLUGINS")
+            .env_remove("PHENIX_CONFIG_FILE")
+            .env_remove("PHENIX_LAYER_POLICY")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if config_environment {
+            process.env("PHENIX_CONFIG_FILE", &config);
+        }
+        let output = process.output().expect("harness must launch");
+        assert!(
+            output.status.success(),
+            "composition failed ({}): {}",
+            suffix,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("list-services emits JSON")
+    };
+
+    let via_cli = run(
+        &["--profile", "phenix.product.basic", "--list-services"],
+        false,
+        "cli",
+    );
+    let via_file = run(
+        &[
+            "--config",
+            config.to_str().expect("UTF-8 temporary file path"),
+            "--list-services",
+        ],
+        false,
+        "file",
+    );
+    let via_deployment = run(&["--list-services"], true, "deployment");
+
+    assert_eq!(via_cli["plugins"], via_file["plugins"]);
+    assert_eq!(via_cli["services"], via_file["services"]);
+    assert_eq!(via_cli["plugins"], via_deployment["plugins"]);
+    assert_eq!(via_cli["services"], via_deployment["services"]);
+    assert!(via_file["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|id| id == "phenix.product.basic"));
+    assert!(!via_file["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|id| id == "phenix.product.full"));
+
+    let _ = fs::remove_dir_all(&workspace);
+}
