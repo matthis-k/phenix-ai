@@ -1002,3 +1002,45 @@ fn later_provider_exclusion_rejects_an_explicit_binding() {
         "unexpected policy failure: {error}"
     );
 }
+
+#[test]
+fn advanced_profile_can_remove_an_inherited_default_before_activation() {
+    let profile = BTreeSet::from([ADVANCED_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.debug".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&profile, &excluded)
+        .expect("profile defaults can be overridden without removing their profile");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(ids.contains(ADVANCED_AGENT_CONFIGURATION));
+    assert!(ids.contains(BASIC_AGENT_CONFIGURATION));
+    assert!(ids.contains("phenix.agent-loop"));
+    assert!(!ids.contains("phenix.debug"), "excluded default must not activate");
+
+    let resolved = builder.build().expect("optional debug default may be omitted");
+    assert!(!resolved
+        .kernel()
+        .config()
+        .manifests()
+        .any(|manifest| manifest.id.as_str() == "phenix.debug"));
+}
+
+#[test]
+fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
+    let profile = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.debug".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&profile, &excluded)
+        .expect("full profile should permit overriding an inherited debug default");
+    let selected = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(selected.contains(FULL_PRODUCT_CONFIGURATION));
+    assert!(selected.contains(ADVANCED_AGENT_CONFIGURATION));
+    assert!(selected.contains(BASIC_AGENT_CONFIGURATION));
+    assert!(!selected.contains("phenix.debug"));
+}
+
