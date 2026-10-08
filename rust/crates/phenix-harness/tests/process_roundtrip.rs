@@ -157,7 +157,10 @@ fn portable_config_file_and_cli_profile_produce_identical_product_graph() {
         let mut process = Command::new(env!("CARGO_BIN_EXE_phenix-harness"));
         process
             .args(args)
-            .env("PHENIX_STATE_DB", workspace.join(format!("{suffix}.sqlite")))
+            .env(
+                "PHENIX_STATE_DB",
+                workspace.join(format!("{suffix}.sqlite")),
+            )
             .env_remove("PHENIX_ENABLED_PLUGINS")
             .env_remove("PHENIX_CONFIG_FILE")
             .env_remove("PHENIX_LAYER_POLICY")
@@ -196,16 +199,20 @@ fn portable_config_file_and_cli_profile_produce_identical_product_graph() {
     assert_eq!(via_cli["services"], via_file["services"]);
     assert_eq!(via_cli["plugins"], via_deployment["plugins"]);
     assert_eq!(via_cli["services"], via_deployment["services"]);
-    assert!(via_file["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|id| id == "phenix.product.basic"));
-    assert!(!via_file["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|id| id == "phenix.product.full"));
+    assert!(
+        via_file["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == "phenix.product.basic")
+    );
+    assert!(
+        !via_file["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == "phenix.product.full")
+    );
 
     let _ = fs::remove_dir_all(&workspace);
 }

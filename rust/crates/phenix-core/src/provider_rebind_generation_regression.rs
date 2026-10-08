@@ -136,7 +136,9 @@ fn explicit_provider_selection_must_not_silently_fall_back() {
     )
     .unwrap_err();
     assert!(
-        error.to_string().contains("explicitly requires provider provider-b"),
+        error
+            .to_string()
+            .contains("explicitly requires provider provider-b"),
         "absent explicit bindings must report the selected provider: {error}"
     );
 
@@ -153,7 +155,9 @@ fn explicit_provider_selection_must_not_silently_fall_back() {
     )
     .unwrap_err();
     assert!(
-        error.to_string().contains("explicitly requires provider provider-b"),
+        error
+            .to_string()
+            .contains("explicitly requires provider provider-b"),
         "disabled explicit bindings must not fall back to provider-a: {error}"
     );
 
@@ -175,7 +179,8 @@ fn explicit_provider_selection_must_not_silently_fall_back() {
     )
     .unwrap();
     assert_eq!(
-        valid.component_graph()
+        valid
+            .component_graph()
             .import_handle(&ComponentId::parse("consumer").unwrap(), &interface)
             .unwrap()
             .unwrap()

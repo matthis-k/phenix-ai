@@ -1240,7 +1240,10 @@ mod tests {
         assert!(config.plugins.enable.contains("phenix.debug"));
         assert!(config.plugins.disable.contains("phenix.planning"));
         assert_eq!(
-            config.providers.bind.get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            config
+                .providers
+                .bind
+                .get(&InterfaceId::parse("fixture.memory@1").unwrap()),
             Some(&ComponentId::parse("fixture.external").unwrap())
         );
         assert_eq!(config.layers.len(), 1);
@@ -1272,13 +1275,10 @@ mod tests {
         // dependency disappear from the selected graph.
         cli.enable_plugins.insert("phenix.options".into());
         cli.disable_plugins.insert("phenix.debug".into());
-        let selected = resolve_configured_first_party_plugins(
-            &cli,
-            &config,
-            Some("phenix.product.full"),
-        )
-        .unwrap()
-        .unwrap();
+        let selected =
+            resolve_configured_first_party_plugins(&cli, &config, Some("phenix.product.full"))
+                .unwrap()
+                .unwrap();
         assert!(selected.contains("phenix.product.basic"));
         assert!(!selected.contains("phenix.product.full"));
         assert!(selected.contains("phenix.options"));
@@ -1287,11 +1287,7 @@ mod tests {
 
     #[test]
     fn native_config_file_flag_supports_both_forms() {
-        let positional = parse_cli([
-            "--config".into(),
-            "composition.json".into(),
-        ])
-        .unwrap();
+        let positional = parse_cli(["--config".into(), "composition.json".into()]).unwrap();
         let inline = parse_cli(["--config=composition.json".into()]).unwrap();
         assert_eq!(positional.config_file, inline.config_file);
         assert_eq!(
@@ -1302,25 +1298,18 @@ mod tests {
         assert!(parse_cli(["--config=".into()]).is_err());
     }
 
-
     #[test]
     fn cli_profile_overrides_file_profile_and_environment() {
-        let config: PortableCompositionConfig = serde_json::from_str(
-            r#"{"profile":"phenix.product.basic"}"#,
-        )
-        .unwrap();
+        let config: PortableCompositionConfig =
+            serde_json::from_str(r#"{"profile":"phenix.product.basic"}"#).unwrap();
         let cli = parse_cli(["--profile=phenix.product.full".into()]).unwrap();
-        let selected = resolve_configured_first_party_plugins(
-            &cli,
-            &config,
-            Some("phenix.agent.basic"),
-        )
-        .unwrap()
-        .unwrap();
+        let selected =
+            resolve_configured_first_party_plugins(&cli, &config, Some("phenix.agent.basic"))
+                .unwrap()
+                .unwrap();
         assert!(selected.contains("phenix.product.full"));
         assert!(selected.contains("phenix.agent.advanced"));
         assert!(parse_cli(["--profile".into()]).is_err());
         assert!(parse_cli(["--profile=".into()]).is_err());
     }
-
 }

@@ -317,11 +317,13 @@ in
         enabledPlugins = [ "phenix.product.basic" ];
         resources = [ harnessResources ];
       };
-      portableCompositionFile = pkgs.writeText "phenix-composition.json" (builtins.toJSON {
-        profile = "phenix.product.basic";
-        plugins.enable = [ "phenix.debug" ];
-        providers.bind."fixture.memory@1" = "fixture.memory.external";
-      });
+      portableCompositionFile = pkgs.writeText "phenix-composition.json" (
+        builtins.toJSON {
+          profile = "phenix.product.basic";
+          plugins.enable = [ "phenix.debug" ];
+          providers.bind."fixture.memory@1" = "fixture.memory.external";
+        }
+      );
       portableConfigFixtureComposition = mkFixturePhenix {
         configFile = portableCompositionFile;
       };

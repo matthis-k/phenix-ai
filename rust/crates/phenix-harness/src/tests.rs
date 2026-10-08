@@ -993,7 +993,10 @@ fn later_provider_exclusion_rejects_an_explicit_binding() {
     let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
     builder.bind_provider(interface.clone(), alpha.clone());
     builder.disable_provider(interface, alpha);
-    let error = builder.build().err().expect("binding an excluded provider must fail");
+    let error = builder
+        .build()
+        .err()
+        .expect("binding an excluded provider must fail");
     assert!(
         error.to_string().contains("explicitly requires provider"),
         "unexpected policy failure: {error}"

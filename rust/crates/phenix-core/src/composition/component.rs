@@ -406,7 +406,10 @@ impl ResolvedComponentGraph {
                 // when the selected component is absent, incompatible, disabled
                 // or cannot satisfy the import's authority.
                 if let Some(expected) = explicit {
-                    if !eligible.iter().any(|candidate| &candidate.component.id == expected) {
+                    if !eligible
+                        .iter()
+                        .any(|candidate| &candidate.component.id == expected)
+                    {
                         return Err(ComponentGraphError::UnavailableExplicitProvider {
                             component: manifest.id.clone(),
                             interface: import.interface.clone(),
