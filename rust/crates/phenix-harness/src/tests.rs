@@ -441,6 +441,7 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
 
 #[test]
 fn default_application_agent_route_uses_the_resolved_contract() {
+    use phenix_core::ComponentInterface;
     use phenix_plugin_catalog::agent_loop_component_id;
 
     let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
