@@ -75,7 +75,7 @@ capability and its selection is represented by the graph.
 
 ### Full: composition overlay, not a second architecture
 
-`Full = Resolve(Basic defaults + Full additions + explicit replacements/disables + Layers)`
+`Full = PhenixResolve(Basic defaults + Full additions + explicit replacements/disables + Layers)`
 
 An overlay may replace or remove any inherited provider, including the Basic agent loop,
 while retaining other Basic providers. An inherited default is not a hard plugin dependency.
@@ -106,148 +106,172 @@ one-shot continuation.
 9. Common contracts are versioned and provider-neutral, and adapters must fulfill their target
    guarantees rather than relying on schema-only compatibility.
 
-## Nix packaging and product wrapper composition
+## Distribution and configuration: Phenix semantics, Nix packaging
 
-**Each executable plugin is an independently addressable Nix package.** The Kernel is the
-only mandatory runtime foundation; common contract definitions are independently published
-as development/interface artifacts and do not require a running process. Basic and Full are
-**product wrappers/profiles**, not special kernel editions or hard-coded monolithic plugin suites.
+**A Phenix configuration is portable and self-sufficient as a *declaration* of the desired
+graph.** Nix is an optional frontend and deployment mechanism that generates or installs
+this configuration, supplies plugin artifacts and launches the runtime. All actual
+composition semantics belong to Phenix's existing canonical configuration/resolution
+pipeline (`spec/configuration-frontends.md`).
 
-The flake should export:
+This **supersedes** any earlier proposal to make `mkPhenix` compute provider-override
+semantics, expand Basic/Full graphs, decide effective priority or resolve plugin imports.
 
-- `packages.${system}.phenix-kernel`: a minimal kernel application with no agent plugins.
-- `packages.${system}.phenix-harness-contracts`: shared contract definitions/descriptors
-  usable by third parties; not a mandatory executable plugin.
-- `phenixPlugins.${system}.<name>`: one package per plugin, including its exact manifest,
-  contract metadata, resources and executable/linked implementation as appropriate.
-- `packages.${system}.phenix-basic`: an explicit wrapper/profile of selected basic providers.
-- `packages.${system}.phenix-full`: the Basic profile with explicit additions,
-  replacements and Layers resolved **before concrete package selection**.
-- `lib.mkPhenix`: compose a kernel and an explicit set of plugin packages, provider
-  bindings, layers, resources and settings into one product wrapper.
+### One configuration model, many frontends
 
-Illustrative Nix API (target design; not current implemented arguments):
+~~~text
+Nix / Home Manager ---------\
+Portable TOML / JSON --------+-> ConfigContribution(s) -> Phenix resolver
+CLI / TUI / GUI -------------+                           -> ResolvedGeneration
+ACP / IPC / agent commands --/                           -> lifecycle/activation
+~~~
+
+The same authored configuration should be usable **without Nix**. Nix may generate the
+canonical file or contributions, set environment variables and supply plugin package
+paths, but it does not need to understand any contract or provider's behavior.
+
+Phenix, not Nix, owns:
+- Named profile inheritance (`Basic`, `Full`, custom profiles), defaults and overrides.
+- Installable/available versus enabled versus bound/active plugin state.
+- Required and optional contract imports, provider selection and adapter chaining.
+- Replacement versus ordered Layers, disablement, fallback and resolution errors.
+- Authority grants, validation, deterministic generation identity and lifecycle.
+- Runtime plugin management, including adding/removing/replacing selected artifacts
+  and reconciling affected graph generations.
+
+The physical package manager determines which artifacts are **available**. A runtime
+may dynamically acquire additional artifacts through a plugin installer/runtime adapter
+where deployment policy permits it. Making an artifact available never implicitly
+grants its requested authority or activates it.
+
+### Portable configuration example (illustrative proposed syntax)
+
+~~~toml
+# phenix.toml — no Nix syntax or store paths in the semantic profile
+profile = "phenix.product.full"
+
+[plugins]
+enable = ["acme.memory"]
+
+[providers]
+"phenix.memory.retrieve@1" = "acme.memory"
+"phenix.context.compact@1" = "phenix.compaction.advanced"
+
+[layers]
+"phenix.memory.retrieve@1" = ["phenix.telemetry"]
+~~~
+
+The exact profile, provider and Layer syntax is **not yet an implemented file schema**.
+The proposal's purpose is one explicit declarative model that a Nix module, a plain
+configuration file, the CLI, a remote API and dynamic plugin management can all lower
+into. The actual schema should reuse and expose the existing `ConfigContribution`,
+`ProviderCompositionPolicy`, `LayerCompositionPolicy` and graph resolver rather than
+inventing a parallel configuration format in Nix.
+
+### Nix as package assembler and configuration generator
+
+A Nix wrapper should primarily:
+1. Package each plugin as an independently addressable derivation, with validated
+   manifest and real executable/embedded artifact as appropriate.
+2. Supply the **available** plugin artifacts, resource directories and runtime
+   adapters in a reproducible deployment; installed does not imply enabled.
+3. Generate or install canonical Phenix configuration (including Basic/Full
+   profile selection and user overrides) without interpreting its graph semantics.
+4. Wrap the same runtime executable, passing paths/configuration and, optionally,
+   host environment/deployment settings.
+
+Illustrative wrapper API (not claimed to exist today):
 
 ~~~nix
-# Kernel with no agent plugins.
-kernel = self.packages.${system}.phenix-kernel;
-
-basic = self.lib.mkPhenix {
-  inherit pkgs kernel;
-  plugins = with self.phenixPlugins.${system}; [
-    agent-loop-basic
-    context-basic
-    compaction-basic
-    model-routing-basic
-    tool-execution-basic
-  ];
-};
-
-full = self.lib.mkPhenix {
-  inherit pkgs kernel;
-  extends = basic;
-  addPlugins = with self.phenixPlugins.${system}; [
-    memory
-    context-advanced
-    planning
-    workspace
-  ];
-  replaceProviders = {
-    "context.compact@1" = self.phenixPlugins.${system}.compaction-advanced;
-  };
-  layers = [ self.phenixPlugins.${system}.diagnostics ];
-};
-
-custom = self.lib.mkPhenix {
-  inherit pkgs kernel;
+phenix-custom = mkPhenix {
+  inherit pkgs;
   plugins = [
-    myExternalAgentPlugin
     self.phenixPlugins.${system}.memory
+    myPlugins.externalMemory
   ];
+  configFile = ./phenix.toml;
 };
 ~~~
 
-**Do not force these exact API names** before implementation. Preserve the existing
-`mkPhenix`/`mkPhenixPlugin` interface where possible, evolve it without introducing
-a second graph resolver, and distinguish profile defaults from explicitly selected plugins.
+The equivalent non-Nix deployment passes the same `phenix.toml` and makes equivalent
+plugin artifacts available through ordinary filesystem package directories, plugin
+installation commands or a runtime API. A CLI/TUI should be able to express, inspect,
+validate, preview and apply **all** operations supported by the Nix frontend. No feature
+should be Nix-only because a graph could not otherwise be composed.
 
-### Audited current gap
+A product convenience wrapper such as `phenix-full` should select the Full *Phenix
+profile* by emitting its profile identity; it must not carry a second independent
+recipe for how Full composes providers.
 
-`modules/package-sets.nix` does export one `phenixPlugins` derivation per named first-party
-plugin. But `mkEmbeddedPluginPackage` currently uses `pkgs.writeTextDir` to record a
-crate name: this is *not a separately executable plugin implementation*. The wrapper
-in `modules/plugin-packaging.nix` links these metadata derivations and sets
-`PHENIX_ENABLED_PLUGINS`; the actual embedded implementations are already compiled
-into `phenix-harness` through its first-party plugin catalog.
+### Existing code and implementation gap
 
-Thus the current model provides distinct **package identities and activation sets**,
-but not yet independently installable implementations for all plugins. A new guest
-plugin cannot become executable just by adding its metadata derivation to a wrapper.
+- `spec/configuration-frontends.md` **already requires** one canonical Phenix
+  resolver shared by Nix, Lua, TOML/JSON, IPC, GUI and other frontends. Keep it the
+  normative source of configuration semantics.
+- `modules/plugin-packaging.nix` defines `mkPhenixPlugin` and `mkPhenix`,
+  wrapping existing runtime binaries and forwarding plugin packages, enabled
+  IDs, settings and Layer policy via `PHENIX_*` variables. This is a useful
+  frontend baseline, but the environment format is fragmented rather than one
+  fully portable profile file.
+- `modules/package-sets.nix` exports `phenixPlugins` derivations. Embedded
+  `mkEmbeddedPluginPackage` currently creates a metadata derivation identifying a
+  Rust crate, **not** independently runnable plugin code. The shared harness
+  already links those embedded factories through its first-party catalog.
+- `spec/plugin-embedded-runtime.md` explicitly prohibits loading Rust dynamic
+  libraries via an unstable Rust ABI. Keep separate *packaging* from the actual
+  *execution strategy*.
+- Core provider and Layer resolver machinery exists, but supported user-facing
+  configuration and builder surfaces do not yet expose the entire composition
+  policy equally across frontends. Fix that at the Phenix configuration boundary,
+  **not** by teaching Nix a special provider-selection algorithm.
 
-### Two executable packaging strategies
+### Executable distribution remains an independent choice
 
-1. **Process-backed / guest plugins (independently composable):** the plugin's Nix
-   derivation contains its guest executable, manifest and runtime-specific resources.
-   `mkPhenix` adds its package closure and passes its manifest/artifact identity to
-   the existing plugin-runtime-adapter and graph resolver. No kernel or product rebuild
-   is required merely to add an independently supported guest plugin. An appropriate
-   process runtime adapter must be available and explicitly permitted in the graph.
-2. **Embedded Rust plugins (static optimization):** the plugin is an independently
-   declared Rust crate and Nix source/build input, but its implementation must be
-   statically linked into the *selected product executable*. Adding its manifest alone
-   does not provide executable behavior. The wrapper may request a product-specific
-   link closure as a build step; changing that set entails relinking/rebuilding the
-   assembled executable. This remains an opt-in distribution choice, never a dynamic
-   Rust ABI.
+**Process-backed guest plugin:** Its package contains the executable, manifest
+and resources. Once a suitable plugin runtime adapter is installed and permitted,
+Phenix can load/reconcile it from any packaging source without relinking the kernel.
 
-**Separate derivation does not imply runtime dynamic loading.** Prefer independently
-shippable process-backed plugins when adding/removing packages through a wrapper must
-work without rebuilding. Retain embedded linking when its performance and trust tradeoffs
-are explicitly selected. Both use the *same* PluginHost, contract semantics, authority,
-cancellation, persistence ownership and Graph Generation resolution.
+**Embedded Rust plugin:** The implementation is an independently defined Rust
+crate and Nix build input, but it must be linked into the chosen product executable
+ahead of time. A new embedded implementation requires rebuilding/relinking that
+executable. The runtime still decides whether that available factory is enabled
+and how its exports are bound. The same Basic/Full/profile file works within
+the artifact choices supported by the installed product.
 
-Resource-only plugins are real independent packages without executables. They
-contribute only metadata and/or resources and must not depend on the monolithic harness.
+**Resource-only plugin:** A separate package of metadata/data with no executable
+factory. It can be installed independently through Nix or another package manager.
 
-### Package selection and overlay invariants
+In all cases, the kernel's PluginHost, authority, generation pinning and graph
+resolution are identical. Nix store closure calculation is a **physical packaging**
+operation, not semantic contract resolution. Superset packages may remain installed
+but inactive; if an optimized minimal closure is desired, derive a deployment
+manifest from a *Phenix-produced resolved plan*, not a Nix reimplementation of
+contract semantics.
 
-- The wrapper computes the requested capability providers and profile overlays, then
-  the closure of **selected** plugin packages. Disabled/replaced defaults do not enter
-  the installed activation set merely because Basic or Full was included by name.
-- Hard dependencies indicate true implementation requirements. Imports indicate
-  *contract* requirements and may be satisfied by any compatible provider or adapter.
-- Nix builds and installs immutable plugin artifacts; the kernel validates manifests,
-  bindings, authority and activation. Nix packaging must not become a second semantic
-  resolver or bypass kernel validation.
-- A product selecting a third-party loop plus Phenix memory should not have to link
-  the full first-party harness or include unused Basic/Full implementations.
-- Distinguish installed/available, enabled/selected and actually bound/executing
-  plugins in inspection and tests.
-- No plugin is silently enabled because it happens to be compiled into an embedded
-  binary; the selected graph determines activation.
-- Honor content-addressed package identity and revisions; runtime hot replacement
-  still obeys pinned generations and migration/state ownership rules.
-- Keep independent derivations cache-friendly. Avoid rebuilding every Rust plugin
-  because a product wrapper's selected plugin list or settings change.
+### Non-Nix and Nix parity acceptance tests
 
-### Required Nix integration tests
-
-1. Kernel-only wrapper has no agent plugin runtime or service and starts successfully.
-2. Each `phenixPlugins` entry carries an actual executable guest artifact when
-   declared process-backed, or a verifiably linked factory in the selected embedded
-   product; metadata-only fake embedded packages cannot pass as runnable.
-3. A wrapper adding one external process-backed plugin can invoke its declared service
-   without relinking the kernel.
-4. Custom third-party loop + Phenix memory wrapper activates only the required closure.
-5. Basic and Full wrappers differ according to their selected provider graphs; Full's
-   replacement excludes inactive Basic implementations and their startup side effects.
-6. A memory provider can be substituted in Full at Nix evaluation/composition without
-   editing Rust application source.
-7. A resource-only plugin composes and loads without an executable factory.
-8. Invalid missing providers, incompatible contracts, ambiguous bindings, and
-   unavailable runtime adapters fail clearly before successful activation.
-9. Embedded product linking remains explicit and reproducible; changing only
-   runtime settings or product policy does not masquerade as a new plugin build.
+1. Kernel-only with no Basic/Full providers works without Nix.
+2. A plain file and Nix-generated file with identical canonical contributions
+   produce equivalent resolved provider graphs and authority, given the same
+   artifact identities/revisions.
+3. CLI/TUI/API can express Full profile selection, provider overrides, adapters,
+   Layers, disablement, validation and reconciliation **without Nix**.
+4. Adding an external process-backed plugin from an arbitrary local package path
+   works with an available runtime adapter and requires no kernel rebuild.
+5. Nix can package the same external plugin and select it by generating the same
+   configuration, without hardcoding conversion or binding semantics.
+6. Basic/Full inheritance and provider replacement are resolved by Phenix, not
+   by Nix attribute merging. Disabled Basic defaults may be physically available,
+   but must not become activated, bound or perform startup side effects.
+7. Unknown contracts, missing required providers, cycles and insufficient authority
+   fail with the same typed diagnostics through every configuration frontend.
+8. Embedded plugins are available only when linked; independent guest plugin
+   packages contain real loadable artifacts; metadata-only packages cannot claim
+   to install runnable implementations.
+9. Nix-only configuration convenience features lower into canonical contributions;
+   no option requires Nix's evaluator to recover missing Phenix runtime semantics.
+10. Graph changes through a live API produce generation-pinned reconciliation just
+    like a subsequent run from the corresponding declarative configuration.
 
 ## Executive decision
 
