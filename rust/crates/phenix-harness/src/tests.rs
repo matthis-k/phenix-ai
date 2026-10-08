@@ -231,6 +231,36 @@ fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
 }
 
 #[test]
+fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
+    use phenix_sdk::{MemoryCommand, MemoryResponse};
+
+    let selected = BTreeSet::from(["phenix.memory".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .expect("memory may be selected without an agent loop");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(ids.contains("phenix.memory"));
+    assert!(!ids.contains("phenix.agent-loop"));
+    assert!(!ids.contains("phenix.step-runner"));
+
+    let mut runtime = builder.build().expect("memory imports are optional");
+    runtime.activate().expect("standalone memory should activate");
+    let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Get {
+        id: "not-recorded".to_owned(),
+    }))
+    .unwrap();
+    let response = runtime
+        .invoke(&memory_service(), &input, &default_suite_authority(), None)
+        .unwrap();
+    let value: PhenixValue = serde_json::from_slice(&response).unwrap();
+    let decoded = MemoryResponse::try_from(Project(&value)).unwrap();
+    assert_eq!(decoded, MemoryResponse::Memory { record: None });
+}
+
+#[test]
 fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
     use phenix_core::{ComponentId, ComponentInterface};
     use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
