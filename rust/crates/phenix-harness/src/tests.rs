@@ -1099,3 +1099,29 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
         manifest.id == external_id
     }));
 }
+
+#[test]
+fn full_profile_can_omit_one_common_model_provider() {
+    use phenix_plugin_catalog::COMMON_PROVIDERS;
+
+    let available = COMMON_PROVIDERS
+        .into_iter()
+        .map(|provider| provider.id())
+        .collect::<BTreeSet<_>>();
+    assert!(available.contains("open-router"));
+
+    let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["open-router".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("common provider defaults must be independently replaceable");
+    let active = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(active.contains(FULL_PRODUCT_CONFIGURATION));
+    assert!(active.contains("phenix.providers"));
+    assert!(active.contains("openai-api"));
+    assert!(!active.contains("open-router"));
+    assert!(builder.build().is_ok());
+}
