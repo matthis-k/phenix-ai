@@ -45,6 +45,7 @@ struct PendingCall {
     connection_id: String,
     descriptor: FrontendProviderDescriptor,
     execution_root: Option<String>,
+    execution_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -213,6 +214,7 @@ fn handle(
                 params,
                 &BTreeSet::new(),
                 Some(root),
+                Some(execution_id),
             )
         }
         FrontendCommand::CheckExecutionCapabilities {
@@ -261,6 +263,7 @@ fn handle(
                 params,
                 &required_capabilities,
                 Some(root),
+                Some(execution_id),
             )
         }
         FrontendCommand::BeginDirectCall {
@@ -276,6 +279,7 @@ fn handle(
             params,
             &BTreeSet::new(),
             None,
+            None,
         ),
         FrontendCommand::CompleteCall {
             connection_id,
@@ -286,12 +290,22 @@ fn handle(
                 .plugin
                 .state
                 .pending
-                .remove(&correlation_id)
+                .get(&correlation_id)
+                .cloned()
                 .ok_or_else(|| format!("unknown frontend correlation id: {correlation_id}"))?;
             if pending.connection_id != connection_id {
-                context.plugin.state.pending.insert(correlation_id, pending);
                 return Err("frontend response came from the wrong connection".into());
             }
+            if let Some(execution_id) = pending.execution_id.as_deref() {
+                let active_owner = execution_root(context, execution_id).is_ok_and(|root| {
+                    context.plugin.state.root_routes.get(&root) == Some(&connection_id)
+                });
+                if !active_owner {
+                    context.plugin.state.pending.remove(&correlation_id);
+                    return Err("execution-scoped frontend call is no longer active or owned".into());
+                }
+            }
+            context.plugin.state.pending.remove(&correlation_id);
             Ok(FrontendResponse::Result {
                 result: FrontendServiceResult {
                     correlation_id,
@@ -323,6 +337,7 @@ fn begin_call(
     params: PhenixValue,
     required_capabilities: &BTreeSet<String>,
     execution_root: Option<String>,
+    execution_id: Option<String>,
 ) -> Result<FrontendResponse, String> {
     validate_id("frontend connection id", &connection_id)?;
     validate_id("frontend provider id", &provider)?;
@@ -351,6 +366,7 @@ fn begin_call(
             connection_id: connection_id.clone(),
             descriptor,
             execution_root,
+            execution_id,
         },
     );
     Ok(FrontendResponse::Request {
