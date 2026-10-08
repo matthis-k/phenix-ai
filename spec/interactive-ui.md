@@ -1,6 +1,6 @@
 # Optional interactive UI plugin
 
-status: design approved; implementation pending
+status: partial
 owner: phenix.interactive-ui
 
 ## Goal
