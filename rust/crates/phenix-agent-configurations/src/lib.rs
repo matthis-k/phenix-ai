@@ -14,6 +14,7 @@ pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
 const BASIC_AGENT_DEFAULTS: &[&str] = &[
     "phenix.agent-loop",
+    "phenix.application-agent-tools",
     "phenix.basic-skills",
     "phenix.context",
     "phenix.execution",
@@ -160,6 +161,7 @@ mod tests {
             &BTreeSet::new(),
         );
         assert!(dependencies.contains("phenix.agent-loop"));
+        assert!(dependencies.contains("phenix.application-agent-tools"));
         assert!(dependencies.contains("phenix.basic-skills"));
         for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
             assert!(!dependencies.contains(optional));
