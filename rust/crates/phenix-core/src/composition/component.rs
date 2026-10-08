@@ -35,6 +35,12 @@ pub enum ComponentGraphError {
         component: ComponentId,
         interface: InterfaceId,
     },
+    /// An explicit provider binding is mandatory, not a best-effort preference.
+    UnavailableExplicitProvider {
+        component: ComponentId,
+        interface: InterfaceId,
+        provider: ComponentId,
+    },
     IncompatibleRequiredImport {
         component: ComponentId,
         interface: InterfaceId,
@@ -87,6 +93,14 @@ impl Display for ComponentGraphError {
             } => write!(
                 f,
                 "component {component} has unresolved required import {interface}"
+            ),
+            Self::UnavailableExplicitProvider {
+                component,
+                interface,
+                provider,
+            } => write!(
+                f,
+                "component {component} explicitly requires provider {provider} for {interface}, but it is absent, incompatible, disabled, or insufficiently authorized"
             ),
             Self::IncompatibleRequiredImport {
                 component,
@@ -384,6 +398,20 @@ impl ResolvedComponentGraph {
                                     .get_or_insert_with(|| (candidate.id.clone(), mismatch));
                             }
                         }
+                    }
+                }
+
+                // An explicit binding is a contract requirement, not a hint.
+                // In particular, never silently route to a different provider
+                // when the selected component is absent, incompatible, disabled
+                // or cannot satisfy the import's authority.
+                if let Some(expected) = explicit {
+                    if !eligible.iter().any(|candidate| &candidate.component.id == expected) {
+                        return Err(ComponentGraphError::UnavailableExplicitProvider {
+                            component: manifest.id.clone(),
+                            interface: import.interface.clone(),
+                            provider: expected.clone(),
+                        });
                     }
                 }
 
