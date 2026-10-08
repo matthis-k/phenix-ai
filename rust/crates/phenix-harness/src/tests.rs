@@ -967,10 +967,7 @@ fn product_builder_rejects_binding_a_missing_provider() {
     );
 
     assert!(
-        matches!(
-            builder.build(),
-            Err(PhenixRuntimeBuildError::Resolution(_))
-        ),
+        matches!(builder.build(), Err(PhenixRuntimeBuildError::Resolution(_))),
         "invalid provider selection must fail during Phenix resolution"
     );
 }

@@ -1048,7 +1048,9 @@ mod tests {
         }"#;
         let config: PortableProviderPolicy = serde_json::from_str(json).unwrap();
         assert_eq!(
-            config.bind.get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            config
+                .bind
+                .get(&InterfaceId::parse("fixture.memory@1").unwrap()),
             Some(&ComponentId::parse("fixture.external").unwrap())
         );
         assert!(
@@ -1075,5 +1077,4 @@ mod tests {
         assert!(parse_cli(["--disable-provider=fixture.memory@1=".into()]).is_err());
         assert!(parse_cli(["--bind-provider=invalid=fixture.external".into()]).is_err());
     }
-
 }

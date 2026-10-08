@@ -546,14 +546,14 @@ impl PhenixRuntimeBuilder {
     /// The provider must still be available, compatible and authorized when
     /// the graph generation is resolved.
     pub fn bind_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
-        self.provider_policy = std::mem::take(&mut self.provider_policy)
-            .with_explicit_binding(interface, provider);
+        self.provider_policy =
+            std::mem::take(&mut self.provider_policy).with_explicit_binding(interface, provider);
     }
 
     /// Exclude one provider from selection for an interface.
     pub fn disable_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
-        self.provider_policy = std::mem::take(&mut self.provider_policy)
-            .with_disabled_provider(interface, provider);
+        self.provider_policy =
+            std::mem::take(&mut self.provider_policy).with_disabled_provider(interface, provider);
     }
 
     pub fn add_embedded<F>(
@@ -611,18 +611,17 @@ impl PhenixRuntimeBuilder {
             .manifests
             .iter()
             .any(|manifest| manifest.id == debug_id);
-        let resolved =
-            ResolvedGeneration::resolve_with_composition_policies(
-                self.manifests.clone(),
-                self.components,
-                self.durable_schemas,
-                self.entry_triggers,
-                self.process_arguments,
-                self.contributions,
-                self.layer_policies,
-                self.provider_policy,
-                &self.component_authority,
-            )?;
+        let resolved = ResolvedGeneration::resolve_with_composition_policies(
+            self.manifests.clone(),
+            self.components,
+            self.durable_schemas,
+            self.entry_triggers,
+            self.process_arguments,
+            self.contributions,
+            self.layer_policies,
+            self.provider_policy,
+            &self.component_authority,
+        )?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());
