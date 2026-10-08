@@ -580,6 +580,24 @@ mod tests {
                 .contains("active execution: root"),
             "a retained root binding must not authorize a finished execution"
         );
+
+        execution(&mut kernel, "second-root", None);
+        execution(&mut kernel, "active-child", Some("second-root"));
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "second-root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+        finish(&mut kernel, "second-root");
+        assert!(
+            call(&mut kernel, "active-child")
+                .unwrap_err()
+                .contains("active execution: second-root"),
+            "an active child cannot outlive the root frontend binding"
+        );
     }
 
     #[test]
