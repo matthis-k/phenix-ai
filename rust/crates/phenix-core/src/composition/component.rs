@@ -846,8 +846,7 @@ mod tests {
             &caller,
             &policy,
         )
-        .err()
-        .expect("unavailable explicit provider must not silently fall back");
+        .expect_err("unavailable explicit provider must not silently fall back");
 
         assert!(matches!(
             error,
