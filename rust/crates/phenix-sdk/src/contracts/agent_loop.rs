@@ -190,7 +190,10 @@ mod tests {
 
     #[test]
     fn agent_execution_contract_identity_does_not_name_an_implementation() {
-        assert_eq!(AgentLoopInterface::interface_id().as_str(), AGENT_LOOP_SERVICE);
+        assert_eq!(
+            AgentLoopInterface::interface_id().as_str(),
+            AGENT_LOOP_SERVICE
+        );
         assert_eq!(
             AgentLoopControlInterface::interface_id().as_str(),
             AGENT_LOOP_CONTROL_SERVICE

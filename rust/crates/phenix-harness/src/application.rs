@@ -60,8 +60,8 @@ use phenix_sdk::{
     AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
     AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, AssociationObservationSource,
-    CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand, ContextInjectionLifetime,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, AssociationObservationSource, CodeQuery,
+    CodeQueryResult, ContextAnchor, ContextCommand, ContextInjectionLifetime,
     ContextInjectionRequester, ContextResourceKind, ContextResponse, ExecutionAuthority,
     ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
@@ -74,9 +74,9 @@ use phenix_sdk::{
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
     RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, agent_loop_control_service,
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
-    context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, workspace_context_id,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service, context_service,
+    execution_resource_service, execution_service, model_routing_service, options_service,
+    workspace_context_id,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
