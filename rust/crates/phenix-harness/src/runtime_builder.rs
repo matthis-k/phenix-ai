@@ -2,8 +2,10 @@
 
 use crate::{PhenixRuntime, application, default_suite_authority};
 use phenix_core::{
-    Authority, ComponentEntryTrigger, ComponentId, ComponentManifest, ComponentProcessArgument,
+    Authority, ComponentEntryTrigger, ComponentId, ComponentInterface, ComponentManifest,
+    ComponentProcessArgument,
     ConfigContribution, DurableSchemaRegistration, GenerationResolutionError, GraphReconciler,
+    InterfaceCompatibility,
     InterfaceId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
     PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
     ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
@@ -40,6 +42,7 @@ use phenix_plugin_catalog::{
     workspace_manifest,
 };
 use phenix_plugin_invocation_defaults as invocation_defaults;
+use phenix_sdk::{LanguageInterface, MemoryInterface, WorkspaceInterface};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -559,6 +562,55 @@ impl PhenixRuntimeBuilder {
             std::mem::take(&mut self.provider_policy).with_disabled_provider(interface, provider);
     }
 
+    /// Add application tools for providers contributed after profile selection.
+    ///
+    /// The final assembled component set, rather than an implementation plugin
+    /// ID, determines whether a tool contract is available to the application.
+    fn add_late_application_tool_triggers(&mut self) {
+        if !self.components.iter().any(|component| {
+            component.owner.as_str() == application::APPLICATION_AGENT_TOOL_PLUGIN
+        }) {
+            return;
+        }
+        if self.has_compatible_export::<WorkspaceInterface>() {
+            self.add_missing_triggers(application::application_workspace_tool_triggers());
+        }
+        if self.has_compatible_export::<LanguageInterface>() {
+            self.add_missing_triggers(application::application_code_tool_triggers());
+        }
+        if self.has_compatible_export::<MemoryInterface>() {
+            self.add_missing_triggers(application::application_memory_tool_triggers());
+        }
+    }
+
+    fn has_compatible_export<I: ComponentInterface>(&self) -> bool {
+        let interface = I::interface_id();
+        let schema = I::schema();
+        self.components.iter().any(|component| {
+            self.provider_policy.provider_enabled(&interface, &component.id)
+                && component.exports.iter().any(|export| {
+                    export.interface == interface
+                        && !matches!(
+                            schema.accepts_provider(&export.schema),
+                            InterfaceCompatibility::Incompatible(_)
+                        )
+                        && component
+                            .maximum_authority
+                            .permits_all(&export.required_authority)
+                })
+        })
+    }
+
+    fn add_missing_triggers(&mut self, triggers: Vec<ComponentEntryTrigger>) {
+        for trigger in triggers {
+            if !self.entry_triggers.iter().any(|existing| {
+                existing.component == trigger.component && existing.interface == trigger.interface
+            }) {
+                self.entry_triggers.push(trigger);
+            }
+        }
+    }
+
     pub fn add_embedded<F>(
         &mut self,
         manifest: PluginManifest,
@@ -605,9 +657,10 @@ impl PhenixRuntimeBuilder {
     }
 
     pub(crate) fn build_using(
-        self,
+        mut self,
         create_kernel: impl FnOnce(&ResolvedGeneration) -> Result<Kernel, PhenixRuntimeBuildError>,
     ) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
+        self.add_late_application_tool_triggers();
         let application_agent_tools = self.application_agent_tools.clone();
         let debug_id = debug_manifest(self.component_authority.clone()).id;
         let debug_enabled = self
