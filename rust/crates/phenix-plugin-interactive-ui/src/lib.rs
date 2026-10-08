@@ -17,6 +17,7 @@ const MAX_DEPTH: usize = 12;
 const MAX_TEXT_BYTES: usize = 4096;
 const MAX_DOCUMENT_BYTES: usize = 65536;
 const MAX_DOCUMENT_KEYS: usize = 512;
+const MAX_DOCUMENT_LINES: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -307,6 +308,7 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
     }
     let mut index = BTreeMap::new();
     let mut total = 0;
+    let mut lines = 0_usize;
     for node in &document.nodes {
         validate_identity(node.id())?;
         if index.insert(node.id(), node).is_some() {
@@ -314,21 +316,30 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
         }
         match node {
             UiNode::Text { text, .. } | UiNode::Label { text, .. } | UiNode::Badge { text, .. } => {
-                validate_text(text, &mut total)?
+                validate_text(text, &mut total)?;
+                lines = lines.saturating_add(1 + text.bytes().filter(|ch| *ch == b'\n').count());
             }
             UiNode::Progress { text, fraction, .. } => {
                 validate_text(text, &mut total)?;
+                lines = lines.saturating_add(1 + text.bytes().filter(|ch| *ch == b'\n').count());
                 if !fraction.is_finite() || !(0.0..=1.0).contains(fraction) {
                     return Err("invalid UI progress fraction".into());
                 }
             }
-            UiNode::Card { title, .. } => validate_text(title, &mut total)?,
+            UiNode::Card { title, .. } => {
+                validate_text(title, &mut total)?;
+                lines = lines.saturating_add(1 + title.bytes().filter(|ch| *ch == b'\n').count());
+            }
             UiNode::Table { columns, rows, .. } => {
                 if columns.is_empty() || columns.len() > 12 || rows.len() > 100 {
                     return Err("invalid UI table dimensions".into());
                 }
+                lines = lines.saturating_add(1 + rows.len());
                 for column in columns {
                     validate_text(column, &mut total)?;
+                    if column.contains('\n') {
+                        return Err("UI table columns must be one line".into());
+                    }
                 }
                 for row in rows {
                     if row.len() != columns.len() {
@@ -336,10 +347,16 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
                     }
                     for cell in row {
                         validate_text(cell, &mut total)?;
+                        if cell.contains('\n') {
+                            return Err("UI table cells must be one line".into());
+                        }
                     }
                 }
             }
             _ => {}
+        }
+        if lines > MAX_DOCUMENT_LINES {
+            return Err("UI document exceeds line limit".into());
         }
         if matches!(
             node,
@@ -451,6 +468,32 @@ mod tests {
         };
         assert!(validate_document(&bad).is_err());
     }
+    #[test]
+    fn display_output_and_document_store_have_bounded_growth() {
+        let mut bad = fixture();
+        bad.nodes[1] = UiNode::Text {
+            id: "title".into(),
+            text: "\n".repeat(MAX_DOCUMENT_LINES),
+        };
+        assert!(validate_document(&bad).unwrap_err().contains("line limit"));
+
+        let mut store = UiStore::default();
+        for index in 0..MAX_DOCUMENT_KEYS {
+            let mut document = fixture();
+            document.document_id = format!("doc-{index}");
+            assert!(store.apply(UiDocumentCommand::Put {
+                document,
+                expected_revision: None,
+            }).is_ok());
+        }
+        let mut overflow = fixture();
+        overflow.document_id = "overflow".into();
+        assert!(store.apply(UiDocumentCommand::Put {
+            document: overflow,
+            expected_revision: None,
+        }).unwrap_err().contains("key limit"));
+    }
+
     #[test]
     fn revision_conflicts_and_tombstones() {
         let mut store = UiStore::default();
