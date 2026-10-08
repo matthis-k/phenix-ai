@@ -523,6 +523,7 @@
                     runtimeInputs = pkgs: [
                       pkgs.bash
                       pkgs.cargo
+                      pkgs.coreutils
                       pkgs.git
                       pkgs.jq
                     ];
