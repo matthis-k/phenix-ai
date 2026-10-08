@@ -1302,4 +1302,25 @@ mod tests {
         assert!(parse_cli(["--config=".into()]).is_err());
     }
 
+
+    #[test]
+    fn cli_profile_overrides_file_profile_and_environment() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{"profile":"phenix.product.basic"}"#,
+        )
+        .unwrap();
+        let cli = parse_cli(["--profile=phenix.product.full".into()]).unwrap();
+        let selected = resolve_configured_first_party_plugins(
+            &cli,
+            &config,
+            Some("phenix.agent.basic"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(selected.contains("phenix.product.full"));
+        assert!(selected.contains("phenix.agent.advanced"));
+        assert!(parse_cli(["--profile".into()]).is_err());
+        assert!(parse_cli(["--profile=".into()]).is_err());
+    }
+
 }
