@@ -63,6 +63,7 @@ struct Cli {
     disable_plugins: BTreeSet<String>,
     config_file: Option<PathBuf>,
     provider_policy_file: Option<PathBuf>,
+    plugin_packages: Vec<PathBuf>,
     provider_bindings: Vec<(InterfaceId, ComponentId)>,
     disabled_providers: Vec<(InterfaceId, ComponentId)>,
     plugin_arguments: Vec<String>,
@@ -101,7 +102,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         None => PhenixRuntimeBuilder::with_default_suite()?,
     };
-    for package in configured_plugin_packages()? {
+    for package in configured_plugin_packages(&cli, &composition)? {
         add_packaged_plugin(&mut builder, &package)?;
     }
     apply_configured_layer_policy(&mut builder, &composition)?;
@@ -183,7 +184,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --profile ID          Select a Phenix product/profile ID\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --profile ID          Select a Phenix product/profile ID\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --plugin-package PATH Add a packaged plugin root\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -238,6 +239,24 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     return Err("--config requires a file path".into());
                 }
                 cli.config_file = Some(PathBuf::from(path));
+            }
+            "--plugin-package" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--plugin-package requires a package root".to_owned())?;
+                if path.is_empty() {
+                    return Err("--plugin-package requires a package root".into());
+                }
+                cli.plugin_packages.push(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--plugin-package=") => {
+                let path = argument
+                    .strip_prefix("--plugin-package=")
+                    .expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--plugin-package requires a package root".into());
+                }
+                cli.plugin_packages.push(PathBuf::from(path));
             }
             "--provider-policy" => {
                 let path = args
@@ -635,6 +654,8 @@ struct PortableCompositionConfig {
     #[serde(default)]
     plugins: PortablePluginSelection,
     #[serde(default)]
+    plugin_packages: Vec<PathBuf>,
+    #[serde(default)]
     providers: PortableProviderPolicy,
     #[serde(default)]
     layers: Vec<ConfiguredLayerPolicy>,
@@ -653,7 +674,20 @@ fn load_portable_configuration(
     path: Option<&Path>,
 ) -> Result<PortableCompositionConfig, Box<dyn Error>> {
     match path {
-        Some(path) => Ok(serde_json::from_str(&fs::read_to_string(path)?)?),
+        Some(path) => {
+            let mut config: PortableCompositionConfig =
+                serde_json::from_str(&fs::read_to_string(path)?)?;
+            let directory = path.parent().unwrap_or_else(|| Path::new("."));
+            for package in &mut config.plugin_packages {
+                if package.as_os_str().is_empty() {
+                    return Err("plugin_packages entries must not be empty".into());
+                }
+                if package.is_relative() {
+                    *package = directory.join(&*package);
+                }
+            }
+            Ok(config)
+        }
         None => Ok(PortableCompositionConfig::default()),
     }
 }
@@ -771,17 +805,24 @@ fn add_layer_policy_values(
     Ok(())
 }
 
-fn configured_plugin_packages() -> Result<Vec<PathBuf>, Box<dyn Error>> {
-    let Some(value) = env::var_os("PHENIX_PLUGIN_PACKAGES") else {
-        return Ok(Vec::new());
-    };
-    let value = value
-        .into_string()
-        .map_err(|_| "PHENIX_PLUGIN_PACKAGES must be valid UTF-8")?;
-    if value.is_empty() {
-        return Ok(Vec::new());
+fn configured_plugin_packages(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut packages = Vec::new();
+    if let Some(value) = env::var_os("PHENIX_PLUGIN_PACKAGES") {
+        let value = value
+            .into_string()
+            .map_err(|_| "PHENIX_PLUGIN_PACKAGES must be valid UTF-8")?;
+        if !value.is_empty() {
+            packages.extend(value.split(':').map(PathBuf::from));
+        }
     }
-    Ok(value.split(':').map(PathBuf::from).collect())
+    packages.extend(config.plugin_packages.iter().cloned());
+    packages.extend(cli.plugin_packages.iter().cloned());
+    let mut seen = BTreeSet::new();
+    packages.retain(|path| seen.insert(path.clone()));
+    Ok(packages)
 }
 
 fn add_packaged_plugin(
