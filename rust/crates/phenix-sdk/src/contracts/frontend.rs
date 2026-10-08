@@ -50,6 +50,7 @@ pub enum FrontendCommand {
     },
     ReleaseRoot {
         execution_id: String,
+        connection_id: String,
     },
     BeginExecutionCall {
         execution_id: String,
