@@ -100,7 +100,7 @@ in
           printf 'unchanged\n' > "$directory/unrelated.txt"
           git -C "$directory" add selected.txt unrelated.txt
           git -C "$directory" commit --quiet -m baseline
-    
+
           # Stub only the normalizer. Exercise the real git index and git commit.
           cat > "$directory/bin/maintenance" <<'STUB'
     #!/usr/bin/env bash
@@ -117,7 +117,7 @@ in
           chmod +x "$directory/bin/maintenance"
           printf '%s\n' "$directory"
         }
-    
+
         pass="$(make_fixture success)"
         printf 'candidate\n' > "$pass/selected.txt"
         git -C "$pass" add selected.txt
@@ -128,7 +128,7 @@ in
         [[ "$(git -C "$pass" show HEAD:selected.txt)" == normalized ]]
         [[ "$(git -C "$pass" rev-list --count HEAD)" == 2 ]]
         [[ -z "$(git -C "$pass" status --porcelain --untracked-files=no)" ]]
-    
+
         unrelated="$(make_fixture unrelated)"
         printf 'candidate\n' > "$unrelated/selected.txt"
         git -C "$unrelated" add selected.txt
@@ -141,7 +141,7 @@ in
         fi
         [[ "$(git -C "$unrelated" rev-list --count HEAD)" == 1 ]]
         [[ "$(git -C "$unrelated" show HEAD:unrelated.txt)" == unchanged ]]
-    
+
         generated="$(make_fixture generated)"
         printf 'candidate\n' > "$generated/selected.txt"
         git -C "$generated" add selected.txt
@@ -154,7 +154,7 @@ in
         fi
         [[ "$(git -C "$generated" rev-list --count HEAD)" == 1 ]]
         [[ -f "$generated/generated.txt" ]]
-    
+
         unstaged="$(make_fixture unstaged)"
         printf 'candidate\n' > "$unstaged/selected.txt"
         git -C "$unstaged" add selected.txt
@@ -167,7 +167,7 @@ in
           exit 1
         fi
         [[ "$(git -C "$unstaged" rev-list --count HEAD)" == 1 ]]
-    
+
         empty="$(make_fixture empty)"
         if (
           cd "$empty"
@@ -177,7 +177,7 @@ in
           exit 1
         fi
         [[ "$(git -C "$empty" rev-list --count HEAD)" == 1 ]]
-    
+
         echo "prepare-commit fixtures passed"
   '';
 }
