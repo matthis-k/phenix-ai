@@ -523,6 +523,7 @@
                       pkgs.cargo
                       pkgs.git
                       pkgs.jq
+                      self'.packages.phenix-test-prepare-commit
                     ];
                     exec = ''
                       ${repositoryRoot}
@@ -689,6 +690,7 @@
           pkgs.statix
           pkgs.taplo
           maintenancePackage.package
+          self'.packages.phenix-prepare-commit
           self'.packages.stitch
           self'.packages.stitch-mcp
         ];
