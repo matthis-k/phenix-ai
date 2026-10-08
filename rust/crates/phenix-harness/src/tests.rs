@@ -440,6 +440,106 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
 }
 
 #[test]
+fn default_application_agent_route_uses_the_resolved_contract() {
+    use phenix_plugin_catalog::agent_loop_component_id;
+
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .unwrap();
+
+    let selected = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the Basic product resolves its agent contract");
+    assert_eq!(selected, Some(plugin("phenix.agent-loop")));
+
+    let binding = runtime
+        .resolved_generation()
+        .component_graph()
+        .import_handle(
+            &phenix_core::ComponentId::parse("phenix.application-agent-tools").unwrap(),
+            &phenix_sdk::AgentLoopInterface::interface_id(),
+        )
+        .unwrap()
+        .expect("application agent import must be resolved");
+    assert_eq!(binding.exporter(), &agent_loop_component_id());
+}
+
+#[test]
+fn application_agent_route_obeys_contract_priority_not_service_priority() {
+    use phenix_core::{ComponentId, ComponentInterface, ProviderCompositionPolicy};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    let owner = plugin("fixture.preferred-contract-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"preferred-contract-agent")),
+        )
+        .unwrap();
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.preferred-contract-agent.component").unwrap();
+    component.owner = owner.clone();
+    component.imports.clear();
+    let id = component.id.clone();
+    builder.add_component(component);
+    builder.set_provider_policy(ProviderCompositionPolicy::new().with_priority(
+        AgentLoopInterface::interface_id(),
+        id.clone(),
+        100,
+    ));
+
+    let mut runtime = builder.build().unwrap();
+    let selected = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the application must follow the resolved contract priority");
+    assert_eq!(selected, Some(owner));
+    runtime.activate().unwrap();
+    let result = runtime
+        .invoke(
+            &agent_loop_service(),
+            b"fixture",
+            &default_suite_authority(),
+            selected.as_ref(),
+        )
+        .expect("selected contract provider must win despite lower service priority");
+    assert_eq!(result, b"preferred-contract-agent");
+}
+
+#[test]
+fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .expect("the tool adapter must run without any agent");
+
+    let error = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect_err("a prompt cannot start without a selected agent provider");
+    assert!(error.to_string().contains("no resolved agent execution provider"));
+}
+
+#[test]
 fn product_configurations_resolve_providers_and_frontend_sdk() {
     for root in [BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION] {
         let builder =
