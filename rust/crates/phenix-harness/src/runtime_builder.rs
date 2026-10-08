@@ -24,7 +24,7 @@ use phenix_plugin_catalog::{
     efficiency_evaluation_factory, efficiency_evaluation_manifest, execution_component_manifest,
     execution_factory, execution_manifest, first_party_durable_schema_registrations,
     frontend_component_manifest, frontend_factory, frontend_manifest,
-    full_product_configuration_manifest, helper_invocation_component_manifest,
+    expand_profile_defaults, full_product_configuration_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     local_environment_component_manifest, local_environment_factory, local_environment_manifest,
@@ -217,6 +217,16 @@ impl PhenixRuntimeBuilder {
     }
 
     pub fn with_selected_suite(enabled: &BTreeSet<String>) -> Result<Self, String> {
+        Self::with_selected_suite_excluding(enabled, &BTreeSet::new())
+    }
+
+    /// Expand named Phenix product defaults before enforcing actual hard plugin
+    /// dependencies. Explicit exclusions affect defaults, not contract resolution:
+    /// a concrete implementation that truly requires a disabled plugin still fails.
+    pub fn with_selected_suite_excluding(
+        enabled: &BTreeSet<String>,
+        excluded: &BTreeSet<String>,
+    ) -> Result<Self, String> {
         let authority = default_suite_authority();
         let provider_definitions = common_provider_definitions();
         let mut available = [
@@ -263,8 +273,10 @@ impl PhenixRuntimeBuilder {
             let manifest = provider.manifest();
             available.insert(manifest.id.as_str().to_owned(), manifest);
         }
+        let mut enabled = expand_profile_defaults(enabled, excluded);
         let unknown = enabled
             .iter()
+            .chain(excluded.iter())
             .filter(|id| !available.contains_key(*id))
             .cloned()
             .collect::<Vec<_>>();
@@ -275,8 +287,8 @@ impl PhenixRuntimeBuilder {
             ));
         }
 
-        // Explicit selection is exact. Only declared manifest dependencies may expand it.
-        let mut enabled = enabled.clone();
+        // Default profiles have already been expanded; only real manifest
+        // dependencies can enlarge this selection now.
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
         let expand_dependencies = |enabled: &mut BTreeSet<String>,
                                    pending: &mut Vec<String>|
@@ -290,6 +302,11 @@ impl PhenixRuntimeBuilder {
                     if !available.contains_key(&dependency) {
                         return Err(format!(
                             "first-party plugin {plugin} depends on unavailable first-party plugin {dependency}"
+                        ));
+                    }
+                    if excluded.contains(&dependency) {
+                        return Err(format!(
+                            "first-party plugin {plugin} requires disabled first-party plugin {dependency}"
                         ));
                     }
                     if enabled.insert(dependency.clone()) {
@@ -308,6 +325,12 @@ impl PhenixRuntimeBuilder {
                 if !available.contains_key(&dependency) {
                     return Err(format!(
                         "first-party plugin {} depends on unavailable first-party plugin {dependency}",
+                        adapter.id
+                    ));
+                }
+                if excluded.contains(&dependency) {
+                    return Err(format!(
+                        "first-party plugin {} requires disabled first-party plugin {dependency}",
                         adapter.id
                     ));
                 }
