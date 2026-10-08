@@ -8,6 +8,20 @@ scope:
   - external harness forwarding and capability use
   - memory and context integration
 
+## Minimal required runtime
+
+**The Phenix kernel is the only mandatory runtime foundation for components composing inside a Phenix graph.** No agent loop, first-party harness, memory, context, model, tool, skill, frontend, protocol bridge or provider-specific SDK service is required by the kernel itself.
+
+The kernel's required responsibilities are generic: declare and resolve component interfaces; select compatible provider exports for imports; enforce effective authority; dispatch calls; manage plugin and Graph Generation lifecycles; and expose the generic runtime facilities needed by the selected components. A capability such as persistence may have a minimal kernel-owned mechanism, but a concrete backend is only required when a selected component uses that capability.
+
+A component may define its own contracts, provide an existing contract, consume other contracts, or adapt contract A into contract B. No component is required to depend on Basic or Full. There must be **no mandatory hidden first-party plugin closure** when a custom graph consists of third-party components.
+
+The contract SDK is a development/interface library, **not an additional mandatory runtime plugin**. A non-Rust or remote implementation only needs to conform to the contract and relevant host/transport protocol.
+
+An external application consuming a Phenix-hosted capability through an authorized gateway does **not** need to embed the kernel itself: the service host runs the Phenix kernel, and the external caller speaks the exposed contract.
+
+Basic and Full are packaged reference selections built *on top* of that substrate, not requirements for running it. The only constraint is that each selected component's **declared required imports** must be satisfiable by the chosen graph.
+
 ## Executive decision
 
 The kernel runs a graph of contracts and capability providers. **It does not contain an agent.**
