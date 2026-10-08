@@ -142,6 +142,17 @@ impl PluginInstance for FixedResponse {
 }
 
 #[test]
+fn bare_kernel_runtime_requires_no_agent_or_first_party_profiles() {
+    let runtime = PhenixRuntimeBuilder::new()
+        .build()
+        .expect("kernel must resolve without any selected product or agent");
+
+    assert_eq!(runtime.kernel().config().manifests().count(), 0);
+    assert!(runtime.resolved_generation().components().is_empty());
+    assert!(runtime.resolved_generation().entry_triggers().is_empty());
+}
+
+#[test]
 fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
     let basic = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         BASIC_AGENT_CONFIGURATION.to_owned(),
@@ -1475,7 +1486,7 @@ fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
 fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory() {
     use phenix_core::{ComponentId, ComponentInterface};
     use phenix_plugin_catalog::memory_component_manifest;
-    use phenix_sdk::MemoryInterface;
+    use phenix_sdk::{MemoryCommand, MemoryInterface, MemoryResponse};
 
     let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
     let excluded = BTreeSet::from(["phenix.memory".to_owned()]);
@@ -1490,18 +1501,17 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
     );
 
     let owner = plugin("fixture.external-memory");
+    let reply = MemoryResponse::Memory { record: None };
+    let wire_reply = serde_json::to_vec(&PhenixValue::from(&reply)).unwrap();
     builder
         .add_embedded(
-            PluginManifest {
-                id: owner.clone(),
-                version: 1,
-                execution: PluginExecution::Embedded,
-                dependencies: Vec::new(),
-                services: Vec::new(),
-                resource_namespaces: Vec::new(),
-                maximum_authority: default_suite_authority(),
-            },
-            || Box::new(Echo(b"external")),
+            service_manifest(
+                owner.as_str(),
+                memory_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            move || Box::new(FixedResponse(wire_reply.clone())),
         )
         .unwrap();
 
@@ -1516,7 +1526,7 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
     builder.add_component(external);
     builder.bind_provider(MemoryInterface::interface_id(), external_id.clone());
 
-    let resolved = builder
+    let mut resolved = builder
         .build()
         .expect("Full may resolve against a foreign memory provider");
     assert!(
@@ -1554,6 +1564,22 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
             "foreign memory provider must expose {required} through contract resolution"
         );
     }
+
+    resolved.activate().expect("foreign memory terminal activates");
+    let command = MemoryCommand::Get {
+        id: "foreign-record".to_owned(),
+    };
+    let encoded = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = resolved
+        .invoke(
+            &memory_service(),
+            &encoded,
+            &default_suite_authority(),
+            Some(&plugin("fixture.external-memory")),
+        )
+        .expect("the foreign terminal accepts a typed memory request");
+    let wire: PhenixValue = serde_json::from_slice(&output).unwrap();
+    assert_eq!(MemoryResponse::try_from(Project(&wire)).unwrap(), reply);
 }
 
 #[test]
