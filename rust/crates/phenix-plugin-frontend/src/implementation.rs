@@ -630,10 +630,10 @@ mod tests {
                 },
             )
         };
-        assert!(matches!(
-            call(&mut kernel, "child").unwrap(),
-            FrontendResponse::Request { .. }
-        ));
+        let child_correlation = match call(&mut kernel, "child").unwrap() {
+            FrontendResponse::Request { request } => request.correlation_id,
+            other => panic!("expected frontend request, got {other:?}"),
+        };
 
         let finish = |kernel: &mut Kernel, execution_id: &str| {
             kernel
@@ -650,6 +650,19 @@ mod tests {
                 .unwrap();
         };
         finish(&mut kernel, "child");
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: child_correlation,
+                    result: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("no longer active or owned"),
+            "late reply to a finished child must be rejected"
+        );
         assert!(
             call(&mut kernel, "child")
                 .unwrap_err()
