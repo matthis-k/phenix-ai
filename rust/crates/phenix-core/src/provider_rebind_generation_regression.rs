@@ -109,3 +109,78 @@ fn provider_rebinding_requires_a_new_resolved_generation() {
         &ComponentId::parse("provider-a").unwrap()
     );
 }
+
+#[test]
+fn explicit_provider_selection_must_not_silently_fall_back() {
+    let interface = InterfaceId::parse("fixture.provider@1").unwrap();
+    let selected = ComponentId::parse("provider-b").unwrap();
+    let other = ComponentId::parse("provider-a").unwrap();
+    let plugin_manifests = [
+        plugin("consumer-package"),
+        plugin("provider-a-package"),
+        plugin("provider-b-package"),
+    ];
+    let components = [
+        consumer(&interface),
+        provider("provider-a", "provider-a-package", &interface, 100),
+    ];
+    let policy =
+        ProviderCompositionPolicy::new().with_explicit_binding(interface.clone(), selected.clone());
+
+    let error = ResolvedGeneration::resolve_with_provider_policy(
+        plugin_manifests.clone(),
+        components.clone(),
+        [],
+        policy.clone(),
+        &Authority::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("explicitly requires provider provider-b"),
+        "absent explicit bindings must report the selected provider: {error}"
+    );
+
+    let error = ResolvedGeneration::resolve_with_provider_policy(
+        plugin_manifests,
+        [
+            components[0].clone(),
+            components[1].clone(),
+            provider("provider-b", "provider-b-package", &interface, 0),
+        ],
+        [],
+        policy.with_disabled_provider(interface.clone(), selected.clone()),
+        &Authority::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("explicitly requires provider provider-b"),
+        "disabled explicit bindings must not fall back to provider-a: {error}"
+    );
+
+    // This remains a normal valid binding when the explicit provider exists.
+    let valid = ResolvedGeneration::resolve_with_provider_policy(
+        [
+            plugin("consumer-package"),
+            plugin("provider-a-package"),
+            plugin("provider-b-package"),
+        ],
+        [
+            consumer(&interface),
+            provider("provider-a", "provider-a-package", &interface, 100),
+            provider("provider-b", "provider-b-package", &interface, 0),
+        ],
+        [],
+        ProviderCompositionPolicy::new().with_explicit_binding(interface.clone(), selected.clone()),
+        &Authority::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        valid.component_graph()
+            .import_handle(&ComponentId::parse("consumer").unwrap(), &interface)
+            .unwrap()
+            .unwrap()
+            .exporter(),
+        &selected
+    );
+    assert_ne!(other, selected);
+}
