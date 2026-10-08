@@ -51,6 +51,20 @@ PR #726 is a prerequisite for Stage C: it introduces generic workflow compilatio
 - No PR may introduce a second resolver, lifecycle dispatcher, tool registry, or agent-specific branch in Core.
 - Shared contracts are stabilized in Stage B before parallel Stage C/D implementation; changing them requires updating affected PRs explicitly.
 
+## Parallel runtime-host workstream
+
+The execution-runtime packaging boundary is separate from contribution kinds and workflow graph edits. [Native plugin ABI and guest runtimes](native-plugin-abi-and-guest-runtimes.md) records a design-only target for one minimal native ABI loader plus plugin-provided Lua, Wasm, JavaScript and process guest-runtime adapters. Lua is the first conformance target because Phenix.nvim is the primary frontend, but Neovim ACP client bindings remain separate from Lua guest hosting.
+
+- **N0 specification:** independent of Stages B-E; identifies where current `embedded` factory language, native artifact packaging, runtime adapters and reload terminology differ from the proposed target.
+- **N1 native ABI contract:** isolated ABI crate/header and separate-compilation conformance, with no edits to #726's workflow files or #728's descriptor authoring files before their merge.
+- **N2 native loader and metadata normalization:** depends on #728's contribution envelope and uses the existing Core resolver. Coordinate runtime edit ownership with #726.
+- **N3 guest adapter proof:** a native Lua runtime adapter loads a Lua guest exporting one canonical service, invoking an imported service and preserving authority, identity and generation. Follow with a narrow Phenix.nvim ACP smoke test without restarting the kernel.
+- **N4 reload/select proof:** use resident-generation staging and explicit promotion from `spec/selectable-generations.md`. Loading a new artifact must not silently switch the default graph.
+- **N5 optional adapters:** add native Wasm, JavaScript or process-backed Guest Runtime adapters only after the Lua adapter proves the generic contract. Each executable adapter is a native ABI plugin; guest interpreters do not bootstrap runtime providers.
+- **N6 legacy migration:** remove the embedded factory/catalog and Rust product-composition ownership only after N2-N4 and Basic/Full plus non-agent product parity; coordinate with #733's cleanup inventory.
+
+The design PR is not an implementation gate by itself. N1-N6 require runnable proofs and no second provider resolver, plugin registry or generation lifecycle.
+
 ## Required end-to-end proofs
 
 1. Core-only non-agent workflow with two independently packaged providers; no agent plugin loaded.
