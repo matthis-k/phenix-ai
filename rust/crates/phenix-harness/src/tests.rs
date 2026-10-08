@@ -376,6 +376,53 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
 }
 
 #[test]
+fn pinned_application_binding_selects_foreign_agent_over_native_service_priority() {
+    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder =
+        PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+            BASIC_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap();
+    let owner = plugin("fixture.low-priority-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"bound-foreign-agent")),
+        )
+        .unwrap();
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.low-priority-agent.component").unwrap();
+    component.owner = owner.clone();
+    component.imports.clear();
+    let id = component.id.clone();
+    builder.add_component(component);
+    builder.bind_provider(AgentLoopInterface::interface_id(), id);
+
+    let mut runtime = builder.build().expect("both loop implementations may coexist");
+    let explicit = application::bound_application_agent_plugin(runtime.resolved_generation())
+        .expect("the selected generation has an eligible bound terminal");
+    assert_eq!(explicit, Some(owner));
+    runtime.activate().unwrap();
+    let output = runtime
+        .invoke(
+            &agent_loop_service(),
+            b"fixture",
+            &default_suite_authority(),
+            explicit.as_ref(),
+        )
+        .expect("explicit binding selects the foreign terminal despite lower priority");
+    assert_eq!(output, b"bound-foreign-agent");
+}
+
+#[test]
 fn product_configurations_resolve_providers_and_frontend_sdk() {
     for root in [BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION] {
         let builder =
