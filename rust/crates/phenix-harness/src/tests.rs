@@ -699,9 +699,7 @@ fn model_tool_exposure_matches_selected_contracts() {
                 application::application_tool_trigger_available(generation, trigger).unwrap()
             })
             .map(|trigger| match &trigger.trigger {
-                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
-                    callable_id.as_str()
-                }
+                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
             })
             .collect::<BTreeSet<_>>();
         assert_eq!(exposed, expected.iter().copied().collect(), "{name}");
