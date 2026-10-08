@@ -50,12 +50,27 @@ pub enum FrontendCommand {
     },
     ReleaseRoot {
         execution_id: String,
+        connection_id: String,
     },
     BeginExecutionCall {
         execution_id: String,
         provider: String,
         method: String,
         params: PhenixValue,
+    },
+    /// Capability discovery is scoped to the active execution's root owner.
+    CheckExecutionCapabilities {
+        execution_id: String,
+        provider: String,
+        required_capabilities: BTreeSet<String>,
+    },
+    /// Atomically checks requirements against the current owner advertisement.
+    BeginExecutionCallWithRequirements {
+        execution_id: String,
+        provider: String,
+        method: String,
+        params: PhenixValue,
+        required_capabilities: BTreeSet<String>,
     },
     BeginDirectCall {
         connection_id: String,
@@ -78,6 +93,9 @@ pub enum FrontendResponse {
     },
     Request {
         request: FrontendServiceRequest,
+    },
+    CapabilityCheck {
+        supported: bool,
     },
     Result {
         result: FrontendServiceResult,
