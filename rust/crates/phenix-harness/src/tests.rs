@@ -1044,3 +1044,58 @@ fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
     assert!(!selected.contains("phenix.debug"));
 }
 
+
+#[test]
+fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory() {
+    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::MemoryInterface;
+
+    let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.memory".to_owned()]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("native memory is a Full default, not a compulsory profile dependency");
+
+    assert!(!builder
+        .manifests
+        .iter()
+        .any(|manifest| manifest.id.as_str() == "phenix.memory"));
+
+    let owner = plugin("fixture.external-memory");
+    builder
+        .add_embedded(
+            PluginManifest {
+                id: owner.clone(),
+                version: 1,
+                execution: PluginExecution::Embedded,
+                dependencies: Vec::new(),
+                services: Vec::new(),
+                resource_namespaces: Vec::new(),
+                maximum_authority: default_suite_authority(),
+            },
+            || Box::new(Echo(b"external")),
+        )
+        .unwrap();
+
+    // A stand-in third-party contract implementation: it advertises compatible
+    // exports without the native memory plugin's helper invocation dependency.
+    // This tests composition, not the semantic quality of a real memory backend.
+    let mut external = memory_component_manifest();
+    external.id = ComponentId::parse("fixture.external-memory.component").unwrap();
+    external.owner = owner;
+    external.imports.clear();
+    let external_id = external.id.clone();
+    builder.add_component(external);
+    builder.bind_provider(MemoryInterface::interface_id(), external_id.clone());
+
+    let resolved = builder.build().expect("Full may resolve against a foreign memory provider");
+    assert!(!resolved.kernel().config().manifests().any(|manifest| {
+        manifest.id.as_str() == "phenix.memory"
+    }));
+    assert!(resolved.kernel().config().manifests().any(|manifest| {
+        manifest.id.as_str() == "fixture.external-memory"
+    }));
+    assert!(resolved.resolved_generation().components().iter().any(|manifest| {
+        manifest.id == external_id
+    }));
+}
