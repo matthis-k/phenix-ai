@@ -1193,4 +1193,91 @@ mod tests {
         assert!(parse_cli(["--disable-provider=fixture.memory@1=".into()]).is_err());
         assert!(parse_cli(["--bind-provider=invalid=fixture.external".into()]).is_err());
     }
+
+    #[test]
+    fn portable_composition_includes_profile_plugins_providers_and_layers() {
+        let source = r#"{
+            "profile": "phenix.product.basic",
+            "plugins": {
+                "enable": ["phenix.debug"],
+                "disable": ["phenix.planning"]
+            },
+            "providers": {
+                "bind": {"fixture.memory@1": "fixture.external"},
+                "disable": {"fixture.context@1": ["fixture.basic"]}
+            },
+            "layers": [{
+                "service": "fixture.memory@1",
+                "plugin": "fixture.observer",
+                "priority": 15,
+                "required": false
+            }]
+        }"#;
+        let config: PortableCompositionConfig = serde_json::from_str(source).unwrap();
+        assert_eq!(config.profile.as_deref(), Some("phenix.product.basic"));
+        assert!(config.plugins.enable.contains("phenix.debug"));
+        assert!(config.plugins.disable.contains("phenix.planning"));
+        assert_eq!(
+            config.providers.bind.get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            Some(&ComponentId::parse("fixture.external").unwrap())
+        );
+        assert_eq!(config.layers.len(), 1);
+        assert_eq!(config.layers[0].priority, 15);
+        assert!(config.layers[0].enabled);
+        assert!(serde_json::from_str::<PortableCompositionConfig>(r#"{"typo":42}"#).is_err());
+        assert!(
+            serde_json::from_str::<PortableCompositionConfig>(
+                r#"{"plugins":{"enable":["phenix.debug"],"typo":true}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn portable_profile_selection_is_phx_owned_and_cli_options_override_file() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.basic",
+                "plugins": {
+                    "enable": ["phenix.debug"],
+                    "disable": ["phenix.options"]
+                }
+            }"#,
+        )
+        .unwrap();
+        let mut cli = Cli::default();
+        // CLI selection overrides a file exclusion, but cannot make a required
+        // dependency disappear from the selected graph.
+        cli.enable_plugins.insert("phenix.options".into());
+        cli.disable_plugins.insert("phenix.debug".into());
+        let selected = resolve_configured_first_party_plugins(
+            &cli,
+            &config,
+            Some("phenix.product.full"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(selected.contains("phenix.product.basic"));
+        assert!(!selected.contains("phenix.product.full"));
+        assert!(selected.contains("phenix.options"));
+        assert!(!selected.contains("phenix.debug"));
+    }
+
+    #[test]
+    fn native_config_file_flag_supports_both_forms() {
+        let positional = parse_cli([
+            "--config".into(),
+            "composition.json".into(),
+        ])
+        .unwrap();
+        let inline = parse_cli(["--config=composition.json".into()]).unwrap();
+        assert_eq!(positional.config_file, inline.config_file);
+        assert_eq!(
+            positional.config_file.as_deref(),
+            Some(Path::new("composition.json"))
+        );
+        assert!(parse_cli(["--config".into()]).is_err());
+        assert!(parse_cli(["--config=".into()]).is_err());
+    }
+
 }
