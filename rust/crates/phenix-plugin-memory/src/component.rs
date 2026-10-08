@@ -27,7 +27,9 @@ pub fn memory_component_manifest() -> ComponentManifest {
             ComponentImport {
                 interface: HelperInvocationInterface::interface_id(),
                 schema: HelperInvocationInterface::schema(),
-                required: true,
+                // Basic store/query does not require a model invocation provider.
+                // Model-assisted maintenance fails at the operation boundary if absent.
+                required: false,
                 authority: authority.clone(),
             },
             ComponentImport {
@@ -96,7 +98,7 @@ mod tests {
             manifest.imports[0].interface,
             HelperInvocationInterface::interface_id()
         );
-        assert!(manifest.imports[0].required);
+        assert!(!manifest.imports[0].required);
         assert_eq!(
             manifest.imports[1].interface,
             OptionsInterface::interface_id()
