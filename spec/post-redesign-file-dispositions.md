@@ -44,6 +44,20 @@ status: specification-only
 | Legacy retirements | Consumer migration + owner-specific parity | Hooks dispatcher, echo production registration, static catalog and imperative progression | No selection paths or direct dependencies remain, old tests rehomed |
 | Repo normalization | Legacy retirements | Nix, CI, docs, scripts, fixture/dependency cleanup | Full tracked-file re-inventory; CI/Nix check coverage maintained |
 
+## Verified retirement consumer ledger
+
+These are concrete references seen on the audited `main` tree. The table names **removal prerequisites**; it does not assert that all consumers are listed. An implementation PR must repeat a complete reverse-dependency and runtime-selection scan against its actual branch.
+
+| Retirement candidate | Verified consumers/references to update | Replacement / parity requirement |
+| --- | --- | --- |
+| `phenix-plugin-hooks` | `phenix-plugin-catalog/Cargo.toml`; `phenix-agent-configurations/src/lib.rs` Advanced defaults; `modules/development.nix`; `rust/Cargo.toml`, `rust/Cargo.lock`; legacy lifecycle/event specs | Move dispatch logic to Service Layers/Events, keep ownership and ordering regression tests, update all profile/Nix selections and specs |
+| `phenix-plugin-basic-model` | `phenix-plugin-catalog/Cargo.toml`; `phenix-plugin-basic-agent/Cargo.toml` dev dependency; `phenix-harness/src/basic_suite.rs`; `modules/package-sets.nix`; `modules/development.nix`; Cargo workspace/lock | Rehome deterministic echo model into test-support fixtures and replace all product-default model selection |
+| `phenix-plugin-catalog` | `phenix-harness/Cargo.toml` and `runtime_builder.rs`; `README.md`; `modules/development.nix`; Rust workspace/lock | Replace re-export/factory roster with typed discovery and portable product manifest selection; migrate `tests/coordination.rs` first |
+| `phenix-plugin-basic-agent/src/agent_loop.rs` | `phenix-plugin-catalog`; `phenix-plugin-execution/Cargo.toml` dev dependency; `modules/package-sets.nix`; `modules/development.nix`; Basic agent profile and app test fixtures | Prove Basic/Full loop parity with #726 topology and replaceable node providers; retain no second loop progression authority |
+| `phenix-plugin-step-runner/src/runner.rs` progression portions | `phenix-plugin-catalog/Cargo.toml`; `modules/development.nix`; Basic profile and SDK step interfaces | Retain per-step execution semantics but hand control flow to compiled workflow graph; ensure tool-call/result and limit behaviors match |
+
+Inspect Cargo `dependencies` separately from `dev-dependencies`, and runtime profile selection separately from both. A crate can be needed only by a test or a Nix package and still require migration before deletion.
+
 ## File-by-file expected disposition
 
 ### `.githooks/` (1 files)
