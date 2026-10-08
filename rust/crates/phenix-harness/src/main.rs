@@ -1005,4 +1005,75 @@ mod tests {
         assert!(error.contains(&execution));
         assert!(error.contains("requires"));
     }
+
+    #[test]
+    fn provider_overrides_have_a_native_cli_independent_of_nix() {
+        let cli = parse_cli([
+            "--provider-policy".into(),
+            "providers.json".into(),
+            "--bind-provider=fixture.memory@1=fixture.external".into(),
+            "--disable-provider".into(),
+            "fixture.context@1=fixture.basic".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.provider_policy_file.as_deref(),
+            Some(Path::new("providers.json"))
+        );
+        assert_eq!(
+            cli.provider_bindings,
+            vec![(
+                InterfaceId::parse("fixture.memory@1").unwrap(),
+                ComponentId::parse("fixture.external").unwrap(),
+            )]
+        );
+        assert_eq!(
+            cli.disabled_providers,
+            vec![(
+                InterfaceId::parse("fixture.context@1").unwrap(),
+                ComponentId::parse("fixture.basic").unwrap(),
+            )]
+        );
+
+        let inline = parse_cli(["--provider-policy=providers.json".into()]).unwrap();
+        assert_eq!(cli.provider_policy_file, inline.provider_policy_file);
+    }
+
+    #[test]
+    fn portable_provider_policy_json_is_typed_and_rejects_unknown_fields() {
+        let json = r#"{
+            "bind": {"fixture.memory@1": "fixture.external"},
+            "disable": {"fixture.context@1": ["fixture.basic"]}
+        }"#;
+        let config: PortableProviderPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.bind.get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            Some(&ComponentId::parse("fixture.external").unwrap())
+        );
+        assert!(
+            config
+                .disable
+                .get(&InterfaceId::parse("fixture.context@1").unwrap())
+                .unwrap()
+                .contains(&ComponentId::parse("fixture.basic").unwrap())
+        );
+        assert!(serde_json::from_str::<PortableProviderPolicy>(r#"{"typo":{}}"#).is_err());
+        assert!(
+            serde_json::from_str::<PortableProviderPolicy>(
+                r#"{"bind":{"invalid-interface":"fixture.external"}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn malformed_provider_options_fail_before_plugin_argument_dispatch() {
+        assert!(parse_cli(["--provider-policy=".into()]).is_err());
+        assert!(parse_cli(["--bind-provider".into()]).is_err());
+        assert!(parse_cli(["--bind-provider=fixture.memory@1".into()]).is_err());
+        assert!(parse_cli(["--disable-provider=fixture.memory@1=".into()]).is_err());
+        assert!(parse_cli(["--bind-provider=invalid=fixture.external".into()]).is_err());
+    }
+
 }
