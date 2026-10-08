@@ -9,6 +9,7 @@
     }:
     let
       maintenanceLib = inputs.phenix-flake-ci.lib;
+      candidateCommit = import ./commit-candidate.nix;
 
       repositoryRoot = ''
         repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -413,6 +414,7 @@
         };
 
         commands = ciCommands // {
+          commit = candidateCommit.command;
           all = {
             description = "Run static validation and the complete semantic CI pipeline";
             dependencies = [
@@ -523,7 +525,6 @@
                       pkgs.cargo
                       pkgs.git
                       pkgs.jq
-                      self'.packages.phenix-test-prepare-commit
                     ];
                     exec = ''
                       ${repositoryRoot}
@@ -531,7 +532,7 @@
                       bash scripts/check-rust-safety-policy.sh
                       bash scripts/check-spec-lifecycle-fixtures.sh
                       bash scripts/check-spec-lifecycle.sh
-                      phenix-test-prepare-commit
+                      ${candidateCommit.test}
                     '';
                   };
 
@@ -690,7 +691,6 @@
           pkgs.statix
           pkgs.taplo
           maintenancePackage.package
-          self'.packages.phenix-prepare-commit
           self'.packages.stitch
           self'.packages.stitch-mcp
         ];
