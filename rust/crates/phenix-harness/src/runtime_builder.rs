@@ -544,10 +544,12 @@ impl PhenixRuntimeBuilder {
     /// Select a provider implementation for a contract in this runtime.
     ///
     /// The provider must still be available, compatible and authorized when
-    /// the graph generation is resolved.
+    /// the graph generation is resolved. An explicit binding re-enables a provider
+    /// excluded by an earlier configuration layer.
     pub fn bind_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
-        self.provider_policy =
-            std::mem::take(&mut self.provider_policy).with_explicit_binding(interface, provider);
+        self.provider_policy = std::mem::take(&mut self.provider_policy)
+            .with_enabled_provider(interface.clone(), provider.clone())
+            .with_explicit_binding(interface, provider);
     }
 
     /// Exclude one provider from selection for an interface.
