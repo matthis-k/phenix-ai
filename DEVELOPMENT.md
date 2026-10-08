@@ -103,7 +103,7 @@ The command runs `maintenance fix` (using the Nix maintenance app outside the de
 
 The pull-request workflows do not write to source branches. The `Source` check rejects formatting and static-analysis failures. For API-only clients that cannot execute Git hooks, run the **Maintenance autofix** workflow manually on the branch to download `maintenance-fixes.patch`, then apply and commit the changes from a checkout. The workflow does not commit or push the patch. Updating the CI generator dependency or lockfile is a separate, intentional change.
 
-Protect `main` with the required `Source` check. Local hooks and the prepare-commit script are convenience and correctness aids, not server-side enforcement; a GitHub API commit can bypass both. Any previously required `autofix` status is preserved as a read-only whitespace check while branch rules are migrated.
+Protect `main` with the required `Source` check. Local hooks and the Nix-packaged prepare-commit command are convenience and correctness aids, not server-side enforcement; a GitHub API commit can bypass both. Any previously required `autofix` status is preserved as a read-only whitespace check while branch rules are migrated.
 
 ## Stitch
 
