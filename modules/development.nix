@@ -9,6 +9,7 @@
     }:
     let
       maintenanceLib = inputs.phenix-flake-ci.lib;
+      candidateCommit = import ./commit-candidate.nix;
 
       repositoryRoot = ''
         repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -413,6 +414,7 @@
         };
 
         commands = ciCommands // {
+          commit = candidateCommit.command;
           all = {
             description = "Run static validation and the complete semantic CI pipeline";
             dependencies = [
@@ -521,6 +523,7 @@
                     runtimeInputs = pkgs: [
                       pkgs.bash
                       pkgs.cargo
+                      pkgs.coreutils
                       pkgs.git
                       pkgs.jq
                     ];
@@ -530,6 +533,7 @@
                       bash scripts/check-rust-safety-policy.sh
                       bash scripts/check-spec-lifecycle-fixtures.sh
                       bash scripts/check-spec-lifecycle.sh
+                      ${candidateCommit.test}
                     '';
                   };
 

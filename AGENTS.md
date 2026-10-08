@@ -19,6 +19,13 @@ Fix or remove documentation that disagrees with the current tree in the same cha
 
 Before finishing an implementation, ask whether new code can be deleted, an existing abstraction can replace it, branches can be merged, stored state can be derived, intermediate representations can be removed, or custom error handling can become ordinary propagation.
 
+## Commit candidates
+
+- Stage only the intended candidate diff, then use `maintenance commit "message"` when working in a Git checkout. It normalizes the candidate, rejects unstaged tracked edits and unrelated formatter changes, stages only candidate paths, and commits once.
+- The generated pre-commit hook remains a fallback for ordinary `git commit`. Do not bypass required checks.
+- CI is read-only. Never push an automated formatting or dependency-update commit from a PR workflow. Fix rejected candidates before committing or pushing.
+- GitHub API contents commits do not execute Git hooks. If the agent has no checkout or normalization tools, do not claim its API commit was preformatted; rely on required read-only checks and use the manual maintenance patch workflow to propose fixes.
+
 ## Rust implementation discipline
 
 Use Canonical's Rust best practices as the primary external Rust reference. Use `mre/idiomatic-rust` as an index to primary guidance. Repository architecture and established local conventions take precedence.
