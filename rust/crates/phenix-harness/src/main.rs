@@ -3,8 +3,8 @@
 mod runtime_config;
 
 use phenix_core::{
-    ComponentProcessArgument, Key, LayerPolicy, LocalPersistence, PhenixValue, PluginExecution,
-    PluginId, PluginManifest, ServiceId,
+    ComponentId, ComponentProcessArgument, InterfaceId, Key, LayerPolicy, LocalPersistence,
+    PhenixValue, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
     PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
@@ -58,6 +58,9 @@ struct Cli {
     mode: Mode,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
+    provider_policy_file: Option<PathBuf>,
+    provider_bindings: Vec<(InterfaceId, ComponentId)>,
+    disabled_providers: Vec<(InterfaceId, ComponentId)>,
     plugin_arguments: Vec<String>,
 }
 
@@ -90,6 +93,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         add_packaged_plugin(&mut builder, &package)?;
     }
     apply_configured_layer_policy(&mut builder)?;
+    apply_configured_provider_policy(&mut builder, &cli)?;
     let mut harness = builder.build_with_persistence(persistence)?;
     let process_arguments = resolve_process_arguments(
         &cli.plugin_arguments,
@@ -167,7 +171,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -190,6 +194,48 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     return Err("--mode requires acp or jsonl".into());
                 }
                 cli.mode = Mode::parse(mode)?;
+            }
+            "--provider-policy" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--provider-policy requires a file path".to_owned())?;
+                if path.is_empty() {
+                    return Err("--provider-policy requires a file path".into());
+                }
+                cli.provider_policy_file = Some(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--provider-policy=") => {
+                let path = argument
+                    .strip_prefix("--provider-policy=")
+                    .expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--provider-policy requires a file path".into());
+                }
+                cli.provider_policy_file = Some(PathBuf::from(path));
+            }
+            "--bind-provider" => {
+                let binding = args
+                    .next()
+                    .ok_or_else(|| "--bind-provider requires INTERFACE=COMPONENT".to_owned())?;
+                cli.provider_bindings.push(parse_provider_pair(&binding)?);
+            }
+            _ if argument.starts_with("--bind-provider=") => {
+                let binding = argument
+                    .strip_prefix("--bind-provider=")
+                    .expect("prefix checked");
+                cli.provider_bindings.push(parse_provider_pair(binding)?);
+            }
+            "--disable-provider" => {
+                let binding = args
+                    .next()
+                    .ok_or_else(|| "--disable-provider requires INTERFACE=COMPONENT".to_owned())?;
+                cli.disabled_providers.push(parse_provider_pair(&binding)?);
+            }
+            _ if argument.starts_with("--disable-provider=") => {
+                let binding = argument
+                    .strip_prefix("--disable-provider=")
+                    .expect("prefix checked");
+                cli.disabled_providers.push(parse_provider_pair(binding)?);
             }
             "--enable-plugin" => {
                 let plugin = args
@@ -233,6 +279,17 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
     Ok(cli)
 }
 
+fn parse_provider_pair(value: &str) -> Result<(InterfaceId, ComponentId), String> {
+    let (interface, component) = value
+        .split_once('=')
+        .ok_or_else(|| "provider binding requires INTERFACE=COMPONENT".to_owned())?;
+    let interface = InterfaceId::parse(interface)
+        .map_err(|error| format!("invalid provider interface {interface}: {error}"))?;
+    let component = ComponentId::parse(component)
+        .map_err(|error| format!("invalid provider component {component}: {error}"))?;
+    Ok((interface, component))
+}
+
 #[derive(Clone, Debug)]
 struct ProcessArgumentInvocation {
     argument: ComponentProcessArgument,
@@ -249,6 +306,9 @@ fn resolve_process_arguments(
         "--mode",
         "--enable-plugin",
         "--disable-plugin",
+        "--provider-policy",
+        "--bind-provider",
+        "--disable-provider",
     ];
 
     let mut declared = BTreeMap::new();
@@ -473,6 +533,45 @@ fn resolve_first_party_plugins(
     }
 
     Ok(Some(enabled))
+}
+
+/// One portable, intentionally minimal provider-selection document.
+///
+/// This is not an alternative graph resolver: it only lowers user decisions
+/// into the existing Phenix provider composition policy.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortableProviderPolicy {
+    #[serde(default)]
+    bind: BTreeMap<InterfaceId, ComponentId>,
+    #[serde(default)]
+    disable: BTreeMap<InterfaceId, BTreeSet<ComponentId>>,
+}
+
+fn apply_configured_provider_policy(
+    builder: &mut PhenixRuntimeBuilder,
+    cli: &Cli,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(path) = &cli.provider_policy_file {
+        let source = fs::read_to_string(path)?;
+        let configured: PortableProviderPolicy = serde_json::from_str(&source)?;
+        for (interface, provider) in configured.bind {
+            builder.bind_provider(interface, provider);
+        }
+        for (interface, providers) in configured.disable {
+            for provider in providers {
+                builder.disable_provider(interface.clone(), provider);
+            }
+        }
+    }
+    // Explicit CLI arguments override bindings in the supplied file.
+    for (interface, provider) in &cli.provider_bindings {
+        builder.bind_provider(interface.clone(), provider.clone());
+    }
+    for (interface, provider) in &cli.disabled_providers {
+        builder.disable_provider(interface.clone(), provider.clone());
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
