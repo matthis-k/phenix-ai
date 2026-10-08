@@ -150,6 +150,33 @@ The adapter should initially specify and test a concrete Lua language/version co
 Prove an editor-independent invoke/import/event round trip first. Then add a narrow Phenix.nvim ACP smoke test: keep the editor connected while staging Lua guest revision B, invoke B from a deliberately selected new root, and confirm the preexisting root remains pinned to A. The frontend must never rebuild or restart the kernel to observe the new generation.
 
 
+### Preserve the Neovim Lua client module
+
+The existing **client-facing** `phenix-binding-lua` crate exports a native Lua module via `#[mlua::lua_module(name = "phenix")]`. Its public import remains `require("phenix")`; existing `phenix.connect(...)`, `phenix.application`, `phenix.tools`, descriptor and callback behavior remain supported. This is an independently loadable Lua client library for Neovim or any compatible Lua 5.1/LuaJIT host. It must not depend on loading `adapter-lua.so` into the editor.
+
+The proposed `adapter-lua.so` is a **server-side native Phenix plugin** that hosts separately packaged Lua guest plugins. A Lua guest may use an adapter-provided module such as `require("phenix.guest")`. That guest module is not the existing editor client module and must not spawn ACP or depend on `vim.*`.
+
+The public Neovim API should remain ergonomic, e.g.:
+
+~~~lua
+local phenix = require("phenix")
+local client = phenix.connect({ command = "phenix", args = { "--mode", "acp" } })
+
+-- Existing ACP and Phenix application operations stay available.
+-- Future generation/plugin management helpers are generated from the
+-- negotiated application descriptor, not handwritten alternate protocols.
+~~~
+
+`phenix-binding-generator` and the fixed application descriptor should remain the source of truth for client-side operation names, errors and negotiated capability metadata. Common contract schemas may be shared by the client and guest binding generators, but transport, threading, lifetime and permission handling stay on their respective sides.
+
+After Stage N4, the Lua client should expose typed, capability-negotiated operations to **list resident generations, inspect a candidate graph and its diff, explicitly select a candidate for a new root, and promote a candidate if authorized**. Naming and exact return shapes are governed by the application descriptor, not by special Lua-only commands. Unavailable management extensions must fail with the binding's existing typed unsupported-capability error; no implicit fallback or direct kernel mutation is permitted.
+
+Acceptance includes:
+- A Neovim session retains its existing `require("phenix")`, ACP connection, requests, event delivery and callback behavior through a Lua guest reload.
+- The same `require("phenix")` module works from a non-Neovim Lua 5.1/LuaJIT fixture without `vim` globals.
+- The server-side Lua guest module can implement and invoke canonical services without pulling `phenix-client-acp` into its guest runtime.
+- A candidate can be selected via negotiated Lua client operations without an editor/kernel restart or accidentally changing existing root generation bindings.
+
 ### Adapter chains
 
 An adapter can itself be hosted as a guest of another runtime adapter, provided it implements the canonical Guest Runtime contract through its host's bindings. That is an optional capability; initial conformance needs only a native adapter loading a guest. Resolving a runtime adapter through itself or through a dependency cycle is always an error.
