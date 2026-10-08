@@ -27,7 +27,7 @@ jobs:
   # Optional repair aid for changes made by GitHub API or other hookless clients.
   # Produces a patch to apply to a local candidate; never commits or pushes it.
   propose-fixes:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'fix/normalize-before-commit-no-bot-push')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -45,7 +45,6 @@ jobs:
           set -euo pipefail
           printf '%s\n' '{"command":"fix","source":{"type":"maintenance-patch"}}' |
             nix run --quiet --no-write-lock-file .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
-          git diff -- modules/commit-candidate.nix
           git diff --binary > maintenance-fixes.patch
           if test -s maintenance-fixes.patch; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
