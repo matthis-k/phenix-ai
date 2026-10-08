@@ -7,7 +7,8 @@ use phenix_core::{
     PhenixValue, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
+    PhenixRuntime, PhenixRuntimeBuilder,
+    application::{application_agent_tool_manifest, serve_configured_application},
     default_suite_authority, invocation_defaults_manifest,
 };
 use phenix_plugin_catalog::{
@@ -472,6 +473,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (efficiency_evaluation_manifest(), true),
         (benchmark_outcome_manifest(), false),
         (agent_loop_manifest(authority.clone()), true),
+        (application_agent_tool_manifest(authority.clone()), true),
         (language_manifest(), true),
         (memory_manifest(), true),
         (planning_manifest(), true),
