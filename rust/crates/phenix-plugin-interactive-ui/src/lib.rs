@@ -3,9 +3,9 @@
 //! Typed display documents. No model tools or frontend actions are exposed yet.
 
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest,
-    InterfaceId, InterfaceSchema, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
+    InterfaceSchema, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,27 +21,60 @@ const MAX_DOCUMENT_KEYS: usize = 512;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UiNode {
-    Text { id: String, text: String },
-    Label { id: String, text: String },
-    Badge { id: String, text: String },
-    Progress { id: String, text: String, fraction: f64 },
-    Row { id: String, children: Vec<String> },
-    Column { id: String, children: Vec<String> },
-    Card { id: String, title: String, children: Vec<String> },
-    Table { id: String, columns: Vec<String>, rows: Vec<Vec<String>> },
+    Text {
+        id: String,
+        text: String,
+    },
+    Label {
+        id: String,
+        text: String,
+    },
+    Badge {
+        id: String,
+        text: String,
+    },
+    Progress {
+        id: String,
+        text: String,
+        fraction: f64,
+    },
+    Row {
+        id: String,
+        children: Vec<String>,
+    },
+    Column {
+        id: String,
+        children: Vec<String>,
+    },
+    Card {
+        id: String,
+        title: String,
+        children: Vec<String>,
+    },
+    Table {
+        id: String,
+        columns: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
 }
 
 impl UiNode {
     fn id(&self) -> &str {
         match self {
-            Self::Text { id, .. } | Self::Label { id, .. } | Self::Badge { id, .. }
-            | Self::Progress { id, .. } | Self::Row { id, .. } | Self::Column { id, .. }
-            | Self::Card { id, .. } | Self::Table { id, .. } => id,
+            Self::Text { id, .. }
+            | Self::Label { id, .. }
+            | Self::Badge { id, .. }
+            | Self::Progress { id, .. }
+            | Self::Row { id, .. }
+            | Self::Column { id, .. }
+            | Self::Card { id, .. }
+            | Self::Table { id, .. } => id,
         }
     }
     fn children(&self) -> &[String] {
         match self {
-            Self::Row { children, .. } | Self::Column { children, .. }
+            Self::Row { children, .. }
+            | Self::Column { children, .. }
             | Self::Card { children, .. } => children,
             _ => &[],
         }
@@ -63,9 +96,19 @@ pub struct UiDocument {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UiDocumentCommand {
-    Put { document: UiDocument, expected_revision: Option<u64> },
-    Get { session_id: String, document_id: String },
-    Dismiss { session_id: String, document_id: String, expected_revision: u64 },
+    Put {
+        document: UiDocument,
+        expected_revision: Option<u64>,
+    },
+    Get {
+        session_id: String,
+        document_id: String,
+    },
+    Dismiss {
+        session_id: String,
+        document_id: String,
+        expected_revision: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -136,13 +179,21 @@ struct UiStore {
 impl UiStore {
     fn apply(&mut self, command: UiDocumentCommand) -> Result<UiDocumentResponse, String> {
         match command {
-            UiDocumentCommand::Put { document, expected_revision } => {
+            UiDocumentCommand::Put {
+                document,
+                expected_revision,
+            } => {
                 validate_document(&document)?;
                 let key = (document.session_id.clone(), document.document_id.clone());
                 if self.documents.get(&key) == Some(&document) {
-                    return Ok(UiDocumentResponse::Stored { revision: document.revision });
+                    return Ok(UiDocumentResponse::Stored {
+                        revision: document.revision,
+                    });
                 }
-                let previous = self.documents.get(&key).map(|d| d.revision)
+                let previous = self
+                    .documents
+                    .get(&key)
+                    .map(|d| d.revision)
                     .or_else(|| self.tombstones.get(&key).copied());
                 if previous != expected_revision {
                     return Err("UI document revision conflict".into());
@@ -154,7 +205,8 @@ impl UiStore {
                 }
                 let next = match previous {
                     None => 1,
-                    Some(previous) => previous.checked_add(1)
+                    Some(previous) => previous
+                        .checked_add(1)
                         .ok_or_else(|| "UI document revision exhausted".to_owned())?,
                 };
                 if next != document.revision {
@@ -164,14 +216,21 @@ impl UiStore {
                 self.documents.insert(key, document);
                 Ok(UiDocumentResponse::Stored { revision: next })
             }
-            UiDocumentCommand::Get { session_id, document_id } => {
+            UiDocumentCommand::Get {
+                session_id,
+                document_id,
+            } => {
                 validate_identity(&session_id)?;
                 validate_identity(&document_id)?;
                 Ok(UiDocumentResponse::Document {
                     document: self.documents.get(&(session_id, document_id)).cloned(),
                 })
             }
-            UiDocumentCommand::Dismiss { session_id, document_id, expected_revision } => {
+            UiDocumentCommand::Dismiss {
+                session_id,
+                document_id,
+                expected_revision,
+            } => {
                 validate_identity(&session_id)?;
                 validate_identity(&document_id)?;
                 let key = (session_id, document_id);
@@ -179,7 +238,8 @@ impl UiStore {
                 if current.revision != expected_revision {
                     return Err("UI document revision conflict".into());
                 }
-                let revision = expected_revision.checked_add(1)
+                let revision = expected_revision
+                    .checked_add(1)
                     .ok_or("UI document revision exhausted")?;
                 self.documents.remove(&key);
                 self.tombstones.insert(key, revision);
@@ -189,32 +249,39 @@ impl UiStore {
     }
 }
 impl PluginInstance for UiStore {
-    fn invoke(&mut self, service: &ServiceId, input: &[u8], host: &PluginHost<'_>)
-        -> Result<Vec<u8>, String>
-    {
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
         if service != &interactive_ui_service() {
             return Err(format!("unsupported UI service: {service}"));
         }
         let context = PluginContext::new(host, (), (), ());
-        let command = context.kernel
+        let command = context
+            .kernel
             .decode_projected::<UiDocumentCommand>(&UiDocumentInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
         let response = self.apply(command)?;
-        context.kernel.encode_value(&response).map_err(|error| error.to_string())
+        context
+            .kernel
+            .encode_value(&response)
+            .map_err(|error| error.to_string())
     }
 }
 
 fn validate_identity(id: &str) -> Result<(), String> {
-    if id.is_empty() || id.len() > 256 || id.trim() != id
-        || id.chars().any(char::is_control)
-    {
+    if id.is_empty() || id.len() > 256 || id.trim() != id || id.chars().any(char::is_control) {
         return Err("invalid UI identity".into());
     }
     Ok(())
 }
 fn validate_text(text: &str, total: &mut usize) -> Result<(), String> {
     if text.len() > MAX_TEXT_BYTES
-        || text.chars().any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+        || text
+            .chars()
+            .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
     {
         return Err("invalid UI text".into());
     }
@@ -242,8 +309,9 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
             return Err("duplicate UI node ID".into());
         }
         match node {
-            UiNode::Text { text, .. } | UiNode::Label { text, .. }
-            | UiNode::Badge { text, .. } => validate_text(text, &mut total)?,
+            UiNode::Text { text, .. } | UiNode::Label { text, .. } | UiNode::Badge { text, .. } => {
+                validate_text(text, &mut total)?
+            }
             UiNode::Progress { text, fraction, .. } => {
                 validate_text(text, &mut total)?;
                 if !fraction.is_finite() || !(0.0..=1.0).contains(fraction) {
@@ -269,15 +337,20 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
             }
             _ => {}
         }
-        if matches!(node, UiNode::Row { .. } | UiNode::Column { .. } | UiNode::Card { .. })
-            && node.children().is_empty()
+        if matches!(
+            node,
+            UiNode::Row { .. } | UiNode::Column { .. } | UiNode::Card { .. }
+        ) && node.children().is_empty()
         {
             return Err("empty UI layout".into());
         }
     }
-    fn visit(id: &str, index: &BTreeMap<&str, &UiNode>,
-        visited: &mut BTreeSet<String>, depth: usize) -> Result<(), String>
-    {
+    fn visit(
+        id: &str,
+        index: &BTreeMap<&str, &UiNode>,
+        visited: &mut BTreeSet<String>,
+        depth: usize,
+    ) -> Result<(), String> {
         if depth > MAX_DEPTH {
             return Err("UI layout nesting exceeds limit".into());
         }
@@ -289,7 +362,8 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
             let nested = index.get(child.as_str()).ok_or("unknown UI child node")?;
             if matches!(node, UiNode::Row { .. }) {
                 let text = match nested {
-                    UiNode::Text { text, .. } | UiNode::Label { text, .. }
+                    UiNode::Text { text, .. }
+                    | UiNode::Label { text, .. }
                     | UiNode::Badge { text, .. } => text,
                     _ => return Err("UI row accepts only text, labels, and badges".into()),
                 };
@@ -315,12 +389,25 @@ mod tests {
 
     fn fixture() -> UiDocument {
         UiDocument {
-            version: 1, session_id: "s1".into(), document_id: "d1".into(),
-            revision: 1, root: "root".into(),
+            version: 1,
+            session_id: "s1".into(),
+            document_id: "d1".into(),
+            revision: 1,
+            root: "root".into(),
             nodes: vec![
-                UiNode::Column { id: "root".into(), children: vec!["title".into(), "status".into()] },
-                UiNode::Text { id: "title".into(), text: "Build".into() },
-                UiNode::Progress { id: "status".into(), text: "Running".into(), fraction: 0.5 },
+                UiNode::Column {
+                    id: "root".into(),
+                    children: vec!["title".into(), "status".into()],
+                },
+                UiNode::Text {
+                    id: "title".into(),
+                    text: "Build".into(),
+                },
+                UiNode::Progress {
+                    id: "status".into(),
+                    text: "Running".into(),
+                    fraction: 0.5,
+                },
             ],
         }
     }
@@ -329,35 +416,67 @@ mod tests {
         let base = fixture();
         validate_document(&base).unwrap();
         let mut bad = base.clone();
-        bad.nodes.push(UiNode::Text { id: "orphan".into(), text: "".into() });
+        bad.nodes.push(UiNode::Text {
+            id: "orphan".into(),
+            text: "".into(),
+        });
         assert!(validate_document(&bad).is_err());
         let mut bad = base.clone();
-        bad.nodes[1] = UiNode::Text { id: "root".into(), text: "".into() };
+        bad.nodes[1] = UiNode::Text {
+            id: "root".into(),
+            text: "".into(),
+        };
         assert!(validate_document(&bad).is_err());
         let mut bad = base.clone();
-        bad.nodes[0] = UiNode::Column { id: "root".into(), children: vec!["root".into()] };
+        bad.nodes[0] = UiNode::Column {
+            id: "root".into(),
+            children: vec!["root".into()],
+        };
         assert!(validate_document(&bad).is_err());
         let mut bad = base.clone();
-        bad.nodes[2] = UiNode::Progress { id: "status".into(), text: "".into(), fraction: f64::NAN };
+        bad.nodes[2] = UiNode::Progress {
+            id: "status".into(),
+            text: "".into(),
+            fraction: f64::NAN,
+        };
         assert!(validate_document(&bad).is_err());
         let mut bad = base;
-        bad.nodes[1] = UiNode::Text { id: "title".into(), text: "\u{1b}[2J".into() };
+        bad.nodes[1] = UiNode::Text {
+            id: "title".into(),
+            text: "\u{1b}[2J".into(),
+        };
         assert!(validate_document(&bad).is_err());
     }
     #[test]
     fn revision_conflicts_and_tombstones() {
         let mut store = UiStore::default();
         let original = fixture();
-        let put = |document, expected_revision| UiDocumentCommand::Put { document, expected_revision };
-        assert_eq!(store.apply(put(original.clone(), None)).unwrap(), UiDocumentResponse::Stored { revision: 1 });
-        assert_eq!(store.apply(put(original.clone(), None)).unwrap(), UiDocumentResponse::Stored { revision: 1 });
+        let put = |document, expected_revision| UiDocumentCommand::Put {
+            document,
+            expected_revision,
+        };
+        assert_eq!(
+            store.apply(put(original.clone(), None)).unwrap(),
+            UiDocumentResponse::Stored { revision: 1 }
+        );
+        assert_eq!(
+            store.apply(put(original.clone(), None)).unwrap(),
+            UiDocumentResponse::Stored { revision: 1 }
+        );
         let mut updated = original.clone();
         updated.revision = 2;
         assert!(store.apply(put(updated.clone(), None)).is_err());
         assert!(store.apply(put(updated.clone(), Some(1))).is_ok());
-        assert_eq!(store.apply(UiDocumentCommand::Dismiss {
-            session_id: "s1".into(), document_id: "d1".into(), expected_revision: 2,
-        }).unwrap(), UiDocumentResponse::Dismissed { revision: 3 });
+        assert_eq!(
+            store
+                .apply(UiDocumentCommand::Dismiss {
+                    session_id: "s1".into(),
+                    document_id: "d1".into(),
+                    expected_revision: 2,
+                })
+                .unwrap(),
+            UiDocumentResponse::Dismissed { revision: 3 }
+        );
         assert!(store.apply(put(original, None)).is_err());
         updated.revision = 4;
         assert!(store.apply(put(updated, Some(3))).is_ok());
@@ -368,14 +487,36 @@ mod tests {
         let a = fixture();
         let mut b = a.clone();
         b.session_id = "s2".into();
-        store.apply(UiDocumentCommand::Put { document: a.clone(), expected_revision: None }).unwrap();
-        store.apply(UiDocumentCommand::Put { document: b.clone(), expected_revision: None }).unwrap();
-        assert_eq!(store.apply(UiDocumentCommand::Get {
-            session_id: "s1".into(), document_id: "d1".into()
-        }).unwrap(), UiDocumentResponse::Document { document: Some(a) });
-        assert_eq!(store.apply(UiDocumentCommand::Get {
-            session_id: "s2".into(), document_id: "d1".into()
-        }).unwrap(), UiDocumentResponse::Document { document: Some(b) });
+        store
+            .apply(UiDocumentCommand::Put {
+                document: a.clone(),
+                expected_revision: None,
+            })
+            .unwrap();
+        store
+            .apply(UiDocumentCommand::Put {
+                document: b.clone(),
+                expected_revision: None,
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .apply(UiDocumentCommand::Get {
+                    session_id: "s1".into(),
+                    document_id: "d1".into()
+                })
+                .unwrap(),
+            UiDocumentResponse::Document { document: Some(a) }
+        );
+        assert_eq!(
+            store
+                .apply(UiDocumentCommand::Get {
+                    session_id: "s2".into(),
+                    document_id: "d1".into()
+                })
+                .unwrap(),
+            UiDocumentResponse::Document { document: Some(b) }
+        );
         assert_eq!(interactive_ui_manifest().id.as_str(), INTERACTIVE_UI_PLUGIN);
         assert_eq!(interactive_ui_component_manifest().exports.len(), 1);
     }

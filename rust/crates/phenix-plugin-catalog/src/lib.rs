@@ -126,16 +126,15 @@ pub use phenix_plugin_frontend::{
     frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
     frontend_service,
 };
-pub use phenix_plugin_interactive_ui::{
-    INTERACTIVE_UI_PLUGIN, UI_DOCUMENT_SERVICE, UiDocument, UiDocumentCommand,
-    UiDocumentInterface, UiDocumentResponse, UiNode, interactive_ui_component_manifest,
-    interactive_ui_factory, interactive_ui_manifest, interactive_ui_service,
-    validate_document as validate_ui_document,
-};
 pub use phenix_plugin_hooks::{
     HOOK_SERVICE, HookAction, HookCommand, HookConfiguration, HookDefinition, HookDispatch,
     HookFailurePolicy, HookInterface, HookResponse, HookWarning, LifecycleEvent, hook_component_id,
     hook_component_manifest, hook_factory, hook_manifest, hook_service,
+};
+pub use phenix_plugin_interactive_ui::{
+    INTERACTIVE_UI_PLUGIN, UI_DOCUMENT_SERVICE, UiDocument, UiDocumentCommand, UiDocumentInterface,
+    UiDocumentResponse, UiNode, interactive_ui_component_manifest, interactive_ui_factory,
+    interactive_ui_manifest, interactive_ui_service, validate_document as validate_ui_document,
 };
 pub use phenix_plugin_jobs::{
     job_component_id, job_component_manifest, job_factory, job_manifest, job_service,
