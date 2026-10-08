@@ -6,7 +6,7 @@ let
     # Normalize a staged candidate before creating its commit. Never stage unrelated
     # working-tree changes, including those produced by a repository-wide formatter.
     if (( $# != 1 )) || [[ -z "''${1//[[:space:]]/}" ]]; then
-      echo "usage: phenix-prepare-commit 'commit message'" >&2
+      echo "usage: maintenance commit 'commit message'" >&2
       exit 2
     fi
     message=$1
@@ -103,17 +103,17 @@ CANDIDATE
 
       # Stub only the normalizer. Exercise the real git index and git commit.
       cat > "$directory/bin/maintenance" <<'STUB'
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [[ "$1" == fix ]]
-    printf 'normalized\n' > selected.txt
-    if [[ "''${FIX_UNRELATED:-}" == 1 ]]; then
-      printf 'unexpected\n' > unrelated.txt
-    fi
-    if [[ "''${FIX_NEW_UNTRACKED:-}" == 1 ]]; then
-      printf 'unexpected\n' > generated.txt
-    fi
-    STUB
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == fix ]]
+printf 'normalized\n' > selected.txt
+if [[ "''${FIX_UNRELATED:-}" == 1 ]]; then
+  printf 'unexpected\n' > unrelated.txt
+fi
+if [[ "''${FIX_NEW_UNTRACKED:-}" == 1 ]]; then
+  printf 'unexpected\n' > generated.txt
+fi
+STUB
       chmod +x "$directory/bin/maintenance"
       printf '%s\n' "$directory"
     }
