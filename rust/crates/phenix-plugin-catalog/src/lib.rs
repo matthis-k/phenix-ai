@@ -8,7 +8,7 @@ pub use phenix_agent_configurations::{
     ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION, BASIC_PRODUCT_CONFIGURATION,
     FULL_PRODUCT_CONFIGURATION, advanced_agent_configuration_manifest,
     basic_agent_configuration_manifest, basic_product_configuration_manifest,
-    full_product_configuration_manifest,
+    expand_profile_defaults, full_product_configuration_manifest, profile_defaults,
 };
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_api::{
