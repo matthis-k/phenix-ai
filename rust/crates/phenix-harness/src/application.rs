@@ -11016,11 +11016,11 @@ mod tests {
         ));
     }
 
-    /// Foreign loops may stop themselves without receiving an application
-    /// Cancel request. This must remain a cancelled session execution.
-    struct ContractCancellingAgent;
+    /// Verify the terminal agent contract through the application dispatch,
+    /// including a provider-initiated cancellation with no caller Cancel request.
+    struct ForeignContractAgent;
 
-    impl PluginInstance for ContractCancellingAgent {
+    impl PluginInstance for ForeignContractAgent {
         fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
             Ok(())
         }
@@ -11028,21 +11028,42 @@ mod tests {
         fn invoke(
             &mut self,
             _service: &ServiceId,
-            _input: &[u8],
+            input: &[u8],
             _host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
-            serde_json::to_vec(&PhenixValue::from(&AgentLoopResponse::Cancelled {
-                usage: phenix_sdk::AgentLoopUsage {
-                    model_calls: 0,
-                    tool_calls: 0,
-                },
-            }))
-            .map_err(|error| error.to_string())
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let command = AgentLoopCommand::try_from(Project(&value))
+                .map_err(|error| format!("{error:?}"))?;
+            let AgentLoopCommand::Run {
+                session_id: Some(_),
+                input,
+                ..
+            } = command else {
+                return Err("application must send a session-qualified run".into());
+            };
+            let complete = input.as_ref().windows(b"foreign completion marker".len()).any(|part| {
+                part == b"foreign completion marker"
+            });
+            let usage = phenix_sdk::AgentLoopUsage {
+                model_calls: 0,
+                tool_calls: 0,
+            };
+            let response = if complete {
+                AgentLoopResponse::Completed {
+                    output: Bytes::new(b"foreign-agent-output".to_vec()),
+                    usage,
+                }
+            } else {
+                AgentLoopResponse::Cancelled { usage }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response))
+                .map_err(|error| error.to_string())
         }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn foreign_agent_self_cancellation_is_a_cancelled_execution() {
+    async fn foreign_agent_completion_and_self_cancellation_are_projected() {
         let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         let owner = PluginId::parse("fixture.self-cancelling-agent").unwrap();
         builder
@@ -11061,7 +11082,7 @@ mod tests {
                     resource_namespaces: Vec::new(),
                     maximum_authority: default_suite_authority(),
                 },
-                || Box::new(ContractCancellingAgent),
+                || Box::new(ForeignContractAgent),
             )
             .unwrap();
         let mut component =
@@ -11137,6 +11158,23 @@ mod tests {
             assert_eq!(prompt.stop_reason, StopReason::Cancelled);
         }
 
+        let completed = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "foreign completion marker".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("foreign agent completion must return promptly")
+        .expect("selected foreign provider must complete the prompt");
+        assert_eq!(completed.stop_reason, StopReason::EndTurn);
+
         let resumed = invoke_transport_operation::<ResumeSession>(
             &transport,
             SessionResumeInput {
@@ -11146,6 +11184,21 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. } if text == "foreign-agent-output"
+            )
+        }));
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State { state: ExecutionState::Completed },
+                } if execution_id == &completed.execution_id
+            )
+        }));
         let cancelled = resumed.updates.iter().filter(|update| {
             matches!(
                 &update.update,
