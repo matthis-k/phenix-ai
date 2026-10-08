@@ -21,7 +21,7 @@ Before finishing an implementation, ask whether new code can be deleted, an exis
 
 ## Commit candidates
 
-- Stage only the intended candidate diff, then use `scripts/prepare-commit.sh "message"` when working in a Git checkout. It normalizes the candidate, rejects unstaged tracked edits and unrelated formatter changes, stages only candidate paths, and commits once.
+- Stage only the intended candidate diff, then use `phenix-prepare-commit "message"` when working in a Git checkout. It normalizes the candidate, rejects unstaged tracked edits and unrelated formatter changes, stages only candidate paths, and commits once.
 - The generated pre-commit hook remains a fallback for ordinary `git commit`. Do not bypass required checks.
 - CI is read-only. Never push an automated formatting or dependency-update commit from a PR workflow. Fix rejected candidates before committing or pushing.
 - GitHub API contents commits do not execute Git hooks. If the agent has no checkout or normalization tools, do not claim its API commit was preformatted; rely on required read-only checks and use the manual maintenance patch workflow to propose fixes.
