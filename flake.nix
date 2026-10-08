@@ -38,6 +38,7 @@
         ./modules/package-sets.nix
         ./modules/lua-binding-integration.nix
         ./modules/development.nix
+        ./modules/commit-candidate.nix
         ./modules/stitch.nix
       ];
 
