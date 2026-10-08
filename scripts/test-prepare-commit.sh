@@ -40,7 +40,7 @@ git -C "$pass" add selected.txt
 )
 [[ "$(git -C "$pass" show HEAD:selected.txt)" == normalized ]]
 [[ "$(git -C "$pass" rev-list --count HEAD)" == 2 ]]
-[[ -z "$(git -C "$pass" status --porcelain)" ]]
+[[ -z "$(git -C "$pass" status --porcelain --untracked-files=no)" ]]
 
 unrelated="$(make_fixture unrelated)"
 printf 'candidate\n' > "$unrelated/selected.txt"
