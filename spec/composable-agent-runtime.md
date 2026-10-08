@@ -198,6 +198,7 @@ through a wrapper. The current supported JSON sections are:
     "enable": ["phenix.debug"],
     "disable": []
   },
+  "plugin_packages": ["./plugins/my-process-plugin"],
   "providers": {
     "bind": {"phenix.memory@1": "acme.memory.component"},
     "disable": {"phenix.context@1": ["phenix.context.native"]}
@@ -219,6 +220,7 @@ Equivalent basic native CLI choices are available:
 ~~~shell
 phenix --config composition.json --profile phenix.product.basic
 phenix --enable-plugin phenix.debug --disable-plugin phenix.planning
+phenix --plugin-package ./plugins/my-process-plugin
 phenix --bind-provider phenix.memory@1=acme.memory.component
 phenix --disable-provider phenix.context@1=phenix.context.native
 ~~~
@@ -227,7 +229,9 @@ The precedence for currently supported choices is deployment defaults
 (`PHENIX_ENABLED_PLUGINS` / `PHENIX_LAYER_POLICY`), then the portable
 file, then explicit CLI flags. A selected profile changes the base plugin
 selection. File Layer declarations for a given service override the deployment
-default list for that service. The existing provider-only
+default list for that service. Portable `plugin_packages` entries are
+resolved relative to the composition file; `--plugin-package` and
+`PHENIX_PLUGIN_PACKAGES` add package roots directly. The existing provider-only
 `--provider-policy` file is accepted for backward compatibility and applied
 after the unified file, before CLI binding flags.
 
@@ -242,7 +246,7 @@ provider rules itself. The same file also works through
 `phenix --config ./composition.json` on a non-Nix system.
 
 **Not yet implemented:** A fully general profiles/overlays schema (including
-replacement of concrete package dependencies), package installation, automatic
+replacement of concrete package dependencies), package installation and automatic discovery, automatic
 standard-location config discovery, unified plugin settings in this file,
 interactive `plan/apply` management commands, and exact full-layer CLI editing.
 These are follow-up work, not covered by this initial JSON frontend.
@@ -410,7 +414,7 @@ by the canonical Core resolver.
 - **Implemented:** Shared SDK-owned agent execution contract, with Basic compatibility exports.
 - **Implemented:** Core's complete resolver path now accepts explicit provider policy alongside Layer policies, durable schemas, process arguments, entry triggers and contributions.
 - **Implemented:** `PhenixRuntimeBuilder::set_provider_policy`, `bind_provider` and `disable_provider` delegate resolution to that canonical path. The builder does not evaluate Nix or implement a separate provider solver.
-- **Implemented:** Native `--config` JSON composition frontend (profile, plugin choices, provider bindings and Layer policies), `--profile`, `--provider-policy`, `--bind-provider`, and `--disable-provider`; Nix `configFile` passes the same file path through unchanged.
+- **Implemented:** Native `--config` JSON composition frontend (profiles, plugins, explicit packaged plugin roots, provider bindings and Layer policies), `--profile`, `--plugin-package`, `--provider-policy`, `--bind-provider`, and `--disable-provider`; Nix `configFile` passes the same file path through unchanged.
 - **Implemented:** Explicit provider selection fails when the nominated provider is unavailable or ineligible, rather than silently routing to another component.
 - **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity, invalid bindings, Full/Advanced profile default exclusions, native-vs-foreign memory contract substitution (resolver fixture only), and CLI precedence.
 - **Implemented in this PR:** Basic/Full reference profile defaults are expanded in Phenix before checking concrete manifest dependencies. Overridden optional defaults are not included as runtime plugins; true implementation dependencies still fail when missing.
