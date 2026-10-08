@@ -82,6 +82,20 @@ impl ProviderCompositionPolicy {
         self
     }
 
+    /// Re-enable a provider explicitly excluded by an earlier configuration layer.
+    ///
+    /// This changes only provider eligibility. An explicit binding must still be
+    /// valid and satisfy the consuming contract and authority constraints.
+    #[must_use]
+    pub fn with_enabled_provider(mut self, interface: InterfaceId, provider: ComponentId) -> Self {
+        self.interfaces
+            .entry(interface)
+            .or_default()
+            .disabled
+            .remove(&provider);
+        self
+    }
+
     /// Declare that the interface contract itself permits pre-dispatch fallback.
     #[must_use]
     pub fn with_interface_fallback(mut self, interface: InterfaceId) -> Self {
