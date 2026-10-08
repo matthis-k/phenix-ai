@@ -84,7 +84,8 @@ in
 {
   command = {
     description = "Normalize a staged candidate and create one commit";
-    dependencies = [ [ "fix" ] ];
+    # Fix must run only after the staged candidate and outside edits are checked.
+    # A command dependency would normalize eagerly and run it a second time.
     runtimeInputs = pkgs: [ pkgs.git ];
     exec = candidate ''"$0" fix'';
   };
