@@ -33,7 +33,7 @@ pub fn expand_profile_defaults(
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_agent_topology::{
     AGENT_TOPOLOGY_PLUGIN, agent_topology_component_manifest, agent_topology_declaration,
-    agent_topology_manifest, run_agent_workflow,
+    agent_topology_manifest, agent_topology_projections, run_agent_workflow,
 };
 pub use phenix_plugin_api::{
     SDK_COMPONENT, SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE,
