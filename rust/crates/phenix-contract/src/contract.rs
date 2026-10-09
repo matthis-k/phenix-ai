@@ -271,8 +271,8 @@ pub enum Type {
     },
     List(Box<Type>),
     Map(Box<Type>),
-    Table(BTreeMap<Key, Type>),
-    Variant(BTreeMap<Key, Type>),
+    Table(#[serde(deserialize_with = "deserialize_unique_value_map")] BTreeMap<Key, Type>),
+    Variant(#[serde(deserialize_with = "deserialize_unique_value_map")] BTreeMap<Key, Type>),
     Callable {
         contract: ContractId,
         input: Box<Type>,
@@ -1380,6 +1380,29 @@ mod tests {
 
     fn key(value: &str) -> Key {
         Key::parse(value).unwrap()
+    }
+
+    #[test]
+    fn portable_contract_schemas_reject_duplicate_fields_and_variants() {
+        for schema in [
+            r#"{"type":"table","value":{"field":{"type":"string"},"field":{"type":"string"}}}"#,
+            r#"{"type":"table","value":{"field":{"type":"string"},"field":{"type":"u64"}}}"#,
+            r#"{"type":"variant","value":{"result":{"type":"unit"},"result":{"type":"unit"}}}"#,
+            r#"{"type":"variant","value":{"result":{"type":"unit"},"result":{"type":"bool"}}}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Type>(schema).is_err(),
+                "duplicate schema identity must fail: {schema}"
+            );
+        }
+        let valid = Type::Variant(BTreeMap::from([
+            (key("success"), Type::String),
+            (key("failed"), Type::Table(BTreeMap::from([(key("reason"), Type::String)]))),
+        ]));
+        assert_eq!(
+            serde_json::from_slice::<Type>(&serde_json::to_vec(&valid).unwrap()).unwrap(),
+            valid
+        );
     }
 
     #[test]
