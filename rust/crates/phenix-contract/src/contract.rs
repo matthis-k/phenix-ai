@@ -629,9 +629,7 @@ fn parse_reference_contract(expected: &ContractId, actual: &ContractId) -> Resul
 /// Preserve the identity of every key in portable structural values.
 /// A plain BTreeMap decoder silently replaces earlier JSON members and makes
 /// distinct untrusted envelopes share the same canonical representation.
-fn deserialize_unique_value_map<'de, D, K, V>(
-    deserializer: D,
-) -> Result<BTreeMap<K, V>, D::Error>
+fn deserialize_unique_value_map<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
 where
     D: Deserializer<'de>,
     K: Ord + Deserialize<'de>,
