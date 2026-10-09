@@ -302,9 +302,16 @@ impl Display for GenerationResolutionError {
                 f.write_str("outcome projections are already bound in this generation")
             }
             Self::MissingProjectionWorkflow { owner, workflow } => {
-                write!(f, "projection targets an unselected workflow {owner}:{workflow}")
+                write!(
+                    f,
+                    "projection targets an unselected workflow {owner}:{workflow}"
+                )
             }
-            Self::DuplicateProjection { owner, workflow, node } => {
+            Self::DuplicateProjection {
+                owner,
+                workflow,
+                node,
+            } => {
                 write!(f, "duplicate projection for {owner}:{workflow}:{node}")
             }
             Self::InvalidProjection {
@@ -313,7 +320,10 @@ impl Display for GenerationResolutionError {
                 node,
                 error,
             } => {
-                write!(f, "invalid projection for {owner}:{workflow}:{node}: {error:?}")
+                write!(
+                    f,
+                    "invalid projection for {owner}:{workflow}:{node}: {error:?}"
+                )
             }
             Self::MissingFrameWorkflow { owner, name } => {
                 write!(
@@ -1105,7 +1115,8 @@ impl ResolvedGeneration {
             };
         }
         for declaration in &declarations {
-            let compiled = self.runtime
+            let compiled = self
+                .runtime
                 .workflow(&declaration.owner, &declaration.workflow)
                 .ok_or_else(|| GenerationResolutionError::MissingProjectionWorkflow {
                     owner: declaration.owner.clone(),
@@ -1130,13 +1141,11 @@ impl ResolvedGeneration {
             &declarations,
         ));
         for declaration in &declarations {
-            self.runtime.workflows
+            self.runtime
+                .workflows
                 .get_mut(&(declaration.owner.clone(), declaration.workflow.clone()))
                 .expect("projection target validated")
-                .bind_outcome_projection(
-                    declaration.node.clone(),
-                    declaration.projection.clone(),
-                );
+                .bind_outcome_projection(declaration.node.clone(), declaration.projection.clone());
         }
         self.workflow_projections = declarations;
         Ok(self)
