@@ -13,7 +13,7 @@ use phenix_plugin_catalog::{
     AGENT_TOPOLOGY_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
     advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
     agent_loop_manifest, agent_topology_component_manifest, agent_topology_declaration,
-    agent_topology_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
+    agent_topology_manifest, agent_topology_projections, artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_agent_nodes_component_manifest,
     basic_agent_nodes_factory, basic_agent_nodes_manifest, basic_context_component_manifest,
     basic_context_factory, basic_context_manifest, basic_model_component_manifest,
@@ -121,6 +121,7 @@ pub struct PhenixRuntimeBuilder {
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
     pub(crate) workflows: Vec<phenix_core::WorkflowDeclaration>,
+    workflow_projections: Vec<phenix_core::WorkflowProjectionDeclaration>,
     process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
@@ -369,6 +370,9 @@ impl PhenixRuntimeBuilder {
         if enabled.contains(AGENT_TOPOLOGY_PLUGIN) {
             builder.add_manifest(agent_topology_manifest(authority.clone()));
             builder.add_workflow(agent_topology_declaration());
+            for projection in agent_topology_projections() {
+                builder.add_workflow_projection(projection);
+            }
         }
         if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             let application_agent_tools = builder.application_agent_tools.clone();
@@ -514,6 +518,13 @@ impl PhenixRuntimeBuilder {
     /// Register a declarative workflow owned by a component in this selection.
     pub fn add_workflow(&mut self, declaration: phenix_core::WorkflowDeclaration) {
         self.workflows.push(declaration);
+    }
+
+    pub fn add_workflow_projection(
+        &mut self,
+        declaration: phenix_core::WorkflowProjectionDeclaration,
+    ) {
+        self.workflow_projections.push(declaration);
     }
 
     pub fn add_component(&mut self, manifest: ComponentManifest) {
@@ -684,7 +695,8 @@ impl PhenixRuntimeBuilder {
             self.provider_policy,
             &self.component_authority,
         )?
-        .with_workflows(self.workflows)?;
+        .with_workflows(self.workflows)?
+        .with_workflow_projections(self.workflow_projections)?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());
