@@ -98,6 +98,14 @@ fn topology() -> WorkflowDeclaration {
 }
 
 fn resolve(selected: &str, logging: bool) -> ResolvedGeneration {
+    resolve_with_workflow(selected, logging, topology())
+}
+
+fn resolve_with_workflow(
+    selected: &str,
+    logging: bool,
+    workflow: WorkflowDeclaration,
+) -> ResolvedGeneration {
     let policy = ProviderCompositionPolicy::new()
         .with_explicit_binding(InterfaceId::parse(MODEL).unwrap(), component_id(selected));
     let mut plugins = vec![
@@ -158,7 +166,7 @@ fn resolve(selected: &str, logging: bool) -> ResolvedGeneration {
         &Authority::default(),
     )
     .unwrap()
-    .with_workflows([topology()])
+    .with_workflows([workflow])
     .unwrap()
 }
 
