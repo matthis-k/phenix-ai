@@ -63,8 +63,10 @@ impl WorkflowPendingTasks {
 
     fn scoped(&self, scope: &str) -> bool {
         self.cancelled_scopes.iter().any(|cancelled| {
-            scope == cancelled ||
-                scope.strip_prefix(cancelled).is_some_and(|remainder| remainder.starts_with('/'))
+            scope == cancelled
+                || scope
+                    .strip_prefix(cancelled)
+                    .is_some_and(|remainder| remainder.starts_with('/'))
         })
     }
 
@@ -90,7 +92,11 @@ impl WorkflowPendingTasks {
         self.cancelled_scopes.insert(scope.into());
         let mut signalled = Vec::new();
         for (id, state) in &mut self.active {
-            if (id.scope == scope || id.scope.strip_prefix(scope).is_some_and(|rest| rest.starts_with('/')))
+            if (id.scope == scope
+                || id
+                    .scope
+                    .strip_prefix(scope)
+                    .is_some_and(|rest| rest.starts_with('/')))
                 && !state.terminal()
             {
                 *state = WorkflowTaskState::Cancelling;
@@ -138,7 +144,11 @@ impl WorkflowPendingTasks {
     /// Generation retirement and root settlement cannot infer completion
     /// from a cancelled future, disconnected channel, or requested timeout.
     pub fn close_root(&mut self) -> Result<(), WorkflowTaskError> {
-        let outstanding = self.active.values().filter(|state| !state.terminal()).count();
+        let outstanding = self
+            .active
+            .values()
+            .filter(|state| !state.terminal())
+            .count();
         if outstanding != 0 {
             return Err(WorkflowTaskError::OutstandingTasks(outstanding));
         }
@@ -147,7 +157,10 @@ impl WorkflowPendingTasks {
     }
 
     pub fn outstanding(&self) -> usize {
-        self.active.values().filter(|state| !state.terminal()).count()
+        self.active
+            .values()
+            .filter(|state| !state.terminal())
+            .count()
     }
 
     pub fn state(&self, id: &WorkflowTaskId) -> Option<WorkflowTaskState> {
@@ -175,15 +188,27 @@ mod tests {
         tasks.admit(a.clone()).unwrap();
         tasks.admit(b.clone()).unwrap();
         assert_eq!(tasks.cancel_root(), vec![a.clone(), b.clone()]);
-        assert_eq!(tasks.close_root(), Err(WorkflowTaskError::OutstandingTasks(2)));
-        assert_eq!(tasks.admit(id("root/late", 3)), Err(WorkflowTaskError::RootNotAdmitting));
+        assert_eq!(
+            tasks.close_root(),
+            Err(WorkflowTaskError::OutstandingTasks(2))
+        );
+        assert_eq!(
+            tasks.admit(id("root/late", 3)),
+            Err(WorkflowTaskError::RootNotAdmitting)
+        );
         tasks.settle(&a, WorkflowTaskState::Cancelled).unwrap();
-        assert_eq!(tasks.close_root(), Err(WorkflowTaskError::OutstandingTasks(1)));
+        assert_eq!(
+            tasks.close_root(),
+            Err(WorkflowTaskError::OutstandingTasks(1))
+        );
         // A non-preemptible native call can report completion after cancellation.
         tasks.settle(&b, WorkflowTaskState::Completed).unwrap();
         tasks.close_root().unwrap();
         assert_eq!(tasks.outstanding(), 0);
-        assert_eq!(tasks.settle(&b, WorkflowTaskState::Failed), Err(WorkflowTaskError::DuplicateSettlement(b)));
+        assert_eq!(
+            tasks.settle(&b, WorkflowTaskState::Failed),
+            Err(WorkflowTaskError::DuplicateSettlement(b))
+        );
     }
 
     #[test]
@@ -195,7 +220,10 @@ mod tests {
         tasks.admit(b.clone()).unwrap();
         assert_eq!(tasks.cancel_scope("root/fork/a"), vec![a.clone()]);
         assert_eq!(tasks.state(&b), Some(WorkflowTaskState::Pending));
-        assert_eq!(tasks.admit(id("root/fork/a/inner", 3)), Err(WorkflowTaskError::RootNotAdmitting));
+        assert_eq!(
+            tasks.admit(id("root/fork/a/inner", 3)),
+            Err(WorkflowTaskError::RootNotAdmitting)
+        );
         tasks.admit(id("root/fork/ab/inner", 4)).unwrap();
     }
 
@@ -204,8 +232,14 @@ mod tests {
         let mut tasks = WorkflowPendingTasks::new("gen-a");
         let valid = id("root/child", 1);
         tasks.admit(valid.clone()).unwrap();
-        let foreign = WorkflowTaskId { generation: "gen-b".into(), ..valid.clone() };
-        assert_eq!(tasks.settle(&foreign, WorkflowTaskState::Completed), Err(WorkflowTaskError::WrongGeneration(foreign)));
+        let foreign = WorkflowTaskId {
+            generation: "gen-b".into(),
+            ..valid.clone()
+        };
+        assert_eq!(
+            tasks.settle(&foreign, WorkflowTaskState::Completed),
+            Err(WorkflowTaskError::WrongGeneration(foreign))
+        );
         assert_eq!(tasks.outstanding(), 1);
         tasks.settle(&valid, WorkflowTaskState::Completed).unwrap();
         tasks.close_root().unwrap();
