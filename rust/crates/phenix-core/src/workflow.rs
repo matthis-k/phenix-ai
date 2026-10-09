@@ -103,6 +103,18 @@ pub enum WorkflowEdge {
         on_success: Box<WorkflowEdge>,
         on_failure: Box<WorkflowEdge>,
     },
+    /// Map a bounded finite list into independent child frame snapshots.
+    MapFork {
+        collection: crate::Key,
+        item_slot: crate::Key,
+        child_output_slot: crate::Key,
+        output_slot: crate::Key,
+        max_children: usize,
+        branch_entry: String,
+        policy: crate::WorkflowJoinPolicy,
+        on_success: Box<WorkflowEdge>,
+        on_failure: Box<WorkflowEdge>,
+    },
     /// Compile-time inclusion of a workflow authored by the same component.
     /// Each child finish outcome must map to one declared continuation.
     Include {
@@ -126,6 +138,16 @@ enum PlanStepId {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct WorkflowMapFork {
+    collection: crate::Key,
+    item_slot: crate::Key,
+    child_output_slot: crate::Key,
+    output_slot: crate::Key,
+    max_children: usize,
+    branch_entry: PlanStepId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum PlanStep {
     Invoke {
         import: InterfaceId,
@@ -133,11 +155,13 @@ enum PlanStep {
     },
     Fork {
         branches: BTreeMap<String, PlanStepId>,
+        map: Option<WorkflowMapFork>,
         join: PlanStepId,
     },
     Join {
         policy: crate::WorkflowJoinPolicy,
         outputs: BTreeMap<String, Vec<crate::Key>>,
+        map_output: Option<(crate::Key, crate::Key)>,
         on_success: PlanStepId,
         on_failure: PlanStepId,
     },
@@ -379,6 +403,7 @@ pub enum WorkflowRunError<E> {
         node: String,
         error: crate::WorkflowFrameError,
     },
+    InvalidMapInput { node: String, reason: String },
 }
 
 impl WorkflowTopology {
