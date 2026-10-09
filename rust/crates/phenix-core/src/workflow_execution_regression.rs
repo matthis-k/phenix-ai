@@ -306,7 +306,6 @@ fn unframed_fork_fails_before_its_first_provider_call() {
     ));
 }
 
-
 fn map_fork_workflow() -> WorkflowDeclaration {
     WorkflowDeclaration {
         owner: component_id(TOPOLOGY),
@@ -320,24 +319,34 @@ fn map_fork_workflow() -> WorkflowDeclaration {
                         import: InterfaceId::parse(MODEL).unwrap(),
                         branches: BTreeMap::from([
                             ("final".into(), WorkflowEdge::Finish),
-                            ("tools".into(), WorkflowEdge::MapFork {
-                                collection: Key::parse("items").unwrap(),
-                                item_slot: Key::parse("item").unwrap(),
-                                child_output_slot: Key::parse("result").unwrap(),
-                                output_slot: Key::parse("results").unwrap(),
-                                max_children: 4,
-                                branch_entry: "map-tool".into(),
-                                policy: WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
-                                on_success: Box::new(WorkflowEdge::Next { node: "model".into() }),
-                                on_failure: Box::new(WorkflowEdge::Finish),
-                            }),
+                            (
+                                "tools".into(),
+                                WorkflowEdge::MapFork {
+                                    collection: Key::parse("items").unwrap(),
+                                    item_slot: Key::parse("item").unwrap(),
+                                    child_output_slot: Key::parse("result").unwrap(),
+                                    output_slot: Key::parse("results").unwrap(),
+                                    max_children: 4,
+                                    branch_entry: "map-tool".into(),
+                                    policy: WorkflowJoinPolicy::All(
+                                        WorkflowJoinAllPolicy::CollectAll,
+                                    ),
+                                    on_success: Box::new(WorkflowEdge::Next {
+                                        node: "model".into(),
+                                    }),
+                                    on_failure: Box::new(WorkflowEdge::Finish),
+                                },
+                            ),
                         ]),
                     },
                 ),
-                ("map-tool".into(), WorkflowNode {
-                    import: InterfaceId::parse(TOOL).unwrap(),
-                    branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
-                }),
+                (
+                    "map-tool".into(),
+                    WorkflowNode {
+                        import: InterfaceId::parse(TOOL).unwrap(),
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                    },
+                ),
             ]),
         },
     }
@@ -351,10 +360,16 @@ fn selected_map_generation() -> ResolvedGeneration {
             schema: WorkflowFrameSchema {
                 revision: 1,
                 slots: BTreeMap::from([
-                    (Key::parse("items").unwrap(), Type::List(Box::new(Type::U64))),
+                    (
+                        Key::parse("items").unwrap(),
+                        Type::List(Box::new(Type::U64)),
+                    ),
                     (Key::parse("item").unwrap(), Type::U64),
                     (Key::parse("result").unwrap(), Type::U64),
-                    (Key::parse("results").unwrap(), Type::List(Box::new(Type::U64))),
+                    (
+                        Key::parse("results").unwrap(),
+                        Type::List(Box::new(Type::U64)),
+                    ),
                 ]),
             },
         }])
@@ -366,57 +381,71 @@ fn non_agent_bounded_map_fanout_collects_typed_results_without_leaking_child_fra
     let resolved = selected_map_generation();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology().workflow(&component_id(TOPOLOGY), "turn")
-        .unwrap().frame_schema().unwrap().clone();
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let item = Key::parse("item").unwrap();
     let result_slot = Key::parse("result").unwrap();
     let results = Key::parse("results").unwrap();
     let mut frame = WorkflowFrame::new(
         schema,
         BTreeMap::from([
-            (Key::parse("items").unwrap(), PhenixValue::List(
-                [2, 4, 6].into_iter().map(PhenixValue::U64).collect(),
-            )),
+            (
+                Key::parse("items").unwrap(),
+                PhenixValue::List([2, 4, 6].into_iter().map(PhenixValue::U64).collect()),
+            ),
             (item.clone(), PhenixValue::U64(0)),
             (result_slot.clone(), PhenixValue::U64(0)),
             (results.clone(), PhenixValue::List(Vec::new())),
         ]),
-    ).unwrap();
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, frame, seen| {
-            if node == "map-tool" {
-                seen.push(match frame.get(&item) {
-                    Some(PhenixValue::U64(value)) => *value,
-                    _ => panic!("map child must have its typed item"),
-                });
-            }
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "map-tool" {
-                let value = match frame.get(&item) {
-                    Some(PhenixValue::U64(value)) => *value,
-                    _ => return Err("map item absent".to_owned()),
-                };
-                frame.set(&result_slot, PhenixValue::U64(value * 3)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                _ => Err("unexpected mock provider response".into()),
-            }
-        },
-        || false, None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, frame, seen| {
+                if node == "map-tool" {
+                    seen.push(match frame.get(&item) {
+                        Some(PhenixValue::U64(value)) => *value,
+                        _ => panic!("map child must have its typed item"),
+                    });
+                }
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "map-tool" {
+                    let value = match frame.get(&item) {
+                        Some(PhenixValue::U64(value)) => *value,
+                        _ => return Err("map item absent".to_owned()),
+                    };
+                    frame
+                        .set(&result_slot, PhenixValue::U64(value * 3))
+                        .unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("unexpected mock provider response".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.executed_nodes, 5);
     assert_eq!(report.final_outcome, "final");
     assert_eq!(seen, [2, 4, 6]);
     assert_eq!(
         frame.get(&results),
         Some(&PhenixValue::List(vec![
-            PhenixValue::U64(6), PhenixValue::U64(12), PhenixValue::U64(18),
+            PhenixValue::U64(6),
+            PhenixValue::U64(12),
+            PhenixValue::U64(18),
         ]))
     );
     assert_eq!(frame.get(&item), Some(&PhenixValue::U64(0)));
