@@ -1430,7 +1430,7 @@ impl CompiledWorkflow {
         &self,
         cursor: &PlanStepId,
         state: &mut State,
-        data: Option<&mut crate::WorkflowFrame>,
+        mut data: Option<&mut crate::WorkflowFrame>,
         invoke: &mut impl FnMut(
             &str,
             &InterfaceId,
@@ -1445,7 +1445,11 @@ impl CompiledWorkflow {
         let PlanStepId::Invoke(name) = cursor else {
             unreachable!("invoke dispatch requires an Invoke identity")
         };
-        let PlanStep::Invoke { import, on_result } = &self.plan.steps[cursor] else {
+        let PlanStep::Invoke {
+            import,
+            on_result,
+            transfers,
+        } = &self.plan.steps[cursor] else {
             unreachable!("compiled Invoke has an Invoke step")
         };
         if cancelled() {
@@ -1460,7 +1464,7 @@ impl CompiledWorkflow {
                 executed_nodes: *count,
             });
         }
-        let outcome = match invoke(name, import, state, data, cancelled) {
+        let outcome = match invoke(name, import, state, data.as_deref_mut(), cancelled) {
             Ok(outcome) => outcome,
             Err(WorkflowInvocationError::Cancelled) => {
                 return Err(WorkflowRunError::Cancelled {
@@ -1478,13 +1482,25 @@ impl CompiledWorkflow {
         *count = count
             .checked_add(1)
             .ok_or(WorkflowRunError::StepCounterOverflow)?;
-        on_result
+        let target = on_result
             .get(&outcome)
             .cloned()
             .ok_or_else(|| WorkflowRunError::UndeclaredOutcome {
                 node: name.clone(),
-                outcome,
-            })
+                outcome: outcome.clone(),
+            })?;
+        if let Some(mappings) = transfers.get(&outcome) {
+            let frame = data.as_deref_mut().ok_or_else(|| {
+                WorkflowRunError::StructuredFrameRequired { node: name.clone() }
+            })?;
+            frame.transfer_slots(mappings).map_err(|error| {
+                WorkflowRunError::InvalidTransitionFrame {
+                    node: name.clone(),
+                    error,
+                }
+            })?;
+        }
+        Ok(target)
     }
 
     pub(crate) fn execute_bound_framed<State, Error>(
