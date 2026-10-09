@@ -165,6 +165,20 @@ pub enum GenerationResolutionError {
     MissingWorkflowOwner(crate::ComponentId),
     InvalidWorkflowName(crate::ComponentId),
     WorkflowAlreadyBound,
+    FrameSchemasAlreadyBound,
+    MissingFrameWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    DuplicateFrameSchema {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    InvalidFrameSchema {
+        owner: crate::ComponentId,
+        name: String,
+        error: crate::WorkflowFrameError,
+    },
     DuplicateWorkflow {
         owner: crate::ComponentId,
         name: String,
@@ -261,6 +275,18 @@ impl Display for GenerationResolutionError {
                     f,
                     "workflow declarations already belong to this resolved generation"
                 )
+            }
+            Self::FrameSchemasAlreadyBound => {
+                write!(f, "frame schemas already belong to this resolved generation")
+            }
+            Self::MissingFrameWorkflow { owner, name } => {
+                write!(f, "frame schema targets an unselected workflow {owner}:{name}")
+            }
+            Self::DuplicateFrameSchema { owner, name } => {
+                write!(f, "duplicate frame schema for workflow {owner}:{name}")
+            }
+            Self::InvalidFrameSchema { owner, name, error } => {
+                write!(f, "invalid frame schema for workflow {owner}:{name}: {error}")
             }
             Self::DuplicateWorkflow { owner, name } => {
                 write!(f, "duplicate workflow {owner}:{name}")
@@ -919,6 +945,70 @@ impl ResolvedGeneration {
         ));
         self.runtime.workflows = compiled;
         self.workflows = declarations;
+        Ok(self)
+    }
+
+    /// Bind frame types to existing selected workflows as part of a candidate.
+    ///
+    /// All ownership, schema, and duplicate checks happen before publishing
+    /// any new compiled binding or changing generation identity. Legacy plans
+    /// remain frame-free unless their owner explicitly declares a schema.
+    pub fn with_workflow_frame_schemas(
+        mut self,
+        declarations: impl IntoIterator<Item = crate::WorkflowFrameDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|left, right| {
+            left.owner.cmp(&right.owner).then_with(|| left.name.cmp(&right.name))
+        });
+        for pair in declarations.windows(2) {
+            if pair[0].owner == pair[1].owner && pair[0].name == pair[1].name {
+                return Err(GenerationResolutionError::DuplicateFrameSchema {
+                    owner: pair[0].owner.clone(),
+                    name: pair[0].name.clone(),
+                });
+            }
+        }
+        let mut already_bound = 0;
+        for declaration in &declarations {
+            declaration.schema.validate().map_err(|error| {
+                GenerationResolutionError::InvalidFrameSchema {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error,
+                }
+            })?;
+            let compiled = self
+                .runtime
+                .workflow(&declaration.owner, &declaration.name)
+                .ok_or_else(|| GenerationResolutionError::MissingFrameWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                })?;
+            if let Some(existing) = compiled.frame_schema() {
+                if existing != &declaration.schema {
+                    return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
+                }
+                already_bound += 1;
+            }
+        }
+        if already_bound == declarations.len() {
+            return Ok(self);
+        }
+        if already_bound != 0 {
+            return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
+        }
+        const FRAME_CONTRACT_REVISION: u32 = 1;
+        self.runtime.incorporate_semantic_metadata(
+            &(FRAME_CONTRACT_REVISION, &declarations),
+        );
+        for declaration in declarations {
+            self.runtime
+                .workflows
+                .get_mut(&(declaration.owner, declaration.name))
+                .expect("selected schema target was validated")
+                .bind_frame_schema(declaration.schema);
+        }
         Ok(self)
     }
 
