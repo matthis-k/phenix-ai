@@ -1,0 +1,156 @@
+# Disposable measurement workflow. This PR is never merged.
+name: Nix artifact identity probe
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  derivation-input-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Compare Nix derivation identities under controlled input changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PROBE_DIR="$RUNNER_TEMP/phenix-derivation-matrix"
+          mkdir -p "$PROBE_DIR"
+
+          # Find a real crate outside the phenix-harness dependency closure.
+          # Cargo metadata owns the dependency graph; no manually maintained crate list.
+          cargo metadata --no-deps --locked --offline --format-version 1 \
+            --manifest-path rust/Cargo.toml > "$PROBE_DIR/cargo-metadata.json"
+          python3 - <<'PY' > "$PROBE_DIR/unrelated.txt"
+          import json
+          from pathlib import Path
+          import os
+          metadata = json.loads(Path(os.environ["PROBE_DIR"], "cargo-metadata.json").read_text())
+          members = set(metadata["workspace_members"])
+          packages = {p["id"]: p for p in metadata["packages"] if p["id"] in members}
+          by_directory = {Path(p["manifest_path"]).parent.resolve(): ident
+                          for ident, p in packages.items()}
+          by_name = {p["name"]: ident for ident, p in packages.items()}
+          root = by_name["phenix-harness"]
+          reachable = set()
+          pending = [root]
+          while pending:
+              ident = pending.pop()
+              if ident in reachable:
+                  continue
+              reachable.add(ident)
+              for dep in packages[ident].get("dependencies", []):
+                  if dep.get("path"):
+                      target = by_directory.get(Path(dep["path"]).resolve())
+                      if target:
+                          pending.append(target)
+          candidates = []
+          for ident, pkg in packages.items():
+              if ident in reachable:
+                  continue
+              crate_dir = Path(pkg["manifest_path"]).parent
+              for target in ("src/lib.rs", "src/main.rs"):
+                  path = crate_dir / target
+                  if path.is_file():
+                      candidates.append((pkg["name"], path))
+                      break
+          if not candidates:
+              raise SystemExit("No unused workspace crate found for the Nix source impact probe")
+          name, path = sorted(candidates)[0]
+          print(os.path.relpath(path))
+          print("Selected unrelated Cargo package: " + name, file=__import__("sys").stderr)
+          PY
+
+          unrelated_path="$(cat "$PROBE_DIR/unrelated.txt")"
+          echo "Unrelated Rust source: $unrelated_path"
+
+          for scenario in baseline docs unrelated shared manifest; do
+            git restore --worktree -- \
+              spec/kernel-runtime-rfc.md rust/Cargo.toml \
+              rust/crates/phenix-contract/src/lib.rs "$unrelated_path"
+            case "$scenario" in
+              baseline) ;;
+              docs)
+                printf '\nCI derivation probe: documentation change.\n' >> spec/kernel-runtime-rfc.md
+                ;;
+              unrelated)
+                printf '\n// Nix derivation probe: unused crate source.\n' >> "$unrelated_path"
+                ;;
+              shared)
+                printf '\n// Nix derivation probe: shared contract source.\n' >> rust/crates/phenix-contract/src/lib.rs
+                ;;
+              manifest)
+                printf '\n# Nix derivation probe: workspace manifest.\n' >> rust/Cargo.toml
+                ;;
+            esac
+
+            echo "::group::Evaluate Nix derivations for $scenario"
+            nix eval --json --impure \
+              --expr '
+                let
+                  flake = builtins.getFlake (toString ./.);
+                  packages = builtins.getAttr builtins.currentSystem flake.packages;
+                  names = [
+                    "phenix-product-rust-dependencies"
+                    "phenix-product-rust-artifacts"
+                    "phenix-harness-resources"
+                    "phenix-core"
+                    "phenix-binding-lua"
+                    "phenix-runtime"
+                  ];
+                in builtins.listToAttrs (
+                  map (name: {
+                    inherit name;
+                    value = (builtins.getAttr name packages).drvPath;
+                  }) names
+                )
+              ' > "$PROBE_DIR/$scenario.json"
+            cat "$PROBE_DIR/$scenario.json"
+            echo "::endgroup::"
+          done
+
+          git restore --worktree -- \
+            spec/kernel-runtime-rfc.md rust/Cargo.toml \
+            rust/crates/phenix-contract/src/lib.rs "$unrelated_path"
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["PROBE_DIR"])
+          baseline = json.loads((root / "baseline.json").read_text())
+          variants = {
+              s: json.loads((root / (s + ".json")).read_text())
+              for s in ("docs", "unrelated", "shared", "manifest")
+          }
+          columns = list(variants)
+          lines = [
+              "## Nix derivation impact matrix",
+              "",
+              "Derived from evaluated derivation paths, without compiling packages.",
+              "",
+              "| Nix output | " + " | ".join(columns) + " |",
+              "| --- | " + " | ".join("---" for _ in columns) + " |",
+          ]
+          for name in sorted(baseline):
+              changed = [
+                  "changed" if variants[s][name] != baseline[name] else "same"
+                  for s in columns
+              ]
+              lines.append("| " + name + " | " + " | ".join(changed) + " |")
+          print("\n".join(lines))
+          if os.environ.get("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("\n".join(lines) + "\n")
+          if variants["docs"] != baseline:
+              raise SystemExit("Documentation-only changes unexpectedly invalidated a Nix derivation")
+          PY
+
+          git diff --exit-code
