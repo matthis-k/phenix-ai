@@ -592,6 +592,34 @@ pub enum WorkflowRunError<E> {
     },
 }
 
+// A combined transfer executes against one immutable frame snapshot. If a
+// parent reads or overwrites a mapped child result, it needs a second ordered
+// phase instead. Reject that dependency before provider admission.
+fn compose_subplan_return_slots(
+    child: Option<&BTreeMap<crate::Key, crate::Key>>,
+    parent: &BTreeMap<crate::Key, crate::Key>,
+    node: &str,
+    outcome: &str,
+) -> Result<BTreeMap<crate::Key, crate::Key>, WorkflowCompileError> {
+    let mut combined = child.cloned().unwrap_or_default();
+    let child_destinations: BTreeSet<_> = combined.values().cloned().collect();
+    let mut destinations = child_destinations.clone();
+    for (source, target) in parent {
+        if child_destinations.contains(source)
+            || combined.contains_key(source)
+            || !destinations.insert(target.clone())
+        {
+            return Err(WorkflowCompileError::InvalidFrameTransfer {
+                node: node.to_owned(),
+                outcome: outcome.to_owned(),
+                reason: "ordered return transfers require independent sources and distinct destinations".into(),
+            });
+        }
+        combined.insert(source.clone(), target.clone());
+    }
+    Ok(combined)
+}
+
 impl WorkflowTopology {
     /// Expand same-owner subplans before binding imports or compiling execution steps.
     ///
@@ -772,28 +800,17 @@ impl WorkflowTopology {
                                             }
                                         }
                                         Some(WorkflowEdge::Transfer { node, slots }) => {
-                                            let mut combined = mapped;
-                                            let child_targets: BTreeSet<_> =
-                                                combined.values().cloned().collect();
-                                            for (source, target) in slots {
-                                                if child_targets.contains(source)
-                                                    || child_targets.contains(target)
-                                                    || combined.contains_key(source)
-                                                {
-                                                    return Err(
-                                                        WorkflowCompileError::InvalidFrameTransfer {
-                                                            node: child_name.to_owned(),
-                                                            outcome: terminal,
-                                                            reason: "ordered return transfers require distinct independent sources and destinations".into(),
-                                                        },
-                                                    );
-                                                }
-                                                combined.insert(source.clone(), target.clone());
-                                            }
+                                            let combined = compose_subplan_return_slots(
+                                                outputs,
+                                                slots,
+                                                child_name,
+                                                &terminal,
+                                            )?;
                                             Ok(WorkflowEdge::Transfer {
                                                 node: node.clone(),
                                                 slots: combined,
                                             })
+                                        })
                                         }
                                         Some(_) => {
                                             Err(WorkflowCompileError::InvalidJoinContinuation {
@@ -860,28 +877,12 @@ impl WorkflowTopology {
                                             _ => WorkflowEdge::Next { node: node.clone() },
                                         },
                                         Some(WorkflowEdge::Transfer { node, slots }) => {
-                                            // These transfers share one immutable source
-                                            // snapshot. Combining them is only sound when
-                                            // the parent transfer neither reads nor rewrites
-                                            // an output written by the included return.
-                                            let mut combined = outputs.cloned().unwrap_or_default();
-                                            let child_targets: BTreeSet<_> =
-                                                combined.values().cloned().collect();
-                                            for (source, target) in slots {
-                                                if child_targets.contains(source)
-                                                    || child_targets.contains(target)
-                                                    || combined.contains_key(source)
-                                                {
-                                                    return Err(
-                                                        WorkflowCompileError::InvalidFrameTransfer {
-                                                            node: child_name.clone(),
-                                                            outcome: child_outcome.clone(),
-                                                            reason: "ordered return transfers require distinct independent sources and destinations".into(),
-                                                        },
-                                                    );
-                                                }
-                                                combined.insert(source.clone(), target.clone());
-                                            }
+                                            let combined = compose_subplan_return_slots(
+                                                outputs,
+                                                slots,
+                                                child_name,
+                                                child_outcome,
+                                            )?;
                                             WorkflowEdge::Transfer {
                                                 node: node.clone(),
                                                 slots: combined,
