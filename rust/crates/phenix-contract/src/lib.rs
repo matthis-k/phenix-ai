@@ -24,3 +24,7 @@ pub use identity::{
 pub use interface::{
     ComponentInterface, InterfaceCompatibility, InterfaceSchema, InterfaceSchemaMismatch,
 };
+
+// Temporary probe: shared contract changes should select reverse-dependency checks.
+#[doc(hidden)]
+pub const CI_SHARED_CONTRACT_IMPACT_PROBE: u8 = 1;
