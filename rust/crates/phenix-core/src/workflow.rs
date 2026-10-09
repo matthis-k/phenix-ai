@@ -931,9 +931,10 @@ impl WorkflowTopology {
                 .collect();
             return Err(WorkflowCompileError::UnreachableNodes(unreachable));
         }
-        // A fork owns disjoint child regions. No child may escape to the parent
-        // or cross into a sibling region before returning through its own Exit.
-        // Nested forks are not admitted until nested scope scheduling is wired.
+        // A fork owns disjoint child regions. Child scopes never enter their
+        // parent/sibling via an ordinary edge. Nested scopes have a separate
+        // owner; their declared Join continuations remain parent-owned.
+        let mut scope_members = BTreeMap::<(String, String), BTreeSet<String>>::new();
         for (fork_owner, node) in &self.nodes {
             for (fork_outcome, edge) in &node.branches {
                 let branch_entries = match edge {
@@ -1047,9 +1048,72 @@ impl WorkflowTopology {
                         }
                     }
                 }
-                // Frame slot names must be selected and validated against the
-                // chosen schema before this plan can run via the framed root.
+                scope_members.insert(
+                    (fork_owner.clone(), fork_outcome.clone()),
+                    owner_of.into_keys().collect(),
+                );
             }
+        }
+        // Active nesting forms a finite DAG. A nested fork may be revisited
+        // after its Join in an ordinary service-bound loop, but a child
+        // cannot recursively admit an active ancestor scope. Check before
+        // activation so a recursive declaration never invokes providers.
+        fn verify_nesting(
+            id: &(String, String),
+            nested: &BTreeMap<(String, String), BTreeSet<(String, String)>>,
+            visiting: &mut BTreeSet<(String, String)>,
+            resolved: &mut BTreeMap<(String, String), usize>,
+        ) -> Result<usize, WorkflowCompileError> {
+            const MAX_SCOPE_DEPTH: usize = 64;
+            if let Some(depth) = resolved.get(id) {
+                return Ok(*depth);
+            }
+            if !visiting.insert(id.clone()) {
+                return Err(WorkflowCompileError::InvalidFork {
+                    node: id.0.clone(),
+                    outcome: id.1.clone(),
+                    reason: "recursive structured scope admission".into(),
+                });
+            }
+            let mut depth = 1usize;
+            if let Some(children) = nested.get(id) {
+                for child in children {
+                    depth = depth.max(
+                        1 + verify_nesting(child, nested, visiting, resolved)?
+                    );
+                    if depth > MAX_SCOPE_DEPTH {
+                        return Err(WorkflowCompileError::InvalidFork {
+                            node: id.0.clone(),
+                            outcome: id.1.clone(),
+                            reason: "nested scope depth exceeds 64".into(),
+                        });
+                    }
+                }
+            }
+            visiting.remove(id);
+            resolved.insert(id.clone(), depth);
+            Ok(depth)
+        }
+        let mut nested = BTreeMap::new();
+        for (id, members) in &scope_members {
+            let mut subscopes = BTreeSet::new();
+            for member in members {
+                for (outcome, edge) in &self.nodes[member].branches {
+                    if matches!(edge, WorkflowEdge::Fork { .. } | WorkflowEdge::MapFork { .. }) {
+                        subscopes.insert((member.clone(), outcome.clone()));
+                    }
+                }
+            }
+            nested.insert(id.clone(), subscopes);
+        }
+        let mut resolved_depths = BTreeMap::new();
+        for scope in scope_members.keys() {
+            verify_nesting(
+                scope,
+                &nested,
+                &mut BTreeSet::new(),
+                &mut resolved_depths,
+            )?;
         }
 
         // A workflow can have no Exit when it is a long-running service loop.
