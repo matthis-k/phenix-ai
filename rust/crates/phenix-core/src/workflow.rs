@@ -759,11 +759,11 @@ impl WorkflowTopology {
                         on_success,
                         on_failure,
                     } => {
-                        if *max_children == 0 || *max_children > 256 {
+                        if *max_children == 0 {
                             return Err(WorkflowCompileError::InvalidFork {
                                 node: name.clone(),
                                 outcome: outcome.clone(),
-                                reason: "map fan-out bound must be 1..=256".into(),
+                                reason: "map fan-out must declare a positive bound".into(),
                             });
                         }
                         if !self.nodes.contains_key(branch_entry) {
@@ -809,13 +809,12 @@ impl WorkflowTopology {
                         policy,
                     } => {
                         if branches.is_empty()
-                            || branches.len() > 256
                             || branches.keys().any(|key| key.trim().is_empty())
                         {
                             return Err(WorkflowCompileError::InvalidFork {
                                 node: name.clone(),
                                 outcome: outcome.clone(),
-                                reason: "fork needs 1..=256 named children".into(),
+                                reason: "fork needs at least one nonempty named child".into(),
                             });
                         }
                         if let crate::WorkflowJoinPolicy::Quorum(k) = policy
