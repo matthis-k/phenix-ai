@@ -28,6 +28,7 @@ mod tasks;
 mod workflow;
 mod workflow_frame;
 mod workflow_join;
+mod workflow_tasks;
 
 extern crate self as phenix_core;
 #[cfg(test)]
@@ -224,6 +225,9 @@ pub use workflow_frame::{
     WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema,
 };
 
+pub use workflow_tasks::{
+    WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
+};
 pub use workflow_join::{
     WorkflowChildSettlement, WorkflowJoinAllPolicy, WorkflowJoinDecision, WorkflowJoinError,
     WorkflowJoinObservation, WorkflowJoinPolicy,
