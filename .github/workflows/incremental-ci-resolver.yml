@@ -28,7 +28,7 @@ jobs:
           echo 'LOCK_NODE_END'
           system="$(nix eval --impure --raw --expr builtins.currentSystem)"
           nix eval --raw ".#packages.$system.phenix-maintenance.phenixMaintenance.ci.github.workflow" > /tmp/generated-ci.yml
-          echo 'WORKFLOW_GZIP_B64_BEGIN'
-          gzip -9c /tmp/generated-ci.yml | base64 -w0
+          echo 'WORKFLOW_BEGIN'
+          cat /tmp/generated-ci.yml
           echo
-          echo 'WORKFLOW_GZIP_B64_END'
+          echo 'WORKFLOW_END'
