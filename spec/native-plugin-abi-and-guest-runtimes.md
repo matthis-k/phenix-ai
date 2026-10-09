@@ -1,6 +1,6 @@
 # Native plugin ABI and extensible guest runtime bindings
 
-status: design-only
+status: specification-only
 scope: native loader, runtime adapter plugins, guest bindings, resident generations
 depends_on:
   - spec/plugin-runtime-bridges.md
