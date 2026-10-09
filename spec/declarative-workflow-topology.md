@@ -416,11 +416,27 @@ identity and one settlement. Cancellation marks pending work as
 refuses root closure until every native ticket actually settles, including
 successful completions after cancellation. Late or wrong-generation callbacks
 and duplicate settlements reject. Focused Core tests cover these rules.
-This is task accounting, **not yet physical generation lease retention**.
-The cooperative scheduler, callback dispatcher and native ABI still need to
-attach the tracker to a pinned root and safely retire orphaned tasks; pending
-native invocations cannot yet progress concurrently along this execution path.
-This is a partial native-async lifecycle contract, not a claim of async parity.
+Core now binds this accounting to a physical root lease through
+`RootExecutionHandle::native_workflow_tasks`. Each pending worker holds a clone
+of the selected root through its real terminal callback, even after the owner
+drops the group or requests cancellation. The existing generation retirement
+and reconciliation guards refuse to replace a generation with outstanding
+native work. Native completion wakes the owning group through a ticket-correlated
+channel. The group supports nonblocking completion polls, blocking event
+wakeup, per-ticket or nested-scope cancellation, and fail-closed root settlement.
+Provider dispatch uses `dispatch_import_pending`, which invokes the selected
+`ResolvedImportHandle` through the canonical Core provider/Layers path and
+returns a typed success, cancellation or invocation failure. It never reselects
+a fallback provider. Core tests cover physical generation retirement under an
+abandoned native callback, cancellation and late completion, a panicking worker,
+and selected versus stale provider bindings.
+
+This remains **partial native-async integration**. The general
+`Invoke/Fork/Join/Exit` dispatcher still runs its existing synchronous
+invocation closure and has not yet admitted pending child callbacks into the
+same structured scheduler. Native plugin ABI entry/wakeup, concurrent Fork
+completion selection, replay-free product cancellation and full streaming
+parity remain open.
 
 The Core also exposes `WorkflowOutcomeProjection` revision 1. It is a
 portable declarative normal-result selector for closed `Variant` tags,
