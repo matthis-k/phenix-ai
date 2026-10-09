@@ -2115,6 +2115,107 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn included_fork_join_finish_returns_to_parent_via_declared_outcome() {
+        let mut all = selected();
+        all.insert(
+            (owner(), "fork-child".into()),
+            WorkflowTopology {
+                entry: "fork".into(),
+                nodes: BTreeMap::from([
+                    (
+                        "fork".into(),
+                        service(
+                            "fixture.fork@1",
+                            &[(
+                                "spawn",
+                                WorkflowEdge::Fork {
+                                    branches: BTreeMap::from([("worker".into(), "work".into())]),
+                                    policy: crate::WorkflowJoinPolicy::All(
+                                        crate::WorkflowJoinAllPolicy::CollectAll,
+                                    ),
+                                    outputs: BTreeMap::new(),
+                                    on_success: Box::new(WorkflowEdge::Finish),
+                                    on_failure: Box::new(WorkflowEdge::Finish),
+                                },
+                            )],
+                        ),
+                    ),
+                    (
+                        "work".into(),
+                        service("fixture.child@1", &[("done", WorkflowEdge::Finish)]),
+                    ),
+                ]),
+            },
+        );
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        parent.nodes.get_mut("start").unwrap().branches.insert(
+            "delegate".into(),
+            include(
+                "fork-child",
+                "subfork",
+                &[
+                    (
+                        "spawn/success",
+                        WorkflowEdge::Next { node: "after".into() },
+                    ),
+                    ("spawn/failure", WorkflowEdge::Finish),
+                ],
+            ),
+        );
+        let compiled = WorkflowTopology::inline_selected(&owner(), "main", &all)
+            .unwrap()
+            .compile(|_| true)
+            .unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let mut invoked = Vec::new();
+        let report = compiled
+            .execute_nodes(
+                &mut invoked,
+                Some(&mut frame),
+                |node, _, visited, _, _| {
+                    visited.push(node.to_owned());
+                    Ok::<_, WorkflowInvocationError<String>>(match node {
+                        "start" => "delegate".into(),
+                        "__include__/subfork/fork" => "spawn".into(),
+                        "__include__/subfork/work" => "done".into(),
+                        "after" => "done".into(),
+                        _ => panic!("unexpected node {node}"),
+                    })
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.final_outcome, "done");
+        assert_eq!(report.executed_nodes, 4);
+        assert_eq!(
+            invoked,
+            ["start", "__include__/subfork/fork", "__include__/subfork/work", "after"]
+        );
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        let WorkflowEdge::Include { on_exit, .. } = parent
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .get_mut("delegate")
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        on_exit.remove("spawn/failure");
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::MissingSubplanExit { outcome, .. })
+                if outcome == "spawn/failure"
+        ));
+    }
+
+    #[test]
     fn included_plan_runs_on_the_same_invoke_exit_executor() {
         let all = selected();
         let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
