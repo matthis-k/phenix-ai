@@ -920,7 +920,7 @@ fn map_max_child_limit_rejects_before_dispatching_a_mapped_provider() {
     assert_eq!(seen, ["model"]);
 }
 
-fn typed_include_generation() -> ResolvedGeneration {
+fn typed_include_generation_unbound() -> ResolvedGeneration {
     let owner = component_id(TOPOLOGY);
     let parent = WorkflowDeclaration {
         owner: owner.clone(),
@@ -967,9 +967,14 @@ fn typed_include_generation() -> ResolvedGeneration {
             )]),
         },
     };
+    let _ = owner;
     resolve_with_workflows(BASIC, false, vec![parent, child])
+}
+
+fn typed_include_generation() -> ResolvedGeneration {
+    typed_include_generation_unbound()
         .with_workflow_frame_schemas([WorkflowFrameDeclaration {
-            owner, name: "turn".into(),
+            owner: component_id(TOPOLOGY), name: "turn".into(),
             schema: WorkflowFrameSchema {
                 revision: 1,
                 slots: BTreeMap::from([
@@ -1035,7 +1040,7 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
 
 #[test]
 fn mapped_subplan_incompatible_type_rejects_before_provider_dispatch() {
-    let mut declaration = typed_include_generation();
+    let declaration = typed_include_generation_unbound();
     let altered = WorkflowFrameDeclaration {
         owner: component_id(TOPOLOGY),
         name: "turn".into(),
@@ -1049,12 +1054,14 @@ fn mapped_subplan_incompatible_type_rejects_before_provider_dispatch() {
             ]),
         },
     };
-    // A new candidate is necessary: selected frame schemas are immutable.
-    let _ = &mut declaration;
-    let err = declaration
-        .with_workflow_frame_schemas([altered])
-        .expect_err("immutable frame schema cannot be changed");
-    assert!(matches!(err, crate::GenerationResolutionError::FrameSchemasAlreadyBound));
+    let outcome = declaration.with_workflow_frame_schemas([altered]);
+    assert!(matches!(
+        outcome,
+        Err(crate::GenerationResolutionError::InvalidWorkflow {
+            error: crate::workflow::WorkflowCompileError::InvalidFrameTransfer { .. },
+            ..
+        })
+    ));
 }
 
 fn resolve(selected: &str, logging: bool) -> ResolvedGeneration {
