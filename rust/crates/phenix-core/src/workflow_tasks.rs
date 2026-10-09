@@ -1,8 +1,9 @@
-//! Host-owned native/pending invocation accounting for structured plan scopes.
+//! Root-owned pending native calls, cancellation, and completion wakeups.
 //!
-//! This is the lifecycle substrate for the pending-capable invocation ABI.
-//! It does not fabricate a pending Core service call; dispatch integration
-//! must retain the root's existing generation lease while these are live.
+//! Workers use the existing kernel task runtime and retain the selected root's
+//! generation lease through actual settlement. A bound component import can
+//! run on this path. The compiled workflow scheduler does not yet suspend or
+//! resume its Fork children from these tickets; plugin ABI parity is separate.
 
 use crate::{
     Authority, CancellationToken, KernelError, ResolvedImportHandle, RootExecutionHandle,
