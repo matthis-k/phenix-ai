@@ -4,7 +4,17 @@
 //! It does not fabricate a pending Core service call; dispatch integration
 //! must retain the root's existing generation lease while these are live.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::{
+    Authority, CancellationToken, RootExecutionHandle, TaskCancellationHandle, TaskHandle,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread,
+};
 
 /// Correlated completion identity. The generation component prevents a late
 /// callback into a different resident plan after a promotion.
@@ -39,6 +49,8 @@ pub enum WorkflowTaskError {
     InvalidSettlement(WorkflowTaskId),
     RootNotAdmitting,
     OutstandingTasks(usize),
+    MissingGeneration,
+    CallCounterOverflow,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +118,22 @@ impl WorkflowPendingTasks {
         signalled
     }
 
+    /// Cancel a single ticket. Repeated requests never signal twice.
+    pub fn cancel_ticket(&mut self, id: &WorkflowTaskId) -> Result<bool, WorkflowTaskError> {
+        if id.generation != self.generation {
+            return Err(WorkflowTaskError::WrongGeneration(id.clone()));
+        }
+        let state = self
+            .active
+            .get_mut(id)
+            .ok_or_else(|| WorkflowTaskError::UnknownTask(id.clone()))?;
+        if *state != WorkflowTaskState::Pending {
+            return Ok(false);
+        }
+        *state = WorkflowTaskState::Cancelling;
+        Ok(true)
+    }
+
     pub fn cancel_root(&mut self) -> Vec<WorkflowTaskId> {
         self.root_cancelled = true;
         let mut signalled = Vec::new();
@@ -165,6 +193,224 @@ impl WorkflowPendingTasks {
 
     pub fn state(&self, id: &WorkflowTaskId) -> Option<WorkflowTaskState> {
         self.active.get(id).copied()
+    }
+}
+
+/// A single workflow root's host-side native tasks. Every admitted worker
+/// owns a clone of the pinned root lease until its callback settles, even if
+/// the caller drops its task result or cancels the enclosing group.
+pub struct WorkflowNativeTaskGroup {
+    root: RootExecutionHandle,
+    shared: Arc<Mutex<NativeTaskLedger>>,
+    next_call: AtomicU64,
+}
+
+struct NativeTaskLedger {
+    pending: WorkflowPendingTasks,
+    signals: BTreeMap<WorkflowTaskId, TaskCancellationHandle>,
+}
+
+struct NativeTaskSettlement {
+    id: WorkflowTaskId,
+    shared: Arc<Mutex<NativeTaskLedger>>,
+    complete: bool,
+}
+
+impl NativeTaskSettlement {
+    fn completed(&mut self) {
+        self.complete = true;
+    }
+}
+
+impl Drop for NativeTaskSettlement {
+    fn drop(&mut self) {
+        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        shared.signals.remove(&self.id);
+        // A provider panic is a failed terminal settlement, not a
+        // completed normal result. Cancellation alone is not settlement.
+        let terminal = if self.complete {
+            WorkflowTaskState::Completed
+        } else {
+            WorkflowTaskState::Failed
+        };
+        let result = shared.pending.settle(&self.id, terminal);
+        debug_assert!(result.is_ok(), "a worker must settle its ticket once");
+    }
+}
+
+/// A pollable result for one native task. The actual root lease belongs to
+/// the worker until its settlement, not to this result receiver.
+pub struct WorkflowNativeTask<T> {
+    id: WorkflowTaskId,
+    task: TaskHandle<T>,
+    shared: Arc<Mutex<NativeTaskLedger>>,
+}
+
+impl<T> WorkflowNativeTask<T> {
+    pub fn id(&self) -> &WorkflowTaskId {
+        &self.id
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
+    /// Returns immediately when the native worker is still running.
+    /// A ready result is joined exactly once.
+    pub fn try_join(self) -> Result<thread::Result<T>, Self> {
+        if self.is_finished() {
+            Ok(self.task.join())
+        } else {
+            Err(self)
+        }
+    }
+
+    pub fn join(self) -> thread::Result<T> {
+        self.task.join()
+    }
+
+    pub fn cancel(&self) -> Result<bool, WorkflowTaskError> {
+        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        if shared.pending.cancel_ticket(&self.id)? {
+            self.task.cancel();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+impl WorkflowNativeTaskGroup {
+    pub fn new(root: RootExecutionHandle) -> Result<Self, WorkflowTaskError> {
+        let generation = root
+            .generation()
+            .ok_or(WorkflowTaskError::MissingGeneration)?
+            .as_str()
+            .to_owned();
+        Ok(Self {
+            root,
+            shared: Arc::new(Mutex::new(NativeTaskLedger {
+                pending: WorkflowPendingTasks::new(generation),
+                signals: BTreeMap::new(),
+            })),
+            next_call: AtomicU64::new(0),
+        })
+    }
+
+    pub fn generation(&self) -> &crate::GenerationId {
+        self.root.generation().expect("native root generation was checked")
+    }
+
+    pub fn spawn<T, F>(
+        &self,
+        scope: &str,
+        requested_authority: &Authority,
+        worker: F,
+    ) -> Result<WorkflowNativeTask<T>, WorkflowTaskError>
+    where
+        T: Send + 'static,
+        F: FnOnce(CancellationToken) -> T + Send + 'static,
+    {
+        let call = self
+            .next_call
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| WorkflowTaskError::CallCounterOverflow)?
+            + 1;
+        let id = WorkflowTaskId {
+            generation: self.generation().as_str().to_owned(),
+            scope: scope.to_owned(),
+            call,
+        };
+        // Admission and signal registration are one transaction. A concurrent
+        // cancel can never observe a ticket without a cancellable worker.
+        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        shared.pending.admit(id.clone())?;
+        let lease = self.root.clone();
+        let settlement = NativeTaskSettlement {
+            id: id.clone(),
+            shared: Arc::clone(&self.shared),
+            complete: false,
+        };
+        let task = self.root.spawn_native_workflow_task(requested_authority, move |token| {
+            // The lease is deliberately retained until after the actual
+            // worker result, including late results after cancellation.
+            let _lease = lease;
+            let mut settlement = settlement;
+            let result = worker(token);
+            settlement.completed();
+            result
+        });
+        shared.signals.insert(id.clone(), task.cancellation_handle());
+        Ok(WorkflowNativeTask {
+            id,
+            task,
+            shared: Arc::clone(&self.shared),
+        })
+    }
+
+    fn signal(&self, ids: Vec<WorkflowTaskId>) -> Vec<WorkflowTaskId> {
+        let shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        for id in &ids {
+            if let Some(signal) = shared.signals.get(id) {
+                signal.cancel();
+            }
+        }
+        ids
+    }
+
+    pub fn cancel_scope(&self, scope: &str) -> Vec<WorkflowTaskId> {
+        let ids = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .cancel_scope(scope);
+        self.signal(ids)
+    }
+
+    pub fn cancel_root(&self) -> Vec<WorkflowTaskId> {
+        let ids = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .cancel_root();
+        self.signal(ids)
+    }
+
+    pub fn outstanding(&self) -> usize {
+        self.shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .outstanding()
+    }
+
+    pub fn state(&self, id: &WorkflowTaskId) -> Option<WorkflowTaskState> {
+        self.shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .state(id)
+    }
+
+    /// Close only after callbacks have actually settled. The group retains
+    /// its root lease until the owner drops it, while individual workers keep
+    /// their own leases until their callbacks finish.
+    pub fn close(&self) -> Result<(), WorkflowTaskError> {
+        self.shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .close_root()
+    }
+}
+
+impl Drop for WorkflowNativeTaskGroup {
+    fn drop(&mut self) {
+        self.cancel_root();
     }
 }
 
