@@ -1395,7 +1395,10 @@ mod tests {
         }
         let valid = Type::Variant(BTreeMap::from([
             (key("success"), Type::String),
-            (key("failed"), Type::Table(BTreeMap::from([(key("reason"), Type::String)]))),
+            (
+                key("failed"),
+                Type::Table(BTreeMap::from([(key("reason"), Type::String)])),
+            ),
         ]));
         assert_eq!(
             serde_json::from_slice::<Type>(&serde_json::to_vec(&valid).unwrap()).unwrap(),
