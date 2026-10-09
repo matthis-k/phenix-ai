@@ -1087,13 +1087,7 @@ impl WorkflowTopology {
             if let Some(children) = nested.get(id) {
                 for child in children {
                     depth = depth.max(
-                        1 + verify_nesting(
-                            child,
-                            nested,
-                            visiting,
-                            resolved,
-                            traversal_depth + 1,
-                        )?
+                        1 + verify_nesting(child, nested, visiting, resolved, traversal_depth + 1)?,
                     );
                     if depth > MAX_SCOPE_DEPTH {
                         return Err(WorkflowCompileError::InvalidFork {
@@ -1113,7 +1107,10 @@ impl WorkflowTopology {
             let mut subscopes = BTreeSet::new();
             for member in members {
                 for (outcome, edge) in &self.nodes[member].branches {
-                    if matches!(edge, WorkflowEdge::Fork { .. } | WorkflowEdge::MapFork { .. }) {
+                    if matches!(
+                        edge,
+                        WorkflowEdge::Fork { .. } | WorkflowEdge::MapFork { .. }
+                    ) {
                         subscopes.insert((member.clone(), outcome.clone()));
                     }
                 }
@@ -1795,10 +1792,7 @@ mod tests {
                 WorkflowEdge::Finish
             } else {
                 WorkflowEdge::Fork {
-                    branches: BTreeMap::from([(
-                        "only".into(),
-                        format!("nested-{:02}", index + 1),
-                    )]),
+                    branches: BTreeMap::from([("only".into(), format!("nested-{:02}", index + 1))]),
                     policy: crate::WorkflowJoinPolicy::All(
                         crate::WorkflowJoinAllPolicy::CollectAll,
                     ),
