@@ -3,7 +3,7 @@ _: {
     { pkgs, ... }:
     let
       rustRoot = ../rust;
-      rustSource = pkgs.lib.cleanSource rustRoot;
+      rustSource = selectedProductSource;
       crateEntries = builtins.readDir (rustRoot + "/crates");
       localCrates = map (name: "crates/${name}") (
         builtins.filter (name: crateEntries.${name} == "directory") (builtins.attrNames crateEntries)
@@ -21,6 +21,80 @@ _: {
           builtins.replaceStrings [ "/" "." ] [ "-" "-" ] relative
         }" (builtins.readFile (rustRoot + "/${relative}"));
       }) manifestPaths;
+
+      # Cargo manifests define path dependency edges. Parse them at evaluation time
+      # rather than maintaining another list of packages needed by the product.
+      workspaceManifest = builtins.fromTOML (builtins.readFile (rustRoot + "/Cargo.toml"));
+      workspaceDependencies = workspaceManifest.workspace.dependencies or { };
+      manifestIndex = builtins.listToAttrs (
+        map (
+          member:
+          let
+            manifest = builtins.fromTOML (builtins.readFile (rustRoot + "/${member}/Cargo.toml"));
+          in
+          {
+            name = manifest.package.name;
+            value = {
+              inherit manifest member;
+            };
+          }
+        ) localCrates
+      );
+
+      dependencySets =
+        manifest:
+        [
+          (manifest.dependencies or { })
+          (manifest."build-dependencies" or { })
+          (manifest."dev-dependencies" or { })
+        ]
+        ++ pkgs.lib.concatMap (target: [
+          (target.dependencies or { })
+          (target."build-dependencies" or { })
+          (target."dev-dependencies" or { })
+        ]) (builtins.attrValues (manifest.target or { }));
+
+      localDependencies =
+        manifest:
+        pkgs.lib.unique (
+          pkgs.lib.concatMap (
+            declarations:
+            pkgs.lib.concatMap (
+              alias:
+              let
+                declared = builtins.getAttr alias declarations;
+                inherited =
+                  if builtins.isAttrs declared && (declared.workspace or false) then
+                    builtins.getAttr alias workspaceDependencies
+                  else
+                    declared;
+              in
+              if builtins.isAttrs inherited && inherited ? path then [ (inherited.package or alias) ] else [ ]
+            ) (builtins.attrNames declarations)
+          ) (dependencySets manifest)
+        );
+
+      productClosure =
+        let
+          visit =
+            seen: pending:
+            if pending == [ ] then
+              seen
+            else
+              let
+                package = builtins.head pending;
+                entry =
+                  if builtins.hasAttr package manifestIndex then
+                    builtins.getAttr package manifestIndex
+                  else
+                    throw "Unknown Cargo path dependency ${package} in the Phenix product closure";
+              in
+              if builtins.elem package seen then
+                visit seen (builtins.tail pending)
+              else
+                visit (seen ++ [ package ]) ((builtins.tail pending) ++ localDependencies entry.manifest);
+        in
+        map (package: (builtins.getAttr package manifestIndex).member) (visit [ ] [ "phenix-harness" ]);
 
       explicitTargetPaths =
         member:
@@ -78,6 +152,20 @@ _: {
         '') executablePlaceholderPaths}
       '';
 
+      # Keep workspace manifests and empty targets from the dependency skeleton.
+      # Copy real files only for crates reachable from the product.
+      selectedProductSource = pkgs.runCommand "phenix-product-selected-rust-source" { } ''
+        set -euo pipefail
+        mkdir -p "$out"
+        cp -a ${dependencySkeleton}/. "$out/"
+        chmod -R u+w "$out"
+
+        ${pkgs.lib.concatMapStringsSep "\n" (member: ''
+          rm -rf "$out/${member}"
+          cp -a ${rustRoot + "/${member}"} "$out/${member}"
+        '') productClosure}
+      '';
+
       productRustDependencies = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-product-rust-dependencies";
         version = "0";
@@ -114,6 +202,7 @@ _: {
       productRustArtifacts = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-product-rust-artifacts";
         version = "0";
+        passthru.productCargoSourceMembers = productClosure;
         src = rustSource;
         cargoLock.lockFile = rustRoot + "/Cargo.lock";
         nativeBuildInputs = [ pkgs.mold ];
