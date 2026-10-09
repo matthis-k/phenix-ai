@@ -171,25 +171,35 @@ fn selected_fork_generation(policy: WorkflowJoinPolicy) -> ResolvedGeneration {
 }
 
 fn selected_nested_fork_generation() -> ResolvedGeneration {
-    let mut workflow = fixed_fork_workflow(WorkflowJoinPolicy::All(
-        WorkflowJoinAllPolicy::CollectAll,
-    ));
-    workflow.topology.nodes.get_mut("alpha-tool").unwrap()
-        .branches.insert("done".into(), WorkflowEdge::Fork {
-            branches: BTreeMap::from([
-                ("first".into(), "inner-one".into()),
-                ("second".into(), "inner-two".into()),
-            ]),
-            policy: WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
-            outputs: BTreeMap::new(),
-            on_success: Box::new(WorkflowEdge::Finish),
-            on_failure: Box::new(WorkflowEdge::Finish),
-        });
+    let mut workflow =
+        fixed_fork_workflow(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
+    workflow
+        .topology
+        .nodes
+        .get_mut("alpha-tool")
+        .unwrap()
+        .branches
+        .insert(
+            "done".into(),
+            WorkflowEdge::Fork {
+                branches: BTreeMap::from([
+                    ("first".into(), "inner-one".into()),
+                    ("second".into(), "inner-two".into()),
+                ]),
+                policy: WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
+                outputs: BTreeMap::new(),
+                on_success: Box::new(WorkflowEdge::Finish),
+                on_failure: Box::new(WorkflowEdge::Finish),
+            },
+        );
     for name in ["inner-one", "inner-two"] {
-        workflow.topology.nodes.insert(name.into(), WorkflowNode {
-            import: InterfaceId::parse(TOOL).unwrap(),
-            branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
-        });
+        workflow.topology.nodes.insert(
+            name.into(),
+            WorkflowNode {
+                import: InterfaceId::parse(TOOL).unwrap(),
+                branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+            },
+        );
     }
     resolve_with_workflow(BASIC, false, workflow)
         .with_workflow_frame_schemas([WorkflowFrameDeclaration {
@@ -202,7 +212,8 @@ fn selected_nested_fork_generation() -> ResolvedGeneration {
                     (Key::parse("beta").unwrap(), Type::U64),
                 ]),
             },
-        }]).unwrap()
+        }])
+        .unwrap()
 }
 
 #[test]
@@ -210,45 +221,56 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
     let resolved = selected_nested_fork_generation();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
-        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
-        .frame_schema().unwrap().clone();
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let alpha = Key::parse("alpha").unwrap();
     let beta = Key::parse("beta").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (alpha.clone(), PhenixValue::U64(0)),
-        (beta.clone(), PhenixValue::U64(0)),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, frame, seen| {
-            if node.starts_with("inner-") || node == "beta-tool" {
-                assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
-            }
-            seen.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "inner-one" {
-                frame.set(&alpha, PhenixValue::U64(40)).unwrap();
-            } else if node == "beta-tool" {
-                frame.set(&beta, PhenixValue::U64(8)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<String, String>(outcome),
-                _ => Err("unexpected mock outcome".into()),
-            }
-        },
-        || false,
-        None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, frame, seen| {
+                if node.starts_with("inner-") || node == "beta-tool" {
+                    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
+                }
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "inner-one" {
+                    frame.set(&alpha, PhenixValue::U64(40)).unwrap();
+                } else if node == "beta-tool" {
+                    frame.set(&beta, PhenixValue::U64(8)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                    _ => Err("unexpected mock outcome".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.final_outcome, "final");
     assert_eq!(report.executed_nodes, 5);
-    assert_eq!(seen, [
-        "model", "inner-one", "beta-tool", "inner-two", "model"
-    ]);
+    assert_eq!(
+        seen,
+        ["model", "inner-one", "beta-tool", "inner-two", "model"]
+    );
     // Inner child-only modifications never escape an unselected Join slot.
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
     assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(8)));
