@@ -1536,6 +1536,24 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
             .outcome_projection("model"),
         Some(&selector.projection)
     );
+    let rebound = selected
+        .with_plugin_set(
+            selected.plugins().to_vec(),
+            selected.components().to_vec(),
+            selected.entry_triggers().to_vec(),
+            selected.process_arguments().to_vec(),
+            &Authority::default(),
+        )
+        .unwrap();
+    assert_eq!(rebound.generation(), selected.generation());
+    assert_eq!(rebound.workflow_projections(), &[selector.clone()]);
+    assert_eq!(
+        rebound.generation_topology()
+            .workflow(&component_id(TOPOLOGY), "portable")
+            .unwrap()
+            .outcome_projection("model"),
+        Some(&selector.projection)
+    );
 
     let mut bad = selector.clone();
     bad.node = "unknown".into();
