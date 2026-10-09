@@ -64,6 +64,7 @@ pub enum KindLoweringError {
     DuplicateContribution(String),
     MissingKind { kind: String, contribution: String },
     InvalidKindValue { kind: String, contribution: String },
+    CapabilityValue { kind: String, contribution: String },
     MissingInputField { contribution: String, field: String },
     KindCycle(Vec<String>),
     OutputBoundExceeded { allowed: usize },
@@ -110,6 +111,19 @@ pub fn lower_kinds(
     Ok(output)
 }
 
+fn contains_live_capability(value: &PhenixValue) -> bool {
+    match value {
+        PhenixValue::Callable(_) | PhenixValue::Object(_) => true,
+        PhenixValue::Option(Some(value)) | PhenixValue::Variant { value, .. } => {
+            contains_live_capability(value)
+        }
+        PhenixValue::List(items) => items.iter().any(contains_live_capability),
+        PhenixValue::Map(items) => items.values().any(contains_live_capability),
+        PhenixValue::Table(items) => items.values().any(contains_live_capability),
+        _ => false,
+    }
+}
+
 fn expand(
     input: &KindInput,
     kind: &str,
@@ -130,6 +144,12 @@ fn expand(
             contribution: input.contribution.clone(),
         });
     };
+    if contains_live_capability(data) {
+        return Err(KindLoweringError::CapabilityValue {
+            kind: kind.into(),
+            contribution: input.contribution.clone(),
+        });
+    }
     if definition.schema.parse(data).is_err() {
         return Err(KindLoweringError::InvalidKindValue {
             kind: kind.into(),
@@ -154,6 +174,12 @@ fn expand(
                         field: field.clone(),
                     })?,
             };
+            if contains_live_capability(&projected) {
+                return Err(KindLoweringError::CapabilityValue {
+                    kind: kind.into(),
+                    contribution: input.contribution.clone(),
+                });
+            }
             fields.insert(target.clone(), projected);
         }
         let value = PhenixValue::Map(fields);
