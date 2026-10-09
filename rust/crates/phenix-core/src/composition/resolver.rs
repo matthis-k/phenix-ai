@@ -242,6 +242,7 @@ pub enum GenerationResolutionError {
     },
     PortableContributions(ContributionSetError),
     UnselectedContributionOwner(PluginId),
+    MissingReselectedContributionOwner(PluginId),
     PortableContributionsAlreadyBound,
     PortableContributionsRequireReselection,
 }
@@ -390,6 +391,9 @@ impl Display for GenerationResolutionError {
             Self::PortableContributions(error) => Display::fmt(error, f),
             Self::UnselectedContributionOwner(owner) => {
                 write!(f, "contribution artifact owner {owner} is not selected")
+            }
+            Self::MissingReselectedContributionOwner(owner) => {
+                write!(f, "selected plugin {owner} must supply a fresh contribution envelope")
             }
             Self::PortableContributionsAlreadyBound => {
                 f.write_str("portable contributions already bound to this generation")
@@ -1031,6 +1035,23 @@ impl ResolvedGeneration {
         // from the new selection. Clearing the old contribution snapshot here
         // only allows that fresh preparation; it does not reuse any old bytes
         // or remove the old generation's pinned identity in place.
+        let selected: Vec<_> = selected.into_iter().collect();
+        if let Some(previous) = &self.portable_contributions {
+            // A still-selected plugin that previously published contributions
+            // must explicitly provide a fresh envelope, even when empty.
+            // Omitting it must not silently erase its metadata or authority
+            // bindings. Removed plugin owners are intentionally exempt.
+            let new_owners: BTreeSet<_> = plugins.iter().map(|plugin| &plugin.id).collect();
+            let supplied: BTreeSet<_> = selected.iter().map(|(owner, _)| *owner).collect();
+            for contribution in previous.iter() {
+                let owner = &contribution.owner;
+                if new_owners.contains(owner) && !supplied.contains(owner) {
+                    return Err(GenerationResolutionError::MissingReselectedContributionOwner(
+                        owner.clone(),
+                    ));
+                }
+            }
+        }
         let mut source = self.clone();
         source.portable_contributions = None;
         source
@@ -1648,6 +1669,21 @@ mod tests {
             unchanged.portable_contributions(),
             initial.portable_contributions()
         );
+
+        // A still-selected plugin cannot have its prior declarations erased
+        // accidentally by omission. Explicit empty envelopes are different.
+        assert!(matches!(
+            initial.with_plugin_set_and_portable_contributions(
+                plugins.clone(),
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+                [(&beta, b.as_slice())],
+            ),
+            Err(GenerationResolutionError::MissingReselectedContributionOwner(owner))
+                if owner == alpha
+        ));
 
         let updated = portable_fixture("fixture.beta", "updated");
         let replacement = initial
