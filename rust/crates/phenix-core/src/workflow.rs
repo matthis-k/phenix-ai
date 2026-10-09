@@ -2232,6 +2232,8 @@ mod inclusion_tests {
     #[test]
     fn included_fork_join_finish_returns_to_parent_via_declared_outcome() {
         let mut all = selected();
+        let child_output = crate::Key::parse("child_output").unwrap();
+        let parent_output = crate::Key::parse("parent_output").unwrap();
         all.insert(
             (owner(), "fork-child".into()),
             WorkflowTopology {
@@ -2248,7 +2250,10 @@ mod inclusion_tests {
                                     policy: crate::WorkflowJoinPolicy::All(
                                         crate::WorkflowJoinAllPolicy::CollectAll,
                                     ),
-                                    outputs: BTreeMap::new(),
+                                    outputs: BTreeMap::from([(
+                                        "worker".into(),
+                                        vec![child_output.clone()],
+                                    )]),
                                     on_success: Box::new(WorkflowEdge::Finish),
                                     on_failure: Box::new(WorkflowEdge::Finish),
                                 },
@@ -2263,32 +2268,38 @@ mod inclusion_tests {
             },
         );
         let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        parent.nodes.remove("after");
         parent.nodes.get_mut("start").unwrap().branches.insert(
             "delegate".into(),
-            include(
-                "fork-child",
-                "subfork",
-                &[
-                    (
-                        "spawn/success",
-                        WorkflowEdge::Next {
-                            node: "after".into(),
-                        },
-                    ),
-                    ("spawn/failure", WorkflowEdge::Finish),
-                ],
-            ),
+            WorkflowEdge::IncludeMapped {
+                workflow: "fork-child".into(),
+                site: "subfork".into(),
+                inputs: BTreeMap::new(),
+                outputs: BTreeMap::from([(child_output.clone(), parent_output.clone())]),
+                on_exit: BTreeMap::from([
+                    ("spawn/success".into(), WorkflowEdge::Finish),
+                    ("spawn/failure".into(), WorkflowEdge::Finish),
+                ]),
+            },
         );
         let compiled = WorkflowTopology::inline_selected(&owner(), "main", &all)
             .unwrap()
             .compile(|_| true)
             .unwrap();
+        let schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([
+                (child_output.clone(), crate::Type::U64),
+                (parent_output.clone(), crate::Type::U64),
+            ]),
+        };
+        compiled.validate_frame_schema(&schema).unwrap();
         let mut frame = crate::WorkflowFrame::new(
-            crate::WorkflowFrameSchema {
-                revision: 1,
-                slots: BTreeMap::new(),
-            },
-            BTreeMap::new(),
+            schema,
+            BTreeMap::from([
+                (child_output.clone(), crate::PhenixValue::U64(0)),
+                (parent_output.clone(), crate::PhenixValue::U64(0)),
+            ]),
         )
         .unwrap();
         let mut invoked = Vec::new();
@@ -2296,13 +2307,17 @@ mod inclusion_tests {
             .execute_nodes(
                 &mut invoked,
                 Some(&mut frame),
-                |node, _, visited, _, _| {
+                |node, _, visited, data, _| {
                     visited.push(node.to_owned());
+                    if node == "__include__/subfork/work" {
+                        data.unwrap()
+                            .set(&child_output, crate::PhenixValue::U64(42))
+                            .unwrap();
+                    }
                     Ok::<_, WorkflowInvocationError<String>>(match node {
                         "start" => "delegate".into(),
                         "__include__/subfork/fork" => "spawn".into(),
                         "__include__/subfork/work" => "done".into(),
-                        "after" => "done".into(),
                         _ => panic!("unexpected node {node}"),
                     })
                 },
@@ -2310,19 +2325,22 @@ mod inclusion_tests {
                 None,
             )
             .unwrap();
-        assert_eq!(report.final_outcome, "done");
-        assert_eq!(report.executed_nodes, 4);
+        assert_eq!(report.final_outcome, "spawn/success");
+        assert_eq!(report.executed_nodes, 3);
+        assert_eq!(
+            frame.get(&parent_output),
+            Some(&crate::PhenixValue::U64(42))
+        );
         assert_eq!(
             invoked,
             [
                 "start",
                 "__include__/subfork/fork",
-                "__include__/subfork/work",
-                "after"
+                "__include__/subfork/work"
             ]
         );
         let parent = all.get_mut(&(owner(), "main".into())).unwrap();
-        let WorkflowEdge::Include { on_exit, .. } = parent
+        let WorkflowEdge::IncludeMapped { on_exit, .. } = parent
             .nodes
             .get_mut("start")
             .unwrap()
