@@ -2,7 +2,7 @@
   description = "Phenix AI core, runtime, plugins, clients, and supported harness";
 
   inputs = {
-    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/725888f5748030156c0f288d972c9f8d97e45367";
+    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/49e2ba329485a19fc691cb54f58987904ebac649";
     phenix-pins = {
       url = "github:matthis-k/phenix-pins";
       inputs.phenix-flake-ci.follows = "phenix-flake-ci";
