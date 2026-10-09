@@ -1,9 +1,25 @@
 # Conflict-aware execution graph patches
 
-status: specification-only
+status: partial implementation (pure slot-order preflight; graph edits not wired)
 stage: C of spec/microkernel-composition-roadmap.md
 depends-on: #726, #727, Stage B typed-contribution PR
 blocks: Stage E application-consumer migration
+
+## Implementation slice: deterministic slot-order preflight
+
+`phenix-core::graph_patch_order::resolve_slot_order` is now executable and
+unit-tested. It consumes selected, stable contribution IDs and owner-published
+slot identities, validates duplicate IDs and duplicate proposed node IDs,
+rejects missing/cross-slot ordering dependencies, detects ordering cycles,
+rejects unordered pairs of effectful insertions, and uses deterministic
+topological ordering independent of discovery order. Qualified inclusion
+slots have separate identities. This is a *pure precursor*; it never mutates
+the live generation or chooses providers.
+
+**Not yet implemented:** actual `InsertNode`/`RemoveNode`/`ReplaceNode`,
+typed edge edits, schema-extension initialization proofs, slot cardinality,
+authority and selected-artifact validation, atomic IR application, resolver
+and inspection integration. These are mandatory before merging #729.
 
 ## Goal
 
