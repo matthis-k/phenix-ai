@@ -389,6 +389,31 @@ activation. The current contract makes frame mapping explicit rather than
 quietly sharing or defaulting unknown fields. It does not claim those
 remaining name/ownership semantics are complete.
 
+## First async and portable outcome contracts (implementation partial)
+
+The Core now exposes a root/generation-correlated `WorkflowPendingTasks`
+accounting contract: individual task tickets have a selected generation, scoped
+identity and one settlement. Cancellation requests mark outstanding work as
+`Cancelling` and return the tickets to signal, but **do not settle them or
+release the generation lease**. Root closure is rejected until all pending
+native calls actually settle, including callbacks completed after cancellation.
+Late/wrong-generation and duplicate settlement are rejected. These invariants
+have focused Core tests. The current cooperative workflow scheduler and native
+ABI are **not yet wired to this accounting substrate**; native pending
+invocations still cannot progress concurrently through this execution path.
+This is a partial native-async lifecycle contract, not a claim of async parity.
+
+The Core also exposes `WorkflowOutcomeProjection` revision 1. It is a
+portable declarative normal-result selector for closed `Variant` tags,
+typed `Table` string fields and direct strings. Candidate validation rejects
+unsupported revisions, omitted or invented variant cases, and outcomes not
+declared by the plan node. Runtime checked projection rejects incorrect
+structural payloads and unknown discriminants instead of turning them into
+normal recovery edges. Tests cover round-trip portable bytes, typed results,
+and negative cases. Binding selected projection descriptors to service
+response schemas and removing the Rust-only agent response adapters is a
+separate, still-open migration gate.
+
 ## Target-state Core IR boundary and migration gate
 
 **Normative target: [kernel RFC #736](https://github.com/matthis-k/phenix-ai/pull/736).** This section describes the eventual architecture, not functionality implemented by #726. The current `WorkflowTopology`, hand-authored Rust adapter, and legacy loop remain migration scaffolding until parity is proved. Do not turn the interim workflow representation into a second permanent Core executor or claim semantic completion from the current direct workflow fixture.
