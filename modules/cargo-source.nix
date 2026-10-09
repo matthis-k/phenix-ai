@@ -1,4 +1,7 @@
-{ pkgs, rustRoot ? ../rust }:
+{
+  pkgs,
+  rustRoot ? ../rust,
+}:
 let
   crateEntries = builtins.readDir (rustRoot + "/crates");
   localCrates = map (name: "crates/${name}") (
@@ -151,17 +154,19 @@ let
 
   # Keep workspace manifests and empty targets from the dependency skeleton.
   # Copy real files only for crates reachable from the requested package.
-  sourceFor = root: pkgs.runCommand "phenix-${root}-selected-rust-source" { } ''
-    set -euo pipefail
-    mkdir -p "$out"
-    cp -a ${dependencySkeleton}/. "$out/"
-    chmod -R u+w "$out"
+  sourceFor =
+    root:
+    pkgs.runCommand "phenix-${root}-selected-rust-source" { } ''
+      set -euo pipefail
+      mkdir -p "$out"
+      cp -a ${dependencySkeleton}/. "$out/"
+      chmod -R u+w "$out"
 
-    ${pkgs.lib.concatMapStringsSep "\n" (member: ''
-      rm -rf "$out/${member}"
-      cp -a ${rustRoot + "/${member}"} "$out/${member}"
-    '') (membersFor root)}
-  '';
+      ${pkgs.lib.concatMapStringsSep "\n" (member: ''
+        rm -rf "$out/${member}"
+        cp -a ${rustRoot + "/${member}"} "$out/${member}"
+      '') (membersFor root)}
+    '';
 
 in
 {
