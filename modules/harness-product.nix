@@ -2,7 +2,7 @@
   perSystem =
     { pkgs, system, ... }:
     let
-      rustSource = pkgs.lib.cleanSource ../rust;
+      rustSource = (import ./cargo-source.nix { inherit pkgs; }).sourceFor "phenix-harness";
       productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
 
       phenixHarnessRuntime = pkgs.runCommand "phenix-harness-runtime" { } ''
