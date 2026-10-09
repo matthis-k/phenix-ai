@@ -949,9 +949,9 @@ impl CompiledWorkflow {
             &mut dyn FnMut() -> bool,
         ) -> Result<String, WorkflowInvocationError<Error>>,
         cancelled: &mut impl FnMut() -> bool,
-        count: &mut u64,
-        limit: Option<NonZeroU64>,
+        budget: (&mut u64, Option<NonZeroU64>),
     ) -> Result<PlanStepId, WorkflowRunError<Error>> {
+        let (count, limit) = budget;
         let PlanStepId::Invoke(name) = cursor else {
             unreachable!("invoke dispatch requires an Invoke identity")
         };
@@ -1062,8 +1062,7 @@ impl CompiledWorkflow {
                         frame.as_deref_mut(),
                         &mut invoke,
                         &mut cancelled,
-                        &mut count,
-                        step_limit,
+                        (&mut count, step_limit),
                     )?;
                 }
                 PlanStep::Fork { branches, join } => {
@@ -1108,8 +1107,7 @@ impl CompiledWorkflow {
                                         Some(child_data),
                                         &mut invoke,
                                         &mut cancelled,
-                                        &mut count,
-                                        step_limit,
+                        (&mut count, step_limit),
                                     )
                                     .map(|next| {
                                         *cursor = next;
