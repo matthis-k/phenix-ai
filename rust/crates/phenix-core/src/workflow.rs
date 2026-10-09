@@ -133,6 +133,12 @@ pub enum WorkflowEdge {
         slots: BTreeMap<crate::Key, crate::Key>,
     },
     Finish,
+    /// Copy typed output fields on an immediate terminal edge. This is
+    /// data on an Invoke-to-Exit transition, not a new execution step.
+    FinishTransfer {
+        #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
+        slots: BTreeMap<crate::Key, crate::Key>,
+    },
     /// Explicit normal failure outcome from an invoked child. Provider,
     /// transport, preparation and projection errors are never synthesized
     /// into this branch outcome.
@@ -250,7 +256,12 @@ impl LoweredPlan {
                     WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
                         unreachable!("selected subplans were inlined before lowering")
                     }
-                    WorkflowEdge::Finish | WorkflowEdge::Fail => {
+                    WorkflowEdge::Finish
+                    | WorkflowEdge::FinishTransfer { .. }
+                    | WorkflowEdge::Fail => {
+                        if let WorkflowEdge::FinishTransfer { slots } = edge {
+                            transfers.insert(outcome.clone(), slots.clone());
+                        }
                         let exit = PlanStepId::Exit {
                             node: name.clone(),
                             outcome: outcome.clone(),
@@ -676,7 +687,9 @@ impl WorkflowTopology {
                                         }
                                     }
                                 }
-                                WorkflowEdge::Finish | WorkflowEdge::Fail => {}
+                                WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. }
+                                | WorkflowEdge::Fail => {}
                                 WorkflowEdge::Include { .. }
                                 | WorkflowEdge::IncludeMapped { .. } => {
                                     unreachable!("child workflow inclusions are already expanded");
@@ -700,12 +713,21 @@ impl WorkflowTopology {
                                     node: format!("{prefix}{node}"),
                                     slots: slots.clone(),
                                 },
-                                WorkflowEdge::Finish | WorkflowEdge::Fail
+                                WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. }
+                                | WorkflowEdge::Fail
                                     if scoped.contains(child_name) =>
                                 {
                                     child_edge.clone()
                                 }
-                                WorkflowEdge::Finish | WorkflowEdge::Fail => {
+                                WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. }
+                                | WorkflowEdge::Fail => {
+                                    if matches!(child_edge, WorkflowEdge::FinishTransfer { .. }) {
+                                        // Sequential handoffs cannot be represented as one
+                                        // source-to-target map without losing aliasing.
+                                        return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                    }
                                     if matches!(child_edge, WorkflowEdge::Fail) {
                                         return Err(WorkflowCompileError::InvalidFork {
                                             node: child_name.clone(),
@@ -732,13 +754,14 @@ impl WorkflowTopology {
                                         Some(WorkflowEdge::Finish)
                                             if outputs.is_some_and(|slots| !slots.is_empty()) =>
                                         {
-                                            return Err(WorkflowCompileError::InvalidFork {
-                                                node: child_name.clone(),
-                                                outcome: child_outcome.clone(),
-                                                reason: "mapped return requires a parent continuation to receive output".into(),
-                                            });
+                                            WorkflowEdge::FinishTransfer {
+                                                slots: (*outputs.expect("nonempty mapping")).clone(),
+                                            }
                                         }
                                         Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
+                                        Some(WorkflowEdge::FinishTransfer { .. }) => {
+                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                        },
                                         Some(WorkflowEdge::Fail) => {
                                             return Err(WorkflowCompileError::InvalidFork {
                                                 node: child_name.clone(),
@@ -1147,6 +1170,7 @@ impl WorkflowTopology {
                         }
                     }
                     WorkflowEdge::Finish
+                    | WorkflowEdge::FinishTransfer { .. }
                     | WorkflowEdge::Fail
                     | WorkflowEdge::Include { .. }
                     | WorkflowEdge::IncludeMapped { .. } => {}
@@ -1205,7 +1229,9 @@ impl WorkflowTopology {
                             match next {
                                 WorkflowEdge::Next { node }
                                 | WorkflowEdge::Transfer { node, .. } => visit.push(node.clone()),
-                                WorkflowEdge::Finish | WorkflowEdge::Fail => {}
+                                WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. }
+                                | WorkflowEdge::Fail => {}
                                 WorkflowEdge::MapFork {
                                     on_success,
                                     on_failure,
@@ -1404,7 +1430,8 @@ impl CompiledWorkflow {
     ) -> Result<(), WorkflowCompileError> {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
-                if let WorkflowEdge::Transfer { slots, .. } = edge {
+                if let WorkflowEdge::Transfer { slots, .. }
+                | WorkflowEdge::FinishTransfer { slots } = edge {
                     let mut destinations = BTreeSet::new();
                     for (source, target) in slots {
                         if !destinations.insert(target) {
@@ -1793,6 +1820,67 @@ mod inclusion_tests {
             ((owner(), "main".into()), main),
             ((owner(), "child".into()), child),
         ])
+    }
+
+    #[test]
+    fn mapped_subplan_can_return_directly_to_parent_finish() {
+        let mut all = selected();
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        parent.nodes.remove("after");
+        parent.nodes.get_mut("start").unwrap().branches.insert(
+            "delegate".into(),
+            WorkflowEdge::IncludeMapped {
+                workflow: "child".into(),
+                site: "terminal".into(),
+                inputs: BTreeMap::new(),
+                outputs: BTreeMap::from([(
+                    crate::Key::parse("child_output").unwrap(),
+                    crate::Key::parse("parent_output").unwrap(),
+                )]),
+                on_exit: BTreeMap::from([("returned".into(), WorkflowEdge::Finish)]),
+            },
+        );
+        let topology = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
+        assert!(matches!(
+            topology.nodes["__include__/terminal/work"].branches["returned"],
+            WorkflowEdge::FinishTransfer { .. }
+        ));
+        let compiled = topology.compile(|_| true).unwrap();
+        let child_output = crate::Key::parse("child_output").unwrap();
+        let parent_output = crate::Key::parse("parent_output").unwrap();
+        let schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([
+                (child_output.clone(), crate::Type::U64),
+                (parent_output.clone(), crate::Type::U64),
+            ]),
+        };
+        compiled.validate_frame_schema(&schema).unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            schema,
+            BTreeMap::from([
+                (child_output.clone(), crate::PhenixValue::U64(0)),
+                (parent_output.clone(), crate::PhenixValue::U64(0)),
+            ]),
+        ).unwrap();
+        let report = compiled.execute_nodes(
+            &mut (),
+            Some(&mut frame),
+            |node, _, _, frame, _| {
+                if node == "__include__/terminal/work" {
+                    frame.unwrap().set(&child_output, crate::PhenixValue::U64(42)).unwrap();
+                    Ok::<_, WorkflowInvocationError<String>>("returned".to_owned())
+                } else {
+                    assert_eq!(node, "start");
+                    Ok::<_, WorkflowInvocationError<String>>("delegate".to_owned())
+                }
+            },
+            || false,
+            None,
+        ).unwrap();
+        assert_eq!(report.final_outcome, "returned");
+        assert_eq!(report.executed_nodes, 2);
+        assert_eq!(frame.get(&parent_output), Some(&crate::PhenixValue::U64(42)));
     }
 
     #[test]
