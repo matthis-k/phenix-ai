@@ -1447,10 +1447,6 @@ impl CompiledWorkflow {
         self.outcome_projections.get(node)
     }
 
-    pub(crate) fn projection_count(&self) -> usize {
-        self.outcome_projections.len()
-    }
-
     pub(crate) fn bind_outcome_projection(
         &mut self,
         node: String,
