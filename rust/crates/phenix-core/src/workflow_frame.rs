@@ -4,14 +4,49 @@
 //! an Invoke/Fork/Join transition through serialized frame contents.
 
 use crate::{Key, PhenixSchema, PhenixValue};
-use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use serde::{Deserialize, Serialize, de::Error as _};
+use std::{collections::{BTreeMap, BTreeSet}, fmt, sync::Arc};
+
+/// Portable frame schema decoding must reject repeated keys, including
+/// byte-identical duplicates. Canonicalization cannot silently choose one.
+fn deserialize_unique_frame_slots<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<Key, PhenixSchema>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueSlots;
+
+    impl<'de> serde::de::Visitor<'de> for UniqueSlots {
+        type Value = BTreeMap<Key, PhenixSchema>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a typed frame schema without duplicate slot identities")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut entries: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut result = BTreeMap::new();
+            while let Some((key, value)) = entries.next_entry::<Key, PhenixSchema>()? {
+                if result.insert(key.clone(), value).is_some() {
+                    return Err(M::Error::custom(format!("duplicate frame slot {key}")));
+                }
+            }
+            Ok(result)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueSlots)
+}
 
 /// Versioned schema for the values visible to an execution plan.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowFrameSchema {
     pub revision: u64,
+    #[serde(deserialize_with = "deserialize_unique_frame_slots")]
     pub slots: BTreeMap<Key, PhenixSchema>,
 }
 
@@ -31,6 +66,7 @@ pub enum WorkflowFrameError {
     UnknownSlot(Key),
     CapabilitySlot(Key),
     CapabilityValue(Key),
+    DuplicateOutputSlot(Key),
     InvalidValue { slot: Key, reason: String },
     IncompatibleSchema,
 }
@@ -162,7 +198,11 @@ impl WorkflowFrame {
             return Err(WorkflowFrameError::IncompatibleSchema);
         }
         let mut candidate = self.clone();
+        let mut seen = BTreeSet::new();
         for slot in slots {
+            if !seen.insert(slot) {
+                return Err(WorkflowFrameError::DuplicateOutputSlot(slot.clone()));
+            }
             let value = branch
                 .get(slot)
                 .ok_or_else(|| WorkflowFrameError::UnknownSlot(slot.clone()))?;
@@ -268,6 +308,19 @@ mod tests {
             unsafe_schema.validate(),
             Err(WorkflowFrameError::CapabilitySlot(_))
         ));
+    }
+
+    #[test]
+    fn portable_schema_and_join_outputs_reject_duplicate_identities() {
+        let encoded = r#"{"revision":1,"slots":{"counter":{"type":"u64"},"counter":{"type":"u64"}}}"#;
+        assert!(serde_json::from_str::<WorkflowFrameSchema>(encoded).is_err());
+        let mut frame = frame();
+        let branch = frame.clone();
+        assert!(matches!(
+            frame.collect_from(&branch, &[key("counter"), key("counter")]),
+            Err(WorkflowFrameError::DuplicateOutputSlot(_))
+        ));
+        assert_eq!(frame.get(&key("counter")), Some(&PhenixValue::U64(0)));
     }
 
     #[test]
