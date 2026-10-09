@@ -15,6 +15,15 @@ pub struct WorkflowFrameSchema {
     pub slots: BTreeMap<Key, PhenixSchema>,
 }
 
+/// Authored schema bound to one selected workflow before generation activation.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowFrameDeclaration {
+    pub owner: crate::ComponentId,
+    pub name: String,
+    pub schema: WorkflowFrameSchema,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkflowFrameError {
     InvalidRevision,
