@@ -1200,6 +1200,10 @@ impl AcpConnection {
     }
 }
 
+// Second-phase probe: a changed exported value forces a real Rust crate build.
+#[doc(hidden)]
+pub const CI_CLIENT_ACP_IMPACT_PROBE: u8 = 1;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1652,6 +1656,3 @@ mod tests {
 
 // Dependency-impact CI probe: isolated ACP client source change.
 
-// Second-phase probe: a changed exported value forces a real Rust crate build.
-#[doc(hidden)]
-pub const CI_CLIENT_ACP_IMPACT_PROBE: u8 = 1;
