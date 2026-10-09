@@ -98,7 +98,6 @@ fn topology() -> WorkflowDeclaration {
     }
 }
 
-
 fn fixed_fork_workflow(policy: WorkflowJoinPolicy) -> WorkflowDeclaration {
     WorkflowDeclaration {
         owner: component_id(TOPOLOGY),
@@ -170,9 +169,8 @@ fn selected_fork_generation(policy: WorkflowJoinPolicy) -> ResolvedGeneration {
 
 #[test]
 fn non_agent_fork_join_executes_two_pinned_providers_with_isolated_frames() {
-    let resolved = selected_fork_generation(WorkflowJoinPolicy::All(
-        WorkflowJoinAllPolicy::CollectAll,
-    ));
+    let resolved =
+        selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
     let schema = resolved
@@ -230,17 +228,22 @@ fn non_agent_fork_join_executes_two_pinned_providers_with_isolated_frames() {
     assert_eq!(
         seen,
         [
-            "enter:model", "exit:model", "enter:alpha-tool", "exit:alpha-tool",
-            "enter:beta-tool", "exit:beta-tool", "enter:model", "exit:model"
+            "enter:model",
+            "exit:model",
+            "enter:alpha-tool",
+            "exit:alpha-tool",
+            "enter:beta-tool",
+            "exit:beta-tool",
+            "enter:model",
+            "exit:model"
         ]
     );
 }
 
 #[test]
 fn fork_fail_fast_does_not_invoke_sibling_after_failed_first_child() {
-    let resolved = selected_fork_generation(WorkflowJoinPolicy::All(
-        WorkflowJoinAllPolicy::FailFast,
-    ));
+    let resolved =
+        selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::FailFast));
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
     let schema = resolved
