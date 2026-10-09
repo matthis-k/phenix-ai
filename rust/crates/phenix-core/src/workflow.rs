@@ -703,6 +703,55 @@ impl WorkflowTopology {
                     let prefix = format!("__include__/{site}/");
                     let entry = format!("{prefix}{}", child.entry);
                     let mut declared_exits = BTreeSet::new();
+                    // A root-scope Join can terminate the included workflow.
+                    // Its public outcome is the same one used by normal
+                    // lowering: <fork outcome>/<success|failure>. A nested
+                    // child-scope Join instead settles its owning fork.
+                    let qualify_join_return = |
+                        edge: &WorkflowEdge,
+                        child_name: &str,
+                        child_outcome: &str,
+                        suffix: &str,
+                        exits: &mut BTreeSet<String>,
+                    | -> Result<WorkflowEdge, WorkflowCompileError> {
+                        match edge {
+                            WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
+                                node: format!("{prefix}{node}"),
+                            }),
+                            WorkflowEdge::Finish if scoped.contains(child_name) => {
+                                Ok(WorkflowEdge::Finish)
+                            }
+                            WorkflowEdge::Finish => {
+                                let terminal = format!("{child_outcome}/{suffix}");
+                                exits.insert(terminal.clone());
+                                if outputs.is_some_and(|slots| !slots.is_empty()) {
+                                    return Err(WorkflowCompileError::InvalidFork {
+                                        node: child_name.to_owned(),
+                                        outcome: terminal,
+                                        reason: "mapped outputs from a terminal Join need an ordered Join transfer".into(),
+                                    });
+                                }
+                                match on_exit.get(&terminal) {
+                                    Some(WorkflowEdge::Next { node }) => Ok(WorkflowEdge::Next {
+                                        node: node.clone(),
+                                    }),
+                                    Some(WorkflowEdge::Finish) => Ok(WorkflowEdge::Finish),
+                                    Some(_) => Err(WorkflowCompileError::InvalidJoinContinuation {
+                                        node: child_name.to_owned(),
+                                        outcome: terminal,
+                                    }),
+                                    None => Err(WorkflowCompileError::MissingSubplanExit {
+                                        workflow: workflow.clone(),
+                                        outcome: terminal,
+                                    }),
+                                }
+                            }
+                            _ => Err(WorkflowCompileError::InvalidJoinContinuation {
+                                node: child_name.to_owned(),
+                                outcome: child_outcome.to_owned(),
+                            }),
+                        }
+                    };
                     let mut inserted = Vec::with_capacity(child.nodes.len());
                     for (child_name, child_node) in &child.nodes {
                         let qualified = format!("{prefix}{child_name}");
@@ -848,14 +897,14 @@ impl WorkflowTopology {
                                     on_success,
                                     on_failure,
                                 } => {
-                                    let qualify = |edge: &WorkflowEdge| match edge {
-                                        WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
-                                            node: format!("{prefix}{node}"),
-                                        }),
-                                        _ => Err(WorkflowCompileError::InvalidJoinContinuation {
-                                            node: child_name.clone(),
-                                            outcome: child_outcome.clone(),
-                                        }),
+                                    let mut qualify = |edge: &WorkflowEdge, suffix| {
+                                        qualify_join_return(
+                                            edge,
+                                            child_name,
+                                            child_outcome,
+                                            suffix,
+                                            &mut declared_exits,
+                                        )
                                     };
                                     WorkflowEdge::MapFork {
                                         collection: collection.clone(),
@@ -865,8 +914,8 @@ impl WorkflowTopology {
                                         max_children: *max_children,
                                         branch_entry: format!("{prefix}{branch_entry}"),
                                         policy: *policy,
-                                        on_success: Box::new(qualify(on_success)?),
-                                        on_failure: Box::new(qualify(on_failure)?),
+                                        on_success: Box::new(qualify(on_success, "success")?),
+                                        on_failure: Box::new(qualify(on_failure, "failure")?),
                                     }
                                 }
                                 WorkflowEdge::Fork {
@@ -876,14 +925,14 @@ impl WorkflowTopology {
                                     on_success,
                                     on_failure,
                                 } => {
-                                    let qualify = |edge: &WorkflowEdge| match edge {
-                                        WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
-                                            node: format!("{prefix}{node}"),
-                                        }),
-                                        _ => Err(WorkflowCompileError::InvalidJoinContinuation {
-                                            node: child_name.clone(),
-                                            outcome: child_outcome.clone(),
-                                        }),
+                                    let mut qualify = |edge: &WorkflowEdge, suffix| {
+                                        qualify_join_return(
+                                            edge,
+                                            child_name,
+                                            child_outcome,
+                                            suffix,
+                                            &mut declared_exits,
+                                        )
                                     };
                                     WorkflowEdge::Fork {
                                         branches: branches
@@ -894,8 +943,8 @@ impl WorkflowTopology {
                                             .collect(),
                                         policy: *policy,
                                         outputs: outputs.clone(),
-                                        on_success: Box::new(qualify(on_success)?),
-                                        on_failure: Box::new(qualify(on_failure)?),
+                                        on_success: Box::new(qualify(on_success, "success")?),
+                                        on_failure: Box::new(qualify(on_failure, "failure")?),
                                     }
                                 }
                             };
