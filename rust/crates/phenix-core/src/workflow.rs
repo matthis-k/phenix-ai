@@ -358,6 +358,7 @@ pub enum WorkflowRunError<E> {
     StepCounterOverflow,
     StructuredFrameRequired { node: String },
     InvalidJoin { node: String, error: crate::WorkflowJoinError },
+    InvalidJoinFrame { node: String, error: crate::WorkflowFrameError },
 }
 
 impl WorkflowTopology {
@@ -797,7 +798,8 @@ impl CompiledWorkflow {
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
         self.execute_nodes(
             state,
-            |_, import, state, _| invoke(import, state).map_err(WorkflowInvocationError::Failed),
+            None,
+            |_, import, state, _, _| invoke(import, state).map_err(WorkflowInvocationError::Failed),
             cancelled,
             step_limit,
         )
@@ -822,7 +824,8 @@ impl CompiledWorkflow {
     ) -> Result<WorkflowRunReport, WorkflowRunError<WorkflowBoundCallError<Error>>> {
         self.execute_nodes(
             state,
-            |name, import, state, cancelled| {
+            None,
+            |name, import, state, _, cancelled| {
                 let binding = self.bindings.get(import).ok_or_else(|| {
                     WorkflowInvocationError::Failed(WorkflowBoundCallError::UnboundImport(
                         import.clone(),
@@ -840,77 +843,195 @@ impl CompiledWorkflow {
         )
     }
 
+
+    // All entries share this dispatcher, even child scopes. No second provider
+    // resolver or agent-specific engine is instantiated for a fork.
+    fn invoke_step<State, Error>(
+        &self,
+        cursor: &PlanStepId,
+        state: &mut State,
+        data: Option<&mut crate::WorkflowFrame>,
+        invoke: &mut impl FnMut(&str, &InterfaceId, &mut State, Option<&mut crate::WorkflowFrame>, &mut dyn FnMut() -> bool) -> Result<String, WorkflowInvocationError<Error>>,
+        cancelled: &mut impl FnMut() -> bool,
+        count: &mut u64,
+        limit: Option<NonZeroU64>,
+    ) -> Result<PlanStepId, WorkflowRunError<Error>> {
+        let PlanStepId::Invoke(name) = cursor else {
+            unreachable!("invoke dispatch requires an Invoke identity")
+        };
+        let PlanStep::Invoke { import, on_result } = &self.plan.steps[cursor] else {
+            unreachable!("compiled Invoke has an Invoke step")
+        };
+        if cancelled() {
+            return Err(WorkflowRunError::Cancelled {
+                next_node: name.clone(), executed_nodes: *count,
+            });
+        }
+        if limit.is_some_and(|limit| *count >= limit.get()) {
+            return Err(WorkflowRunError::StepLimitReached {
+                next_node: name.clone(), executed_nodes: *count,
+            });
+        }
+        let outcome = match invoke(name, import, state, data, cancelled) {
+            Ok(outcome) => outcome,
+            Err(WorkflowInvocationError::Cancelled) => {
+                return Err(WorkflowRunError::Cancelled {
+                    next_node: name.clone(), executed_nodes: *count,
+                });
+            }
+            Err(WorkflowInvocationError::Failed(error)) => {
+                return Err(WorkflowRunError::NodeFailed {
+                    node: name.clone(), error,
+                });
+            }
+        };
+        *count = count.checked_add(1).ok_or(WorkflowRunError::StepCounterOverflow)?;
+        on_result.get(&outcome).cloned().ok_or_else(|| {
+            WorkflowRunError::UndeclaredOutcome {
+                node: name.clone(), outcome,
+            }
+        })
+    }
+
+    pub(crate) fn execute_bound_framed<State, Error>(
+        &self,
+        state: &mut State,
+        frame: &mut crate::WorkflowFrame,
+        mut invoke: impl FnMut(&str, &InterfaceId, &ResolvedImportHandle, &mut State, &mut crate::WorkflowFrame, &mut dyn FnMut() -> bool) -> Result<String, WorkflowInvocationError<Error>>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<WorkflowRunReport, WorkflowRunError<WorkflowBoundCallError<Error>>> {
+        self.execute_nodes(
+            state,
+            Some(frame),
+            |name, import, state, frame, cancelled| {
+                let binding = self.bindings.get(import).ok_or_else(|| {
+                    WorkflowInvocationError::Failed(
+                        WorkflowBoundCallError::UnboundImport(import.clone())
+                    )
+                })?;
+                let frame = frame.expect("framed plan always carries a frame");
+                invoke(name, import, binding, state, frame, cancelled)
+                    .map_err(|error| match error {
+                        WorkflowInvocationError::Cancelled => WorkflowInvocationError::Cancelled,
+                        WorkflowInvocationError::Failed(error) => {
+                            WorkflowInvocationError::Failed(WorkflowBoundCallError::Invocation(error))
+                        }
+                    })
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
     fn execute_nodes<State, Error>(
         &self,
         state: &mut State,
-        mut invoke: impl FnMut(
-            &str,
-            &InterfaceId,
-            &mut State,
-            &mut dyn FnMut() -> bool,
-        ) -> Result<String, WorkflowInvocationError<Error>>,
+        mut frame: Option<&mut crate::WorkflowFrame>,
+        mut invoke: impl FnMut(&str, &InterfaceId, &mut State, Option<&mut crate::WorkflowFrame>, &mut dyn FnMut() -> bool) -> Result<String, WorkflowInvocationError<Error>>,
         mut cancelled: impl FnMut() -> bool,
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
-        let mut current = &self.plan.entry;
+        let mut current = self.plan.entry.clone();
         let mut count = 0u64;
+        let mut join_result: Option<crate::WorkflowJoinDecision> = None;
         loop {
-            let step = &self.plan.steps[current];
-            match step {
-                PlanStep::Invoke { import, on_result } => {
-                    let PlanStepId::Invoke(name) = current else {
-                        unreachable!("compiled invoke step has a typed invoke identity")
+            match &self.plan.steps[&current] {
+                PlanStep::Invoke { .. } => {
+                    current = self.invoke_step(
+                        &current, state, frame.as_deref_mut(), &mut invoke,
+                        &mut cancelled, &mut count, step_limit,
+                    )?;
+                }
+                PlanStep::Fork { branches, join } => {
+                    let PlanStepId::Fork { node, .. } = &current else {
+                        unreachable!("Fork step has a typed identity")
                     };
-                    if cancelled() {
-                        return Err(WorkflowRunError::Cancelled {
-                            next_node: name.clone(),
-                            executed_nodes: count,
-                        });
-                    }
-                    if step_limit.is_some_and(|limit| count >= limit.get()) {
-                        return Err(WorkflowRunError::StepLimitReached {
-                            next_node: name.clone(),
-                            executed_nodes: count,
-                        });
-                    }
-                    let outcome = match invoke(name, import, state, &mut cancelled) {
-                        Ok(outcome) => outcome,
-                        Err(WorkflowInvocationError::Cancelled) => {
-                            return Err(WorkflowRunError::Cancelled {
-                                next_node: name.clone(),
-                                executed_nodes: count,
-                            });
-                        }
-                        Err(WorkflowInvocationError::Failed(error)) => {
-                            return Err(WorkflowRunError::NodeFailed {
-                                node: name.clone(),
-                                error,
-                            });
-                        }
-                    };
-                    count = count
-                        .checked_add(1)
-                        .ok_or(WorkflowRunError::StepCounterOverflow)?;
-                    current = on_result.get(&outcome).ok_or_else(|| {
-                        WorkflowRunError::UndeclaredOutcome {
-                            node: name.clone(),
-                            outcome,
-                        }
+                    let data = frame.as_deref_mut().ok_or_else(|| {
+                        WorkflowRunError::StructuredFrameRequired { node: node.clone() }
                     })?;
+                    let PlanStep::Join { policy, outputs, .. } = &self.plan.steps[join] else {
+                        unreachable!("Fork step always refers to a Join")
+                    };
+                    let admitted: BTreeSet<_> = branches.keys().cloned().collect();
+                    let mut children: BTreeMap<_, _> = branches.iter().map(|(name, target)| {
+                        (name.clone(), (target.clone(), data.clone()))
+                    }).collect();
+                    let mut observed = Vec::<crate::WorkflowJoinObservation>::new();
+                    let mut settled = BTreeSet::new();
+                    let mut round = 0u64;
+                    let decision = loop {
+                        // One Invoke per live child per round. Long-running
+                        // branch loops cannot starve other admitted children.
+                        for (branch, (cursor, child_data)) in &mut children {
+                            if settled.contains(branch) { continue; }
+                            if cancelled() {
+                                return Err(WorkflowRunError::Cancelled {
+                                    next_node: branch.clone(), executed_nodes: count,
+                                });
+                            }
+                            let result = match &self.plan.steps[cursor] {
+                                PlanStep::Invoke { .. } => self.invoke_step(
+                                    cursor, state, Some(child_data),
+                                    &mut invoke, &mut cancelled, &mut count, step_limit,
+                                ).map(|next| { *cursor = next; None }),
+                                PlanStep::Exit => Ok(Some(crate::WorkflowChildSettlement::Completed)),
+                                PlanStep::Fork { .. } => unreachable!("nested fork rejected at compilation"),
+                                PlanStep::Join { .. } => unreachable!("child cannot enter parent Join"),
+                            };
+                            let settlement = match result {
+                                Ok(settlement) => settlement,
+                                Err(WorkflowRunError::NodeFailed { .. } | WorkflowRunError::UndeclaredOutcome { .. }) => {
+                                    Some(crate::WorkflowChildSettlement::Failed)
+                                }
+                                Err(error) => return Err(error),
+                            };
+                            if let Some(settlement) = settlement {
+                                settled.insert(branch.clone());
+                                observed.push(crate::WorkflowJoinObservation {
+                                    branch: branch.clone(), order: round, settlement,
+                                });
+                            }
+                        }
+                        let decision = policy.decide(&admitted, &observed).map_err(|error| {
+                            WorkflowRunError::InvalidJoin { node: node.clone(), error }
+                        })?;
+                        if decision != crate::WorkflowJoinDecision::Pending {
+                            break decision;
+                        }
+                        round = round.checked_add(1).ok_or(WorkflowRunError::StepCounterOverflow)?;
+                    };
+                    // Child calls run cooperatively; none remains in-flight at
+                    // the Join boundary. Dropping unselected cursors settles
+                    // their scopes before the root may finish.
+                    if let crate::WorkflowJoinDecision::Succeeded { selected, .. } = &decision {
+                        let mut candidate = data.clone();
+                        for branch in selected {
+                            if let Some(slots) = outputs.get(branch) {
+                                candidate.collect_from(&children[branch].1, slots).map_err(|error| {
+                                    WorkflowRunError::InvalidJoinFrame { node: node.clone(), error }
+                                })?;
+                            }
+                        }
+                        *data = candidate;
+                    }
+                    join_result = Some(decision);
+                    current = join.clone();
+                }
+                PlanStep::Join { on_success, on_failure, .. } => {
+                    current = match join_result.take().expect("Join follows settled Fork") {
+                        crate::WorkflowJoinDecision::Succeeded { .. } => on_success.clone(),
+                        crate::WorkflowJoinDecision::Failed { .. } => on_failure.clone(),
+                        crate::WorkflowJoinDecision::Pending => unreachable!("pending Join cannot advance"),
+                    };
                 }
                 PlanStep::Exit => {
-                    let PlanStepId::Exit { node, outcome } = current else {
-                        unreachable!("compiled exit step has a typed exit identity")
+                    let PlanStepId::Exit { node, outcome } = &current else {
+                        unreachable!("Exit step has a typed identity")
                     };
-                    // Cancellation can arrive while the final service is executing.
-                    // A terminal edge does not invoke another provider, so the
-                    // pre-Invoke check alone would incorrectly report success.
-                    // The call has already completed: preserve the invocation
-                    // count and never attempt to roll back its side effects.
                     if cancelled() {
                         return Err(WorkflowRunError::Cancelled {
-                            next_node: node.clone(),
-                            executed_nodes: count,
+                            next_node: node.clone(), executed_nodes: count,
                         });
                     }
                     return Ok(WorkflowRunReport {
@@ -922,6 +1043,7 @@ impl CompiledWorkflow {
             }
         }
     }
+
 }
 
 #[cfg(test)]
