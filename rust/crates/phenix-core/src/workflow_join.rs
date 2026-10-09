@@ -4,7 +4,11 @@
 //! generation leases and actual service calls. This module never dispatches.
 
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}, fmt, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    num::NonZeroUsize,
+};
 
 /// The only All policies recognized by the Core plan semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -71,7 +75,10 @@ impl fmt::Display for WorkflowJoinError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyBranches => f.write_str("join has no admitted branches"),
-            Self::InvalidQuorum { required, available } => {
+            Self::InvalidQuorum {
+                required,
+                available,
+            } => {
                 write!(f, "quorum {required} exceeds {available} admitted branches")
             }
             Self::UnknownBranch(branch) => write!(f, "unknown join branch {branch}"),
@@ -248,8 +255,7 @@ mod tests {
             Ok(WorkflowJoinDecision::Pending)
         );
         assert_eq!(
-            WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::FailFast)
-                .decide(&members, &[failure]),
+            WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::FailFast).decide(&members, &[failure]),
             Ok(WorkflowJoinDecision::Failed {
                 selected: vec!["beta".into()],
                 cancel_remaining: true,
@@ -261,8 +267,7 @@ mod tests {
             observation("alpha", 1, WorkflowChildSettlement::Completed),
         ];
         assert_eq!(
-            WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll)
-                .decide(&members, &finished),
+            WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll).decide(&members, &finished),
             Ok(WorkflowJoinDecision::Succeeded {
                 selected: vec!["alpha".into(), "beta".into(), "gamma".into()],
                 cancel_remaining: false,
@@ -330,8 +335,7 @@ mod tests {
             })
         );
         assert_eq!(
-            WorkflowJoinPolicy::Quorum(NonZeroUsize::new(4).unwrap())
-                .decide(&members, &[]),
+            WorkflowJoinPolicy::Quorum(NonZeroUsize::new(4).unwrap()).decide(&members, &[]),
             Err(WorkflowJoinError::InvalidQuorum {
                 required: 4,
                 available: 3,
@@ -350,7 +354,11 @@ mod tests {
         assert_eq!(
             WorkflowJoinPolicy::FirstCompleted.decide(
                 &members,
-                &[observation("not-admitted", 1, WorkflowChildSettlement::Completed)]
+                &[observation(
+                    "not-admitted",
+                    1,
+                    WorkflowChildSettlement::Completed
+                )]
             ),
             Err(WorkflowJoinError::UnknownBranch("not-admitted".into()))
         );
