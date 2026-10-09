@@ -210,8 +210,7 @@ pub enum WorkflowNativeDispatchError {
 }
 
 /// Pending result of one generation-pinned component import invocation.
-pub type WorkflowPendingImport =
-    WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>;
+pub type WorkflowPendingImport = WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>;
 
 // A callback from another root may share generation and scope names. Unique
 // call IDs prevent two independent roots from ever producing the same ticket.
@@ -516,8 +515,8 @@ impl Drop for WorkflowNativeTaskGroup {
 mod tests {
     use super::*;
     use crate::{
-        ComponentManifest, ConfigContribution, Kernel, KernelError, PermissionId,
-        PluginExecution, PluginId, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
+        ComponentManifest, ConfigContribution, Kernel, KernelError, PermissionId, PluginExecution,
+        PluginId, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
     };
     use std::sync::mpsc;
 
@@ -669,8 +668,12 @@ mod tests {
             .root_execution_handle(&Authority::default())
             .native_workflow_tasks()
             .unwrap();
-        let a = left.spawn("root/same", &Authority::default(), |_| 1_u64).unwrap();
-        let b = right.spawn("root/same", &Authority::default(), |_| 2_u64).unwrap();
+        let a = left
+            .spawn("root/same", &Authority::default(), |_| 1_u64)
+            .unwrap();
+        let b = right
+            .spawn("root/same", &Authority::default(), |_| 2_u64)
+            .unwrap();
         assert_eq!(a.id().generation, b.id().generation);
         assert_eq!(a.id().scope, b.id().scope);
         assert_ne!(a.id(), b.id());
