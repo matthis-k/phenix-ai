@@ -397,6 +397,47 @@ fn fork_fail_fast_does_not_invoke_sibling_after_failed_first_child() {
 }
 
 #[test]
+fn quorum_one_settles_before_dispatching_unneeded_second_child() {
+    let resolved = selected_fork_generation(WorkflowJoinPolicy::Quorum(
+        std::num::NonZeroUsize::new(1).unwrap(),
+    ));
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
+        .frame_schema().unwrap().clone();
+    let alpha = Key::parse("alpha").unwrap();
+    let beta = Key::parse("beta").unwrap();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (alpha.clone(), PhenixValue::U64(0)),
+        (beta.clone(), PhenixValue::U64(0)),
+    ])).unwrap();
+    let mut seen = Vec::new();
+    let report = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut seen, &mut frame),
+        |node, _, _, seen| {
+            seen.push(node.to_owned());
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |node, _, output, frame, _| {
+            if node == "alpha-tool" {
+                frame.set(&alpha, PhenixValue::U64(23)).unwrap();
+            }
+            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                _ => Err("invalid provider result".into()),
+            }
+        },
+        || false, None,
+    ).unwrap();
+    assert_eq!(report.executed_nodes, 3);
+    assert_eq!(seen, ["model", "alpha-tool", "model"]);
+    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(23)));
+    assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(0)));
+}
+
+#[test]
 fn first_completed_stops_before_the_second_child_invocation() {
     let resolved = selected_fork_generation(WorkflowJoinPolicy::FirstCompleted);
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
