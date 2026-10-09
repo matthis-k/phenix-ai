@@ -7,10 +7,12 @@
 //! The kernel root owns all pinned invocation and generation leases.
 use super::{
     CompiledWorkflow, InterfaceId, NonZeroU64, PlanStep, PlanStepId,
-    WorkflowChildSettlement, WorkflowInvocationError, WorkflowJoinDecision,
-    WorkflowJoinObservation, WorkflowJoinPolicy, WorkflowRunError, WorkflowRunReport,
+    WorkflowInvocationError, WorkflowRunError, WorkflowRunReport,
 };
-use crate::{PhenixValue, WorkflowFrame};
+use crate::{
+    PhenixValue, WorkflowChildSettlement, WorkflowFrame, WorkflowJoinDecision,
+    WorkflowJoinObservation, WorkflowJoinPolicy,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_ACTIVE_SCOPE_DEPTH: usize = 64;
