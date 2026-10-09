@@ -350,34 +350,32 @@ impl WorkflowNativeTaskGroup {
         })
     }
 
-    fn signal(&self, ids: Vec<WorkflowTaskId>) -> Vec<WorkflowTaskId> {
-        let shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+    fn signal(
+        shared: &mut NativeTaskLedger,
+        ids: Vec<WorkflowTaskId>,
+    ) -> Vec<WorkflowTaskId> {
         for id in &ids {
-            if let Some(signal) = shared.signals.get(id) {
-                signal.cancel();
-            }
+            // The same mutex guards admission, settlement, and signaling:
+            // cancellation can never race a worker's signal deregistration.
+            shared
+                .signals
+                .get(id)
+                .expect("an outstanding ticket has a registered cancellation signal")
+                .cancel();
         }
         ids
     }
 
     pub fn cancel_scope(&self, scope: &str) -> Vec<WorkflowTaskId> {
-        let ids = self
-            .shared
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .pending
-            .cancel_scope(scope);
-        self.signal(ids)
+        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let ids = shared.pending.cancel_scope(scope);
+        Self::signal(&mut shared, ids)
     }
 
     pub fn cancel_root(&self) -> Vec<WorkflowTaskId> {
-        let ids = self
-            .shared
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .pending
-            .cancel_root();
-        self.signal(ids)
+        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let ids = shared.pending.cancel_root();
+        Self::signal(&mut shared, ids)
     }
 
     pub fn outstanding(&self) -> usize {
