@@ -92,6 +92,10 @@ pub enum WorkflowEdge {
         node: String,
     },
     Finish,
+    /// Explicit normal failure outcome from an invoked child. Provider,
+    /// transport, preparation and projection errors are never synthesized
+    /// into this branch outcome.
+    Fail,
     /// Admit named child scopes with independent frame snapshots. A generated
     /// Join step resolves the closed policy and explicitly selected outputs.
     Fork {
@@ -165,7 +169,9 @@ enum PlanStep {
         on_success: PlanStepId,
         on_failure: PlanStepId,
     },
-    Exit,
+    Exit {
+        failed: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,12 +191,17 @@ impl LoweredPlan {
                     WorkflowEdge::Include { .. } => {
                         unreachable!("selected subplans were inlined before lowering")
                     }
-                    WorkflowEdge::Finish => {
+                    WorkflowEdge::Finish | WorkflowEdge::Fail => {
                         let exit = PlanStepId::Exit {
                             node: name.clone(),
                             outcome: outcome.clone(),
                         };
-                        steps.insert(exit.clone(), PlanStep::Exit);
+                        steps.insert(
+                            exit.clone(),
+                            PlanStep::Exit {
+                                failed: matches!(edge, WorkflowEdge::Fail),
+                            },
+                        );
                         exit
                     }
                     WorkflowEdge::Fork {
@@ -216,7 +227,7 @@ impl LoweredPlan {
                                         node: name.clone(),
                                         outcome: format!("{outcome}/{suffix}"),
                                     };
-                                    steps.insert(exit.clone(), PlanStep::Exit);
+                                    steps.insert(exit.clone(), PlanStep::Exit { failed: false });
                                     exit
                                 }
                                 _ => unreachable!("join continuation is validated as Next or Finish"),
@@ -275,7 +286,7 @@ impl LoweredPlan {
                                     let exit = PlanStepId::Exit {
                                         node: name.clone(), outcome: format!("{outcome}/{suffix}"),
                                     };
-                                    steps.insert(exit.clone(), PlanStep::Exit);
+                                    steps.insert(exit.clone(), PlanStep::Exit { failed: false });
                                     exit
                                 }
                                 _ => unreachable!("map join continuation was validated"),
@@ -470,6 +481,11 @@ pub enum WorkflowRunError<E> {
         node: String,
         reason: String,
     },
+    ExplicitFailure {
+        node: String,
+        outcome: String,
+        executed_nodes: u64,
+    },
 }
 
 impl WorkflowTopology {
@@ -542,13 +558,27 @@ impl WorkflowTopology {
                                 WorkflowEdge::Next { node } => WorkflowEdge::Next {
                                     node: format!("{prefix}{node}"),
                                 },
-                                WorkflowEdge::Finish => {
+                                WorkflowEdge::Finish | WorkflowEdge::Fail => {
+                                    if matches!(child_edge, WorkflowEdge::Fail) {
+                                        return Err(WorkflowCompileError::InvalidFork {
+                                            node: child_name.clone(),
+                                            outcome: child_outcome.clone(),
+                                            reason: "failing child exits require a scoped fork, not inline subplan return".into(),
+                                        });
+                                    }
                                     declared_exits.insert(child_outcome.clone());
                                     match on_exit.get(child_outcome) {
                                         Some(WorkflowEdge::Next { node }) => {
                                             WorkflowEdge::Next { node: node.clone() }
                                         }
                                         Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
+                                        Some(WorkflowEdge::Fail) => {
+                                            return Err(WorkflowCompileError::InvalidFork {
+                                                node: child_name.clone(),
+                                                outcome: child_outcome.clone(),
+                                                reason: "subplan return cannot produce a scoped child failure".into(),
+                                            });
+                                        }
                                         Some(WorkflowEdge::Include { .. }) => {
                                             return Err(
                                                 WorkflowCompileError::UnsupportedReturnInclude,
@@ -887,7 +917,7 @@ impl WorkflowTopology {
                             }
                         }
                     }
-                    WorkflowEdge::Finish | WorkflowEdge::Include { .. } => {}
+                    WorkflowEdge::Finish | WorkflowEdge::Fail | WorkflowEdge::Include { .. } => {}
                 }
             }
         }
@@ -941,7 +971,7 @@ impl WorkflowTopology {
                         for next in self.nodes[&current].branches.values() {
                             match next {
                                 WorkflowEdge::Next { node } => visit.push(node.clone()),
-                                WorkflowEdge::Finish => {}
+                                WorkflowEdge::Finish | WorkflowEdge::Fail => {}
                                 WorkflowEdge::MapFork { .. } => {
                                     return Err(WorkflowCompileError::NestedForkNotSupported {
                                         node: current.clone(),
@@ -1404,9 +1434,13 @@ impl CompiledWorkflow {
                                         *cursor = next;
                                         None
                                     }),
-                                PlanStep::Exit => {
-                                    Ok(Some(crate::WorkflowChildSettlement::Completed))
-                                }
+                                PlanStep::Exit { failed } => Ok(Some(
+                                    if *failed {
+                                        crate::WorkflowChildSettlement::Failed
+                                    } else {
+                                        crate::WorkflowChildSettlement::Completed
+                                    },
+                                )),
                                 PlanStep::Fork { .. } => {
                                     unreachable!("nested fork rejected at compilation")
                                 }
@@ -1507,13 +1541,20 @@ impl CompiledWorkflow {
                         }
                     };
                 }
-                PlanStep::Exit => {
+                PlanStep::Exit { failed } => {
                     let PlanStepId::Exit { node, outcome } = &current else {
                         unreachable!("Exit step has a typed identity")
                     };
                     if cancelled() {
                         return Err(WorkflowRunError::Cancelled {
                             next_node: node.clone(),
+                            executed_nodes: count,
+                        });
+                    }
+                    if *failed {
+                        return Err(WorkflowRunError::ExplicitFailure {
+                            node: node.clone(),
+                            outcome: outcome.clone(),
                             executed_nodes: count,
                         });
                     }
@@ -1918,7 +1959,7 @@ mod tests {
         };
         assert!(matches!(
             compiled.plan.steps.get(&exit),
-            Some(PlanStep::Exit)
+            Some(PlanStep::Exit { failed: false })
         ));
         assert_ne!(exit, PlanStepId::Invoke("model".into()));
     }
