@@ -751,12 +751,13 @@ impl RootExecutionHandle {
                 name: name.to_owned(),
             }
         })?;
-        let expected = compiled.frame_schema().ok_or_else(|| {
-            WorkflowRunError::MissingFrameSchema {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
-        })?;
+        let expected =
+            compiled
+                .frame_schema()
+                .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+                    owner: owner.clone(),
+                    name: name.to_owned(),
+                })?;
         if expected != frame.schema() {
             return Err(WorkflowRunError::FrameSchemaMismatch {
                 owner: owner.clone(),
@@ -766,18 +767,10 @@ impl RootExecutionHandle {
         self.execute_workflow(
             workflow,
             &mut (state, frame),
-            |node, import, context| {
-                prepare(node, import, &*context.1, &mut *context.0)
-            },
+            |node, import, context| prepare(node, import, &*context.1, &mut *context.0),
             |node, import, response, context| {
                 let snapshot = (*context.1).clone();
-                match project(
-                    node,
-                    import,
-                    response,
-                    &mut *context.1,
-                    &mut *context.0,
-                ) {
+                match project(node, import, response, &mut *context.1, &mut *context.0) {
                     Ok(outcome) => Ok(outcome),
                     Err(error) => {
                         *context.1 = snapshot;
