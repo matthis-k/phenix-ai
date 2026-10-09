@@ -264,3 +264,17 @@ A passing build does not establish migration completion.
 ## Out of scope for this design PR
 
 No production shared-library loading, `dlclose` guarantee, Wasm interpreter in Core, automatic promotion, new product behavior, Rust ABI exposure or native sandbox guarantee. Code implementation must earn completion against the acceptance gates above.
+
+## Kernel RFC alignment: asynchronous ABI and leases
+
+The [kernel RFC](kernel-runtime-rfc.md) fixes the semantic constraints for native, process and guest providers. They apply to the future ABI loader; they are not claims about currently available loader behavior.
+
+- A native service call may settle immediately or remain pending. The ABI must express exactly one eventual completion, cancellation request correlation and host wakeup/poll readiness. Callback versus poll representation is deferred; asynchronous dispatch and lost-wakeup avoidance are mandatory.
+- The host scheduler must not block on arbitrary provider code. Blocking providers use a managed blocking executor or an isolated process boundary. Dropping a waiting client does not prove a native invocation stopped.
+- Pending calls, outstanding callbacks, guest children and managed blocking work retain the generation lease and root scope until settlement or authorized isolation-level termination. A native call ignoring cooperative cancellation can delay retirement indefinitely.
+- No unwind or panic may cross the C-compatible ABI. Buffer allocation/free ownership, alignment, thread affinity, legal reentrancy, callback lifetime and late-completion rejection are versioned ABI contracts. Host TLS cannot be an authority source.
+- Guest authorization remains per guest identity. Adapter permissions do not become guest grants. Data-only frame values and `DataRef` locators carry no authority; host capabilities never cross through serialized frames.
+- The in-process native adapter is trusted code, not a sandbox. An isolated process adapter is a first-class, separately deployable trust boundary through the same logical Plugin contract. OS process termination may provide stronger containment than cooperative in-process cancellation.
+- Client-side `require("phenix")` in Neovim and guest-side `require("phenix")` remain separate Lua environments and roles, with no automatic ACP fallback or shared interpreter state.
+
+First-party ABI conformance must cover pending/immediate completion, concurrent callback races, ownership and reentrancy, cancellation and late results, lease-preserving retirement, malformed value decoding, Lua-to-Rust imports and process-isolated termination. Do not remove embedded/process compatibility implementations until the separate artifact and product-level parity tests pass.

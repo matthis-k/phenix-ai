@@ -79,3 +79,13 @@ The design PR is not an implementation gate by itself. N1-N6 require runnable pr
 ## Exclusions
 
 This roadmap does not authorize rewriting all domain code, exposing a general imperative graph mutation API, embedding Bevy ECS types in the plugin contract, or merging #726 before its product parity gate. Keep domain-specific mechanisms in ordinary plugins. The smallest adequate canonical representation is preferable to an all-purpose meta-DSL.
+
+## Normative target kernel RFC
+
+The [kernel execution and composition RFC](kernel-runtime-rfc.md), introduced by #736, defines the **post-redesign target** shared by the staged PRs. It does not claim executable implementation. The older workflow examples and provisional graph patch operations in #726 and #729 must lower into the RFC's canonical `ExecutionPlan` IR rather than remain separate kernel control-flow languages.
+
+Stage B (#728) owns frozen `ExecutionPlanDefinition` and `EntryBinding` contributions and portable authoring. The #726 generic workflow foundation must converge to the closed `Invoke/Fork/Join/Exit` IR, compile-time subplan inclusion and one Core scheduler before legacy loop retirement. Stage C (#729) owns only IR-level patches and compatible frame-schema extensions. Stage D (#730) owns bounded plugin-defined declarative lowering, with exceptional procedural preparation strictly outside canonical resolution. Stage E (#731) proves direct service-only authorship and agent-free plan execution as separate fixtures.
+
+The native loader and runtime adapter workstream continues independently. Its implementation must satisfy the kernel RFC's async settlement, callback ownership, cancellation and generation lease rules, including safe noncooperative-call retirement limitations. The prior native ABI design is specification-only.
+
+These rules add acceptance criteria to existing implementation stages; they do not replace dependency order or authorize merging a design-only stage as working code.
