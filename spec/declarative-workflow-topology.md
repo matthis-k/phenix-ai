@@ -283,6 +283,22 @@ semantics, cancellation during effects, tool-error continuation, generation
 promotion during a prompt, and durable crash/retry behavior need product-level
 conformance before retiring the legacy path.
 
+## Compile-time subplan inclusion
+
+The selected workflow compiler now expands `WorkflowEdge::Include` within one
+component owner's selected definitions. Each inclusion has a stable site ID and
+an explicit mapping from child finish outcomes to parent transitions. Nested
+inclusions get qualified node IDs. Missing children, recursive references,
+duplicate sites, conflicting node IDs and incomplete mappings reject candidate
+compilation. The expansion has fixed preparation-time depth and node-count
+bounds. The executor still sees only Invoke and Exit steps and uses the same
+pinned imports.
+
+This is a partial implementation of the RFC subplan rule. It does not yet
+provide typed input/output frame mappings, public slot identity, cross-owner
+selection, or patch integration. The compiler version is included in generation
+identity so an earlier compiled plan cannot be confused with this revision.
+
 ## Target-state Core IR boundary and migration gate
 
 **Normative target: [kernel RFC #736](https://github.com/matthis-k/phenix-ai/pull/736).** This section describes the eventual architecture, not functionality implemented by #726. The current `WorkflowTopology`, hand-authored Rust adapter, and legacy loop remain migration scaffolding until parity is proved. Do not turn the interim workflow representation into a second permanent Core executor or claim semantic completion from the current direct workflow fixture.
