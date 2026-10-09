@@ -810,7 +810,6 @@ impl WorkflowTopology {
                                                 node: node.clone(),
                                                 slots: combined,
                                             })
-                                        })
                                         }
                                         Some(_) => {
                                             Err(WorkflowCompileError::InvalidJoinContinuation {
