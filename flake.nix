@@ -2,6 +2,7 @@
   description = "Phenix AI core, runtime, plugins, clients, and supported harness";
 
   inputs = {
+    crane.url = "github:ipetkov/crane";
     phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/2c2211f528608bf705fd92aeffc0b19f3de2bc4a";
     phenix-pins = {
       url = "github:matthis-k/phenix-pins";
@@ -33,6 +34,7 @@
 
       imports = [
         ./modules/rust-artifacts.nix
+        ./modules/crane-artifact-probe.nix
         ./modules/harness-product.nix
         ./modules/plugin-packaging.nix
         ./modules/package-sets.nix
