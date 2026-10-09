@@ -166,6 +166,22 @@ pub enum GenerationResolutionError {
     InvalidWorkflowName(crate::ComponentId),
     WorkflowAlreadyBound,
     FrameSchemasAlreadyBound,
+    ProjectionsAlreadyBound,
+    MissingProjectionWorkflow {
+        owner: crate::ComponentId,
+        workflow: String,
+    },
+    DuplicateProjection {
+        owner: crate::ComponentId,
+        workflow: String,
+        node: String,
+    },
+    InvalidProjection {
+        owner: crate::ComponentId,
+        workflow: String,
+        node: String,
+        error: crate::WorkflowProjectionError,
+    },
     MissingFrameWorkflow {
         owner: crate::ComponentId,
         name: String,
@@ -281,6 +297,23 @@ impl Display for GenerationResolutionError {
                     f,
                     "frame schemas already belong to this resolved generation"
                 )
+            }
+            Self::ProjectionsAlreadyBound => {
+                f.write_str("outcome projections are already bound in this generation")
+            }
+            Self::MissingProjectionWorkflow { owner, workflow } => {
+                write!(f, "projection targets an unselected workflow {owner}:{workflow}")
+            }
+            Self::DuplicateProjection { owner, workflow, node } => {
+                write!(f, "duplicate projection for {owner}:{workflow}:{node}")
+            }
+            Self::InvalidProjection {
+                owner,
+                workflow,
+                node,
+                error,
+            } => {
+                write!(f, "invalid projection for {owner}:{workflow}:{node}: {error:?}")
             }
             Self::MissingFrameWorkflow { owner, name } => {
                 write!(
@@ -437,6 +470,7 @@ pub struct ResolvedGeneration {
     entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
     workflows: Vec<WorkflowDeclaration>,
+    workflow_projections: Vec<crate::WorkflowProjectionDeclaration>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
@@ -778,6 +812,7 @@ impl ResolvedGeneration {
             entry_triggers,
             process_arguments,
             workflows: Vec::new(),
+            workflow_projections: Vec::new(),
             durable_schemas,
             configuration,
             layer_policies: inputs.layer_policies,
@@ -1041,6 +1076,76 @@ impl ResolvedGeneration {
         Ok(self)
     }
 
+    /// Freeze the selected normal-result projection against the exact bound
+    /// import response schema. This never adds a resolver or fallback provider.
+    pub fn with_workflow_projections(
+        mut self,
+        declarations: impl IntoIterator<Item = crate::WorkflowProjectionDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|a, b| {
+            (&a.owner, &a.workflow, &a.node).cmp(&(&b.owner, &b.workflow, &b.node))
+        });
+        for pair in declarations.windows(2) {
+            if (&pair[0].owner, &pair[0].workflow, &pair[0].node)
+                == (&pair[1].owner, &pair[1].workflow, &pair[1].node)
+            {
+                return Err(GenerationResolutionError::DuplicateProjection {
+                    owner: pair[0].owner.clone(),
+                    workflow: pair[0].workflow.clone(),
+                    node: pair[0].node.clone(),
+                });
+            }
+        }
+        if !self.workflow_projections.is_empty() {
+            return if self.workflow_projections == declarations {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::ProjectionsAlreadyBound)
+            };
+        }
+        for declaration in &declarations {
+            let compiled = self.runtime
+                .workflow(&declaration.owner, &declaration.workflow)
+                .ok_or_else(|| GenerationResolutionError::MissingProjectionWorkflow {
+                    owner: declaration.owner.clone(),
+                    workflow: declaration.workflow.clone(),
+                })?;
+            compiled
+                .validate_outcome_projection(&declaration.node, &declaration.projection)
+                .map_err(|error| GenerationResolutionError::InvalidProjection {
+                    owner: declaration.owner.clone(),
+                    workflow: declaration.workflow.clone(),
+                    node: declaration.node.clone(),
+                    error,
+                })?;
+        }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
+        const PROJECTION_BINDING_REVISION: u32 = 1;
+        self.runtime.incorporate_semantic_metadata(&(
+            "phenix.workflow-projections",
+            PROJECTION_BINDING_REVISION,
+            &declarations,
+        ));
+        for declaration in &declarations {
+            self.runtime.workflows
+                .get_mut(&(declaration.owner.clone(), declaration.workflow.clone()))
+                .expect("projection target validated")
+                .bind_outcome_projection(
+                    declaration.node.clone(),
+                    declaration.projection.clone(),
+                );
+        }
+        self.workflow_projections = declarations;
+        Ok(self)
+    }
+
+    pub fn workflow_projections(&self) -> &[crate::WorkflowProjectionDeclaration] {
+        &self.workflow_projections
+    }
+
     pub fn durable_schemas(&self) -> &[DurableSchemaRegistration] {
         &self.durable_schemas
     }
@@ -1154,6 +1259,16 @@ impl ResolvedGeneration {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let retained_projections = self
+            .workflow_projections
+            .iter()
+            .filter(|projection| {
+                retained_workflows.iter().any(|workflow| {
+                    workflow.owner == projection.owner && workflow.name == projection.workflow
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         Self {
             runtime: GenerationTopology::resolved(
                 generation,
@@ -1167,13 +1282,15 @@ impl ResolvedGeneration {
             entry_triggers,
             process_arguments,
             workflows: Vec::new(),
+            workflow_projections: Vec::new(),
             durable_schemas,
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
             authority_ceiling: authority_ceiling.clone(),
         }
-        .with_workflows(retained_workflows)
+        .with_workflows(retained_workflows)?
+        .with_workflow_projections(retained_projections)
     }
 }
 
