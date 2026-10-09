@@ -1,6 +1,6 @@
 # Plugin-defined contribution kinds and templates
 
-status: partial implementation (bounded pure lowering; candidate integration pending)
+status: partial
 stage: D of spec/microkernel-composition-roadmap.md
 depends-on: #727, Stage B typed-contribution PR
 parallel-with: Stage C graph patch composition, after Stage B
