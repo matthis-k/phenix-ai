@@ -2500,6 +2500,81 @@ mod inclusion_tests {
                 crate::PhenixValue::U64(15),
             ]))
         );
+
+        // The same included MapFork may publish its joined results directly
+        // to a different parent slot, then finish without another Invoke.
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        parent.nodes.remove("after");
+        parent.nodes.get_mut("start").unwrap().branches.insert(
+            "delegate".into(),
+            WorkflowEdge::IncludeMapped {
+                workflow: "mapped-child".into(),
+                site: "batch-return".into(),
+                inputs: BTreeMap::new(),
+                outputs: BTreeMap::from([(key("results"), key("published"))]),
+                on_exit: BTreeMap::from([
+                    ("launch/success".into(), WorkflowEdge::Finish),
+                    ("launch/failure".into(), WorkflowEdge::Finish),
+                ]),
+            },
+        );
+        let compiled = WorkflowTopology::inline_selected(&owner(), "main", &all)
+            .unwrap()
+            .compile(|_| true)
+            .unwrap();
+        let mut schema = frame.schema().clone();
+        schema.slots.insert(
+            key("published"),
+            crate::Type::List(Box::new(crate::Type::U64)),
+        );
+        compiled.validate_frame_schema(&schema).unwrap();
+        let mut incorrect = schema.clone();
+        incorrect.slots.insert(key("published"), crate::Type::U64);
+        assert!(matches!(
+            compiled.validate_frame_schema(&incorrect),
+            Err(WorkflowCompileError::InvalidFrameTransfer { .. })
+        ));
+        let mut values = frame.values().clone();
+        values.insert(key("published"), crate::PhenixValue::List(Vec::new()));
+        let mut mapped = crate::WorkflowFrame::new(schema, values).unwrap();
+        let mut calls = Vec::new();
+        let report = compiled
+            .execute_nodes(
+                &mut calls,
+                Some(&mut mapped),
+                |node, _, visited, local, _| {
+                    visited.push(node.to_owned());
+                    match node {
+                        "start" => Ok::<_, WorkflowInvocationError<String>>("delegate".into()),
+                        "__include__/batch-return/batch" => Ok("launch".into()),
+                        "__include__/batch-return/item-task" => {
+                            let data = local.unwrap();
+                            let crate::PhenixValue::U64(value) =
+                                data.get(&key("item")).unwrap()
+                            else {
+                                panic!("map child item missing");
+                            };
+                            data.set(&key("result"), crate::PhenixValue::U64(value * 3))
+                                .unwrap();
+                            Ok("done".into())
+                        }
+                        other => panic!("unexpected Invoke after terminal Join: {other}"),
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.final_outcome, "launch/success");
+        assert_eq!(report.executed_nodes, 4);
+        assert_eq!(
+            mapped.get(&key("published")),
+            Some(&crate::PhenixValue::List(vec![
+                crate::PhenixValue::U64(6),
+                crate::PhenixValue::U64(15),
+            ]))
+        );
+        assert_eq!(calls.len(), 4);
     }
 
     #[test]
