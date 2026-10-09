@@ -102,13 +102,13 @@ impl WorkflowJoinPolicy {
         if admitted.is_empty() {
             return Err(WorkflowJoinError::EmptyBranches);
         }
-        if let Self::Quorum(quorum) = self {
-            if quorum.get() > admitted.len() {
-                return Err(WorkflowJoinError::InvalidQuorum {
-                    required: quorum.get(),
-                    available: admitted.len(),
-                });
-            }
+        if let Self::Quorum(quorum) = self
+            && quorum.get() > admitted.len()
+        {
+            return Err(WorkflowJoinError::InvalidQuorum {
+                required: quorum.get(),
+                available: admitted.len(),
+            });
         }
         let mut unique = BTreeMap::new();
         for observation in observations {
