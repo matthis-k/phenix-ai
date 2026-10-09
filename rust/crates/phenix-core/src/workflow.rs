@@ -612,7 +612,9 @@ fn compose_subplan_return_slots(
             return Err(WorkflowCompileError::InvalidFrameTransfer {
                 node: node.to_owned(),
                 outcome: outcome.to_owned(),
-                reason: "ordered return transfers require independent sources and distinct destinations".into(),
+                reason:
+                    "ordered return transfers require independent sources and distinct destinations"
+                        .into(),
             });
         }
         combined.insert(source.clone(), target.clone());
@@ -801,10 +803,7 @@ impl WorkflowTopology {
                                         }
                                         Some(WorkflowEdge::Transfer { node, slots }) => {
                                             let combined = compose_subplan_return_slots(
-                                                outputs,
-                                                slots,
-                                                child_name,
-                                                &terminal,
+                                                outputs, slots, child_name, &terminal,
                                             )?;
                                             Ok(WorkflowEdge::Transfer {
                                                 node: node.clone(),
