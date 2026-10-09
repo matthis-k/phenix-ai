@@ -624,6 +624,55 @@ impl WorkflowTopology {
                         return Err(WorkflowCompileError::DuplicateInclusionSite(site.clone()));
                     }
                     let child = expand(owner, workflow, selected, stack, cache)?;
+                    // A branch Exit settles its owning Fork, not the
+                    // subplan itself. Only root-scope exits are rewritten
+                    // as the included plan's declared return handoff.
+                    let mut scoped = BTreeSet::new();
+                    let mut pending_children = Vec::new();
+                    for source_node in child.nodes.values() {
+                        for source_edge in source_node.branches.values() {
+                            match source_edge {
+                                WorkflowEdge::Fork { branches, .. } => {
+                                    pending_children.extend(branches.values().cloned());
+                                }
+                                WorkflowEdge::MapFork { branch_entry, .. } => {
+                                    pending_children.push(branch_entry.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    while let Some(current) = pending_children.pop() {
+                        if !scoped.insert(current.clone()) {
+                            continue;
+                        }
+                        let source_node = child.nodes.get(&current).ok_or_else(|| {
+                            WorkflowCompileError::UnknownTarget {
+                                from: workflow.clone(),
+                                target: current.clone(),
+                            }
+                        })?;
+                        for edge in source_node.branches.values() {
+                            match edge {
+                                WorkflowEdge::Next { node }
+                                | WorkflowEdge::Transfer { node, .. } => {
+                                    pending_children.push(node.clone());
+                                }
+                                WorkflowEdge::Fork { on_success, on_failure, .. }
+                                | WorkflowEdge::MapFork { on_success, on_failure, .. } => {
+                                    for continuation in [on_success, on_failure] {
+                                        if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                            pending_children.push(node.clone());
+                                        }
+                                    }
+                                }
+                                WorkflowEdge::Finish | WorkflowEdge::Fail => {}
+                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
+                                    unreachable!("child workflow inclusions are already expanded");
+                                }
+                            }
+                        }
+                    }
                     let prefix = format!("__include__/{site}/");
                     let entry = format!("{prefix}{}", child.entry);
                     let mut declared_exits = BTreeSet::new();
@@ -640,6 +689,9 @@ impl WorkflowTopology {
                                     node: format!("{prefix}{node}"),
                                     slots: slots.clone(),
                                 },
+                                WorkflowEdge::Finish | WorkflowEdge::Fail if scoped.contains(child_name) => {
+                                    child_edge.clone()
+                                }
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {
                                     if matches!(child_edge, WorkflowEdge::Fail) {
                                         return Err(WorkflowCompileError::InvalidFork {
