@@ -215,8 +215,12 @@ mod tests {
                     .contains_key(outcome.workflow_outcome()),
             );
             assert_eq!(
-                projections.iter().find(|p| p.node == "turn").unwrap()
-                    .projection.project_checked(
+                projections
+                    .iter()
+                    .find(|p| p.node == "turn")
+                    .unwrap()
+                    .projection
+                    .project_checked(
                         AgentTurnStepInterface::schema().response(),
                         &phenix_core::PhenixValue::from(&outcome),
                     ),
@@ -230,8 +234,12 @@ mod tests {
                     .contains_key(outcome.workflow_outcome()),
             );
             assert_eq!(
-                projections.iter().find(|p| p.node == "tool_batch").unwrap()
-                    .projection.project_checked(
+                projections
+                    .iter()
+                    .find(|p| p.node == "tool_batch")
+                    .unwrap()
+                    .projection
+                    .project_checked(
                         AgentToolBatchInterface::schema().response(),
                         &phenix_core::PhenixValue::from(&outcome),
                     ),
