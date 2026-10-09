@@ -132,7 +132,7 @@ pub enum WorkflowEdge {
 // Internal lowering of the legacy service topology into execution steps.
 // An Exit key is structurally disjoint from author-supplied Invoke names,
 // preserving terminal outcomes without inventing or colliding string IDs.
-// Fork and Join will be added to the same representation in subsequent work.
+// Fork and Join share the same pinned service-invocation dispatcher.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum PlanStepId {
     Invoke(String),
@@ -969,15 +969,20 @@ impl WorkflowTopology {
                             match next {
                                 WorkflowEdge::Next { node } => visit.push(node.clone()),
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {}
-                                WorkflowEdge::MapFork { .. } => {
-                                    return Err(WorkflowCompileError::NestedForkNotSupported {
-                                        node: current.clone(),
-                                    });
+                                WorkflowEdge::MapFork {
+                                    on_success, on_failure, ..
                                 }
-                                WorkflowEdge::Fork { .. } => {
-                                    return Err(WorkflowCompileError::NestedForkNotSupported {
-                                        node: current.clone(),
-                                    });
+                                | WorkflowEdge::Fork {
+                                    on_success, on_failure, ..
+                                } => {
+                                    // Nested children are visited in their own
+                                    // declared scope. Their Join continuations
+                                    // remain in this outer child scope.
+                                    for continuation in [on_success, on_failure] {
+                                        if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                            visit.push(node.clone());
+                                        }
+                                    }
                                 }
                                 WorkflowEdge::Include { .. } => {
                                     unreachable!("includes are rejected before reachability")
@@ -1330,303 +1335,24 @@ impl CompiledWorkflow {
     fn execute_nodes<State, Error>(
         &self,
         state: &mut State,
-        mut frame: Option<&mut crate::WorkflowFrame>,
-        mut invoke: impl FnMut(
+        frame: Option<&mut crate::WorkflowFrame>,
+        invoke: impl FnMut(
             &str,
             &InterfaceId,
             &mut State,
             Option<&mut crate::WorkflowFrame>,
             &mut dyn FnMut() -> bool,
         ) -> Result<String, WorkflowInvocationError<Error>>,
-        mut cancelled: impl FnMut() -> bool,
+        cancelled: impl FnMut() -> bool,
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
-        let mut current = self.plan.entry.clone();
-        let mut count = 0u64;
-        let mut join_result: Option<crate::WorkflowJoinDecision> = None;
-        loop {
-            match &self.plan.steps[&current] {
-                PlanStep::Invoke { .. } => {
-                    current = self.invoke_step(
-                        &current,
-                        state,
-                        frame.as_deref_mut(),
-                        &mut invoke,
-                        &mut cancelled,
-                        (&mut count, step_limit),
-                    )?;
-                }
-                PlanStep::Fork {
-                    branches,
-                    map,
-                    join,
-                } => {
-                    let PlanStepId::Fork { node, .. } = &current else {
-                        unreachable!("Fork step has a typed identity")
-                    };
-                    let data = frame.as_deref_mut().ok_or_else(|| {
-                        WorkflowRunError::StructuredFrameRequired { node: node.clone() }
-                    })?;
-                    let PlanStep::Join {
-                        policy,
-                        outputs,
-                        map_output,
-                        ..
-                    } = &self.plan.steps[join]
-                    else {
-                        unreachable!("Fork step always refers to a Join")
-                    };
-                    let mut children: BTreeMap<_, _> = branches
-                        .iter()
-                        .map(|(name, target)| (name.clone(), (target.clone(), data.clone())))
-                        .collect();
-                    if let Some(spec) = map {
-                        let items = match data.get(&spec.collection) {
-                            Some(crate::PhenixValue::List(items)) => items,
-                            _ => {
-                                return Err(WorkflowRunError::InvalidMapInput {
-                                    node: node.clone(),
-                                    reason: format!(
-                                        "map source {} must be a list",
-                                        spec.collection
-                                    ),
-                                });
-                            }
-                        };
-                        if items.len() > spec.max_children {
-                            return Err(WorkflowRunError::InvalidMapInput {
-                                node: node.clone(),
-                                reason: format!(
-                                    "map admits at most {} children; got {}",
-                                    spec.max_children,
-                                    items.len()
-                                ),
-                            });
-                        }
-                        if items.is_empty() {
-                            if !matches!(policy, crate::WorkflowJoinPolicy::All(_)) {
-                                return Err(WorkflowRunError::InvalidMapInput {
-                                    node: node.clone(),
-                                    reason: "empty map needs an All join policy".into(),
-                                });
-                            }
-                            let mut candidate = data.clone();
-                            candidate
-                                .set(&spec.output_slot, crate::PhenixValue::List(Vec::new()))
-                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
-                                    node: node.clone(),
-                                    error,
-                                })?;
-                            *data = candidate;
-                            join_result = Some(crate::WorkflowJoinDecision::Succeeded {
-                                selected: Vec::new(),
-                                cancel_remaining: false,
-                            });
-                            current = join.clone();
-                            continue;
-                        }
-                        if let crate::WorkflowJoinPolicy::Quorum(required) = policy
-                            && required.get() > items.len()
-                        {
-                            return Err(WorkflowRunError::InvalidMapInput {
-                                node: node.clone(),
-                                reason: format!(
-                                    "join requires {} children but map admitted {}",
-                                    required,
-                                    items.len()
-                                ),
-                            });
-                        }
-                        for (index, item) in items.iter().enumerate() {
-                            let mut snapshot = data.clone();
-                            snapshot
-                                .set(&spec.item_slot, item.clone())
-                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
-                                    node: node.clone(),
-                                    error,
-                                })?;
-                            children.insert(
-                                format!("{index:06}"),
-                                (spec.branch_entry.clone(), snapshot),
-                            );
-                        }
-                    }
-                    let admitted: BTreeSet<_> = children.keys().cloned().collect();
-                    let mut observed = Vec::<crate::WorkflowJoinObservation>::new();
-                    let mut settled = BTreeSet::new();
-                    let mut round = 0u64;
-                    let decision = 'settle: loop {
-                        // One Invoke per live child per round. Long-running
-                        // branch loops cannot starve other admitted children.
-                        for (branch, (cursor, child_data)) in &mut children {
-                            if settled.contains(branch) {
-                                continue;
-                            }
-                            if cancelled() {
-                                return Err(WorkflowRunError::Cancelled {
-                                    next_node: branch.clone(),
-                                    executed_nodes: count,
-                                });
-                            }
-                            let result = match &self.plan.steps[cursor] {
-                                PlanStep::Invoke { .. } => self
-                                    .invoke_step(
-                                        cursor,
-                                        state,
-                                        Some(child_data),
-                                        &mut invoke,
-                                        &mut cancelled,
-                                        (&mut count, step_limit),
-                                    )
-                                    .map(|next| {
-                                        *cursor = next;
-                                        // A child exits in the same scheduling
-                                        // turn as its final Invoke. In particular,
-                                        // FirstCompleted/FailFast may not dispatch
-                                        // a second sibling after the first exits.
-                                        match &self.plan.steps[cursor] {
-                                            PlanStep::Exit { failed } => Some(if *failed {
-                                                crate::WorkflowChildSettlement::Failed
-                                            } else {
-                                                crate::WorkflowChildSettlement::Completed
-                                            }),
-                                            _ => None,
-                                        }
-                                    }),
-                                PlanStep::Exit { failed } => Ok(Some(if *failed {
-                                    crate::WorkflowChildSettlement::Failed
-                                } else {
-                                    crate::WorkflowChildSettlement::Completed
-                                })),
-                                PlanStep::Fork { .. } => {
-                                    unreachable!("nested fork rejected at compilation")
-                                }
-                                PlanStep::Join { .. } => {
-                                    unreachable!("child cannot enter parent Join")
-                                }
-                            };
-                            // An execution failure is not a declared child
-                            // outcome. Never turn authority, transport, or
-                            // adapter failure into the policy's failure edge.
-                            let settlement = result?;
-                            if cancelled() {
-                                return Err(WorkflowRunError::Cancelled {
-                                    next_node: branch.clone(),
-                                    executed_nodes: count,
-                                });
-                            }
-                            if let Some(settlement) = settlement {
-                                settled.insert(branch.clone());
-                                observed.push(crate::WorkflowJoinObservation {
-                                    branch: branch.clone(),
-                                    order: round,
-                                    settlement,
-                                });
-                                // Evaluate after each settlement, not only
-                                // after a full scheduler round. FailFast and
-                                // FirstCompleted cannot invoke an unnecessary
-                                // sibling after the policy has already settled.
-                                let choice =
-                                    policy.decide(&admitted, &observed).map_err(|error| {
-                                        WorkflowRunError::InvalidJoin {
-                                            node: node.clone(),
-                                            error,
-                                        }
-                                    })?;
-                                if choice != crate::WorkflowJoinDecision::Pending {
-                                    break 'settle choice;
-                                }
-                            }
-                        }
-                        let decision = policy.decide(&admitted, &observed).map_err(|error| {
-                            WorkflowRunError::InvalidJoin {
-                                node: node.clone(),
-                                error,
-                            }
-                        })?;
-                        if decision != crate::WorkflowJoinDecision::Pending {
-                            break decision;
-                        }
-                        round = round
-                            .checked_add(1)
-                            .ok_or(WorkflowRunError::StepCounterOverflow)?;
-                    };
-                    // Child calls run cooperatively; none remains in-flight at
-                    // the Join boundary. Dropping unselected cursors settles
-                    // their scopes before the root may finish.
-                    if let crate::WorkflowJoinDecision::Succeeded { selected, .. } = &decision {
-                        let mut candidate = data.clone();
-                        for branch in selected {
-                            if let Some(slots) = outputs.get(branch) {
-                                candidate.collect_from(&children[branch].1, slots).map_err(
-                                    |error| WorkflowRunError::InvalidJoinFrame {
-                                        node: node.clone(),
-                                        error,
-                                    },
-                                )?;
-                            }
-                        }
-                        if let Some((child_output, output_slot)) = map_output {
-                            let collected = selected.iter().map(|branch| {
-                                children[branch].1.get(child_output).cloned().ok_or_else(|| {
-                                    WorkflowRunError::InvalidMapInput {
-                                        node: node.clone(),
-                                        reason: format!("missing output slot {child_output} in map child {branch}"),
-                                    }
-                                })
-                            }).collect::<Result<Vec<_>, _>>()?;
-                            candidate
-                                .set(output_slot, crate::PhenixValue::List(collected))
-                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
-                                    node: node.clone(),
-                                    error,
-                                })?;
-                        }
-                        *data = candidate;
-                    }
-                    join_result = Some(decision);
-                    current = join.clone();
-                }
-                PlanStep::Join {
-                    on_success,
-                    on_failure,
-                    ..
-                } => {
-                    current = match join_result.take().expect("Join follows settled Fork") {
-                        crate::WorkflowJoinDecision::Succeeded { .. } => on_success.clone(),
-                        crate::WorkflowJoinDecision::Failed { .. } => on_failure.clone(),
-                        crate::WorkflowJoinDecision::Pending => {
-                            unreachable!("pending Join cannot advance")
-                        }
-                    };
-                }
-                PlanStep::Exit { failed } => {
-                    let PlanStepId::Exit { node, outcome } = &current else {
-                        unreachable!("Exit step has a typed identity")
-                    };
-                    if cancelled() {
-                        return Err(WorkflowRunError::Cancelled {
-                            next_node: node.clone(),
-                            executed_nodes: count,
-                        });
-                    }
-                    if *failed {
-                        return Err(WorkflowRunError::ExplicitFailure {
-                            node: node.clone(),
-                            outcome: outcome.clone(),
-                            executed_nodes: count,
-                        });
-                    }
-                    return Ok(WorkflowRunReport {
-                        last_node: node.clone(),
-                        final_outcome: outcome.clone(),
-                        executed_nodes: count,
-                    });
-                }
-            }
-        }
+        self.execute_cooperative(state, frame, invoke, cancelled, step_limit)
     }
+
 }
+
+#[path = "workflow_scheduler.rs"]
+mod scheduler;
 
 #[cfg(test)]
 mod inclusion_tests {
