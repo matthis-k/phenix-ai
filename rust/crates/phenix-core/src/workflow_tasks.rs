@@ -213,10 +213,13 @@ pub enum WorkflowNativeDispatchError {
 pub type WorkflowPendingImport =
     WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>;
 
+// A callback from another root may share generation and scope names. Unique
+// call IDs prevent two independent roots from ever producing the same ticket.
+static NEXT_NATIVE_CALL: AtomicU64 = AtomicU64::new(0);
+
 pub struct WorkflowNativeTaskGroup {
     root: RootExecutionHandle,
     shared: Arc<Mutex<NativeTaskLedger>>,
-    next_call: AtomicU64,
     completion_tx: Sender<WorkflowTaskId>,
     completion_rx: Mutex<Receiver<WorkflowTaskId>>,
 }
@@ -306,7 +309,6 @@ impl WorkflowNativeTaskGroup {
                 pending: WorkflowPendingTasks::new(generation),
                 signals: BTreeMap::new(),
             })),
-            next_call: AtomicU64::new(0),
             completion_tx,
             completion_rx: Mutex::new(completion_rx),
         })
@@ -379,8 +381,7 @@ impl WorkflowNativeTaskGroup {
         F: FnOnce(CancellationToken) -> T + Send + 'static,
         C: FnOnce(&T) -> WorkflowTaskState + Send + 'static,
     {
-        let call = self
-            .next_call
+        let call = NEXT_NATIVE_CALL
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1)
             })
