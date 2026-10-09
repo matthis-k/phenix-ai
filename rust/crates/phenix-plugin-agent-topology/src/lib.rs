@@ -246,6 +246,44 @@ mod tests {
         .unwrap()
         .with_workflows([agent_topology_declaration()])
         .unwrap();
+        let resolved = resolved
+            .with_workflow_projections(agent_topology_projections())
+            .unwrap();
+        assert_eq!(resolved.workflow_projections().len(), 2);
+        let workflow = resolved
+            .generation_topology()
+            .workflow(
+                &ComponentId::parse(AGENT_TOPOLOGY_PLUGIN).unwrap(),
+                "agent.turn",
+            )
+            .unwrap();
+        assert!(workflow.outcome_projection("turn").is_some());
+        assert!(workflow.outcome_projection("tool_batch").is_some());
+        let mut duplicated = agent_topology_projections();
+        duplicated.push(duplicated[0].clone());
+        assert!(matches!(
+            resolved.clone().with_workflow_projections(duplicated),
+            Err(GenerationResolutionError::DuplicateProjection { .. })
+        ));
+        let mut incompatible = agent_topology_projections();
+        incompatible[0]
+            .projection
+            .cases
+            .insert("final".into(), "undeclared".into());
+        let base = ResolvedGeneration::resolve(
+            [agent_topology_manifest(authority.clone()), providers.clone()],
+            components.clone(),
+            [],
+            &authority,
+        )
+        .unwrap()
+        .with_workflows([agent_topology_declaration()])
+        .unwrap();
+        assert_ne!(base.generation(), resolved.generation());
+        assert!(matches!(
+            base.with_workflow_projections(incompatible),
+            Err(GenerationResolutionError::InvalidProjection { .. })
+        ));
         assert!(
             resolved
                 .generation_topology()
