@@ -226,14 +226,14 @@ pub use workflow_frame::{
     WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema,
 };
 
+pub use workflow_join::{
+    WorkflowChildSettlement, WorkflowJoinAllPolicy, WorkflowJoinDecision, WorkflowJoinError,
+    WorkflowJoinObservation, WorkflowJoinPolicy,
+};
 pub use workflow_projection::{
     WORKFLOW_PROJECTION_REVISION, WorkflowOutcomeProjection, WorkflowProjectionError,
     WorkflowProjectionSelector,
 };
 pub use workflow_tasks::{
     WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
-};
-pub use workflow_join::{
-    WorkflowChildSettlement, WorkflowJoinAllPolicy, WorkflowJoinDecision, WorkflowJoinError,
-    WorkflowJoinObservation, WorkflowJoinPolicy,
 };
