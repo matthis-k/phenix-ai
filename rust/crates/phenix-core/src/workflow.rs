@@ -537,6 +537,13 @@ impl WorkflowTopology {
                                                 WorkflowCompileError::UnsupportedReturnInclude,
                                             );
                                         }
+                                        Some(WorkflowEdge::MapFork { .. }) => {
+                                            return Err(WorkflowCompileError::InvalidFork {
+                                                node: child_name.clone(),
+                                                outcome: child_outcome.clone(),
+                                                reason: "subplan return cannot directly admit a map fork".into(),
+                                            });
+                                        }
                                         Some(WorkflowEdge::Fork { .. }) => {
                                             return Err(WorkflowCompileError::InvalidFork {
                                                 node: child_name.clone(),
@@ -556,6 +563,13 @@ impl WorkflowTopology {
                                     return Err(WorkflowCompileError::UnexpandedInclude {
                                         node: child_name.clone(),
                                         outcome: child_outcome.clone(),
+                                    });
+                                }
+                                WorkflowEdge::MapFork { .. } => {
+                                    return Err(WorkflowCompileError::InvalidFork {
+                                        node: child_name.clone(),
+                                        outcome: child_outcome.clone(),
+                                        reason: "map fork inside an inline subplan requires scoped frame mappings".into(),
                                     });
                                 }
                                 WorkflowEdge::Fork { .. } => {
@@ -685,6 +699,45 @@ impl WorkflowTopology {
                             outcome: outcome.clone(),
                         });
                     }
+                    WorkflowEdge::MapFork {
+                        collection: _, item_slot: _, child_output_slot: _,
+                        output_slot: _, max_children, branch_entry, policy,
+                        on_success, on_failure,
+                    } => {
+                        if *max_children == 0 || *max_children > 256 {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: "map fan-out bound must be 1..=256".into(),
+                            });
+                        }
+                        if !self.nodes.contains_key(branch_entry) {
+                            return Err(WorkflowCompileError::UnknownTarget {
+                                from: name.clone(), target: branch_entry.clone(),
+                            });
+                        }
+                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy {
+                            if k.get() > *max_children {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: name.clone(), outcome: outcome.clone(),
+                                    reason: "quorum exceeds maximum admitted map children".into(),
+                                });
+                            }
+                        }
+                        for continuation in [on_success, on_failure] {
+                            match continuation.as_ref() {
+                                WorkflowEdge::Next { node: target } if !self.nodes.contains_key(target) => {
+                                    return Err(WorkflowCompileError::UnknownTarget {
+                                        from: name.clone(), target: target.clone(),
+                                    });
+                                }
+                                WorkflowEdge::Next { .. } | WorkflowEdge::Finish => {}
+                                _ => return Err(WorkflowCompileError::InvalidJoinContinuation {
+                                    node: name.clone(), outcome: outcome.clone(),
+                                }),
+                            }
+                        }
+                    }
                     WorkflowEdge::Fork {
                         branches,
                         outputs,
@@ -788,6 +841,14 @@ impl WorkflowTopology {
                             }
                         }
                     }
+                    WorkflowEdge::MapFork { branch_entry, on_success, on_failure, .. } => {
+                        pending.push(branch_entry.clone());
+                        for continuation in [on_success, on_failure] {
+                            if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                pending.push(node.clone());
+                            }
+                        }
+                    }
                     WorkflowEdge::Finish | WorkflowEdge::Include { .. } => {}
                 }
             }
@@ -806,14 +867,15 @@ impl WorkflowTopology {
         // Nested forks are not admitted until nested scope scheduling is wired.
         for (fork_owner, node) in &self.nodes {
             for (fork_outcome, edge) in &node.branches {
-                let WorkflowEdge::Fork {
-                    branches, outputs, ..
-                } = edge
-                else {
-                    continue;
+                let branch_entries = match edge {
+                    WorkflowEdge::Fork { branches, .. } => branches.clone(),
+                    WorkflowEdge::MapFork { branch_entry, .. } => {
+                        BTreeMap::from([("map".to_owned(), branch_entry.clone())])
+                    }
+                    _ => continue,
                 };
                 let mut owner_of = BTreeMap::<String, String>::new();
-                for (branch, entry) in branches {
+                for (branch, entry) in &branch_entries {
                     let mut visit = vec![entry.clone()];
                     let mut visited = BTreeSet::new();
                     while let Some(current) = visit.pop() {
@@ -842,6 +904,11 @@ impl WorkflowTopology {
                             match next {
                                 WorkflowEdge::Next { node } => visit.push(node.clone()),
                                 WorkflowEdge::Finish => {}
+                                WorkflowEdge::MapFork { .. } => {
+                                    return Err(WorkflowCompileError::NestedForkNotSupported {
+                                        node: current.clone(),
+                                    });
+                                }
                                 WorkflowEdge::Fork { .. } => {
                                     return Err(WorkflowCompileError::NestedForkNotSupported {
                                         node: current.clone(),
@@ -875,7 +942,7 @@ impl WorkflowTopology {
                 }
                 // Frame slot names must be selected and validated against the
                 // chosen schema before this plan can run via the framed root.
-                let _ = outputs;
+
             }
         }
 
