@@ -2765,10 +2765,8 @@ mod tests {
         );
         assert!(matches!(
             baseline.clone().with_workflows([parent]),
-            Err(GenerationResolutionError::InvalidWorkflow {
-                error: WorkflowCompileError::MissingSubplan(_),
-                ..
-            })
+            Err(GenerationResolutionError::InvalidWorkflow { error, .. })
+                if matches!(*error, WorkflowCompileError::MissingSubplan(_))
         ));
 
         // Declaration enumeration does not participate in generation identity.
@@ -2816,10 +2814,12 @@ mod tests {
             InterfaceId::parse("fixture.missing@1").unwrap();
         assert!(matches!(
             baseline.clone().with_workflows([unbound]),
-            Err(GenerationResolutionError::InvalidWorkflow {
-                error: WorkflowCompileError::ImportLookup { error, .. },
-                ..
-            }) if matches!(*error, ComponentGraphError::ImportNotDeclared { .. })
+            Err(GenerationResolutionError::InvalidWorkflow { error, .. })
+                if matches!(
+                    *error,
+                    WorkflowCompileError::ImportLookup { error, .. }
+                        if matches!(*error, ComponentGraphError::ImportNotDeclared { .. })
+                )
         ));
         assert!(matches!(
             baseline
