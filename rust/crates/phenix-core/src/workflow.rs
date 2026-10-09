@@ -214,6 +214,7 @@ pub struct CompiledWorkflow {
     topology: WorkflowTopology,
     plan: LoweredPlan,
     bindings: BTreeMap<InterfaceId, ResolvedImportHandle>,
+    frame_schema: Option<crate::WorkflowFrameSchema>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -250,6 +251,14 @@ pub(crate) enum WorkflowInvocationError<E> {
 #[derive(Debug)]
 pub enum WorkflowRunError<E> {
     MissingWorkflow {
+        owner: ComponentId,
+        name: String,
+    },
+    MissingFrameSchema {
+        owner: ComponentId,
+        name: String,
+    },
+    FrameSchemaMismatch {
         owner: ComponentId,
         name: String,
     },
@@ -523,6 +532,7 @@ impl WorkflowTopology {
             topology: self,
             plan,
             bindings: BTreeMap::new(),
+            frame_schema: None,
         })
     }
 }
@@ -530,6 +540,16 @@ impl WorkflowTopology {
 impl CompiledWorkflow {
     pub fn topology(&self) -> &WorkflowTopology {
         &self.topology
+    }
+
+    /// Selected typed frame contract. Missing means this legacy workflow has
+    /// no frame-aware entry, not that an arbitrary schema can be supplied.
+    pub fn frame_schema(&self) -> Option<&crate::WorkflowFrameSchema> {
+        self.frame_schema.as_ref()
+    }
+
+    pub(crate) fn bind_frame_schema(&mut self, schema: crate::WorkflowFrameSchema) {
+        self.frame_schema = Some(schema);
     }
 
     /// Selected import handle, including provider, authority and generation
