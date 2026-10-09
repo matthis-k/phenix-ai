@@ -702,7 +702,10 @@ impl WorkflowTopology {
                                     ..
                                 } => {
                                     for continuation in [on_success, on_failure] {
-                                        if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                        if let WorkflowEdge::Next { node }
+                                            | WorkflowEdge::Transfer { node, .. } =
+                                                continuation.as_ref()
+                                        {
                                             pending_children.push(node.clone());
                                         }
                                     }
@@ -1134,6 +1137,7 @@ impl WorkflowTopology {
                         for continuation in [on_success, on_failure] {
                             match continuation.as_ref() {
                                 WorkflowEdge::Next { node: target }
+                                | WorkflowEdge::Transfer { node: target, .. }
                                     if !self.nodes.contains_key(target) =>
                                 {
                                     return Err(WorkflowCompileError::UnknownTarget {
@@ -1141,7 +1145,10 @@ impl WorkflowTopology {
                                         target: target.clone(),
                                     });
                                 }
-                                WorkflowEdge::Next { .. } | WorkflowEdge::Finish => {}
+                                WorkflowEdge::Next { .. }
+                                | WorkflowEdge::Transfer { .. }
+                                | WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. } => {}
                                 _ => {
                                     return Err(WorkflowCompileError::InvalidJoinContinuation {
                                         node: name.clone(),
@@ -1198,6 +1205,7 @@ impl WorkflowTopology {
                         for continuation in [on_success, on_failure] {
                             match continuation.as_ref() {
                                 WorkflowEdge::Next { node: target }
+                                | WorkflowEdge::Transfer { node: target, .. }
                                     if !self.nodes.contains_key(target) =>
                                 {
                                     return Err(WorkflowCompileError::UnknownTarget {
@@ -1205,7 +1213,10 @@ impl WorkflowTopology {
                                         target: target.clone(),
                                     });
                                 }
-                                WorkflowEdge::Next { .. } | WorkflowEdge::Finish => {}
+                                WorkflowEdge::Next { .. }
+                                | WorkflowEdge::Transfer { .. }
+                                | WorkflowEdge::Finish
+                                | WorkflowEdge::FinishTransfer { .. } => {}
                                 _ => {
                                     return Err(WorkflowCompileError::InvalidJoinContinuation {
                                         node: name.clone(),
@@ -1248,7 +1259,10 @@ impl WorkflowTopology {
                     } => {
                         pending.extend(branches.values().cloned());
                         for continuation in [on_success, on_failure] {
-                            if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                            if let WorkflowEdge::Next { node }
+                                            | WorkflowEdge::Transfer { node, .. } =
+                                                continuation.as_ref()
+                                        {
                                 pending.push(node.clone());
                             }
                         }
@@ -1261,7 +1275,10 @@ impl WorkflowTopology {
                     } => {
                         pending.push(branch_entry.clone());
                         for continuation in [on_success, on_failure] {
-                            if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                            if let WorkflowEdge::Next { node }
+                                            | WorkflowEdge::Transfer { node, .. } =
+                                                continuation.as_ref()
+                                        {
                                 pending.push(node.clone());
                             }
                         }
@@ -1343,7 +1360,10 @@ impl WorkflowTopology {
                                     // declared scope. Their Join continuations
                                     // remain in this outer child scope.
                                     for continuation in [on_success, on_failure] {
-                                        if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                        if let WorkflowEdge::Next { node }
+                                            | WorkflowEdge::Transfer { node, .. } =
+                                                continuation.as_ref()
+                                        {
                                             visit.push(node.clone());
                                         }
                                     }
@@ -1373,7 +1393,8 @@ impl WorkflowTopology {
                     _ => unreachable!("only forks have admitted child scopes"),
                 };
                 for continuation in [on_success, on_failure] {
-                    if let WorkflowEdge::Next { node: target } = continuation.as_ref()
+                    if let WorkflowEdge::Next { node: target }
+                    | WorkflowEdge::Transfer { node: target, .. } = continuation.as_ref()
                         && owner_of.contains_key(target)
                     {
                         return Err(WorkflowCompileError::InvalidFork {
@@ -1561,8 +1582,25 @@ impl CompiledWorkflow {
     ) -> Result<(), WorkflowCompileError> {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
+                // Both an Invoke outcome and a Join continuation may
+                // transfer data. Type-check every mapping before activation.
+                let mut transitions = vec![edge];
+                if let WorkflowEdge::Fork {
+                    on_success,
+                    on_failure,
+                    ..
+                }
+                | WorkflowEdge::MapFork {
+                    on_success,
+                    on_failure,
+                    ..
+                } = edge
+                {
+                    transitions.extend([on_success.as_ref(), on_failure.as_ref()]);
+                }
+                for transition in transitions {
                 if let WorkflowEdge::Transfer { slots, .. }
-                | WorkflowEdge::FinishTransfer { slots } = edge
+                | WorkflowEdge::FinishTransfer { slots } = transition
                 {
                     let mut destinations = BTreeSet::new();
                     for (source, target) in slots {
@@ -1599,6 +1637,7 @@ impl CompiledWorkflow {
                             });
                         }
                     }
+                }
                 }
                 if let WorkflowEdge::MapFork {
                     collection,
