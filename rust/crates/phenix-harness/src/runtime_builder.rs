@@ -730,10 +730,9 @@ mod workflow_frame_selection_tests {
     use super::*;
     use phenix_core::{
         ComponentExport, ComponentImport, InterfaceSchema, Key, PluginHost, Type,
-        WorkflowEdge, WorkflowFrameDeclaration, WorkflowFrameSchema, WorkflowNode,
-        WorkflowTopology, WorkflowDeclaration, WorkflowOutcomeProjection,
-        WorkflowProjectionDeclaration, WorkflowProjectionSelector,
-        WORKFLOW_PROJECTION_REVISION,
+        WORKFLOW_PROJECTION_REVISION, WorkflowDeclaration, WorkflowEdge, WorkflowFrameDeclaration,
+        WorkflowFrameSchema, WorkflowNode, WorkflowOutcomeProjection,
+        WorkflowProjectionDeclaration, WorkflowProjectionSelector, WorkflowTopology,
     };
 
     struct NoopProvider;
@@ -808,10 +807,7 @@ mod workflow_frame_selection_tests {
                     "node".into(),
                     WorkflowNode {
                         import: service,
-                        branches: BTreeMap::from([(
-                            "done".into(),
-                            WorkflowEdge::Finish,
-                        )]),
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
                     },
                 )]),
             },
@@ -844,7 +840,8 @@ mod workflow_frame_selection_tests {
             schema: schema.clone(),
         });
         let runtime = builder.build().unwrap();
-        let compiled = runtime.resolved_generation()
+        let compiled = runtime
+            .resolved_generation()
             .generation_topology()
             .workflow(&owner, "selected")
             .unwrap();
