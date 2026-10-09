@@ -35,6 +35,12 @@ pub fn interface(args: TokenStream, input: TokenStream) -> TokenStream {
         .into()
 }
 
+/// Contract-first spelling for the canonical typed Interface declaration.
+#[proc_macro_attribute]
+pub fn contract(args: TokenStream, input: TokenStream) -> TokenStream {
+    interface(args, input)
+}
+
 #[proc_macro_attribute]
 pub fn plugin(args: TokenStream, input: TokenStream) -> TokenStream {
     plugin_attr::expand(args.into(), input.into())

@@ -254,19 +254,19 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
     let has_root_component = !contributions.imports.is_empty()
         || !contributions.hosts.is_empty()
         || !contributions.events.is_empty();
-    if !contributions.components.is_empty() || has_root_component {
-        if plugin_execution_is_resource_only(args.clone())? {
-            return Err(syn::Error::new_spanned(
-                &item.ident,
-                "resource-only plugins cannot declare embedded component fields",
-            ));
-        }
-        if plugin_execution_is_runtime_hosted(args.clone())? {
-            return Err(syn::Error::new_spanned(
-                &item.ident,
-                "runtime-hosted plugins cannot declare embedded component fields",
-            ));
-        }
+    if !contributions.components.is_empty() && plugin_execution_is_resource_only(args.clone())? {
+        return Err(syn::Error::new_spanned(
+            &item.ident,
+            "resource-only plugins cannot declare embedded component fields",
+        ));
+    }
+    if (!contributions.components.is_empty() || has_root_component)
+        && plugin_execution_is_runtime_hosted(args.clone())?
+    {
+        return Err(syn::Error::new_spanned(
+            &item.ident,
+            "runtime-hosted plugins cannot declare embedded component fields",
+        ));
     }
     validate_nested_ids(
         &resolve_plugin_id(args.clone(), &item.ident)?,
@@ -414,6 +414,16 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
     });
     let configuration = configuration.unwrap_or_else(|| quote!(None));
     let id = resolve_plugin_id(args, &item.ident)?;
+    let static_fields = contributions.static_contributions.iter().map(|field| {
+        let ty = &field.ty;
+        let value = &field.value;
+        quote! {
+            {
+                let declared: &#ty = &#value;
+                ::phenix_sdk::StaticContributionDefinition::contribution(declared, &owner)?
+            }
+        }
+    });
     let name = &item.ident;
     let identity_impl = plugin_identity_impl(name, &id);
     let root_component_impl = has_root_component.then(|| {
@@ -450,6 +460,13 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         #root_component_impl
 
         impl ::phenix_sdk::StaticPluginDefinition for #name {
+            fn contributions() -> Result<::phenix_sdk::ContributionSet, String> {
+                let owner = Self::plugin_id();
+                let declarations = vec![#(#static_fields),*];
+                ::phenix_sdk::ContributionSet::collect_owned(&owner, declarations)
+                    .map_err(|error| error.to_string())
+            }
+
             fn descriptor() -> ::phenix_sdk::StaticPluginDescriptor {
                 ::phenix_sdk::StaticPluginDescriptor {
                     id: Self::plugin_id(),
@@ -461,6 +478,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
                         #(::phenix_sdk::StaticPluginDependency::of::<#dependency_types>()),*
                     ],
                     embedded_factory: None,
+                    contributions: Self::contributions,
                 }
             }
         }
@@ -492,12 +510,6 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
     let resource_only = plugin_execution_is_resource_only(args.clone())?;
     let runtime_hosted = plugin_execution_is_runtime_hosted(args.clone())?;
     let id = resolve_plugin_id(args, &item.ident)?;
-    if resource_only {
-        return Err(syn::Error::new_spanned(
-            &item.ident,
-            "resource-only plugins cannot use the stateless embedded-handler form",
-        ));
-    }
     if runtime_hosted {
         return Err(syn::Error::new_spanned(
             &item.ident,
@@ -518,6 +530,13 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
     }
 
     let contributions = module_contributions(items)?;
+    if resource_only && (!contributions.exports.is_empty() || !contributions.values.is_empty()) {
+        return Err(syn::Error::new_spanned(
+            &item.ident,
+            "resource-only plugin modules may contribute static data but cannot declare executable handlers",
+        ));
+    }
+    let static_consts = contributions.static_consts.iter();
     let export_descriptors = contributions
         .exports
         .iter()
@@ -612,8 +631,22 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
             }
         }
     };
+    let embedded_factory = if resource_only {
+        quote!(None)
+    } else {
+        quote!(Some(<Plugin as ::phenix_sdk::StaticPluginFactory>::factory))
+    };
     let definition_impl: Item = parse_quote! {
         impl ::phenix_sdk::StaticPluginDefinition for Plugin {
+            fn contributions() -> Result<::phenix_sdk::ContributionSet, String> {
+                let owner = Self::plugin_id();
+                let declarations = vec![
+                    #(::phenix_sdk::StaticContributionDefinition::contribution(&#static_consts, &owner)?),*
+                ];
+                ::phenix_sdk::ContributionSet::collect_owned(&owner, declarations)
+                    .map_err(|error| error.to_string())
+            }
+
             fn descriptor() -> ::phenix_sdk::StaticPluginDescriptor {
                 ::phenix_sdk::StaticPluginDescriptor {
                     id: Self::plugin_id(),
@@ -622,9 +655,8 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
                     execution: #execution,
                     maximum_authority: #authority,
                     dependencies: Vec::new(),
-                    embedded_factory: Some(
-                        <Plugin as ::phenix_sdk::StaticPluginFactory>::factory,
-                    ),
+                    embedded_factory: #embedded_factory,
+                    contributions: Self::contributions,
                 }
             }
         }
@@ -685,17 +717,24 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
             }
         }
     };
+    let component_descriptors = if resource_only {
+        quote!(Vec::new())
+    } else {
+        quote!(
+            vec![::phenix_sdk::StaticComponentDescriptor::explicit::<Component>(
+                #id,
+                "default",
+            )]
+        )
+    };
     let components_impl: Item = parse_quote! {
         impl ::phenix_sdk::StaticPluginComponents for Plugin {
             fn components() -> Vec<::phenix_sdk::StaticComponentDescriptor> {
-                vec![::phenix_sdk::StaticComponentDescriptor::explicit::<Component>(
-                    #id,
-                    "default",
-                )]
+                #component_descriptors
             }
         }
     };
-    items.extend([
+    let mut generated = vec![
         identity,
         component,
         identity_impl,
@@ -705,10 +744,12 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
         component_definition,
         component_imports,
         component_behavior,
-        instance_impl,
-        factory_impl,
         components_impl,
-    ]);
+    ];
+    if !resource_only {
+        generated.extend([instance_impl, factory_impl]);
+    }
+    items.extend(generated);
 
     Ok(quote!(#item))
 }
@@ -717,6 +758,7 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
 struct ModuleContributions {
     exports: Vec<StatelessExportContribution>,
     values: Vec<(Ident, StatelessValueContribution, Type)>,
+    static_consts: Vec<Ident>,
 }
 
 struct StatelessExportContribution {
@@ -745,6 +787,42 @@ struct StatelessValueContribution {
 fn module_contributions(items: &mut [Item]) -> syn::Result<ModuleContributions> {
     let mut contributions = ModuleContributions::default();
     for item in items {
+        // Static contribution items are declarations, not executable handlers.
+        if let Item::Const(constant) = item {
+            let mut retained = Vec::new();
+            let mut contribute = false;
+            for attribute in std::mem::take(&mut constant.attrs) {
+                if !attribute.path().is_ident("phenix") {
+                    retained.push(attribute);
+                    continue;
+                }
+                if contribute {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "a static contribution const may have only one Phenix role",
+                    ));
+                }
+                let Meta::List(meta) = &attribute.meta else {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "static contribution must use #[phenix(contribute)]",
+                    ));
+                };
+                let role = syn::parse2::<Meta>(meta.tokens.clone())?;
+                if !matches!(role, Meta::Path(path) if path.is_ident("contribute")) {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "unsupported const contribution; use #[phenix(contribute)]",
+                    ));
+                }
+                contribute = true;
+            }
+            constant.attrs = retained;
+            if contribute {
+                contributions.static_consts.push(constant.ident.clone());
+            }
+            continue;
+        }
         let Item::Fn(function) = item else {
             continue;
         };
@@ -894,10 +972,10 @@ fn parse_stateless_contribution(attribute: &Attribute) -> syn::Result<StatelessC
     let Some(Meta::List(kind)) = arguments.first() else {
         return Err(syn::Error::new_spanned(
             attribute,
-            "stateless plugin function contribution must begin with export(...) or value(...)",
+            "stateless plugin function contribution must begin with provide(...), export(...) or value(...)",
         ));
     };
-    if kind.path.is_ident("export") {
+    if kind.path.is_ident("export") || kind.path.is_ident("provide") {
         return parse_export(attribute)
             .map(Box::new)
             .map(StatelessContribution::Export);
@@ -905,7 +983,7 @@ fn parse_stateless_contribution(attribute: &Attribute) -> syn::Result<StatelessC
     if !kind.path.is_ident("value") {
         return Err(syn::Error::new_spanned(
             &kind.path,
-            "stateless plugins support export(...) and value(...) functions",
+            "stateless plugins support provide(...), export(...) and value(...) functions",
         ));
     }
 
@@ -1215,6 +1293,7 @@ struct FieldContributions {
     imports: Vec<ImportContribution>,
     hosts: Vec<ImportContribution>,
     events: Vec<EventFieldContribution>,
+    static_contributions: Vec<StaticFieldContribution>,
 }
 
 struct DependencyContribution {
@@ -1252,6 +1331,11 @@ struct EventFieldContribution {
     event: LitStr,
 }
 
+struct StaticFieldContribution {
+    ty: Type,
+    value: Expr,
+}
+
 enum FieldRole {
     Dependency,
     Config,
@@ -1263,6 +1347,9 @@ enum FieldRole {
     },
     Event {
         event: LitStr,
+    },
+    Contribution {
+        value: Expr,
     },
     Component {
         id: Option<LitStr>,
@@ -1359,6 +1446,14 @@ fn field_contributions(item: &mut ItemStruct) -> syn::Result<FieldContributions>
                     event,
                 });
             }
+            Some(FieldRole::Contribution { value }) => {
+                contributions
+                    .static_contributions
+                    .push(StaticFieldContribution {
+                        ty: field.ty.clone(),
+                        value,
+                    });
+            }
             None => {}
         }
     }
@@ -1437,12 +1532,44 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
             .map_err(|error| syn::Error::new_spanned(&event, error))?;
         return Ok(FieldRole::Event { event });
     }
+    if let Meta::List(contribution) = &first
+        && contribution.path.is_ident("contribute")
+    {
+        if let Some(argument) = arguments.next() {
+            return Err(syn::Error::new_spanned(
+                argument,
+                "contribution fields accept only a single value = CONSTANT_PATH",
+            ));
+        }
+        let argument = syn::parse2::<Meta>(contribution.tokens.clone())?;
+        let Meta::NameValue(argument) = argument else {
+            return Err(syn::Error::new_spanned(
+                argument,
+                "contribution fields require contribute(value = CONSTANT_PATH)",
+            ));
+        };
+        if !argument.path.is_ident("value") || !matches!(&argument.value, Expr::Path(_)) {
+            return Err(syn::Error::new_spanned(
+                argument,
+                "contribution value must be a static Rust const path",
+            ));
+        }
+        return Ok(FieldRole::Contribution {
+            value: argument.value,
+        });
+    }
     let Meta::Path(role) = first else {
         return Err(syn::Error::new_spanned(
             attribute,
             "plugin field attribute must begin with a field role",
         ));
     };
+    if role.is_ident("contribute") {
+        return Err(syn::Error::new_spanned(
+            role,
+            "struct fields require #[phenix(contribute(value = CONSTANT_PATH))]; module constants may use #[phenix(contribute)]",
+        ));
+    }
 
     if role.is_ident("dep") || role.is_ident("config") {
         if let Some(argument) = arguments.next() {
@@ -2071,8 +2198,8 @@ mod tests {
     }
 
     #[test]
-    fn resource_only_plugin_rejects_root_component_imports() {
-        let error = expand(
+    fn resource_only_plugin_accepts_declarative_root_imports() {
+        let output = expand(
             quote!(
                 id = "phenix.resource-only",
                 execution = ::phenix_sdk::PluginExecution::ResourceOnly
@@ -2086,13 +2213,12 @@ mod tests {
                 }
             },
         )
-        .unwrap_err();
+        .unwrap()
+        .to_string();
 
-        assert!(
-            error
-                .to_string()
-                .contains("resource-only plugins cannot declare embedded component fields")
-        );
+        assert!(output.contains("StaticComponentImport :: of"));
+        assert!(output.contains("StaticComponentBehavior for Plugin"));
+        assert!(output.contains("embedded_factory : None"));
     }
 
     #[test]
@@ -2116,20 +2242,74 @@ mod tests {
     }
 
     #[test]
+    fn struct_fields_lower_typed_static_contributions() {
+        let output = expand(
+            quote!("fixture.struct-contribution"),
+            quote! {
+                struct Plugin {
+                    #[phenix(contribute(value = ROUTE))]
+                    route: RouteMetadata,
+                }
+            },
+        )
+        .unwrap()
+        .to_string();
+        assert!(output.contains("StaticContributionDefinition :: contribution"));
+        assert!(output.contains("collect_owned"));
+        assert!(output.contains("let declared : & RouteMetadata = & ROUTE"));
+    }
+
+    #[test]
+    fn struct_field_requires_an_explicit_static_value_path() {
+        let missing = expand(
+            quote!("fixture.struct-contribution"),
+            quote! {
+                struct Plugin {
+                    #[phenix(contribute)]
+                    route: RouteMetadata,
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .contains("contribute(value = CONSTANT_PATH)")
+        );
+
+        let procedural = expand(
+            quote!("fixture.struct-contribution"),
+            quote! {
+                struct Plugin {
+                    #[phenix(contribute(value = make_patch()))]
+                    route: RouteMetadata,
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(procedural.to_string().contains("static Rust const path"));
+    }
+
+    #[test]
     fn resource_only_plugin_rejects_stateless_embedded_handler_form() {
         let error = expand(
             quote!(
                 id = "phenix.resource-only",
                 execution = ::phenix_sdk::PluginExecution::ResourceOnly
             ),
-            quote! { mod plugin {} },
+            quote! {
+                mod plugin {
+                    #[phenix(export("fixture.no-executable-handlers@1"))]
+                    fn run() {}
+                }
+            },
         )
         .unwrap_err();
 
         assert!(
             error
                 .to_string()
-                .contains("stateless embedded-handler form")
+                .contains("cannot declare executable handlers")
         );
     }
 

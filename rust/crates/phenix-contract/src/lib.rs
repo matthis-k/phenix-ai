@@ -4,6 +4,7 @@
 
 mod contract;
 mod contract_wire;
+mod contribution;
 mod identity;
 mod infallible_value;
 mod interface;
@@ -15,6 +16,7 @@ pub use contract::{
     ObjectRef, PhenixContract, PhenixSchema, PhenixValue, Project, ReferenceId, ReferenceOwnerId,
     SchemaCompatibility, SchemaMismatch, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
+pub use contribution::{Contribution, ContributionRole, ContributionSet, ContributionSetError};
 pub use identity::{
     CallableId, ClientConnectionId, ComponentId, ConfigurationFrontendId, ContextResourceId,
     ContextRevisionId, EventTypeId, GenerationId, InterfaceId, ModelFeatureGenerationId, ModelId,

@@ -677,7 +677,7 @@ fn parse_method_contribution(attribute: &Attribute) -> syn::Result<MethodContrib
         ));
     };
 
-    if kind.path.is_ident("export") {
+    if kind.path.is_ident("export") || kind.path.is_ident("provide") {
         return parse_export(attribute).map(MethodContribution::Export);
     }
     if kind.path.is_ident("layer") {
@@ -939,10 +939,11 @@ pub(crate) fn parse_export(attribute: &Attribute) -> syn::Result<ExportContribut
     let Some(Meta::List(export)) = arguments.next() else {
         return Err(syn::Error::new_spanned(
             attribute,
-            "component method contribution must begin with export(...)",
+            "component method contribution must begin with export(...) or provide(...)",
         ));
     };
-    if !export.path.is_ident("export") {
+    let provided = export.path.is_ident("provide");
+    if !export.path.is_ident("export") && !provided {
         return Err(syn::Error::new_spanned(
             export.path,
             "unsupported component method contribution",
@@ -960,7 +961,7 @@ pub(crate) fn parse_export(attribute: &Attribute) -> syn::Result<ExportContribut
     Ok(ExportContribution {
         interface,
         public,
-        terminal,
+        terminal: provided || terminal,
         priority,
         authority,
     })
