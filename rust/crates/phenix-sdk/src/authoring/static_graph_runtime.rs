@@ -1,18 +1,45 @@
 use super::{StaticPluginDefinition, StaticPluginGraph};
 
 impl StaticPluginGraph {
-    fn verify_prepared_manifest(
+    /// Bind frozen authored metadata to the selected kernel generation.
+    /// The kernel rechecks verified plugin owners and incorporates canonical
+    /// bytes into generation identity. This does not lower contribution kinds.
+    pub fn bind_portable_contributions(
         &self,
-        kernel: &phenix_core::Kernel,
+        resolved: phenix_core::ResolvedGeneration,
+    ) -> Result<phenix_core::ResolvedGeneration, phenix_core::GenerationResolutionError> {
+        // The static graph and the candidate must agree on the selected
+        // executable revisions before any contribution bytes enter identity.
+        // Owner names alone do not authenticate version, authority or closure.
+        for id in self.ids() {
+            let manifest = resolved
+                .plugins()
+                .iter()
+                .find(|manifest| &manifest.id == id)
+                .ok_or_else(|| {
+                    phenix_core::GenerationResolutionError::UnselectedContributionOwner(id.clone())
+                })?;
+            self.verify_manifest_snapshot(id, manifest)
+                .map_err(phenix_core::GenerationResolutionError::Kernel)?;
+        }
+        let envelopes = self
+            .portable_contribution_envelopes()
+            .map_err(phenix_core::GenerationResolutionError::PortableContributions)?;
+        resolved.with_portable_contributions(
+            envelopes
+                .iter()
+                .map(|(owner, bytes)| (owner, bytes.as_slice())),
+        )
+    }
+
+    fn verify_manifest_snapshot(
+        &self,
         id: &phenix_core::PluginId,
+        manifest: &phenix_core::PluginManifest,
     ) -> Result<(), phenix_core::KernelError> {
         let descriptor = self
             .descriptor(id)
             .expect("selected static graph IDs have frozen descriptors");
-        let manifest = kernel
-            .config()
-            .manifest(id)
-            .ok_or_else(|| phenix_core::KernelError::UnknownPlugin(id.clone()))?;
         let mut selected_dependencies = manifest.dependencies.clone();
         selected_dependencies.sort();
         if descriptor.version != manifest.version
@@ -23,6 +50,18 @@ impl StaticPluginGraph {
             return Err(phenix_core::KernelError::PreparedPluginMismatch(id.clone()));
         }
         Ok(())
+    }
+
+    fn verify_prepared_manifest(
+        &self,
+        kernel: &phenix_core::Kernel,
+        id: &phenix_core::PluginId,
+    ) -> Result<(), phenix_core::KernelError> {
+        let manifest = kernel
+            .config()
+            .manifest(id)
+            .ok_or_else(|| phenix_core::KernelError::UnknownPlugin(id.clone()))?;
+        self.verify_manifest_snapshot(id, manifest)
     }
 
     fn verify_prepared_graph(
@@ -116,6 +155,40 @@ mod tests {
     struct UnselectedImpostor;
     struct UnselectedCallback;
     struct ChangedMetadata;
+    struct FrozenContributions;
+    static CONTRIBUTION_READS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    fn frozen_contributions() -> Result<phenix_contract::ContributionSet, String> {
+        CONTRIBUTION_READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let declaration = phenix_contract::Contribution {
+            owner: PluginId::parse("fixture.graph.frozen-contributions").unwrap(),
+            id: phenix_contract::ContractId::parse("fixture.graph.frozen-record@1").unwrap(),
+            kind: phenix_contract::ContractId::parse("fixture.record@1").unwrap(),
+            role: phenix_contract::ContributionRole::Declare,
+            payload: phenix_contract::PhenixValue::String("frozen".into()),
+        };
+        phenix_contract::ContributionSet::collect([declaration]).map_err(|error| error.to_string())
+    }
+
+    impl StaticPluginDefinition for FrozenContributions {
+        fn descriptor() -> StaticPluginDescriptor {
+            let mut authored = descriptor("fixture.graph.frozen-contributions", Vec::new());
+            authored.contributions = frozen_contributions;
+            authored
+        }
+    }
+
+    impl StaticPluginComponents for FrozenContributions {
+        fn components() -> Vec<crate::StaticComponentDescriptor> {
+            Vec::new()
+        }
+    }
+
+    impl StaticPluginResources for FrozenContributions {
+        fn resources() -> Vec<crate::StaticResourceDescriptor> {
+            Vec::new()
+        }
+    }
 
     static PLUGIN_VERSION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     static PLUGIN_DEPENDENCY_CHANGE: std::sync::atomic::AtomicBool =
@@ -227,6 +300,94 @@ mod tests {
             embedded_factory: Some(factory),
             contributions: || Ok(Default::default()),
         }
+    }
+
+    #[test]
+    fn frozen_static_contributions_bind_into_kernel_generation_without_callbacks() {
+        use std::sync::atomic::Ordering;
+
+        CONTRIBUTION_READS.store(0, Ordering::SeqCst);
+        let graph = StaticPluginGraph::compose::<FrozenContributions>().unwrap();
+        assert_eq!(CONTRIBUTION_READS.load(Ordering::SeqCst), 1);
+
+        let candidate = phenix_core::ResolvedGeneration::resolve(
+            [FrozenContributions::manifest()],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let before = candidate.generation().clone();
+        let selected = graph.bind_portable_contributions(candidate).unwrap();
+        assert_ne!(selected.generation(), &before);
+        assert_eq!(CONTRIBUTION_READS.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            selected.portable_contributions(),
+            Some(&graph.contributions().unwrap())
+        );
+
+        let missing = phenix_core::ResolvedGeneration::resolve(
+            [Leaf::manifest()],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            graph.bind_portable_contributions(missing),
+            Err(phenix_core::GenerationResolutionError::UnselectedContributionOwner(_))
+        ));
+        assert_eq!(CONTRIBUTION_READS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn contribution_binding_rejects_manifest_revision_and_authority_drift() {
+        let graph = StaticPluginGraph::compose::<FrozenContributions>().unwrap();
+        let manifest = FrozenContributions::manifest();
+        let expected = manifest.id.clone();
+        let authority = Authority::default();
+
+        let mut wrong_version = manifest.clone();
+        wrong_version.version += 1;
+        let candidate =
+            phenix_core::ResolvedGeneration::resolve([wrong_version], [], [], &authority).unwrap();
+        assert!(matches!(
+            graph.bind_portable_contributions(candidate),
+            Err(phenix_core::GenerationResolutionError::Kernel(
+                phenix_core::KernelError::PreparedPluginMismatch(id)
+            )) if id == expected
+        ));
+
+        let mut wrong_authority = manifest;
+        wrong_authority.maximum_authority =
+            Authority::new([crate::PermissionId::parse("fixture.extra").unwrap()]);
+        let candidate =
+            phenix_core::ResolvedGeneration::resolve([wrong_authority], [], [], &authority)
+                .unwrap();
+        assert!(matches!(
+            graph.bind_portable_contributions(candidate),
+            Err(phenix_core::GenerationResolutionError::Kernel(
+                phenix_core::KernelError::PreparedPluginMismatch(id)
+            )) if id == expected
+        ));
+    }
+
+    #[test]
+    fn contribution_binding_rejects_changed_transitive_dependency_selection() {
+        let graph = StaticPluginGraph::compose::<Root>().unwrap();
+        let leaf = Leaf::manifest();
+        let mut root = Root::manifest();
+        let expected = root.id.clone();
+        root.dependencies.clear();
+        let candidate =
+            phenix_core::ResolvedGeneration::resolve([leaf, root], [], [], &Authority::default())
+                .unwrap();
+        assert!(matches!(
+            graph.bind_portable_contributions(candidate),
+            Err(phenix_core::GenerationResolutionError::Kernel(
+                phenix_core::KernelError::PreparedPluginMismatch(id)
+            )) if id == expected
+        ));
     }
 
     #[test]

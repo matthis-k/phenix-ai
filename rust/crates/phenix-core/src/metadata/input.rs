@@ -278,7 +278,10 @@ impl CompositionMetadataInput {
             layer_policies,
             authority_ceiling,
         )?;
-        resolved.incorporate_semantic_metadata(&(&package_metadata, &component_metadata));
+        resolved.incorporate_semantic_metadata(
+            "phenix.package-metadata",
+            &(&package_metadata, &component_metadata),
+        );
         Ok(resolved)
     }
 }

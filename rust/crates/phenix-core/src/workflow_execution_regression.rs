@@ -265,9 +265,22 @@ fn basic_and_advanced_execute_identical_topology_with_different_providers() {
     for (resolved, expected_provider, logging) in
         [(basic, BASIC, false), (advanced, ADVANCED, true)]
     {
+        let owner = plugin_id(TOPOLOGY);
+        let envelope = serde_json::to_vec(&serde_json::json!([{
+            "owner": owner.as_str(),
+            "id": "fixture.workflow.metadata@1",
+            "kind": "fixture.metadata@1",
+            "role": "declare",
+            "payload": { "type": "string", "value": "selected" }
+        }]))
+        .unwrap();
+        let resolved = resolved
+            .with_portable_contributions([(&owner, envelope.as_slice())])
+            .unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let kernel = started_kernel(&resolved, &log);
         let root = kernel.root_execution_handle(&Authority::default());
+        assert_eq!(root.generation(), Some(resolved.generation()));
         let chosen = resolved
             .generation_topology()
             .workflow(&component_id(TOPOLOGY), "turn")

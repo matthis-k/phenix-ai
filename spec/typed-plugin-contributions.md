@@ -105,9 +105,17 @@ A plugin should be able to contribute several instances of the same kind and mix
 
 ## Implementation ownership
 
-Stage B may change `phenix-contract` identities/schema, `phenix-sdk` static descriptor authoring, `phenix-sdk-macros` and additive normalization in Core. Keep `phenix-core/src/workflow.rs`, `phenix-core/src/composition/resolver.rs`, `phenix-harness/src/runtime_builder.rs` and the agent plugins untouched while #726 is active. If a shared integration seam is required, use a separate additive module and defer wiring to Stage C.
+#728 owns the passive contract and SDK authoring. #760 owns the candidate-generation integration and depends on both #728 and #726. #760 adds a metadata-only method to Core's resolver and inspection types, so it must rebase after #726 settles those files. Leave agent plugins and the workflow executor in #726. Stage C owns graph patch composition and kind-specific lowering.
 
 Do not introduce domain-specific SDK default tool/skill registration in Stage B; Stage D/E own that.
+
+## Prepared generation binding in #760
+
+The SDK passes each selected Rust plugin's frozen contribution snapshot to Core as canonical bytes. Core checks that every verified artifact owner belongs to the selected plugin set, decodes the full contribution stream once and rejects duplicate IDs. The resulting contribution bytes affect the resolved generation identity and remain available for inspection. No author callback runs during binding.
+
+A second binding of identical bytes is idempotent. Different bytes require a fresh candidate. The existing plugin-set replacement method rejects a generation carrying attached contribution metadata until it can prepare new authenticated envelopes. This avoids silently discarding metadata when plugins change.
+
+These methods accept **inert** contributions. Kind schemas, authority-sensitive lowering, graph patches, portable executable activation and promotion/reconciliation remain separate requirements. The end-to-end candidate loader does not yet call the new method automatically.
 
 ## Acceptance tests and completion
 

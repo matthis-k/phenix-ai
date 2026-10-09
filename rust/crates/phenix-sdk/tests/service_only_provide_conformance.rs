@@ -19,6 +19,15 @@ struct Response {
 #[phenix_sdk::plugin("fixture.service-only")]
 mod plugin {
     use super::{Echo, Request, Response};
+    use phenix_sdk::{ContributionRole, StaticRawContribution};
+
+    #[phenix(contribute)]
+    const CONTRACT_HINT: StaticRawContribution = StaticRawContribution {
+        id: "fixture.service-only.hint@1",
+        kind: "fixture.declarative-hint@1",
+        role: ContributionRole::Declare,
+        payload_json: r#"{"type":"string","value":"service-only"}"#,
+    };
 
     #[phenix(provide(Echo), public)]
     fn echo(request: Request) -> Response {
@@ -59,7 +68,7 @@ fn typed_provide_activates_through_canonical_kernel_dispatch_without_a_plan() {
     );
 
     let graph = StaticPluginGraph::compose::<Consumer>().unwrap();
-    assert!(graph.contributions().unwrap().is_empty());
+    assert_eq!(graph.contributions().unwrap().len(), 1);
     let consumer_components = Consumer::component_manifests();
     let resolved = phenix_core::ResolvedGeneration::resolve(
         [manifest.clone(), Consumer::manifest()],
@@ -71,6 +80,16 @@ fn typed_provide_activates_through_canonical_kernel_dispatch_without_a_plan() {
         &authority,
     )
     .unwrap();
+    // Frozen portable metadata must not require a contribution kind, agent
+    // topology or executable preparation step for service-only roots.
+    let unfrozen = resolved.generation().clone();
+    let resolved = graph.bind_portable_contributions(resolved).unwrap();
+    assert_ne!(resolved.generation(), &unfrozen);
+    assert!(
+        resolved
+            .portable_contributions()
+            .is_some_and(|contributions| contributions == &graph.contributions().unwrap())
+    );
     let mut kernel = phenix_core::Kernel::new(resolved.kernel_config().clone());
     graph.preload_embedded_factories(&mut kernel).unwrap();
     kernel.activate_resolved_generation(&resolved).unwrap();

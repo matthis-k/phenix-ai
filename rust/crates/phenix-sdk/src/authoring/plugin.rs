@@ -348,6 +348,21 @@ impl StaticPluginGraph {
         Ok(self.contributions.clone())
     }
 
+    /// Canonical metadata envelopes captured from each selected Rust plugin.
+    /// No author callback runs after composition.
+    pub(super) fn portable_contribution_envelopes(
+        &self,
+    ) -> Result<Vec<(PluginId, Vec<u8>)>, phenix_contract::ContributionSetError> {
+        self.contribution_snapshots
+            .iter()
+            .map(|(owner, declarations)| {
+                declarations
+                    .canonical_bytes()
+                    .map(|bytes| (owner.clone(), bytes))
+            })
+            .collect()
+    }
+
     /// Only a Rust definition included in the validated dependency closure
     /// may preload a stateful instance into this prepared graph. An identical
     /// declaration string supplied by a different type is not proof of origin.
