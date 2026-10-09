@@ -356,6 +356,39 @@ artifact discovery, runtime lifecycle rebinding, and Basic/Advanced product
 streaming parity remain open. A new generation must select its own frame
 declarations; reconfiguration does not inherit a former owner's frame grants.
 
+## Typed compile-time subplan frame handoffs
+
+A selected component may reuse another selected workflow through
+`IncludeMapped`, which declares an inclusion-site identity, exact child
+workflow, explicit source-to-target entry slot mappings and explicit
+source-to-target return slot mappings. Core inlines the selected child before
+compiling providers or starting a root. Handoffs become **metadata on
+ordinary Invoke result transitions**, not another IR step or a second
+executor. Child node identities and nested Fork/MapFork branch identities are
+qualified by the stable inclusion-site prefix.
+
+Candidate preparation checks each source and target field against the
+selected versioned frame schema and rejects missing fields, incompatible
+types, or two sources writing the same target. Runtime transfers read one
+immutable pre-handoff snapshot, validate all target values and atomically
+publish only the complete new frame. Failed transfers cannot partially
+modify the frame or replay provider side effects. The unframed entry
+rejects such workflows before invoking the first provider.
+
+Returns from an included workflow rewrite **only root-scope Finish outcomes**
+through the declared parent continuation. A child Fork's own Finish retains
+its child-scope settlement, including bounded map fan-out. Normal nested
+Fork continuations require an explicit child node, not an implicit subplan
+return. Typed inclusion tests exercise real provider-pinned input/output
+handoffs and child map Fork settlement within the same root.
+
+**Still outstanding:** private frame-slot qualification and per-subplan
+published-slot/export visibility, cross-owner subplan selection, output
+handoffs from an immediate Finish continuation, and portable EntryBinding
+activation. The current contract makes frame mapping explicit rather than
+quietly sharing or defaulting unknown fields. It does not claim those
+remaining name/ownership semantics are complete.
+
 ## Target-state Core IR boundary and migration gate
 
 **Normative target: [kernel RFC #736](https://github.com/matthis-k/phenix-ai/pull/736).** This section describes the eventual architecture, not functionality implemented by #726. The current `WorkflowTopology`, hand-authored Rust adapter, and legacy loop remain migration scaffolding until parity is proved. Do not turn the interim workflow representation into a second permanent Core executor or claim semantic completion from the current direct workflow fixture.
