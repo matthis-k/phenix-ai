@@ -219,4 +219,6 @@ pub use workflow::{
     WorkflowEdge, WorkflowNode, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
     WorkflowTopology,
 };
-pub use workflow_frame::{WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema};
+pub use workflow_frame::{
+    WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema,
+};
