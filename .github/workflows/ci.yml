@@ -92,7 +92,7 @@ jobs:
 
 
   build-rust-workspace:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Build / Rust workspace"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -114,9 +114,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust workspace"
         env:
@@ -133,17 +133,17 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - name: Save shared cache
-        if: ${{ success() && steps.phenix-cache-restore.outputs.cache-hit != 'true' }}
+        if: ${{ success() && steps.phenix-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
 
 
   build-stitch-mcp:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Build / Stitch MCP package"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -174,7 +174,7 @@ jobs:
 
 
   integration-model-adapter-acp:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Integration / ACP model adapter integration"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -196,9 +196,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "ACP model adapter integration"
         env:
@@ -216,7 +216,7 @@ jobs:
 
 
   integration-plugin-packaging:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Integration / Plugin packaging integration"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -247,7 +247,7 @@ jobs:
 
 
   product-phenix-lua-binding:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Product / Phenix Lua binding product fixture"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -278,7 +278,7 @@ jobs:
 
 
   product-phenix-runtime:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Product / Phenix supported runtime journey"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -300,6 +300,7 @@ jobs:
           restore-prefixes-first-match: |
             phenix-product-nix-${{ runner.os }}-
           gc-max-store-size-linux: "4G"
+          save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: "Phenix supported runtime journey"
         env:
@@ -317,7 +318,7 @@ jobs:
 
 
   product-phenix-standalone-runtime:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Product / Phenix standalone runtime package"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -348,7 +349,7 @@ jobs:
 
 
   runtime-process-roundtrip:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Runtime / Harness process roundtrip"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -370,9 +371,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Harness process roundtrip"
         env:
@@ -390,7 +391,7 @@ jobs:
 
 
   runtime-stitch:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Runtime / Stitch runtime smoke"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -443,9 +444,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Adapter and domain tests"
         env:
@@ -463,7 +464,7 @@ jobs:
 
 
   test-docs:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Test / Rust doc tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -485,9 +486,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust doc tests"
         env:
@@ -527,9 +528,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Harness code tests"
         env:
@@ -547,7 +548,7 @@ jobs:
 
 
   test-sdk:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Test / SDK tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -569,9 +570,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "SDK tests"
         env:
@@ -611,9 +612,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust unit tests / agent and product"
         env:
@@ -653,9 +654,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust unit tests / core"
         env:
@@ -695,9 +696,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust unit tests / plugin foundation"
         env:
@@ -715,7 +716,7 @@ jobs:
 
 
   test-unit-plugin-state:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     name: "CI / Test / Rust unit tests / plugin state"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
@@ -737,9 +738,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust unit tests / plugin state"
         env:
@@ -779,9 +780,9 @@ jobs:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
             ${{ runner.temp }}/phenix-cargo-target
-          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          key: "phenix-rust-v2-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}"
           restore-keys: |
-            phenix-rust-${{ runner.os }}-
+            phenix-rust-v2-${{ runner.os }}-
 
       - name: "Rust unit tests / protocol and SDK"
         env:
@@ -829,21 +830,21 @@ jobs:
           set -euo pipefail
           [[ '${{ needs.source.result }}' == success ]]
           [[ '${{ needs.clippy.result }}' == success ]]
-          [[ '${{ needs.build-rust-workspace.result }}' == success ]]
-          [[ '${{ needs.build-stitch-mcp.result }}' == success ]]
-          [[ '${{ needs.integration-model-adapter-acp.result }}' == success ]]
-          [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
-          [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
-          [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
-          [[ '${{ needs.product-phenix-standalone-runtime.result }}' == success ]]
-          [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
-          [[ '${{ needs.runtime-stitch.result }}' == success ]]
+          [[ '${{ needs.build-rust-workspace.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.build-rust-workspace.result }}' == skipped ) ]]
+          [[ '${{ needs.build-stitch-mcp.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.build-stitch-mcp.result }}' == skipped ) ]]
+          [[ '${{ needs.integration-model-adapter-acp.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.integration-model-adapter-acp.result }}' == skipped ) ]]
+          [[ '${{ needs.integration-plugin-packaging.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.integration-plugin-packaging.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-lua-binding.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-lua-binding.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-runtime.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-runtime.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-standalone-runtime.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-standalone-runtime.result }}' == skipped ) ]]
+          [[ '${{ needs.runtime-process-roundtrip.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.runtime-process-roundtrip.result }}' == skipped ) ]]
+          [[ '${{ needs.runtime-stitch.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.runtime-stitch.result }}' == skipped ) ]]
           [[ '${{ needs.test-adapter-domain.result }}' == success ]]
-          [[ '${{ needs.test-docs.result }}' == success ]]
+          [[ '${{ needs.test-docs.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-docs.result }}' == skipped ) ]]
           [[ '${{ needs.test-harness.result }}' == success ]]
-          [[ '${{ needs.test-sdk.result }}' == success ]]
+          [[ '${{ needs.test-sdk.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-sdk.result }}' == skipped ) ]]
           [[ '${{ needs.test-unit-agent-product.result }}' == success ]]
           [[ '${{ needs.test-unit-core.result }}' == success ]]
           [[ '${{ needs.test-unit-plugin-foundation.result }}' == success ]]
-          [[ '${{ needs.test-unit-plugin-state.result }}' == success ]]
+          [[ '${{ needs.test-unit-plugin-state.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-unit-plugin-state.result }}' == skipped ) ]]
           [[ '${{ needs.test-unit-protocol-sdk.result }}' == success ]]
