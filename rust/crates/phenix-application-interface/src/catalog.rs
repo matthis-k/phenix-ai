@@ -36,6 +36,7 @@ operations! {
     CloseSession: "session-close", "sessions", SessionInput => Acknowledged;
     GetLineage: "session-lineage", "lineage", SessionInput => SessionLineage;
     Prompt: "prompt", "prompt", PromptInput => PromptResult;
+    AdmitPrompt: "prompt-admit", "prompt", PromptAdmitInput => PromptAdmission;
     Cancel: "cancel", "prompt", SessionInput => Acknowledged;
     ListDefaultSelections: "selection-default-list", "routing", Empty => Selections;
     SelectDefaultSelection: "selection-default-select", "routing", SelectionDefaultSelectInput => Selections;

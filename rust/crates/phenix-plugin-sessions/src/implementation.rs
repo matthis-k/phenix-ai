@@ -164,6 +164,15 @@ fn handle_session(
             journal,
         } => transition_session(context, &id, transition, journal),
         SessionCommand::AppendJournal { id, entry } => append_journal(context, &id, entry),
+        SessionCommand::AppendJournalClaimed { id, entry, claim } => {
+            append_journal_claimed(context, &id, entry, &claim)
+        }
+        SessionCommand::AppendJournalWithClaim { id, entry, claim } => {
+            append_journal_owned(context, &id, entry, &claim, false)
+        }
+        SessionCommand::AppendJournalReleasingClaim { id, entry, claim } => {
+            append_journal_owned(context, &id, entry, &claim, true)
+        }
         SessionCommand::Journal {
             id,
             stream,
@@ -358,6 +367,7 @@ fn transition_session(
         SessionTransition::Close => session.lifecycle = SessionLifecycle::Closed,
     }
     let value = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
+    let claim_key = journal_claim_key(id, &journal.stream);
     let (journal, mut journal_operations) = prepare_journal_append(context, id, journal)?;
     let mut operations = vec![
         TransactionOp::AssertValue {
@@ -367,6 +377,13 @@ fn transition_session(
         TransactionOp::Put { key, value },
     ];
     operations.append(&mut journal_operations);
+    // Legacy transitions cannot write through an active execution claim.
+    // Check under the same durable transaction as the session and journal
+    // writes, so concurrent admission cannot race this fence.
+    operations.push(TransactionOp::AssertValue {
+        key: claim_key,
+        expected: None,
+    });
     context
         .kernel
         .transact_durable(&session_namespace(), &operations)
@@ -382,7 +399,87 @@ fn append_journal(
     if read_session(context, id)?.is_none() {
         return Err(format!("unknown session: {id}"));
     }
-    let (entry, operations) = prepare_journal_append(context, id, draft)?;
+    let claim_key = journal_claim_key(id, &draft.stream);
+    let (entry, mut operations) = prepare_journal_append(context, id, draft)?;
+    // An unclaimed append must not bypass a concurrent prompt execution.
+    // The claim and journal assertions are committed atomically.
+    operations.push(TransactionOp::AssertValue {
+        key: claim_key,
+        expected: None,
+    });
+    context
+        .kernel
+        .transact_durable(&session_namespace(), &operations)
+        .map_err(|error| error.to_string())?;
+    Ok(SessionResponse::JournalAppended { entry })
+}
+
+fn append_journal_claimed(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    draft: SessionJournalDraft,
+    claim: &str,
+) -> Result<SessionResponse, String> {
+    // Pin the session lifecycle in the same transaction as the claim.
+    // A concurrent Close must not let us commit a prompt into a closed session.
+    let session_state_key = session_key(id);
+    let session_raw =
+        read_raw(context, &session_state_key)?.ok_or_else(|| format!("unknown session: {id}"))?;
+    let session: SessionRecord =
+        serde_json::from_slice(&session_raw).map_err(|error| error.to_string())?;
+    require_open(&session)?;
+    if claim.is_empty() {
+        return Err("journal claim identity must not be empty".into());
+    }
+    let claim_key = journal_claim_key(id, &draft.stream);
+    let (entry, mut operations) = prepare_journal_append(context, id, draft)?;
+    operations.extend([
+        TransactionOp::AssertValue {
+            key: session_state_key,
+            expected: Some(session_raw),
+        },
+        TransactionOp::AssertValue {
+            key: claim_key.clone(),
+            expected: None,
+        },
+        TransactionOp::Put {
+            key: claim_key,
+            value: claim.as_bytes().to_vec(),
+        },
+    ]);
+    context
+        .kernel
+        .transact_durable(&session_namespace(), &operations)
+        .map_err(|error| error.to_string())?;
+    Ok(SessionResponse::JournalAppended { entry })
+}
+
+fn append_journal_owned(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    draft: SessionJournalDraft,
+    claim: &str,
+    release: bool,
+) -> Result<SessionResponse, String> {
+    if claim.is_empty() {
+        return Err("journal claim identity must not be empty".into());
+    }
+    let key = journal_claim_key(id, &draft.stream);
+    let expected = claim.as_bytes().to_vec();
+    if read_raw(context, &key)?.as_deref() != Some(expected.as_slice()) {
+        return Err(format!(
+            "session journal claim mismatch for {id}: {}",
+            draft.stream
+        ));
+    }
+    let (entry, mut operations) = prepare_journal_append(context, id, draft)?;
+    operations.push(TransactionOp::AssertValue {
+        key: key.clone(),
+        expected: Some(expected),
+    });
+    if release {
+        operations.push(TransactionOp::Delete { key });
+    }
     context
         .kernel
         .transact_durable(&session_namespace(), &operations)
@@ -681,6 +778,10 @@ fn history_key(id: &SessionId) -> String {
 
 fn journal_key(id: &SessionId, stream: &ContractId) -> String {
     format!("journal/{id}/{}", stream.as_str())
+}
+
+fn journal_claim_key(id: &SessionId, stream: &ContractId) -> String {
+    format!("journal-claims/{id}/{}", stream.as_str())
 }
 
 #[cfg(test)]
@@ -1011,6 +1112,223 @@ mod tests {
             .unwrap(),
             SessionResponse::Created { ref session } if session.id.as_str() == "session-3"
         ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn journal_claim_is_atomic_across_independent_kernels_and_rejects_wrong_release() {
+        let path = temp_db("session-journal-claim");
+        let session = SessionId::parse("root").unwrap();
+        let stream = ContractId::parse("fixture.claimed-stream@1").unwrap();
+        let mut first = kernel_with(&path);
+        invoke(
+            &mut first,
+            &SessionCommand::Create {
+                session: SessionRecord::new(session.clone()),
+            },
+        )
+        .unwrap();
+        let mut second = kernel_with(&path);
+        let claimed = |claim: &str| SessionCommand::AppendJournalClaimed {
+            id: session.clone(),
+            entry: SessionJournalDraft {
+                stream: stream.clone(),
+                payload: PhenixValue::String(claim.into()),
+            },
+            claim: claim.into(),
+        };
+        assert!(matches!(
+            invoke(&mut first, &claimed("execution-a")).unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 1
+        ));
+        assert!(
+            invoke(&mut second, &claimed("execution-b")).is_err(),
+            "another kernel must not admit a concurrent execution for the claimed stream"
+        );
+        let legacy_entry = || SessionJournalDraft {
+            stream: stream.clone(),
+            payload: PhenixValue::String("unclaimed write".into()),
+        };
+        assert!(
+            invoke(
+                &mut second,
+                &SessionCommand::AppendJournal {
+                    id: session.clone(),
+                    entry: legacy_entry(),
+                },
+            )
+            .is_err(),
+            "unclaimed journal append must not bypass an active claim"
+        );
+        assert!(
+            invoke(
+                &mut second,
+                &SessionCommand::Transition {
+                    id: session.clone(),
+                    transition: SessionTransition::Rename {
+                        title: "must not commit".into(),
+                    },
+                    journal: legacy_entry(),
+                },
+            )
+            .is_err(),
+            "legacy session transitions must not bypass the stream claim"
+        );
+        // Owning a claim authorizes intermediate output without releasing
+        // exclusive stream ownership; the public execution ID does not.
+        let with_claim = |claim: &str| SessionCommand::AppendJournalWithClaim {
+            id: session.clone(),
+            entry: SessionJournalDraft {
+                stream: stream.clone(),
+                payload: PhenixValue::String("progress".into()),
+            },
+            claim: claim.into(),
+        };
+        assert!(invoke(&mut second, &with_claim("execution-b")).is_err());
+        assert!(matches!(
+            invoke(&mut first, &with_claim("execution-a")).unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 2
+        ));
+        assert!(
+            invoke(
+                &mut second,
+                &SessionCommand::AppendJournal {
+                    id: session.clone(),
+                    entry: legacy_entry(),
+                },
+            )
+            .is_err(),
+            "the claim remains active after an authorized progress append"
+        );
+        assert!(
+            invoke(
+                &mut second,
+                &SessionCommand::AppendJournalReleasingClaim {
+                    id: session.clone(),
+                    entry: SessionJournalDraft {
+                        stream: stream.clone(),
+                        payload: PhenixValue::String("forged completion".into()),
+                    },
+                    claim: "execution-b".into(),
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            invoke(&mut second, &claimed("execution-b")).is_err(),
+            "a forged release must not free the stream"
+        );
+        assert!(matches!(
+            invoke(
+                &mut first,
+                &SessionCommand::AppendJournalReleasingClaim {
+                    id: session.clone(),
+                    entry: SessionJournalDraft {
+                        stream: stream.clone(),
+                        payload: PhenixValue::String("execution-a:completed".into()),
+                    },
+                    claim: "execution-a".into(),
+                },
+            )
+            .unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 3
+        ));
+        assert!(matches!(
+            invoke(
+                &mut second,
+                &SessionCommand::AppendJournal {
+                    id: session.clone(),
+                    entry: legacy_entry(),
+                },
+            )
+            .unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 4
+        ));
+        assert!(matches!(
+            invoke(&mut second, &claimed("execution-b")).unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 5
+        ));
+        drop(first);
+        drop(second);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unfinished_journal_claim_survives_process_restart_without_implicit_steal() {
+        let path = temp_db("unfinished-journal-claim");
+        let session = SessionId::parse("root").unwrap();
+        let stream = ContractId::parse("fixture.unfinished-stream@1").unwrap();
+        {
+            let mut owner = kernel_with(&path);
+            invoke(
+                &mut owner,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(session.clone()),
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                invoke(
+                    &mut owner,
+                    &SessionCommand::AppendJournalClaimed {
+                        id: session.clone(),
+                        entry: SessionJournalDraft {
+                            stream: stream.clone(),
+                            payload: PhenixValue::String("admitted".into()),
+                        },
+                        claim: "original-execution".into(),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::JournalAppended { entry } if entry.sequence == 1
+            ));
+            // No terminal journal entry and no release: simulate process death.
+        }
+
+        let mut replacement = kernel_with(&path);
+        assert!(
+            invoke(
+                &mut replacement,
+                &SessionCommand::AppendJournalClaimed {
+                    id: session.clone(),
+                    entry: SessionJournalDraft {
+                        stream: stream.clone(),
+                        payload: PhenixValue::String("new-attempt".into()),
+                    },
+                    claim: "replacement-execution".into(),
+                },
+            )
+            .is_err(),
+            "new worker must not steal a crash-surviving durable claim"
+        );
+        assert!(
+            invoke(
+                &mut replacement,
+                &SessionCommand::AppendJournalReleasingClaim {
+                    id: session.clone(),
+                    entry: SessionJournalDraft {
+                        stream: stream.clone(),
+                        payload: PhenixValue::String("forged-terminal".into()),
+                    },
+                    claim: "replacement-execution".into(),
+                },
+            )
+            .is_err(),
+            "replacement owner cannot invent a terminal release"
+        );
+        assert!(matches!(
+            invoke(
+                &mut replacement,
+                &SessionCommand::Journal {
+                    id: session.clone(),
+                    stream: stream.clone(),
+                    after_sequence: None,
+                }
+            ),
+            Ok(SessionResponse::Journal { entries, .. })
+                if entries.len() == 1 && entries[0].sequence == 1
+        ));
+        drop(replacement);
         let _ = fs::remove_file(path);
     }
 

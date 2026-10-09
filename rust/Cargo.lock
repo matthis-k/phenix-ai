@@ -1715,6 +1715,7 @@ name = "phenix-harness"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "getrandom 0.4.3",
  "parking_lot",
  "phenix-acp-stdio",
  "phenix-application-interface",

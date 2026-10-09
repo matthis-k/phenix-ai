@@ -1,22 +1,23 @@
 use super::*;
 use phenix_application_interface::{
-    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
-    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
-    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
-    ListDefaultSelections as AppListDefaultSelections, ListSelections as AppListSelections,
-    ListSessions as AppListSessions, Prompt as AppPrompt, QueryLogs as AppQueryLogs,
-    ReadLogReference as AppReadLogReference, RenameSession as AppRenameSession,
-    ResumeSession as AppResumeSession, SelectDefaultSelection as AppSelectDefaultSelection,
-    SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
+    AdmitPrompt as AppAdmitPrompt, Authenticate as AppAuthenticate, Cancel as AppCancel,
+    CloseSession as AppCloseSession, CreateSession as AppCreateSession,
+    DecideReview as AppDecideReview, DiscoverAuthentication as AppDiscoverAuthentication,
+    GetProvenance as AppGetProvenance, ListDefaultSelections as AppListDefaultSelections,
+    ListSelections as AppListSelections, ListSessions as AppListSessions, Prompt as AppPrompt,
+    QueryLogs as AppQueryLogs, ReadLogReference as AppReadLogReference,
+    RenameSession as AppRenameSession, ResumeSession as AppResumeSession,
+    SelectDefaultSelection as AppSelectDefaultSelection, SelectSelection as AppSelectSelection,
+    SetInteractionHandlers as AppSetInteractionHandlers,
     types::{
         Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
         ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, LogPage, LogQueryInput, LogReferenceContent, LogReferenceInput,
-        PageInput, PermissionRequest, PermissionResponse, PromptInput, PromptResult, Provenance,
-        ReviewDecision, ReviewDecisionInput, ReviewRecord, SelectionDefaultSelectInput,
-        SelectionSelectInput, Selections, SessionCreateInput, SessionInfo, SessionInput,
-        SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
-        SetInteractionHandlersInput,
+        PageInput, PermissionRequest, PermissionResponse, PromptAdmission, PromptAdmitInput,
+        PromptInput, PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
+        SelectionDefaultSelectInput, SelectionSelectInput, Selections, SessionCreateInput,
+        SessionInfo, SessionInput, SessionProjection, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput,
     },
 };
 use phenix_core::{
@@ -129,6 +130,9 @@ enum RequestProjection {
     Prompt {
         session_id: String,
     },
+    PromptAdmission {
+        session_id: String,
+    },
     DefaultSelections,
     Selections {
         session_id: String,
@@ -151,6 +155,7 @@ enum FacadeOutcome {
     SessionInfo(SessionInfo),
     Acknowledged(Acknowledged),
     Prompt(PromptResult),
+    PromptAdmission(PromptAdmission),
     Selections(Selections),
     Provenance(Provenance),
     Logs(LogPage),
@@ -503,6 +508,26 @@ impl UserData for FacadeSession {
             )?;
             lua.create_userdata(request)
         });
+        methods.add_method(
+            "admit_prompt",
+            |lua, this, (item_id, revision, content): (String, u64, Table)| {
+                require_ready(&this.core)?;
+                let content = parse_content(content)?;
+                let request = application_request::<AppAdmitPrompt>(
+                    &this.core,
+                    PromptAdmitInput {
+                        session_id: this.id.clone(),
+                        item_id,
+                        revision,
+                        content,
+                    },
+                    RequestProjection::PromptAdmission {
+                        session_id: this.id.to_string(),
+                    },
+                )?;
+                lua.create_userdata(request)
+            },
+        );
         methods.add_method("cancel", |lua, this, ()| {
             require_ready(&this.core)?;
             let request = application_request::<AppCancel>(
@@ -827,6 +852,23 @@ fn decode_outcome(
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::Prompt(result))
         }
+        RequestProjection::PromptAdmission { session_id } => {
+            let receipt = decode::<PromptAdmission>(&value)?;
+            if &receipt.session_id.to_string() != session_id {
+                return Err(BindingError::conversion(
+                    "admission receipt targets another session",
+                ));
+            }
+            let mut state = core.state.borrow_mut();
+            if state.closed_sessions.contains(session_id) {
+                return Err(BindingError::transport("session is closed"));
+            }
+            state
+                .latest_execution
+                .insert(session_id.clone(), receipt.execution_id.clone());
+            state.events.push_back(FacadeEvent::Status);
+            Ok(FacadeOutcome::PromptAdmission(receipt))
+        }
         RequestProjection::DefaultSelections => {
             Ok(FacadeOutcome::Selections(decode::<Selections>(&value)?))
         }
@@ -885,6 +927,9 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
             facade_value(lua, &value.to_value()).map_err(lua_error)
         }
         FacadeOutcome::Prompt(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::PromptAdmission(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Selections(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Provenance(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Logs(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
@@ -1614,6 +1659,7 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
     )?;
     for (name, operation) in [
         ("provenance", AppGetProvenance::ID),
+        ("prompt_admission", AppAdmitPrompt::ID),
         ("review", AppDecideReview::ID),
     ] {
         let operation = ContractId::parse(operation).expect("static feature operation");

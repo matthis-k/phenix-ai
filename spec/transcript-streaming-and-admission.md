@@ -52,7 +52,19 @@ Emits bounded, ordered text segments for commands and other tools that support s
 
 ## Prompt admission and follow-up queue
 
-A client currently learns prompt completion only after the full execution ends. It needs an explicit admission event to clear the draft once the user message has entered the session journal.
+The legacy `prompt` operation responds only after execution completion. The optional `prompt-admit@1` operation instead returns a `PromptAdmission` receipt after the user message has entered the durable session journal and before model completion. The journal entry is `MessageAdmitted { message, item_id, revision, execution_id }`: receipt identity and user content are committed together, not inferred from matching text.
+
+The admission key is `(session_id, item_id, revision)`. Exact duplicate requests replay the persisted receipt without starting another execution. Reusing a key with different content is a conflict. A client may remove a queued buffer after the matching receipt, but must wait for the terminal `ExecutionChange::State` journal event before sending the next queued turn.
+
+A prompt now atomically appends its initial message and acquires an exclusive claim for that session journal stream. Two independent workers sharing persistence cannot both admit fresh prompts for the same stream. The durable claim value is a random 256-bit secret held by the owning application worker, separate from the journal-visible execution ID. A second worker cannot release the claim using a public receipt or transcript. The terminal state and claim release are committed in one transaction; only then is the terminal event delivered. This retains the terminal event as the next-turn readiness boundary without a split-release window. The legacy prompt path acquires the same claim. The selected declarative agent route uses that same admission and release path. Its transport regression retries one queue item concurrently, checks one receipt and journal admission, rejects changed content under the same key, and counts exactly one provider invocation for the admitted item.
+
+Model input construction must reflect the journal committed before the new prompt's claim. If another worker advanced the session after the local projection was read, the admitted journal sequence reveals the gap. The application then rebuilds model input from the repaired durable projection, excluding the message just admitted to avoid submitting that message twice. This applies to both receipt-based and legacy prompt paths.
+
+**Crash recovery is still a merge blocker.** If the owning process dies after admission and before the terminal transaction, its durable claim remains held. Replaying the original key returns its receipt without restarting unknown side effects; a fresh key must fail closed. An orphan cannot be identified solely by the absence of an entry in one worker's local `active` map. Recovery must prove the previous owner cannot still execute (for example, through explicitly fenced process ownership), record the interrupted terminal state and release the claim atomically. No automatic timeout-based claim stealing is permitted.
+
+The client maintains strict FIFO and focus/write soft locks. Busy or disconnected submissions remain recoverable with their original identity. Steering is a separate input lane, not equivalent to submitting another turn while one runs; this operation does not implement steering. Older runtimes keep the legacy blocking prompt behavior.
+
+For compatibility, the original requirement for a distinct event is retained below as a potential explicit notification shape. The implemented typed operation returns the durable journal sequence directly, and typed session updates carry the same request metadata.
 
 ```text
 PromptAdmission {
@@ -82,6 +94,7 @@ Do not add UI-specific Rust code to the kernel or model providers. Keep events g
 - A shell with incremental stdout/stderr produces updates before termination; final output is not duplicated.
 - Tool error, cancellation, stderr-only output and disconnect retain terminal states and error data.
 - Admission arrives after the user message is persisted and before model completion; rejected prompts keep their drafts.
+- A worker with stale session history observes another worker's completed messages after claiming the next prompt, without duplicating its own admitted user message in model input.
 - Rapid sends, duplicate IDs, two sessions and two frontends do not mix queues or acknowledgements.
 - A disconnected client does not consume stale action or admission events.
 - Existing descriptor snapshot and generated bindings agree after adding event variants.
