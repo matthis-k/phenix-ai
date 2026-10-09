@@ -691,6 +691,11 @@ impl RootExecutionHandle {
                 name: name.to_owned(),
             }
         })?;
+        if compiled.requires_frame() {
+            return Err(WorkflowRunError::StructuredFrameRequired {
+                node: compiled.topology().entry.clone(),
+            });
+        }
         compiled.execute_bound(
             state,
             |node, service, import, state, cancelled| {
