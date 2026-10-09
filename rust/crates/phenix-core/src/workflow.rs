@@ -1347,6 +1347,18 @@ impl CompiledWorkflow {
                                 ),
                             });
                         }
+                        if let crate::WorkflowJoinPolicy::Quorum(required) = policy
+                            && required.get() > items.len()
+                        {
+                            return Err(WorkflowRunError::InvalidMapInput {
+                                node: node.clone(),
+                                reason: format!(
+                                    "join requires {} children but map admitted {}",
+                                    required,
+                                    items.len()
+                                ),
+                            });
+                        }
                         for (index, item) in items.iter().enumerate() {
                             let mut snapshot = data.clone();
                             snapshot
