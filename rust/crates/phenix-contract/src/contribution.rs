@@ -358,7 +358,7 @@ mod tests {
 
         let nested = br#"[{"owner":"acme.fixture","id":"acme.fixture.payload@1","kind":"acme.fixture.kind@1","role":"declare","payload":{"type":"list","value":[{"type":"map","value":{"selected":{"type":"bool","value":true},"selected":{"type":"bool","value":true}}}]}}]"#;
         assert!(matches!(
-            ContributionSet::decode_selected([(&owner, nested.as_slice())]),
+            ContributionSet::decode_selected([(&owner, &nested[..])]),
             Err(ContributionSetError::Serialization(_))
         ));
     }
