@@ -90,6 +90,14 @@ pub struct WorkflowNode {
 pub enum WorkflowEdge {
     Next { node: String },
     Finish,
+    /// Compile-time inclusion of a workflow authored by the same component.
+    /// Each child finish outcome must map to one declared continuation.
+    Include {
+        workflow: String,
+        site: String,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        on_exit: BTreeMap<String, WorkflowEdge>,
+    },
 }
 
 // Internal lowering of the legacy service topology into execution steps.
@@ -125,6 +133,9 @@ impl LoweredPlan {
             for (outcome, edge) in &node.branches {
                 let target = match edge {
                     WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
+                    WorkflowEdge::Include { .. } => {
+                        unreachable!("selected subplans were inlined before lowering")
+                    }
                     WorkflowEdge::Finish => {
                         let exit = PlanStepId::Exit {
                             node: name.clone(),
@@ -174,6 +185,17 @@ pub enum WorkflowCompileError {
         error: Box<ComponentGraphError>,
     },
     UnreachableNodes(Vec<String>),
+    MissingSubplan(String),
+    RecursiveSubplan(Vec<String>),
+    SubplanDepthExceeded,
+    SubplanExpansionTooLarge,
+    InvalidInclusionSite(String),
+    DuplicateInclusionSite(String),
+    InclusionIdentityConflict(String),
+    MissingSubplanExit { workflow: String, outcome: String },
+    UnknownSubplanExit { workflow: String, outcome: String },
+    UnsupportedReturnInclude,
+    UnexpandedInclude { node: String, outcome: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +262,133 @@ pub enum WorkflowRunError<E> {
 }
 
 impl WorkflowTopology {
+    /// Expand same-owner subplans before binding imports or compiling execution steps.
+    ///
+    /// The site-qualified IDs live only in the immutable compiled plan. No
+    /// runtime CallPlan, provider lookup, or extra root is introduced. All
+    /// returns must be mapped explicitly to a parent edge. Recursive references
+    /// and oversized expansions fail before generation activation.
+    pub(crate) fn inline_selected(
+        owner: &ComponentId,
+        name: &str,
+        selected: &BTreeMap<(ComponentId, String), WorkflowTopology>,
+    ) -> Result<Self, WorkflowCompileError> {
+        fn expand(
+            owner: &ComponentId,
+            name: &str,
+            selected: &BTreeMap<(ComponentId, String), WorkflowTopology>,
+            stack: &mut Vec<String>,
+            cache: &mut BTreeMap<String, WorkflowTopology>,
+        ) -> Result<WorkflowTopology, WorkflowCompileError> {
+            const MAX_INCLUSION_DEPTH: usize = 64;
+            const MAX_EXPANDED_NODES: usize = 65_536;
+            if let Some(position) = stack.iter().position(|item| item == name) {
+                let mut cycle = stack[position..].to_vec();
+                cycle.push(name.to_owned());
+                return Err(WorkflowCompileError::RecursiveSubplan(cycle));
+            }
+            if stack.len() >= MAX_INCLUSION_DEPTH {
+                return Err(WorkflowCompileError::SubplanDepthExceeded);
+            }
+            if let Some(cached) = cache.get(name) {
+                return Ok(cached.clone());
+            }
+            let source = selected
+                .get(&(owner.clone(), name.to_owned()))
+                .ok_or_else(|| WorkflowCompileError::MissingSubplan(name.to_owned()))?;
+            stack.push(name.to_owned());
+            let mut expanded = source.clone();
+            let mut sites = BTreeSet::new();
+            for (parent_name, parent_node) in &source.nodes {
+                for (outcome, edge) in &parent_node.branches {
+                    let WorkflowEdge::Include {
+                        workflow,
+                        site,
+                        on_exit,
+                    } = edge
+                    else {
+                        continue;
+                    };
+                    if site.trim().is_empty() || site.trim() != site {
+                        return Err(WorkflowCompileError::InvalidInclusionSite(site.clone()));
+                    }
+                    if !sites.insert(site.clone()) {
+                        return Err(WorkflowCompileError::DuplicateInclusionSite(site.clone()));
+                    }
+                    let child = expand(owner, workflow, selected, stack, cache)?;
+                    let prefix = format!("__include__/{site}/");
+                    let entry = format!("{prefix}{}", child.entry);
+                    let mut declared_exits = BTreeSet::new();
+                    let mut inserted = Vec::with_capacity(child.nodes.len());
+                    for (child_name, child_node) in &child.nodes {
+                        let qualified = format!("{prefix}{child_name}");
+                        let mut node = child_node.clone();
+                        for (child_outcome, child_edge) in &mut node.branches {
+                            *child_edge = match child_edge {
+                                WorkflowEdge::Next { node } => WorkflowEdge::Next {
+                                    node: format!("{prefix}{node}"),
+                                },
+                                WorkflowEdge::Finish => {
+                                    declared_exits.insert(child_outcome.clone());
+                                    match on_exit.get(child_outcome) {
+                                        Some(WorkflowEdge::Next { node }) => {
+                                            WorkflowEdge::Next { node: node.clone() }
+                                        }
+                                        Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
+                                        Some(WorkflowEdge::Include { .. }) => {
+                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                        }
+                                        None => {
+                                            return Err(WorkflowCompileError::MissingSubplanExit {
+                                                workflow: workflow.clone(),
+                                                outcome: child_outcome.clone(),
+                                            });
+                                        }
+                                    }
+                                }
+                                WorkflowEdge::Include { .. } => {
+                                    return Err(WorkflowCompileError::UnexpandedInclude {
+                                        node: child_name.clone(),
+                                        outcome: child_outcome.clone(),
+                                    });
+                                }
+                            };
+                        }
+                        inserted.push((qualified, node));
+                    }
+                    for exit in on_exit.keys() {
+                        if !declared_exits.contains(exit) {
+                            return Err(WorkflowCompileError::UnknownSubplanExit {
+                                workflow: workflow.clone(),
+                                outcome: exit.clone(),
+                            });
+                        }
+                    }
+                    if expanded.nodes.len().saturating_add(inserted.len()) > MAX_EXPANDED_NODES {
+                        return Err(WorkflowCompileError::SubplanExpansionTooLarge);
+                    }
+                    // Detect collisions with authored nodes and earlier sites.
+                    // All mutations are local to the candidate until validation completes.
+                    for (qualified, node) in inserted {
+                        if expanded.nodes.insert(qualified.clone(), node).is_some() {
+                            return Err(WorkflowCompileError::InclusionIdentityConflict(qualified));
+                        }
+                    }
+                    expanded
+                        .nodes
+                        .get_mut(parent_name)
+                        .expect("source parent is present in its cloned topology")
+                        .branches
+                        .insert(outcome.clone(), WorkflowEdge::Next { node: entry });
+                }
+            }
+            stack.pop();
+            cache.insert(name.to_owned(), expanded.clone());
+            Ok(expanded)
+        }
+        expand(owner, name, selected, &mut Vec::new(), &mut BTreeMap::new())
+    }
+
     /// Compile against the caller's canonical resolved component imports.
     ///
     /// This rejects undeclared, disabled, incompatible or unauthorized node
@@ -310,13 +459,20 @@ impl WorkflowTopology {
                 if outcome.trim().is_empty() {
                     return Err(WorkflowCompileError::EmptyBranch { node: name.clone() });
                 }
-                if let WorkflowEdge::Next { node: target } = edge
-                    && !self.nodes.contains_key(target)
-                {
-                    return Err(WorkflowCompileError::UnknownTarget {
-                        from: name.clone(),
-                        target: target.clone(),
-                    });
+                match edge {
+                    WorkflowEdge::Next { node: target } if !self.nodes.contains_key(target) => {
+                        return Err(WorkflowCompileError::UnknownTarget {
+                            from: name.clone(),
+                            target: target.clone(),
+                        });
+                    }
+                    WorkflowEdge::Include { .. } => {
+                        return Err(WorkflowCompileError::UnexpandedInclude {
+                            node: name.clone(),
+                            outcome: outcome.clone(),
+                        });
+                    }
+                    _ => {}
                 }
             }
         }
