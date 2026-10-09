@@ -2816,9 +2816,9 @@ mod tests {
             baseline.clone().with_workflows([unbound]),
             Err(GenerationResolutionError::InvalidWorkflow { error, .. })
                 if matches!(
-                    *error,
+                    error.as_ref(),
                     WorkflowCompileError::ImportLookup { error, .. }
-                        if matches!(*error, ComponentGraphError::ImportNotDeclared { .. })
+                        if matches!(error.as_ref(), ComponentGraphError::ImportNotDeclared { .. })
                 )
         ));
         assert!(matches!(
