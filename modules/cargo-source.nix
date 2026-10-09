@@ -41,20 +41,23 @@ let
   );
 
   dependencySets =
-    manifest:
+    includeDev: manifest:
     [
       (manifest.dependencies or { })
       (manifest."build-dependencies" or { })
-      (manifest."dev-dependencies" or { })
     ]
-    ++ pkgs.lib.concatMap (target: [
-      (target.dependencies or { })
-      (target."build-dependencies" or { })
-      (target."dev-dependencies" or { })
-    ]) (builtins.attrValues (manifest.target or { }));
+    ++ pkgs.lib.optionals includeDev [ (manifest."dev-dependencies" or { }) ]
+    ++ pkgs.lib.concatMap (
+      target:
+      [
+        (target.dependencies or { })
+        (target."build-dependencies" or { })
+      ]
+      ++ pkgs.lib.optionals includeDev [ (target."dev-dependencies" or { }) ]
+    ) (builtins.attrValues (manifest.target or { }));
 
   localDependencies =
-    manifest:
+    includeDev: manifest:
     pkgs.lib.unique (
       pkgs.lib.concatMap (
         declarations:
@@ -70,11 +73,11 @@ let
           in
           if builtins.isAttrs inherited && inherited ? path then [ (inherited.package or alias) ] else [ ]
         ) (builtins.attrNames declarations)
-      ) (dependencySets manifest)
+      ) (dependencySets includeDev manifest)
     );
 
-  membersFor =
-    root:
+  membersForWith =
+    includeDev: root:
     let
       visit =
         seen: pending:
@@ -92,9 +95,14 @@ let
           if builtins.elem package seen then
             visit seen (builtins.tail pending)
           else
-            visit (seen ++ [ package ]) ((builtins.tail pending) ++ localDependencies entry.manifest);
+            visit (seen ++ [ package ]) (
+              (builtins.tail pending) ++ localDependencies includeDev entry.manifest
+            );
     in
     map (package: (builtins.getAttr package manifestIndex).member) (visit [ ] [ root ]);
+
+  membersFor = membersForWith true;
+  membersForBuild = membersForWith false;
 
   explicitTargetPaths =
     member:
@@ -154,8 +162,8 @@ let
 
   # Keep workspace manifests and empty targets from the dependency skeleton.
   # Copy real files only for crates reachable from the requested package.
-  sourceFor =
-    root:
+  sourceForWith =
+    includeDev: root:
     pkgs.runCommand "phenix-${root}-selected-rust-source" { } ''
       set -euo pipefail
       mkdir -p "$out"
@@ -165,10 +173,20 @@ let
       ${pkgs.lib.concatMapStringsSep "\n" (member: ''
         rm -rf "$out/${member}"
         cp -a ${rustRoot + "/${member}"} "$out/${member}"
-      '') (membersFor root)}
+      '') (membersForWith includeDev root)}
     '';
+
+  # Dev-only dependencies belong to test/example closures, not release builds.
+  sourceFor = sourceForWith false;
+  sourceForWithDev = sourceForWith true;
 
 in
 {
-  inherit dependencySkeleton membersFor sourceFor;
+  inherit
+    dependencySkeleton
+    membersFor
+    membersForBuild
+    sourceFor
+    sourceForWithDev
+    ;
 }
