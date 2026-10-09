@@ -1,11 +1,11 @@
 //! Cross-profile proof that the same workflow uses the resolved provider graph.
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
-    InterfaceSchema, Kernel, KernelError, LayerPolicy, LayerResult, PhenixValue, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, ProviderCompositionPolicy,
-    ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
-    WorkflowDeclaration, WorkflowEdge, WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameSchema,
-    WorkflowNode, WorkflowTopology, Key, Type,
+    InterfaceSchema, Kernel, KernelError, Key, LayerPolicy, LayerResult, PhenixValue,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
+    ProviderCompositionPolicy, ResolvedGeneration, ResolvedGenerationActivation,
+    ServiceContribution, ServiceId, ServiceRole, Type, WorkflowDeclaration, WorkflowEdge,
+    WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameSchema, WorkflowNode, WorkflowTopology,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -364,7 +364,9 @@ fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
         Err(crate::GenerationResolutionError::FrameSchemasAlreadyBound)
     ));
     assert!(matches!(
-        typed.clone().with_workflow_frame_schemas(std::iter::empty()),
+        typed
+            .clone()
+            .with_workflow_frame_schemas(std::iter::empty()),
         Err(crate::GenerationResolutionError::FrameSchemasAlreadyBound)
     ));
     let mut missing = declaration.clone();
@@ -485,34 +487,36 @@ fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
     )
     .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        &mut seen,
-        &mut frame,
-        |_, _, frame, _| {
-            assert!(matches!(
-                frame.get(&counter),
-                Some(PhenixValue::U64(count)) if *count <= 2
-            ));
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, seen| {
-            seen.push(node.to_owned());
-            let count = match frame.get(&counter) {
-                Some(PhenixValue::U64(count)) => *count,
-                _ => return Err("missing frame counter".into()),
-            };
-            frame
-                .set(&counter, PhenixValue::U64(count + 1))
-                .map_err(|error| error.to_string())?;
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                _ => Err("invalid outcome".into()),
-            }
-        },
-        || false,
-        None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            &mut seen,
+            &mut frame,
+            |_, _, frame, _| {
+                assert!(matches!(
+                    frame.get(&counter),
+                    Some(PhenixValue::U64(count)) if *count <= 2
+                ));
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, seen| {
+                seen.push(node.to_owned());
+                let count = match frame.get(&counter) {
+                    Some(PhenixValue::U64(count)) => *count,
+                    _ => return Err("missing frame counter".into()),
+                };
+                frame
+                    .set(&counter, PhenixValue::U64(count + 1))
+                    .map_err(|error| error.to_string())?;
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("invalid outcome".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.executed_nodes, 3);
     assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(3)));
     assert_eq!(seen, ["model", "tool", "model"]);
@@ -551,7 +555,10 @@ fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects
         || false,
         None,
     );
-    assert!(matches!(result, Err(crate::WorkflowRunError::NodeFailed { .. })));
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::NodeFailed { .. })
+    ));
     assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(0)));
 }
 
