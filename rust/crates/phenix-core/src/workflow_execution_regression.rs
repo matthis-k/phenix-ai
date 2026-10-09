@@ -1461,6 +1461,143 @@ fn started_kernel(resolved: &ResolvedGeneration, log: &Arc<Mutex<Vec<&'static st
 }
 
 #[test]
+fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retry() {
+    use crate::{
+        WorkflowNodeDispatchError, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
+        WorkflowProjectionSelector, WorkflowRunError, WorkflowBoundCallError,
+        WORKFLOW_PROJECTION_REVISION,
+    };
+
+    let typed = InterfaceSchema::new(Type::Unit, Type::String);
+    let mut owner = ComponentManifest {
+        id: component_id(TOPOLOGY),
+        owner: plugin_id(TOPOLOGY),
+        imports: vec![ComponentImport {
+            interface: InterfaceId::parse(MODEL).unwrap(),
+            schema: typed.clone(),
+            required: true,
+            authority: Authority::default(),
+        }],
+        exports: Vec::new(),
+        listeners: Vec::new(),
+        maximum_authority: Authority::default(),
+    };
+    let mut selected_provider = provider(BASIC, MODEL, 100);
+    selected_provider.exports[0].schema = typed.clone();
+    let workflow = WorkflowDeclaration {
+        owner: owner.id.clone(),
+        name: "portable".into(),
+        topology: WorkflowTopology {
+            entry: "model".into(),
+            nodes: BTreeMap::from([(
+                "model".into(),
+                WorkflowNode {
+                    import: InterfaceId::parse(MODEL).unwrap(),
+                    branches: BTreeMap::from([
+                        ("tools".into(), WorkflowEdge::Next { node: "model".into() }),
+                        ("final".into(), WorkflowEdge::Finish),
+                    ]),
+                },
+            )]),
+        },
+    };
+    let selector = WorkflowProjectionDeclaration {
+        owner: component_id(TOPOLOGY),
+        workflow: "portable".into(),
+        node: "model".into(),
+        projection: WorkflowOutcomeProjection {
+            revision: WORKFLOW_PROJECTION_REVISION,
+            selector: WorkflowProjectionSelector::DirectString,
+            cases: BTreeMap::from([
+                ("tools".into(), "tools".into()),
+                ("final".into(), "final".into()),
+            ]),
+        },
+    };
+    let baseline = ResolvedGeneration::resolve(
+        [manifest(TOPOLOGY, PluginExecution::ResourceOnly), manifest(BASIC, PluginExecution::Embedded)],
+        [owner.clone(), selected_provider],
+        [],
+        &Authority::default(),
+    )
+    .unwrap()
+    .with_workflows([workflow])
+    .unwrap();
+    let selected = baseline
+        .clone()
+        .with_workflow_projections([selector.clone()])
+        .unwrap();
+    assert_ne!(baseline.generation(), selected.generation());
+    assert_eq!(
+        selected
+            .generation_topology()
+            .workflow(&component_id(TOPOLOGY), "portable")
+            .unwrap()
+            .outcome_projection("model"),
+        Some(&selector.projection)
+    );
+
+    let mut bad = selector.clone();
+    bad.node = "unknown".into();
+    assert!(matches!(
+        baseline.with_workflow_projections([bad]),
+        Err(crate::GenerationResolutionError::InvalidProjection { .. })
+    ));
+
+    let mut kernel = Kernel::new(selected.kernel_config().clone());
+    kernel.activate_resolved_generation(&selected).unwrap();
+    kernel.register_embedded_factory(plugin_id(BASIC), move || {
+        Box::new(MockNode { kind: "basic", model_calls: 0 })
+    }).unwrap();
+    kernel.activate_all().unwrap();
+    let root = kernel.root_execution_handle(&Authority::default());
+    let result = root.execute_workflow(
+        (&component_id(TOPOLOGY), "portable"),
+        &mut (),
+        |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+        |_, _, _, _| Ok::<_, String>("final".into()),
+        || false,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(WorkflowRunError::NodeFailed {
+            error: WorkflowBoundCallError::Invocation(
+                WorkflowNodeDispatchError::ProjectionMismatch {
+                    selected,
+                    reported,
+                }
+            ),
+            ..
+        }) if selected == "tools" && reported == "final"
+    ));
+
+    // The prior failed execution does not retry the first provider response.
+    // The next independent root starts a new execution with its own adapter.
+    let mut visited = Vec::new();
+    let report = root.execute_workflow(
+        (&component_id(TOPOLOGY), "portable"),
+        &mut visited,
+        |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+        |node, _, bytes, state| {
+            state.push(node.to_owned());
+            match serde_json::from_slice::<PhenixValue>(bytes).unwrap() {
+                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                _ => Err("not a typed string outcome".into()),
+            }
+        },
+        || false,
+        None,
+    ).unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(visited, ["model"]);
+
+    // Keep all imported bindings owned by the selected ResourceOnly plugin.
+    owner.imports.clear();
+    assert_eq!(owner.exports.len(), 0);
+}
+
+#[test]
 fn basic_and_advanced_execute_identical_topology_with_different_providers() {
     let basic = resolve(BASIC, false);
     let advanced = resolve(ADVANCED, true);
