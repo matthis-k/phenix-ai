@@ -316,6 +316,14 @@ checks schema identity, and rejects duplicate selectors. Failed response
 projection reverts that node's frame edits without replaying side effects.
 The ordinary workflow API is unchanged.
 
+Core also defines the closed join settlement policies in `WorkflowJoinPolicy`.
+The decision function accepts the admitted child identities and the scheduler's
+monotonic settlement order. It validates duplicate, missing and foreign
+observations, breaks simultaneous ties by child ID, handles early failure and
+quorum impossibility, and reports when outstanding siblings need cancellation.
+This is a pure decision function. Root-owned child scheduling, cancellation
+completion, lease settlement and Join-step integration are not implemented.
+
 These are data and dispatch contracts, not a full structured scheduler.
 Fork/Join nodes, cancellation of sibling scopes, typed input/output handoff
 for inlined subplans, and full selected-plan artifact discovery remain open.
