@@ -297,6 +297,9 @@ impl WorkflowTopology {
                 .get(&(owner.clone(), name.to_owned()))
                 .ok_or_else(|| WorkflowCompileError::MissingSubplan(name.to_owned()))?;
             stack.push(name.to_owned());
+            if source.nodes.len() > MAX_EXPANDED_NODES {
+                return Err(WorkflowCompileError::SubplanExpansionTooLarge);
+            }
             let mut expanded = source.clone();
             let mut sites = BTreeSet::new();
             for (parent_name, parent_node) in &source.nodes {
@@ -1509,6 +1512,61 @@ mod tests {
             .unwrap();
         assert!(bound.bound_import(&interface).is_some());
         assert_eq!(selected.workflows(), std::slice::from_ref(&declaration));
+
+        // The candidate resolver, not just a unit-only compiler, lowers a
+        // reusable subplan and binds its imports through the same graph.
+        let mut child = declaration.clone();
+        child.name = "child".into();
+        let parent = WorkflowDeclaration {
+            owner: consumer.clone(),
+            name: "parent".into(),
+            topology: WorkflowTopology {
+                entry: "before".into(),
+                nodes: BTreeMap::from([(
+                    "before".into(),
+                    WorkflowNode {
+                        import: interface.clone(),
+                        branches: BTreeMap::from([(
+                            "delegate".into(),
+                            WorkflowEdge::Include {
+                                workflow: "child".into(),
+                                site: "selected".into(),
+                                on_exit: BTreeMap::from([(
+                                    "final".into(),
+                                    WorkflowEdge::Finish,
+                                )]),
+                            },
+                        )]),
+                    },
+                )]),
+            },
+        };
+        let with_subplan = baseline
+            .clone()
+            .with_workflows([parent.clone(), child.clone()])
+            .unwrap();
+        assert!(with_subplan
+            .generation_topology()
+            .workflow(&consumer, "parent")
+            .unwrap()
+            .topology()
+            .nodes
+            .contains_key("__include__/selected/model"));
+        assert_eq!(
+            with_subplan.generation(),
+            baseline
+                .clone()
+                .with_workflows([child.clone(), parent.clone()])
+                .unwrap()
+                .generation()
+        );
+        assert!(matches!(
+            baseline.clone().with_workflows([parent]),
+            Err(GenerationResolutionError::InvalidWorkflow {
+                error: WorkflowCompileError::MissingSubplan(_),
+                ..
+            })
+        ));
 
         // Declaration enumeration does not participate in generation identity.
         let mut additional = declaration.clone();
