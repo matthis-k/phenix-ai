@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
+    thread,
 };
 
 /// Correlated completion identity. The generation component prevents a late
