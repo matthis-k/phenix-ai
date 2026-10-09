@@ -1,6 +1,6 @@
 # Conflict-aware execution graph patches
 
-status: partial implementation (pure slot-order preflight; graph edits not wired)
+status: partial
 stage: C of spec/microkernel-composition-roadmap.md
 depends-on: #726, #727, Stage B typed-contribution PR
 blocks: Stage E application-consumer migration
