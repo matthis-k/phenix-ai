@@ -38,7 +38,10 @@ pub enum WorkflowProjectionError {
     EmptyCases,
     IncompatibleResultSchema,
     UnknownDiscriminant(String),
-    UnknownEdge { discriminant: String, outcome: String },
+    UnknownEdge {
+        discriminant: String,
+        outcome: String,
+    },
     MissingVariantCase(String),
     UnknownVariantCase(String),
     InvalidResult,
@@ -62,7 +65,9 @@ impl WorkflowOutcomeProjection {
             (WorkflowProjectionSelector::VariantTag, Type::Variant(variants)) => {
                 for name in variants.keys() {
                     if !self.cases.contains_key(name.as_str()) {
-                        return Err(WorkflowProjectionError::MissingVariantCase(name.to_string()));
+                        return Err(WorkflowProjectionError::MissingVariantCase(
+                            name.to_string(),
+                        ));
                     }
                 }
                 for name in self.cases.keys() {
@@ -164,9 +169,15 @@ mod tests {
             projection.project_checked(&schema, &forged_payload),
             Err(WorkflowProjectionError::InvalidResult)
         );
-        assert_eq!(projection.project_checked(&schema, &value), Ok("continue".into()));
+        assert_eq!(
+            projection.project_checked(&schema, &value),
+            Ok("continue".into())
+        );
         let bytes = serde_json::to_vec(&projection).unwrap();
-        assert_eq!(serde_json::from_slice::<WorkflowOutcomeProjection>(&bytes).unwrap(), projection);
+        assert_eq!(
+            serde_json::from_slice::<WorkflowOutcomeProjection>(&bytes).unwrap(),
+            projection
+        );
     }
 
     #[test]
@@ -206,14 +217,23 @@ mod tests {
         };
         let branches = BTreeSet::from(["final".into()]);
         assert!(matches!(
-            projection.validate(&Type::Table(BTreeMap::from([(key("outcome"), Type::U64)])), &branches),
+            projection.validate(
+                &Type::Table(BTreeMap::from([(key("outcome"), Type::U64)])),
+                &branches
+            ),
             Err(WorkflowProjectionError::IncompatibleResultSchema)
         ));
-        projection.validate(&Type::Table(BTreeMap::from([(key("outcome"), Type::String)])), &branches).unwrap();
+        projection
+            .validate(
+                &Type::Table(BTreeMap::from([(key("outcome"), Type::String)])),
+                &branches,
+            )
+            .unwrap();
         assert_eq!(
-            projection.project(&PhenixValue::Table(BTreeMap::from([
-                (key("outcome"), PhenixValue::String("done".into()))
-            ]))),
+            projection.project(&PhenixValue::Table(BTreeMap::from([(
+                key("outcome"),
+                PhenixValue::String("done".into())
+            )]))),
             Ok("final".into())
         );
         assert!(matches!(
