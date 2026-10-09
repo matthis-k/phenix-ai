@@ -452,6 +452,88 @@ fn non_agent_bounded_map_fanout_collects_typed_results_without_leaking_child_fra
     assert_eq!(frame.get(&result_slot), Some(&PhenixValue::U64(0)));
 }
 
+
+#[test]
+fn child_scope_cancellation_stops_before_provider_dispatch() {
+    use std::cell::Cell;
+
+    let resolved = selected_fork_generation(WorkflowJoinPolicy::FirstSuccess);
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
+        .frame_schema().unwrap().clone();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+    ])).unwrap();
+    let cancellation = Cell::new(false);
+    let mut prepared = Vec::new();
+    let result = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut prepared, &mut frame),
+        |node, _, _, prepared| {
+            prepared.push(node.to_owned());
+            if node == "alpha-tool" {
+                cancellation.set(true);
+            }
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+            PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+            _ => Err("invalid provider response".into()),
+        },
+        || cancellation.get(),
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::Cancelled {
+            executed_nodes: 1,
+            ..
+        })
+    ));
+    assert_eq!(prepared, ["model", "alpha-tool"]);
+}
+
+#[test]
+fn map_max_child_limit_rejects_before_dispatching_a_mapped_provider() {
+    let resolved = selected_map_generation();
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
+        .frame_schema().unwrap().clone();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (Key::parse("items").unwrap(), PhenixValue::List(
+            (1..=5).map(PhenixValue::U64).collect(),
+        )),
+        (Key::parse("item").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("result").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("results").unwrap(), PhenixValue::List(Vec::new())),
+    ])).unwrap();
+    let mut seen = Vec::new();
+    let outcome = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut seen, &mut frame),
+        |node, _, _, seen| {
+            seen.push(node.to_owned());
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+            PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+            _ => Err("invalid provider response".into()),
+        },
+        || false,
+        None,
+    );
+    assert!(matches!(
+        outcome,
+        Err(crate::WorkflowRunError::InvalidMapInput { .. })
+    ));
+    assert_eq!(seen, ["model"]);
+}
+
 fn resolve(selected: &str, logging: bool) -> ResolvedGeneration {
     resolve_with_workflow(selected, logging, topology())
 }
