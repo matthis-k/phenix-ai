@@ -15,7 +15,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
-    thread,
 };
 
 /// Correlated completion identity. The generation component prevents a late
@@ -269,16 +268,6 @@ impl<T> WorkflowNativeTask<T> {
 
     pub fn is_finished(&self) -> bool {
         self.task.is_finished()
-    }
-
-    /// Returns immediately when the native worker is still running.
-    /// A ready result is joined exactly once.
-    pub fn try_join(self) -> Result<thread::Result<T>, Self> {
-        if self.is_finished() {
-            Ok(self.task.join())
-        } else {
-            Err(self)
-        }
     }
 
     pub fn join(self) -> thread::Result<T> {
@@ -580,10 +569,7 @@ mod tests {
             kernel.reconcile_resolved_generation(&second, &BTreeSet::new()),
             Err(KernelError::GenerationInUse { .. })
         ));
-        let task = match task.try_join() {
-            Err(task) => task,
-            Ok(_) => panic!("blocked worker cannot be ready"),
-        };
+        assert!(!task.is_finished(), "blocked worker cannot be ready");
         assert_eq!(group.cancel_root(), vec![ticket.clone()]);
         assert!(group.cancel_root().is_empty());
         assert_eq!(group.state(&ticket), Some(WorkflowTaskState::Cancelling));
