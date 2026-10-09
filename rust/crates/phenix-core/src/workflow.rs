@@ -731,8 +731,8 @@ impl WorkflowTopology {
                                 } => {
                                     for continuation in [on_success, on_failure] {
                                         if let WorkflowEdge::Next { node }
-                                            | WorkflowEdge::Transfer { node, .. } =
-                                                continuation.as_ref()
+                                        | WorkflowEdge::Transfer { node, .. } =
+                                            continuation.as_ref()
                                         {
                                             pending_children.push(node.clone());
                                         }
@@ -1299,9 +1299,8 @@ impl WorkflowTopology {
                         pending.extend(branches.values().cloned());
                         for continuation in [on_success, on_failure] {
                             if let WorkflowEdge::Next { node }
-                                            | WorkflowEdge::Transfer { node, .. } =
-                                                continuation.as_ref()
-                                        {
+                            | WorkflowEdge::Transfer { node, .. } = continuation.as_ref()
+                            {
                                 pending.push(node.clone());
                             }
                         }
@@ -1315,9 +1314,8 @@ impl WorkflowTopology {
                         pending.push(branch_entry.clone());
                         for continuation in [on_success, on_failure] {
                             if let WorkflowEdge::Next { node }
-                                            | WorkflowEdge::Transfer { node, .. } =
-                                                continuation.as_ref()
-                                        {
+                            | WorkflowEdge::Transfer { node, .. } = continuation.as_ref()
+                            {
                                 pending.push(node.clone());
                             }
                         }
@@ -1400,8 +1398,8 @@ impl WorkflowTopology {
                                     // remain in this outer child scope.
                                     for continuation in [on_success, on_failure] {
                                         if let WorkflowEdge::Next { node }
-                                            | WorkflowEdge::Transfer { node, .. } =
-                                                continuation.as_ref()
+                                        | WorkflowEdge::Transfer { node, .. } =
+                                            continuation.as_ref()
                                         {
                                             visit.push(node.clone());
                                         }
@@ -1638,45 +1636,45 @@ impl CompiledWorkflow {
                     transitions.extend([on_success.as_ref(), on_failure.as_ref()]);
                 }
                 for transition in transitions {
-                if let WorkflowEdge::Transfer { slots, .. }
-                | WorkflowEdge::FinishTransfer { slots } = transition
-                {
-                    let mut destinations = BTreeSet::new();
-                    for (source, target) in slots {
-                        if !destinations.insert(target) {
-                            return Err(WorkflowCompileError::InvalidFrameTransfer {
-                                node: name.clone(),
-                                outcome: outcome.clone(),
-                                reason: format!("target field {target} is written twice"),
-                            });
-                        }
-                        let from = schema.slots.get(source).ok_or_else(|| {
-                            WorkflowCompileError::InvalidFrameTransfer {
-                                node: name.clone(),
-                                outcome: outcome.clone(),
-                                reason: format!("source field {source} is undeclared"),
+                    if let WorkflowEdge::Transfer { slots, .. }
+                    | WorkflowEdge::FinishTransfer { slots } = transition
+                    {
+                        let mut destinations = BTreeSet::new();
+                        for (source, target) in slots {
+                            if !destinations.insert(target) {
+                                return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("target field {target} is written twice"),
+                                });
                             }
-                        })?;
-                        let to = schema.slots.get(target).ok_or_else(|| {
-                            WorkflowCompileError::InvalidFrameTransfer {
-                                node: name.clone(),
-                                outcome: outcome.clone(),
-                                reason: format!("target field {target} is undeclared"),
+                            let from = schema.slots.get(source).ok_or_else(|| {
+                                WorkflowCompileError::InvalidFrameTransfer {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("source field {source} is undeclared"),
+                                }
+                            })?;
+                            let to = schema.slots.get(target).ok_or_else(|| {
+                                WorkflowCompileError::InvalidFrameTransfer {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("target field {target} is undeclared"),
+                                }
+                            })?;
+                            if !matches!(
+                                to.accepts(from),
+                                crate::SchemaCompatibility::Exact
+                                    | crate::SchemaCompatibility::Compatible
+                            ) {
+                                return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("incompatible handoff {source} to {target}"),
+                                });
                             }
-                        })?;
-                        if !matches!(
-                            to.accepts(from),
-                            crate::SchemaCompatibility::Exact
-                                | crate::SchemaCompatibility::Compatible
-                        ) {
-                            return Err(WorkflowCompileError::InvalidFrameTransfer {
-                                node: name.clone(),
-                                outcome: outcome.clone(),
-                                reason: format!("incompatible handoff {source} to {target}"),
-                            });
                         }
                     }
-                }
                 }
                 if let WorkflowEdge::MapFork {
                     collection,
@@ -2549,8 +2547,7 @@ mod inclusion_tests {
                         "__include__/batch-return/batch" => Ok("launch".into()),
                         "__include__/batch-return/item-task" => {
                             let data = local.unwrap();
-                            let crate::PhenixValue::U64(value) =
-                                data.get(&key("item")).unwrap()
+                            let crate::PhenixValue::U64(value) = data.get(&key("item")).unwrap()
                             else {
                                 panic!("map child item missing");
                             };
