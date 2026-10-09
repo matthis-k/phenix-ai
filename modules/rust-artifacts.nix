@@ -202,6 +202,7 @@ _: {
       productRustArtifacts = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-product-rust-artifacts";
         version = "0";
+        passthru.productCargoSourceMembers = productClosure;
         src = rustSource;
         cargoLock.lockFile = rustRoot + "/Cargo.lock";
         nativeBuildInputs = [ pkgs.mold ];
