@@ -1687,6 +1687,66 @@ fn basic_and_advanced_execute_identical_topology_with_different_providers() {
 }
 
 #[test]
+fn pending_native_workflow_import_uses_pinned_provider_and_never_reselects() {
+    let basic = resolve(BASIC, false);
+    let advanced = resolve(ADVANCED, false);
+    let owner = component_id(TOPOLOGY);
+    let model = InterfaceId::parse(MODEL).unwrap();
+    let selected = basic
+        .generation_topology()
+        .workflow(&owner, "turn")
+        .unwrap()
+        .bound_import(&model)
+        .unwrap()
+        .clone();
+    let foreign = advanced
+        .generation_topology()
+        .workflow(&owner, "turn")
+        .unwrap()
+        .bound_import(&model)
+        .unwrap()
+        .clone();
+    assert_ne!(selected, foreign);
+
+    let kernel = started_kernel(&basic, &Arc::new(Mutex::new(Vec::new())));
+    let group = kernel
+        .root_execution_handle(&Authority::default())
+        .native_workflow_tasks()
+        .unwrap();
+    let request = serde_json::to_vec(&PhenixValue::Unit).unwrap();
+    let pending = group
+        .dispatch_import_pending("root/turn", selected, request.clone())
+        .unwrap();
+    let ticket = pending.id().clone();
+    let output = pending.join().unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<PhenixValue>(&output).unwrap(),
+        PhenixValue::String("tools".into()),
+    );
+    assert_eq!(group.state(&ticket), Some(crate::WorkflowTaskState::Completed));
+    assert_eq!(group.wait_settlement(), Some(ticket));
+
+    // A foreign binding cannot be accepted as an alternate provider in
+    // a pinned native invocation. The failed ticket is still settled.
+    let pending = group
+        .dispatch_import_pending("root/stale", foreign, request)
+        .unwrap();
+    let failed_ticket = pending.id().clone();
+    assert!(matches!(
+        pending.join().unwrap(),
+        Err(crate::WorkflowNativeDispatchError::Invoke(
+            KernelError::PinnedBindingChanged { .. }
+        ))
+    ));
+    assert_eq!(
+        group.state(&failed_ticket),
+        Some(crate::WorkflowTaskState::Failed)
+    );
+    assert_eq!(group.wait_settlement(), Some(failed_ticket));
+    group.close().unwrap();
+}
+
+#[test]
 fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
     let ordinary = resolve(BASIC, false);
     let owner = component_id(TOPOLOGY);
