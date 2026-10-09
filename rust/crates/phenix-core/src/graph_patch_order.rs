@@ -88,8 +88,8 @@ pub fn resolve_slot_order(
                 {
                     return Err(SlotOrderError::AmbiguousEffects {
                         slot,
-                        first: (*first).clone(),
-                        second: (*second).clone(),
+                        first: first.to_string(),
+                        second: second.to_string(),
                     });
                 }
             }
