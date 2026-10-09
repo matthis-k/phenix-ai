@@ -228,6 +228,8 @@ enum PlanStep {
         map_output: Option<(crate::Key, crate::Key)>,
         on_success: PlanStepId,
         on_failure: PlanStepId,
+        on_success_transfer: Option<BTreeMap<crate::Key, crate::Key>>,
+        on_failure_transfer: Option<BTreeMap<crate::Key, crate::Key>>,
     },
     Exit {
         failed: bool,
@@ -241,6 +243,36 @@ struct LoweredPlan {
 }
 
 impl LoweredPlan {
+    /// A Join's return handoff remains data on its Join step. It reads the
+    /// parent frame after explicitly selected child outputs have been merged.
+    fn lower_join_return(
+        edge: &WorkflowEdge,
+        node: &str,
+        outcome: &str,
+        suffix: &str,
+        steps: &mut BTreeMap<PlanStepId, PlanStep>,
+    ) -> (PlanStepId, Option<BTreeMap<crate::Key, crate::Key>>) {
+        match edge {
+            WorkflowEdge::Next { node } => (PlanStepId::Invoke(node.clone()), None),
+            WorkflowEdge::Transfer { node, slots } => {
+                (PlanStepId::Invoke(node.clone()), Some(slots.clone()))
+            }
+            WorkflowEdge::Finish | WorkflowEdge::FinishTransfer { .. } => {
+                let exit = PlanStepId::Exit {
+                    node: node.to_owned(),
+                    outcome: format!("{outcome}/{suffix}"),
+                };
+                steps.insert(exit.clone(), PlanStep::Exit { failed: false });
+                let slots = match edge {
+                    WorkflowEdge::FinishTransfer { slots } => Some(slots.clone()),
+                    _ => None,
+                };
+                (exit, slots)
+            }
+            _ => unreachable!("Join continuation was validated before lowering"),
+        }
+    }
+
     fn from_topology(topology: &WorkflowTopology) -> Self {
         let mut steps = BTreeMap::new();
         for (name, node) in &topology.nodes {
@@ -289,22 +321,12 @@ impl LoweredPlan {
                             node: name.clone(),
                             outcome: outcome.clone(),
                         };
-                        let lower_join_edge = |edge: &WorkflowEdge, suffix: &str, steps: &mut BTreeMap<PlanStepId, PlanStep>| {
-                            match edge {
-                                WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
-                                WorkflowEdge::Finish => {
-                                    let exit = PlanStepId::Exit {
-                                        node: name.clone(),
-                                        outcome: format!("{outcome}/{suffix}"),
-                                    };
-                                    steps.insert(exit.clone(), PlanStep::Exit { failed: false });
-                                    exit
-                                }
-                                _ => unreachable!("join continuation is validated as Next or Finish"),
-                            }
-                        };
-                        let success = lower_join_edge(on_success, "success", &mut steps);
-                        let failure = lower_join_edge(on_failure, "failure", &mut steps);
+                        let (success, success_transfer) = Self::lower_join_return(
+                            on_success, name, outcome, "success", &mut steps
+                        );
+                        let (failure, failure_transfer) = Self::lower_join_return(
+                            on_failure, name, outcome, "failure", &mut steps
+                        );
                         steps.insert(
                             fork.clone(),
                             PlanStep::Fork {
@@ -326,6 +348,8 @@ impl LoweredPlan {
                                 map_output: None,
                                 on_success: success,
                                 on_failure: failure,
+                                on_success_transfer: success_transfer,
+                                on_failure_transfer: failure_transfer,
                             },
                         );
                         fork
@@ -349,21 +373,12 @@ impl LoweredPlan {
                             node: name.clone(),
                             outcome: outcome.clone(),
                         };
-                        let lower_continuation = |edge: &WorkflowEdge, suffix: &str, steps: &mut BTreeMap<PlanStepId, PlanStep>| {
-                            match edge {
-                                WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
-                                WorkflowEdge::Finish => {
-                                    let exit = PlanStepId::Exit {
-                                        node: name.clone(), outcome: format!("{outcome}/{suffix}"),
-                                    };
-                                    steps.insert(exit.clone(), PlanStep::Exit { failed: false });
-                                    exit
-                                }
-                                _ => unreachable!("map join continuation was validated"),
-                            }
-                        };
-                        let success = lower_continuation(on_success, "success", &mut steps);
-                        let failure = lower_continuation(on_failure, "failure", &mut steps);
+                        let (success, success_transfer) = Self::lower_join_return(
+                            on_success, name, outcome, "success", &mut steps
+                        );
+                        let (failure, failure_transfer) = Self::lower_join_return(
+                            on_failure, name, outcome, "failure", &mut steps
+                        );
                         steps.insert(
                             fork.clone(),
                             PlanStep::Fork {
@@ -387,6 +402,8 @@ impl LoweredPlan {
                                 map_output: Some((child_output_slot.clone(), output_slot.clone())),
                                 on_success: success,
                                 on_failure: failure,
+                                on_success_transfer: success_transfer,
+                                on_failure_transfer: failure_transfer,
                             },
                         );
                         fork
