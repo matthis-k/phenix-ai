@@ -167,8 +167,11 @@ fn handle_session(
         SessionCommand::AppendJournalClaimed { id, entry, claim } => {
             append_journal_claimed(context, &id, entry, &claim)
         }
+        SessionCommand::AppendJournalWithClaim { id, entry, claim } => {
+            append_journal_owned(context, &id, entry, &claim, false)
+        }
         SessionCommand::AppendJournalReleasingClaim { id, entry, claim } => {
-            append_journal_releasing_claim(context, &id, entry, &claim)
+            append_journal_owned(context, &id, entry, &claim, true)
         }
         SessionCommand::Journal {
             id,
@@ -451,11 +454,12 @@ fn append_journal_claimed(
     Ok(SessionResponse::JournalAppended { entry })
 }
 
-fn append_journal_releasing_claim(
+fn append_journal_owned(
     context: &SessionContext<'_, '_>,
     id: &SessionId,
     draft: SessionJournalDraft,
     claim: &str,
+    release: bool,
 ) -> Result<SessionResponse, String> {
     if claim.is_empty() {
         return Err("journal claim identity must not be empty".into());
@@ -469,13 +473,13 @@ fn append_journal_releasing_claim(
         ));
     }
     let (entry, mut operations) = prepare_journal_append(context, id, draft)?;
-    operations.extend([
-        TransactionOp::AssertValue {
-            key: key.clone(),
-            expected: Some(expected),
-        },
-        TransactionOp::Delete { key },
-    ]);
+    operations.push(TransactionOp::AssertValue {
+        key: key.clone(),
+        expected: Some(expected),
+    });
+    if release {
+        operations.push(TransactionOp::Delete { key });
+    }
     context
         .kernel
         .transact_durable(&session_namespace(), &operations)
@@ -1170,6 +1174,32 @@ mod tests {
             .is_err(),
             "legacy session transitions must not bypass the stream claim"
         );
+        // Owning a claim authorizes intermediate output without releasing
+        // exclusive stream ownership; the public execution ID does not.
+        let with_claim = |claim: &str| SessionCommand::AppendJournalWithClaim {
+            id: session.clone(),
+            entry: SessionJournalDraft {
+                stream: stream.clone(),
+                payload: PhenixValue::String("progress".into()),
+            },
+            claim: claim.into(),
+        };
+        assert!(invoke(&mut second, &with_claim("execution-b")).is_err());
+        assert!(matches!(
+            invoke(&mut first, &with_claim("execution-a")).unwrap(),
+            SessionResponse::JournalAppended { entry } if entry.sequence == 2
+        ));
+        assert!(
+            invoke(
+                &mut second,
+                &SessionCommand::AppendJournal {
+                    id: session.clone(),
+                    entry: legacy_entry(),
+                },
+            )
+            .is_err(),
+            "the claim remains active after an authorized progress append"
+        );
         assert!(
             invoke(
                 &mut second,
@@ -1201,7 +1231,7 @@ mod tests {
                 },
             )
             .unwrap(),
-            SessionResponse::JournalAppended { entry } if entry.sequence == 2
+            SessionResponse::JournalAppended { entry } if entry.sequence == 3
         ));
         assert!(matches!(
             invoke(
@@ -1212,11 +1242,11 @@ mod tests {
                 },
             )
             .unwrap(),
-            SessionResponse::JournalAppended { entry } if entry.sequence == 3
+            SessionResponse::JournalAppended { entry } if entry.sequence == 4
         ));
         assert!(matches!(
             invoke(&mut second, &claimed("execution-b")).unwrap(),
-            SessionResponse::JournalAppended { entry } if entry.sequence == 4
+            SessionResponse::JournalAppended { entry } if entry.sequence == 5
         ));
         drop(first);
         drop(second);

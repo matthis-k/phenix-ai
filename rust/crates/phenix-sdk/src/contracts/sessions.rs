@@ -287,6 +287,14 @@ pub enum SessionCommand {
         entry: SessionJournalDraft,
         claim: String,
     },
+    /// Append an in-flight execution event under an existing private stream
+    /// claim. The durable transaction checks that the claim still belongs to
+    /// this worker without releasing it.
+    AppendJournalWithClaim {
+        id: SessionId,
+        entry: SessionJournalDraft,
+        claim: String,
+    },
     /// Atomically append a terminal event and release the exact stream claim.
     /// Observers never see the terminal event before the stream is available.
     AppendJournalReleasingClaim {

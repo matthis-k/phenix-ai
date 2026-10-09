@@ -2470,13 +2470,22 @@ impl ApplicationWorker {
         root: &RootExecutionHandle,
         session: &SessionRecord,
         change: SessionChange,
+        execution_id: &str,
     ) -> Result<SessionUpdate, ApplicationError> {
         self.reserve_session_event_slot()?;
+        let claim = self
+            .journal_claims
+            .get(execution_id)
+            .ok_or_else(|| ApplicationError::Conflict {
+                message: format!("this worker does not own journal claim for {execution_id}"),
+            })?
+            .clone();
         let response = self.invoke_session_on(
             root,
-            SessionCommand::AppendJournal {
+            SessionCommand::AppendJournalWithClaim {
                 id: session.id.clone(),
                 entry: session_change_journal(&change),
+                claim,
             },
         )?;
         let SessionResponse::JournalAppended { entry } = response else {
@@ -2593,6 +2602,7 @@ impl ApplicationWorker {
                 execution_id: execution_id.to_owned(),
                 update,
             },
+            execution_id,
         )
     }
 
@@ -5421,6 +5431,7 @@ fn complete_prompt_output_on(
             execution_id: execution_id.to_owned(),
             text: text.clone(),
         },
+        execution_id,
     )?;
     worker.append_session_change_on(
         root,
@@ -5431,6 +5442,7 @@ fn complete_prompt_output_on(
                 content: vec![Content::Text { text }],
             },
         },
+        execution_id,
     )?;
     record_terminal_and_release_claim(
         worker,
