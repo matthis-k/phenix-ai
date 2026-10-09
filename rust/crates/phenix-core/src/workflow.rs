@@ -987,6 +987,55 @@ impl CompiledWorkflow {
     ) -> Result<(), WorkflowCompileError> {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
+                if let WorkflowEdge::MapFork {
+                    collection, item_slot, child_output_slot, output_slot, ..
+                } = edge {
+                    let required = [collection, item_slot, child_output_slot, output_slot];
+                    for slot in required {
+                        if !schema.slots.contains_key(slot) {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(), outcome: outcome.clone(),
+                                reason: format!("map frame slot {slot} is absent"),
+                            });
+                        }
+                    }
+                    if !matches!(
+                        schema.slots.get(collection),
+                        Some(crate::Type::List(_))
+                    ) || !matches!(
+                        schema.slots.get(output_slot),
+                        Some(crate::Type::List(_))
+                    ) {
+                        return Err(WorkflowCompileError::InvalidFork {
+                            node: name.clone(), outcome: outcome.clone(),
+                            reason: "map collection and output must have list schemas".into(),
+                        });
+                    }
+                    if let Some(crate::Type::List(item)) = schema.slots.get(collection) {
+                        let slot_type = &schema.slots[item_slot];
+                        if !matches!(
+                            slot_type.accepts(item),
+                            crate::SchemaCompatibility::Exact | crate::SchemaCompatibility::Compatible
+                        ) {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(), outcome: outcome.clone(),
+                                reason: "map item slot cannot accept collection element schema".into(),
+                            });
+                        }
+                    }
+                    if let Some(crate::Type::List(item)) = schema.slots.get(output_slot) {
+                        let produced = &schema.slots[child_output_slot];
+                        if !matches!(
+                            item.accepts(produced),
+                            crate::SchemaCompatibility::Exact | crate::SchemaCompatibility::Compatible
+                        ) {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(), outcome: outcome.clone(),
+                                reason: "map output cannot accept child result slot".into(),
+                            });
+                        }
+                    }
+                }
                 if let WorkflowEdge::Fork { outputs, .. } = edge {
                     for slots in outputs.values() {
                         for slot in slots {
