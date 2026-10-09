@@ -26,6 +26,7 @@ mod runtime;
 mod sdk;
 mod tasks;
 mod workflow;
+mod workflow_frame;
 
 extern crate self as phenix_core;
 #[cfg(test)]
@@ -218,3 +219,4 @@ pub use workflow::{
     WorkflowEdge, WorkflowNode, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
     WorkflowTopology,
 };
+pub use workflow_frame::{WorkflowFrame, WorkflowFrameError, WorkflowFrameSchema};
