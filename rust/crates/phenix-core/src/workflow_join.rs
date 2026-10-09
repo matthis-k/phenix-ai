@@ -4,7 +4,7 @@
 //! generation leases and actual service calls. This module never dispatches.
 
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}, num::NonZeroUsize};
+use std::{collections::{BTreeMap, BTreeSet}, fmt, num::NonZeroUsize};
 
 /// The only All policies recognized by the Core plan semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -66,6 +66,23 @@ pub enum WorkflowJoinError {
     UnknownBranch(String),
     DuplicateSettlement(String),
 }
+
+impl fmt::Display for WorkflowJoinError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyBranches => f.write_str("join has no admitted branches"),
+            Self::InvalidQuorum { required, available } => {
+                write!(f, "quorum {required} exceeds {available} admitted branches")
+            }
+            Self::UnknownBranch(branch) => write!(f, "unknown join branch {branch}"),
+            Self::DuplicateSettlement(branch) => {
+                write!(f, "duplicate settlement for join branch {branch}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorkflowJoinError {}
 
 impl WorkflowJoinPolicy {
     /// Evaluate an immutable snapshot. Different input enumeration orders
