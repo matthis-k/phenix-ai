@@ -122,17 +122,17 @@
     },
     "phenix-flake-ci": {
       "locked": {
-        "lastModified": 1791148102,
-        "narHash": "sha256-whKvvcHbpeXwst2YAt6Nr3RTeAGuBxp7RWmjQbS4I/Q=",
+        "lastModified": 1791520493,
+        "narHash": "sha256-SVKdGUy3xMnnIm0N8xIth7g2EM9wjkm/Xlvx3ZrYuYQ=",
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "05111b90595c33cf9fb105cb44d8afb6b4fb3e71",
+        "rev": "10d23f79f8f826679b6b287d28dc2b4f3d57d311",
         "type": "github"
       },
       "original": {
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "05111b90595c33cf9fb105cb44d8afb6b4fb3e71",
+        "rev": "10d23f79f8f826679b6b287d28dc2b4f3d57d311",
         "type": "github"
       }
     },
