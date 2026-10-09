@@ -657,12 +657,33 @@
                   pkgs.cargo
                   pkgs.clippy
                   pkgs.git
+                  pkgs.jq
                   pkgs.rustc
                 ];
                 exec = ''
                   ${rustRoot}
-                  cargo clippy --quiet --workspace --all-targets --locked -- -D warnings
-                  cargo clippy --quiet --workspace --lib --bins --locked -- \
+                  # The impact preflight uses Cargo metadata and includes all reverse
+                  # dependents. A missing or invalid plan keeps full CI coverage.
+                  clippyTargets=(--workspace)
+                  impactPackages="''${PHENIX_IMPACT_PACKAGES:-null}"
+                  if [ "$impactPackages" != null ] && [ -n "$impactPackages" ]; then
+                    if printf '%s' "$impactPackages" |
+                      jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null; then
+                      mapfile -t selectedPackages < <(
+                        printf '%s' "$impactPackages" | jq -r '.[]'
+                      )
+                      if [ "''${#selectedPackages[@]}" -gt 0 ]; then
+                        clippyTargets=()
+                        for package in "''${selectedPackages[@]}"; do
+                          clippyTargets+=(--package "$package")
+                        done
+                      fi
+                    else
+                      echo "Invalid Cargo impact package list; linting workspace" >&2
+                    fi
+                  fi
+                  cargo clippy --quiet "''${clippyTargets[@]}" --all-targets --locked -- -D warnings
+                  cargo clippy --quiet "''${clippyTargets[@]}" --lib --bins --locked -- \
                     -D warnings \
                     -D clippy::unwrap_used \
                     -D clippy::panic
