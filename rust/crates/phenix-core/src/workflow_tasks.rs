@@ -515,8 +515,8 @@ impl Drop for WorkflowNativeTaskGroup {
 mod tests {
     use super::*;
     use crate::{
-        ComponentManifest, ConfigContribution, Kernel, KernelError, PluginExecution, PluginId,
-        PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
+        ComponentManifest, ConfigContribution, Kernel, KernelError, PermissionId,
+        PluginExecution, PluginId, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
     };
     use std::sync::mpsc;
 
@@ -652,6 +652,40 @@ mod tests {
             group.spawn("root/late", &Authority::default(), |_| 1_u64),
             Err(WorkflowTaskError::RootNotAdmitting)
         ));
+    }
+
+    #[test]
+    fn native_worker_receives_only_root_attenuated_authority_and_generation() {
+        let read = PermissionId::parse("fixture.permission.read").unwrap();
+        let write = PermissionId::parse("fixture.permission.write").unwrap();
+        let ceiling = Authority::new([read.clone()]);
+        let selected = ResolvedGeneration::resolve(
+            Vec::<PluginManifest>::new(),
+            Vec::<ComponentManifest>::new(),
+            Vec::<ConfigContribution>::new(),
+            &ceiling,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(selected.kernel_config().clone());
+        kernel.activate_resolved_generation(&selected).unwrap();
+        kernel.activate_all().unwrap();
+        let caller = Authority::new([read.clone(), write.clone()]);
+        let group = kernel
+            .root_execution_handle(&caller)
+            .native_workflow_tasks()
+            .unwrap();
+        let generation = group.generation().clone();
+        let task = group
+            .spawn("root/scoped", &caller, move |token| {
+                (
+                    token.graph_generation().clone(),
+                    token.authority().permits(&read),
+                    token.authority().permits(&write),
+                )
+            })
+            .unwrap();
+        assert_eq!(task.join().unwrap(), (generation, true, false));
+        group.close().unwrap();
     }
 
     #[test]
