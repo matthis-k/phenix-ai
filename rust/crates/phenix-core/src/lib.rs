@@ -15,6 +15,7 @@ mod configuration;
 mod configuration_regression;
 mod content_reference;
 mod events;
+pub mod graph_patch_order;
 mod invocation;
 mod logging;
 mod metadata;
