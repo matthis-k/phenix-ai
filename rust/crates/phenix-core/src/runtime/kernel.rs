@@ -723,8 +723,7 @@ impl RootExecutionHandle {
     pub fn execute_workflow_with_frame<State, Error>(
         &self,
         workflow: (&ComponentId, &str),
-        state: &mut State,
-        frame: &mut crate::WorkflowFrame,
+        execution: (&mut State, &mut crate::WorkflowFrame),
         mut prepare: impl FnMut(
             &str,
             &InterfaceId,
@@ -744,6 +743,7 @@ impl RootExecutionHandle {
         WorkflowRunReport,
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
+        let (state, frame) = execution;
         let (owner, name) = workflow;
         let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
             WorkflowRunError::MissingWorkflow {
