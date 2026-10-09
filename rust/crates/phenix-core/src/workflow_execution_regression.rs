@@ -4,7 +4,7 @@ use crate::{
     InterfaceSchema, Kernel, KernelError, LayerPolicy, LayerResult, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ProviderCompositionPolicy,
     ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
-    WorkflowDeclaration, WorkflowEdge, WorkflowFrame, WorkflowFrameSchema,
+    WorkflowDeclaration, WorkflowEdge, WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameSchema,
     WorkflowNode, WorkflowTopology, Key, Type,
 };
 use std::collections::BTreeMap;
@@ -311,15 +311,22 @@ fn basic_and_advanced_execute_identical_topology_with_different_providers() {
 
 #[test]
 fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
-    let resolved = resolve(BASIC, false);
+    let counter = Key::parse("counter").unwrap();
+    let frame_schema = WorkflowFrameSchema {
+        revision: 1,
+        slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+    };
+    let resolved = resolve(BASIC, false)
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner: component_id(TOPOLOGY),
+            name: "turn".into(),
+            schema: frame_schema.clone(),
+        }])
+        .unwrap();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let counter = Key::parse("counter").unwrap();
     let mut frame = WorkflowFrame::new(
-        WorkflowFrameSchema {
-            revision: 1,
-            slots: BTreeMap::from([(counter.clone(), Type::U64)]),
-        },
+        frame_schema,
         BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
     )
     .unwrap();
@@ -359,15 +366,22 @@ fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
 
 #[test]
 fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects() {
-    let resolved = resolve(BASIC, false);
+    let counter = Key::parse("counter").unwrap();
+    let frame_schema = WorkflowFrameSchema {
+        revision: 1,
+        slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+    };
+    let resolved = resolve(BASIC, false)
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner: component_id(TOPOLOGY),
+            name: "turn".into(),
+            schema: frame_schema.clone(),
+        }])
+        .unwrap();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let counter = Key::parse("counter").unwrap();
     let mut frame = WorkflowFrame::new(
-        WorkflowFrameSchema {
-            revision: 1,
-            slots: BTreeMap::from([(counter.clone(), Type::U64)]),
-        },
+        frame_schema,
         BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
     )
     .unwrap();
