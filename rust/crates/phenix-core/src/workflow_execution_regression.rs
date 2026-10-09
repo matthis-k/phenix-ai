@@ -310,6 +310,113 @@ fn basic_and_advanced_execute_identical_topology_with_different_providers() {
 }
 
 #[test]
+fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
+    let ordinary = resolve(BASIC, false);
+    let owner = component_id(TOPOLOGY);
+    let counter = Key::parse("counter").unwrap();
+    let declaration = WorkflowFrameDeclaration {
+        owner: owner.clone(),
+        name: "turn".into(),
+        schema: WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+        },
+    };
+    let typed = ordinary
+        .clone()
+        .with_workflow_frame_schemas([declaration.clone()])
+        .unwrap();
+    assert_ne!(typed.generation(), ordinary.generation());
+    assert_eq!(
+        typed
+            .generation_topology()
+            .workflow(&owner, "turn")
+            .unwrap()
+            .frame_schema(),
+        Some(&declaration.schema)
+    );
+    assert_eq!(
+        typed
+            .clone()
+            .with_workflow_frame_schemas([declaration.clone()])
+            .unwrap()
+            .generation(),
+        typed.generation()
+    );
+    assert!(matches!(
+        ordinary
+            .clone()
+            .with_workflow_frame_schemas([declaration.clone(), declaration.clone()]),
+        Err(crate::GenerationResolutionError::DuplicateFrameSchema { .. })
+    ));
+    let mut different = declaration.clone();
+    different.schema.revision = 2;
+    assert_ne!(
+        ordinary
+            .clone()
+            .with_workflow_frame_schemas([different.clone()])
+            .unwrap()
+            .generation(),
+        typed.generation()
+    );
+    assert!(matches!(
+        typed.clone().with_workflow_frame_schemas([different]),
+        Err(crate::GenerationResolutionError::FrameSchemasAlreadyBound)
+    ));
+    let mut missing = declaration.clone();
+    missing.name = "unselected".into();
+    assert!(matches!(
+        ordinary.clone().with_workflow_frame_schemas([missing]),
+        Err(crate::GenerationResolutionError::MissingFrameWorkflow { .. })
+    ));
+    let mut forbidden = declaration;
+    forbidden.schema.slots.insert(
+        counter,
+        Type::Object {
+            contract: InterfaceId::parse("fixture.forbidden@1").unwrap(),
+        },
+    );
+    assert!(matches!(
+        ordinary.with_workflow_frame_schemas([forbidden]),
+        Err(crate::GenerationResolutionError::InvalidFrameSchema { .. })
+    ));
+}
+
+#[test]
+fn frame_aware_entry_requires_a_selected_schema_before_invocation() {
+    let resolved = resolve(BASIC, false);
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let counter = Key::parse("counter").unwrap();
+    let schema = WorkflowFrameSchema {
+        revision: 1,
+        slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+    };
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
+    )
+    .unwrap();
+    let result = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        &mut (),
+        &mut frame,
+        |_, _, _, _| -> Result<Vec<u8>, String> {
+            panic!("an unselected frame schema must reject before preparing a service request")
+        },
+        |_, _, _, _, _| -> Result<String, String> {
+            panic!("a rejected entry must never project provider output")
+        },
+        || false,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::MissingFrameSchema { .. })
+    ));
+}
+
+#[test]
 fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
     let counter = Key::parse("counter").unwrap();
     let frame_schema = WorkflowFrameSchema {
