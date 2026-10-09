@@ -1432,15 +1432,24 @@ impl CompiledWorkflow {
                                     )
                                     .map(|next| {
                                         *cursor = next;
-                                        None
+                                        // A child exits in the same scheduling
+                                        // turn as its final Invoke. In particular,
+                                        // FirstCompleted/FailFast may not dispatch
+                                        // a second sibling after the first exits.
+                                        match &self.plan.steps[cursor] {
+                                            PlanStep::Exit { failed } => Some(if *failed {
+                                                crate::WorkflowChildSettlement::Failed
+                                            } else {
+                                                crate::WorkflowChildSettlement::Completed
+                                            }),
+                                            _ => None,
+                                        }
                                     }),
-                                PlanStep::Exit { failed } => Ok(Some(
-                                    if *failed {
-                                        crate::WorkflowChildSettlement::Failed
-                                    } else {
-                                        crate::WorkflowChildSettlement::Completed
-                                    },
-                                )),
+                                PlanStep::Exit { failed } => Ok(Some(if *failed {
+                                    crate::WorkflowChildSettlement::Failed
+                                } else {
+                                    crate::WorkflowChildSettlement::Completed
+                                })),
                                 PlanStep::Fork { .. } => {
                                     unreachable!("nested fork rejected at compilation")
                                 }
@@ -1448,14 +1457,16 @@ impl CompiledWorkflow {
                                     unreachable!("child cannot enter parent Join")
                                 }
                             };
-                            let settlement = match result {
-                                Ok(settlement) => settlement,
-                                Err(
-                                    WorkflowRunError::NodeFailed { .. }
-                                    | WorkflowRunError::UndeclaredOutcome { .. },
-                                ) => Some(crate::WorkflowChildSettlement::Failed),
-                                Err(error) => return Err(error),
-                            };
+                            // An execution failure is not a declared child
+                            // outcome. Never turn authority, transport, or
+                            // adapter failure into the policy's failure edge.
+                            let settlement = result?;
+                            if cancelled() {
+                                return Err(WorkflowRunError::Cancelled {
+                                    next_node: branch.clone(),
+                                    executed_nodes: count,
+                                });
+                            }
                             if let Some(settlement) = settlement {
                                 settled.insert(branch.clone());
                                 observed.push(crate::WorkflowJoinObservation {
