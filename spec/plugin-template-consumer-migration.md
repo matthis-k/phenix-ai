@@ -1,6 +1,6 @@
 # Plugin-defined tools and skills: consumer migration and non-agent canary
 
-status: partial implementation (independent non-agent provider canary)
+status: partial
 stage: E of spec/microkernel-composition-roadmap.md
 depends-on: #727, #728, Stage C graph-patch PR, Stage D plugin-defined-kind PR
 prerequisite: #726 must be semantically complete through Stage C
