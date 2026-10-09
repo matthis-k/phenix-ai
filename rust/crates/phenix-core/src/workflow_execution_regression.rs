@@ -1739,6 +1739,113 @@ fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
 }
 
 #[test]
+fn reconciled_generation_preserves_typed_frame_contract_for_retained_workflows() {
+    let owner = component_id(TOPOLOGY);
+    let counter = Key::parse("counter").unwrap();
+    let schema = WorkflowFrameSchema {
+        revision: 1,
+        slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+    };
+    let selected = resolve(BASIC, false)
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner: owner.clone(),
+            name: "turn".into(),
+            schema: schema.clone(),
+        }])
+        .unwrap();
+
+    // Identical desired state is a semantic no-op, including the frame schema
+    // and its contribution to the canonical generation identifier.
+    let retained = selected
+        .with_plugin_set(
+            selected.plugins().to_vec(),
+            selected.components().to_vec(),
+            selected.entry_triggers().to_vec(),
+            selected.process_arguments().to_vec(),
+            &Authority::default(),
+        )
+        .unwrap();
+    assert_eq!(retained.generation(), selected.generation());
+    assert_eq!(
+        retained
+            .generation_topology()
+            .workflow(&owner, "turn")
+            .unwrap()
+            .frame_schema(),
+        Some(&schema)
+    );
+
+    // Rebinding an independent provider must preserve the frame contract
+    // while deriving a new generation identity from the changed provider.
+    let mut providers = retained.plugins().to_vec();
+    providers
+        .iter_mut()
+        .find(|plugin| plugin.id == plugin_id(BASIC))
+        .unwrap()
+        .version += 1;
+    let rebound = retained
+        .with_plugin_set(
+            providers,
+            retained.components().to_vec(),
+            retained.entry_triggers().to_vec(),
+            retained.process_arguments().to_vec(),
+            &Authority::default(),
+        )
+        .unwrap();
+    assert_ne!(rebound.generation(), retained.generation());
+    assert_eq!(
+        rebound
+            .generation_topology()
+            .workflow(&owner, "turn")
+            .unwrap()
+            .frame_schema(),
+        Some(&schema)
+    );
+
+    let kernel = started_kernel(&rebound, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let mut frame = WorkflowFrame::new(
+        schema.clone(),
+        BTreeMap::from([(counter.clone(), PhenixValue::U64(9))]),
+    )
+    .unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&owner, "turn"),
+            (&mut (), &mut frame),
+            |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+            |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                other => Err(format!("unexpected response: {other:?}")),
+            },
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(9)));
+
+    // An upgraded topology author cannot inherit the previous owner's
+    // workflow or typed schema merely by keeping its component ID.
+    let mut manifests = rebound.plugins().to_vec();
+    manifests
+        .iter_mut()
+        .find(|plugin| plugin.id == plugin_id(TOPOLOGY))
+        .unwrap()
+        .version += 1;
+    let retired = rebound
+        .with_plugin_set(
+            manifests,
+            rebound.components().to_vec(),
+            rebound.entry_triggers().to_vec(),
+            rebound.process_arguments().to_vec(),
+            &Authority::default(),
+        )
+        .unwrap();
+    assert!(retired.generation_topology().workflow(&owner, "turn").is_none());
+}
+
+#[test]
 fn frame_aware_entry_requires_a_selected_schema_before_invocation() {
     let resolved = resolve(BASIC, false);
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
