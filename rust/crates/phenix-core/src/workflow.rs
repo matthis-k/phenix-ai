@@ -486,6 +486,10 @@ pub enum WorkflowRunError<E> {
         outcome: String,
         executed_nodes: u64,
     },
+    ScopeDepthExceeded {
+        node: String,
+        maximum: usize,
+    },
 }
 
 impl WorkflowTopology {
