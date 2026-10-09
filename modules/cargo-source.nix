@@ -41,21 +41,23 @@ let
   );
 
   dependencySets =
-    includeDev:
-    manifest:
+    includeDev: manifest:
     [
       (manifest.dependencies or { })
       (manifest."build-dependencies" or { })
     ]
     ++ pkgs.lib.optionals includeDev [ (manifest."dev-dependencies" or { }) ]
-    ++ pkgs.lib.concatMap (target: [
-      (target.dependencies or { })
-      (target."build-dependencies" or { })
-    ] ++ pkgs.lib.optionals includeDev [ (target."dev-dependencies" or { }) ]) (builtins.attrValues (manifest.target or { }));
+    ++ pkgs.lib.concatMap (
+      target:
+      [
+        (target.dependencies or { })
+        (target."build-dependencies" or { })
+      ]
+      ++ pkgs.lib.optionals includeDev [ (target."dev-dependencies" or { }) ]
+    ) (builtins.attrValues (manifest.target or { }));
 
   localDependencies =
-    includeDev:
-    manifest:
+    includeDev: manifest:
     pkgs.lib.unique (
       pkgs.lib.concatMap (
         declarations:
@@ -75,8 +77,7 @@ let
     );
 
   membersForWith =
-    includeDev:
-    root:
+    includeDev: root:
     let
       visit =
         seen: pending:
@@ -94,7 +95,9 @@ let
           if builtins.elem package seen then
             visit seen (builtins.tail pending)
           else
-            visit (seen ++ [ package ]) ((builtins.tail pending) ++ localDependencies includeDev entry.manifest);
+            visit (seen ++ [ package ]) (
+              (builtins.tail pending) ++ localDependencies includeDev entry.manifest
+            );
     in
     map (package: (builtins.getAttr package manifestIndex).member) (visit [ ] [ root ]);
 
@@ -160,8 +163,7 @@ let
   # Keep workspace manifests and empty targets from the dependency skeleton.
   # Copy real files only for crates reachable from the requested package.
   sourceForWith =
-    includeDev:
-    root:
+    includeDev: root:
     pkgs.runCommand "phenix-${root}-selected-rust-source" { } ''
       set -euo pipefail
       mkdir -p "$out"
@@ -180,5 +182,11 @@ let
 
 in
 {
-  inherit dependencySkeleton membersFor membersForBuild sourceFor sourceForWithDev;
+  inherit
+    dependencySkeleton
+    membersFor
+    membersForBuild
+    sourceFor
+    sourceForWithDev
+    ;
 }
