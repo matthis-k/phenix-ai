@@ -808,9 +808,7 @@ impl WorkflowTopology {
                         on_failure,
                         policy,
                     } => {
-                        if branches.is_empty()
-                            || branches.keys().any(|key| key.trim().is_empty())
-                        {
+                        if branches.is_empty() || branches.keys().any(|key| key.trim().is_empty()) {
                             return Err(WorkflowCompileError::InvalidFork {
                                 node: name.clone(),
                                 outcome: outcome.clone(),
@@ -992,10 +990,16 @@ impl WorkflowTopology {
                 // at a child would restart it outside the child scope with
                 // the parent's frame and bypass structured settlement.
                 let (on_success, on_failure) = match edge {
-                    WorkflowEdge::Fork { on_success, on_failure, .. }
-                    | WorkflowEdge::MapFork { on_success, on_failure, .. } => {
-                        (on_success, on_failure)
+                    WorkflowEdge::Fork {
+                        on_success,
+                        on_failure,
+                        ..
                     }
+                    | WorkflowEdge::MapFork {
+                        on_success,
+                        on_failure,
+                        ..
+                    } => (on_success, on_failure),
                     _ => unreachable!("only forks have admitted child scopes"),
                 };
                 for continuation in [on_success, on_failure] {
@@ -1975,20 +1979,23 @@ mod tests {
         let topology = WorkflowTopology {
             entry: "model".into(),
             nodes: BTreeMap::from([
-                node("model", &[(
-                    "spawn",
-                    WorkflowEdge::Fork {
-                        branches: BTreeMap::from([("one".into(), "child".into())]),
-                        policy: crate::WorkflowJoinPolicy::All(
-                            crate::WorkflowJoinAllPolicy::CollectAll,
-                        ),
-                        outputs: BTreeMap::new(),
-                        on_success: Box::new(WorkflowEdge::Next {
-                            node: "child".into(),
-                        }),
-                        on_failure: Box::new(WorkflowEdge::Finish),
-                    },
-                )]),
+                node(
+                    "model",
+                    &[(
+                        "spawn",
+                        WorkflowEdge::Fork {
+                            branches: BTreeMap::from([("one".into(), "child".into())]),
+                            policy: crate::WorkflowJoinPolicy::All(
+                                crate::WorkflowJoinAllPolicy::CollectAll,
+                            ),
+                            outputs: BTreeMap::new(),
+                            on_success: Box::new(WorkflowEdge::Next {
+                                node: "child".into(),
+                            }),
+                            on_failure: Box::new(WorkflowEdge::Finish),
+                        },
+                    )],
+                ),
                 node("child", &[("done", WorkflowEdge::Finish)]),
             ]),
         };
@@ -2003,9 +2010,7 @@ mod tests {
     fn explicit_failure_is_not_synthesized_from_an_invocation_error() {
         let topology = WorkflowTopology {
             entry: "model".into(),
-            nodes: BTreeMap::from([node("model", &[(
-                "failed", WorkflowEdge::Fail,
-            )])]),
+            nodes: BTreeMap::from([node("model", &[("failed", WorkflowEdge::Fail)])]),
         };
         let workflow = topology.compile(|_| true).unwrap();
         let report = workflow.execute(
