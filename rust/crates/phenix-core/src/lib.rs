@@ -51,6 +51,8 @@ mod plugin_runtime_adapter_host_regression;
 #[cfg(test)]
 mod plugin_runtime_adapter_regression;
 #[cfg(test)]
+mod plugin_template_consumer_canary;
+#[cfg(test)]
 mod provider_availability_regression;
 #[cfg(test)]
 mod provider_fallback_regression;
