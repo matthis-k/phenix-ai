@@ -1,0 +1,29 @@
+name: Format incremental CI declarations
+
+on:
+  push:
+    branches:
+      - perf/dependency-derived-incremental-pr-ci
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Format Nix using canonical maintenance command
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"command":"fix","source":{"type":"maintenance-patch"}}' |
+            nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
+          echo 'FORMATTED_NIX_BEGIN'
+          cat modules/development.nix
+          echo 'FORMATTED_NIX_END'
