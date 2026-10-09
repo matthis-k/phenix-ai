@@ -1640,7 +1640,6 @@ impl CompiledWorkflow {
         })?;
         if let Some(mappings) = transfers.get(&outcome) {
             let frame = data
-                .as_deref_mut()
                 .ok_or_else(|| WorkflowRunError::StructuredFrameRequired { node: name.clone() })?;
             frame.transfer_slots(mappings).map_err(|error| {
                 WorkflowRunError::InvalidTransitionFrame {
