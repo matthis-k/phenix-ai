@@ -231,8 +231,8 @@ pub use workflow_join::{
     WorkflowJoinObservation, WorkflowJoinPolicy,
 };
 pub use workflow_projection::{
-    WORKFLOW_PROJECTION_REVISION, WorkflowOutcomeProjection, WorkflowProjectionError,
-    WorkflowProjectionSelector,
+    WORKFLOW_PROJECTION_REVISION, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
+    WorkflowProjectionError, WorkflowProjectionSelector,
 };
 pub use workflow_tasks::{
     WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
