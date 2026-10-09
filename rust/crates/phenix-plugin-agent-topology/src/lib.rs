@@ -104,8 +104,19 @@ pub fn agent_topology_declaration() -> WorkflowDeclaration {
 pub fn agent_topology_projections() -> Vec<WorkflowProjectionDeclaration> {
     let owner = ComponentId::parse(AGENT_TOPOLOGY_PLUGIN).expect("static component");
     [
-        ("turn", &["tool_calls", "final", "cancelled", "failed"][..]),
-        ("tool_batch", &["continue", "cancelled"][..]),
+        (
+            "turn",
+            &[
+                ("ToolCalls", "tool_calls"),
+                ("Final", "final"),
+                ("Cancelled", "cancelled"),
+                ("Failed", "failed"),
+            ][..],
+        ),
+        (
+            "tool_batch",
+            &[("Continue", "continue"), ("Cancelled", "cancelled")][..],
+        ),
     ]
     .into_iter()
     .map(|(node, variants)| WorkflowProjectionDeclaration {
@@ -117,7 +128,7 @@ pub fn agent_topology_projections() -> Vec<WorkflowProjectionDeclaration> {
             selector: WorkflowProjectionSelector::VariantTag,
             cases: variants
                 .iter()
-                .map(|name| ((*name).into(), (*name).into()))
+                .map(|(tag, outcome)| ((*tag).into(), (*outcome).into()))
                 .collect(),
         },
     })
