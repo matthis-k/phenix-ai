@@ -855,6 +855,18 @@ impl ResolvedGeneration {
                 });
             }
         }
+        // Resolve inclusions from the complete selected declaration set, never
+        // from a runtime provider search. Same-component reuse is the only
+        // permitted ownership scope in this first lowering form.
+        let selected_topologies: BTreeMap<_, _> = declarations
+            .iter()
+            .map(|declaration| {
+                (
+                    (declaration.owner.clone(), declaration.name.clone()),
+                    declaration.topology.clone(),
+                )
+            })
+            .collect();
         let mut compiled = BTreeMap::new();
         for declaration in &declarations {
             if declaration.name.trim().is_empty() {
@@ -871,9 +883,17 @@ impl ResolvedGeneration {
                     declaration.owner.clone(),
                 ));
             }
-            let workflow = declaration
-                .topology
-                .clone()
+            let topology = crate::WorkflowTopology::inline_selected(
+                &declaration.owner,
+                &declaration.name,
+                &selected_topologies,
+            )
+            .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                owner: declaration.owner.clone(),
+                name: declaration.name.clone(),
+                error,
+            })?;
+            let workflow = topology
                 .compile_for_component(self.component_graph(), &declaration.owner)
                 .map_err(|error| GenerationResolutionError::InvalidWorkflow {
                     owner: declaration.owner.clone(),
@@ -891,7 +911,7 @@ impl ResolvedGeneration {
         // A compiler semantic revision changes the meaning of identical
         // authored plan bytes. Version the canonical execution contract in
         // every pinned generation, not just the plugin-provided declarations.
-        const INVOKE_EXIT_LOWERING_REVISION: u32 = 1;
+        const INVOKE_EXIT_LOWERING_REVISION: u32 = 2;
         self.runtime.incorporate_semantic_metadata(&(
             "phenix.workflow-ir",
             INVOKE_EXIT_LOWERING_REVISION,
