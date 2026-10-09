@@ -1469,7 +1469,7 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
     };
 
     let typed = InterfaceSchema::new(Type::Unit, Type::String);
-    let mut owner = ComponentManifest {
+    let owner = ComponentManifest {
         id: component_id(TOPOLOGY),
         owner: plugin_id(TOPOLOGY),
         imports: vec![ComponentImport {
@@ -1572,10 +1572,11 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
         }) if selected == "tools" && reported == "final"
     ));
 
-    // The prior failed execution does not retry the first provider response.
-    // The next independent root starts a new execution with its own adapter.
+    // The failure is terminal; a separately admitted root may invoke the
+    // provider again and consumes its next response without implicit replay.
+    let next_root = kernel.root_execution_handle(&Authority::default());
     let mut visited = Vec::new();
-    let report = root.execute_workflow(
+    let report = next_root.execute_workflow(
         (&component_id(TOPOLOGY), "portable"),
         &mut visited,
         |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
@@ -1592,9 +1593,6 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
     assert_eq!(report.final_outcome, "final");
     assert_eq!(visited, ["model"]);
 
-    // Keep all imported bindings owned by the selected ResourceOnly plugin.
-    owner.imports.clear();
-    assert_eq!(owner.exports.len(), 0);
 }
 
 #[test]
