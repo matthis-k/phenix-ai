@@ -269,7 +269,14 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
     assert_eq!(report.executed_nodes, 6);
     assert_eq!(
         seen,
-        ["model", "alpha-tool", "beta-tool", "inner-one", "inner-two", "model"]
+        [
+            "model",
+            "alpha-tool",
+            "beta-tool",
+            "inner-one",
+            "inner-two",
+            "model"
+        ]
     );
     // Inner child-only modifications never escape an unselected Join slot.
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
@@ -403,34 +410,45 @@ fn quorum_one_settles_before_dispatching_unneeded_second_child() {
     ));
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
-        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
-        .frame_schema().unwrap().clone();
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let alpha = Key::parse("alpha").unwrap();
     let beta = Key::parse("beta").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (alpha.clone(), PhenixValue::U64(0)),
-        (beta.clone(), PhenixValue::U64(0)),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, _, seen| {
-            seen.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "alpha-tool" {
-                frame.set(&alpha, PhenixValue::U64(23)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<String, String>(outcome),
-                _ => Err("invalid provider result".into()),
-            }
-        },
-        || false, None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, _, seen| {
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "alpha-tool" {
+                    frame.set(&alpha, PhenixValue::U64(23)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                    _ => Err("invalid provider result".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.executed_nodes, 3);
     assert_eq!(seen, ["model", "alpha-tool", "model"]);
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(23)));
