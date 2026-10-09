@@ -1,0 +1,254 @@
+# Temporary conformance probe. Do not merge.
+name: Nix Cargo build-only source regression
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  parity-and-hashes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Compare Cargo closure against Nix parser for every packaged root
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --locked --offline --format-version 1 --manifest-path rust/Cargo.toml > "$RUNNER_TEMP/metadata.json"
+          nix eval --json --impure --expr '
+            let
+              flake = builtins.getFlake (toString ./.);
+              cs = import ./modules/cargo-source.nix { pkgs = flake.inputs.nixpkgs.legacyPackages.x86_64-linux; };
+              names = [
+                "phenix-core" "phenix-client" "phenix-runtime" "phenix-binding-lua"
+                "phenix-application-interface" "phenix-acp-stdio" "phenix-harness"
+              ];
+            in builtins.listToAttrs (map (name: { inherit name; value = cs.membersFor name; }) names)
+          ' > "$RUNNER_TEMP/nix-members.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          folder = Path(os.environ["RUNNER_TEMP"])
+          m = json.loads((folder/"metadata.json").read_text())
+          wanted = json.loads((folder/"nix-members.json").read_text())
+          packages = {p["id"]:p for p in m["packages"] if p["id"] in m["workspace_members"]}
+          by_name = {p["name"]:ident for ident,p in packages.items()}
+          by_dir = {Path(p["manifest_path"]).parent.resolve():ident for ident,p in packages.items()}
+          summary = ["| Cargo root | Nix crates | Cargo crates | Match |", "| --- | ---: | ---: | --- |"]
+          for name, paths in sorted(wanted.items()):
+              pending = [by_name[name]]
+              seen = set()
+              while pending:
+                  ident = pending.pop()
+                  if ident in seen: continue
+                  seen.add(ident)
+                  for dep in packages[ident].get("dependencies", []):
+                      if dep.get("path"):
+                          dependency_id = by_dir.get(Path(dep["path"]).resolve())
+                          if dependency_id is None: raise SystemExit("Cargo local path package missing: "+str(dep))
+                          pending.append(dependency_id)
+              cargo = {"crates/"+Path(packages[ident]["manifest_path"]).parent.name for ident in seen}
+              nix = set(paths)
+              ok = cargo == nix
+              summary.append(f"| {name} | {len(nix)} | {len(cargo)} | {'yes' if ok else 'NO'} |")
+              if not ok:
+                  print("Only in Cargo:", sorted(cargo-nix))
+                  print("Only in Nix:", sorted(nix-cargo))
+                  raise SystemExit("Nix/Cargo dependency mismatch for "+name)
+          print("\n".join(summary))
+          if os.environ.get("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                  f.write("\n".join(summary)+"\n")
+          PY
+
+      - name: Verify build-only source graph against Cargo metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --locked --offline --format-version 1 \
+            --manifest-path rust/Cargo.toml > "$RUNNER_TEMP/build-cargo.json"
+          nix eval --json --impure --expr '
+            let
+              f = builtins.getFlake (toString ./.);
+              cs = import ./modules/cargo-source.nix { pkgs = f.inputs.nixpkgs.legacyPackages.x86_64-linux; };
+              roots = [
+                "phenix-core" "phenix-client" "phenix-runtime" "phenix-binding-lua"
+                "phenix-application-interface" "phenix-acp-stdio" "phenix-harness"
+              ];
+            in builtins.listToAttrs (map (name: { inherit name; value = cs.membersForBuild name; }) roots)
+          ' > "$RUNNER_TEMP/build-nix.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          folder = Path(os.environ["RUNNER_TEMP"])
+          metadata = json.loads((folder/"build-cargo.json").read_text())
+          actual = json.loads((folder/"build-nix.json").read_text())
+          packages = {p["id"]: p for p in metadata["packages"]
+                      if p["id"] in metadata["workspace_members"]}
+          names = {p["name"]: ident for ident,p in packages.items()}
+          by_dir = {Path(p["manifest_path"]).parent.resolve(): ident for ident,p in packages.items()}
+          summary = ["| Build root | Nix source crates | Cargo build crates | Result |",
+                     "| --- | ---: | ---: | --- |"]
+          for name, nix_members in sorted(actual.items()):
+              pending = [names[name]]
+              visited = set()
+              while pending:
+                  ident = pending.pop()
+                  if ident in visited:
+                      continue
+                  visited.add(ident)
+                  for dep in packages[ident]["dependencies"]:
+                      if dep.get("kind") == "dev" or not dep.get("path"):
+                          continue
+                      target = by_dir.get(Path(dep["path"]).resolve())
+                      if target is None:
+                          raise SystemExit("Missing Cargo workspace member: "+str(dep))
+                      pending.append(target)
+              expected = {"crates/"+Path(packages[k]["manifest_path"]).parent.name
+                          for k in visited}
+              passed = expected == set(nix_members)
+              summary.append(f"| {name} | {len(nix_members)} | {len(expected)} | {'yes' if passed else 'NO'} |")
+              if not passed:
+                  print("Missing:", sorted(expected-set(nix_members)))
+                  print("Extra:", sorted(set(nix_members)-expected))
+                  raise SystemExit("Nix build closure mismatch for "+name)
+          print("\n".join(summary))
+          if os.environ.get("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as file:
+                  file.write("\n".join(summary)+"\n")
+          PY
+
+      - name: Verify dev-only crate edits preserve release artifact identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix eval --raw .#packages.x86_64-linux.phenix-product-rust-artifacts.drvPath > "$RUNNER_TEMP/before"
+          nix eval --raw --impure --expr '
+            let f = builtins.getFlake (toString ./.);
+                cs = import ./modules/cargo-source.nix { pkgs = f.inputs.nixpkgs.legacyPackages.x86_64-linux; };
+            in builtins.toJSON {
+                all = cs.membersFor "phenix-harness";
+                build = cs.membersForBuild "phenix-harness";
+            }
+          ' > "$RUNNER_TEMP/harness-members.json"
+          python3 - <<'PY' > "$RUNNER_TEMP/dev-only-path"
+          import json, sys, os
+          from pathlib import Path
+          d=json.loads(Path(os.environ["RUNNER_TEMP"],"harness-members.json").read_text())
+          dev=sorted(set(d["all"])-set(d["build"]))
+          print("Harness dev-only crates:", dev, file=sys.stderr)
+          for name in dev:
+              source=Path("rust", name, "src", "lib.rs")
+              if source.is_file():
+                  print(source)
+                  break
+          else: raise SystemExit("No independently editable dev-only crate found")
+          PY
+          path="$(cat "$RUNNER_TEMP/dev-only-path")"
+          printf '\n// Temporary CI-only dev-dependency source mutation.\n' >> "$path"
+          nix eval --raw .#packages.x86_64-linux.phenix-product-rust-artifacts.drvPath > "$RUNNER_TEMP/after"
+          git restore --worktree -- "$path"
+          cmp "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
+          echo "Product output unchanged after dev-only crate edit: $path"
+
+      - name: Check derivation identity under controlled file changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in baseline docs unrelated shared manifest; do
+            git restore --worktree -- spec/kernel-runtime-rfc.md rust/Cargo.toml \
+              rust/crates/phenix-binding-generator/src/lib.rs \
+              rust/crates/phenix-contract/src/lib.rs
+            case "$variant" in
+              baseline) ;;
+              docs) printf '\nNix source probe text.\n' >> spec/kernel-runtime-rfc.md ;;
+              unrelated) printf '\n// unrelated crate probe\n' >> rust/crates/phenix-binding-generator/src/lib.rs ;;
+              shared) printf '\n// shared contract probe\n' >> rust/crates/phenix-contract/src/lib.rs ;;
+              manifest) printf '\n# workspace manifest probe\n' >> rust/Cargo.toml ;;
+            esac
+            nix eval --json --impure --expr '
+              let
+                flake = builtins.getFlake (toString ./.);
+                names = [
+                  "phenix-core" "phenix-client" "phenix-runtime" "phenix-binding-lua"
+                  "phenix-application-interface" "phenix-acp-fixture" "phenix-product-rust-artifacts"
+                ];
+                packages = builtins.listToAttrs (map (name: {
+                  inherit name;
+                  value = (builtins.getAttr name flake.packages.x86_64-linux).drvPath;
+                }) names);
+              in packages // {
+                phenix-binding-lua-observable-callback =
+                  flake.checks.x86_64-linux.phenix-binding-lua-observable-callback.drvPath;
+                phenix-harness-resources = flake.packages.x86_64-linux.phenix-harness-resources.drvPath;
+              }
+            ' > "$RUNNER_TEMP/$variant.json"
+          done
+          git restore --worktree -- spec/kernel-runtime-rfc.md rust/Cargo.toml \
+            rust/crates/phenix-binding-generator/src/lib.rs \
+            rust/crates/phenix-contract/src/lib.rs
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          folder=Path(os.environ["RUNNER_TEMP"])
+          snaps={v:json.loads((folder/(v+".json")).read_text()) for v in ("baseline","docs","unrelated","shared","manifest")}
+          baseline=snaps["baseline"]
+          columns=["docs","unrelated","shared","manifest"]
+          lines=["| Nix derivation | "+" | ".join(columns)+" |",
+                 "| --- | "+" | ".join("---" for _ in columns)+" |"]
+          for package in sorted(baseline):
+              states=["changed" if snaps[v][package]!=baseline[package] else "same" for v in columns]
+              lines.append("| "+package+" | "+" | ".join(states)+" |")
+          print("\n".join(lines))
+          if os.environ.get("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+                  f.write("\n".join(lines)+"\n")
+          if snaps["docs"] != baseline: raise SystemExit("Docs-only invalidated derivations")
+          protected=["phenix-core","phenix-client","phenix-runtime","phenix-binding-lua",
+                     "phenix-application-interface","phenix-acp-fixture","phenix-product-rust-artifacts"]
+          for name in protected:
+              if snaps["manifest"][name]==baseline[name]:
+                  raise SystemExit("Cargo.toml change failed to invalidate "+name)
+          for name in ("phenix-core","phenix-product-rust-artifacts"):
+              if snaps["unrelated"][name]!=baseline[name]:
+                  raise SystemExit("Unrelated binding-generator change invalidated "+name)
+          if snaps["shared"]["phenix-core"]==baseline["phenix-core"]:
+              raise SystemExit("Shared dependency failed to invalidate core")
+          PY
+          git diff --exit-code
+
+  build-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+      - name: Build isolated Rust library and runtime packages
+        run: |
+          set -euo pipefail
+          nix build --no-link --print-build-logs \
+            .#packages.x86_64-linux.phenix-core \
+            .#packages.x86_64-linux.phenix-client \
+            .#packages.x86_64-linux.phenix-runtime \
+            .#packages.x86_64-linux.phenix-application-interface \
+            .#packages.x86_64-linux.phenix-acp-fixture
+
+  build-lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+      - name: Build Lua binding and run observable callback integration
+        run: |
+          set -euo pipefail
+          nix build --no-link --print-build-logs \
+            .#checks.x86_64-linux.phenix-binding-lua-load \
+            .#checks.x86_64-linux.phenix-binding-lua-observable-callback
