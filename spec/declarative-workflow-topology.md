@@ -299,6 +299,29 @@ provide typed input/output frame mappings, public slot identity, cross-owner
 selection, or patch integration. The compiler version is included in generation
 identity so an earlier compiled plan cannot be confused with this revision.
 
+## Typed execution frames
+
+Core now exposes versioned `WorkflowFrameSchema` and `WorkflowFrame`
+values. Selected workflow owners attach a frame contract using
+`ResolvedGeneration::with_workflow_frame_schemas`. Candidate preparation
+checks the target workflow and schema, rejects duplicate declarations, and
+includes the selected contract in generation identity. A frame-backed root
+rejects an absent or mismatched contract before invoking a provider.
+
+Frames are copy-on-write data snapshots with explicit initialization and
+typed slot updates. Recursive validation excludes live callable and object
+references, including values hidden under `Any`. Copying a frame never
+copies host authority. `collect_from` selects named branch outputs,
+checks schema identity, and rejects duplicate selectors. Failed response
+projection reverts that node's frame edits without replaying side effects.
+The ordinary workflow API is unchanged.
+
+These are data and dispatch contracts, not a full structured scheduler.
+Fork/Join nodes, cancellation of sibling scopes, typed input/output handoff
+for inlined subplans, and full selected-plan artifact discovery remain open.
+A new generation currently needs its own selected frame declarations; the
+reconfiguration path does not inherit an old owner's frame authority.
+
 ## Target-state Core IR boundary and migration gate
 
 **Normative target: [kernel RFC #736](https://github.com/matthis-k/phenix-ai/pull/736).** This section describes the eventual architecture, not functionality implemented by #726. The current `WorkflowTopology`, hand-authored Rust adapter, and legacy loop remain migration scaffolding until parity is proved. Do not turn the interim workflow representation into a second permanent Core executor or claim semantic completion from the current direct workflow fixture.
