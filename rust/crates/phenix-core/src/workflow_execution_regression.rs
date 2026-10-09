@@ -405,8 +405,7 @@ fn frame_aware_entry_requires_a_selected_schema_before_invocation() {
     .unwrap();
     let result = root.execute_workflow_with_frame(
         (&component_id(TOPOLOGY), "turn"),
-        &mut (),
-        &mut frame,
+        (&mut (), &mut frame),
         |_, _, _, _| -> Result<Vec<u8>, String> {
             panic!("an unselected frame schema must reject before preparing a service request")
         },
@@ -447,8 +446,7 @@ fn frame_entry_rejects_mismatched_schema_before_service_invocation() {
     .unwrap();
     let result = root.execute_workflow_with_frame(
         (&component_id(TOPOLOGY), "turn"),
-        &mut (),
-        &mut frame,
+        (&mut (), &mut frame),
         |_, _, _, _| -> Result<Vec<u8>, String> {
             panic!("mismatched schema must fail before request preparation")
         },
@@ -490,8 +488,7 @@ fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
     let report = root
         .execute_workflow_with_frame(
             (&component_id(TOPOLOGY), "turn"),
-            &mut seen,
-            &mut frame,
+            (&mut seen, &mut frame),
             |_, _, frame, _| {
                 assert!(matches!(
                     frame.get(&counter),
@@ -545,8 +542,7 @@ fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects
     .unwrap();
     let result = root.execute_workflow_with_frame(
         (&component_id(TOPOLOGY), "turn"),
-        &mut (),
-        &mut frame,
+        (&mut (), &mut frame),
         |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
         |_, _, _, frame, _| {
             frame.set(&counter, PhenixValue::U64(17)).unwrap();
