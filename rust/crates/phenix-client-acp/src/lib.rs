@@ -1,3 +1,4 @@
+// CI probe: changed ACP client source should lint only Cargo's impacted closure.
 #![forbid(unsafe_code)]
 
 use agent_client_protocol::schema::{
