@@ -738,24 +738,63 @@ impl WorkflowTopology {
                                 WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
                                     node: format!("{prefix}{node}"),
                                 }),
-                                WorkflowEdge::Finish if scoped.contains(child_name) => {
-                                    Ok(WorkflowEdge::Finish)
+                                WorkflowEdge::Transfer { node, slots } => {
+                                    Ok(WorkflowEdge::Transfer {
+                                        node: format!("{prefix}{node}"),
+                                        slots: slots.clone(),
+                                    })
+                                }
+                                WorkflowEdge::Finish | WorkflowEdge::FinishTransfer { .. }
+                                    if scoped.contains(child_name) =>
+                                {
+                                    Ok(edge.clone())
                                 }
                                 WorkflowEdge::Finish => {
                                     let terminal = format!("{child_outcome}/{suffix}");
                                     exits.insert(terminal.clone());
-                                    if outputs.is_some_and(|slots| !slots.is_empty()) {
-                                        return Err(WorkflowCompileError::InvalidFork {
-                                        node: child_name.to_owned(),
-                                        outcome: terminal,
-                                        reason: "mapped outputs from a terminal Join need an ordered Join transfer".into(),
-                                    });
-                                    }
+                                    let mapped = outputs.cloned().unwrap_or_default();
                                     match on_exit.get(&terminal) {
                                         Some(WorkflowEdge::Next { node }) => {
-                                            Ok(WorkflowEdge::Next { node: node.clone() })
+                                            if mapped.is_empty() {
+                                                Ok(WorkflowEdge::Next { node: node.clone() })
+                                            } else {
+                                                Ok(WorkflowEdge::Transfer {
+                                                    node: node.clone(),
+                                                    slots: mapped,
+                                                })
+                                            }
                                         }
-                                        Some(WorkflowEdge::Finish) => Ok(WorkflowEdge::Finish),
+                                        Some(WorkflowEdge::Finish) => {
+                                            if mapped.is_empty() {
+                                                Ok(WorkflowEdge::Finish)
+                                            } else {
+                                                Ok(WorkflowEdge::FinishTransfer { slots: mapped })
+                                            }
+                                        }
+                                        Some(WorkflowEdge::Transfer { node, slots }) => {
+                                            let mut combined = mapped;
+                                            let child_targets: BTreeSet<_> =
+                                                combined.values().cloned().collect();
+                                            for (source, target) in slots {
+                                                if child_targets.contains(source)
+                                                    || child_targets.contains(target)
+                                                    || combined.contains_key(source)
+                                                {
+                                                    return Err(
+                                                        WorkflowCompileError::InvalidFrameTransfer {
+                                                            node: child_name.to_owned(),
+                                                            outcome: terminal,
+                                                            reason: "ordered return transfers require distinct independent sources and destinations".into(),
+                                                        },
+                                                    );
+                                                }
+                                                combined.insert(source.clone(), target.clone());
+                                            }
+                                            Ok(WorkflowEdge::Transfer {
+                                                node: node.clone(),
+                                                slots: combined,
+                                            })
+                                        }
                                         Some(_) => {
                                             Err(WorkflowCompileError::InvalidJoinContinuation {
                                                 node: child_name.to_owned(),
