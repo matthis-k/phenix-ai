@@ -239,9 +239,7 @@ impl CompiledWorkflow {
         // Invoke performs its own single pre-dispatch cancellation check.
         // A redundant check here would change cancellation ordering and
         // turn terminal-after-invoke cancellation into a pre-call failure.
-        if !matches!(&self.plan.steps[&cursor.step], PlanStep::Invoke { .. })
-            && cancelled()
-        {
+        if !matches!(&self.plan.steps[&cursor.step], PlanStep::Invoke { .. }) && cancelled() {
             return Err(WorkflowRunError::Cancelled {
                 next_node: match &cursor.step {
                     PlanStepId::Invoke(node)
