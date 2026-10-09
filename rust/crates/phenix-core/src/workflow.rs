@@ -322,10 +322,10 @@ impl LoweredPlan {
                             outcome: outcome.clone(),
                         };
                         let (success, success_transfer) = Self::lower_join_return(
-                            on_success, name, outcome, "success", &mut steps
+                            on_success, name, outcome, "success", &mut steps,
                         );
                         let (failure, failure_transfer) = Self::lower_join_return(
-                            on_failure, name, outcome, "failure", &mut steps
+                            on_failure, name, outcome, "failure", &mut steps,
                         );
                         steps.insert(
                             fork.clone(),
@@ -374,10 +374,10 @@ impl LoweredPlan {
                             outcome: outcome.clone(),
                         };
                         let (success, success_transfer) = Self::lower_join_return(
-                            on_success, name, outcome, "success", &mut steps
+                            on_success, name, outcome, "success", &mut steps,
                         );
                         let (failure, failure_transfer) = Self::lower_join_return(
-                            on_failure, name, outcome, "failure", &mut steps
+                            on_failure, name, outcome, "failure", &mut steps,
                         );
                         steps.insert(
                             fork.clone(),
