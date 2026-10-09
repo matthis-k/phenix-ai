@@ -340,19 +340,38 @@ impl CompiledWorkflow {
             PlanStep::Join {
                 on_success,
                 on_failure,
+                on_success_transfer,
+                on_failure_transfer,
                 ..
             } => {
-                cursor.step = match cursor
+                let (next, transfer) = match cursor
                     .join_decision
                     .take()
                     .expect("Join must follow the settlement of its Fork")
                 {
-                    WorkflowJoinDecision::Succeeded { .. } => on_success.clone(),
-                    WorkflowJoinDecision::Failed { .. } => on_failure.clone(),
+                    WorkflowJoinDecision::Succeeded { .. } => (on_success, on_success_transfer),
+                    WorkflowJoinDecision::Failed { .. } => (on_failure, on_failure_transfer),
                     WorkflowJoinDecision::Pending => {
                         unreachable!("Join cannot resume pending scope")
                     }
                 };
+                if let Some(slots) = transfer {
+                    let PlanStepId::Join { node, .. } = &cursor.step else {
+                        unreachable!("compiled Join has a Join identity")
+                    };
+                    let frame = cursor.frame.as_mut().ok_or_else(|| {
+                        WorkflowRunError::StructuredFrameRequired { node: node.clone() }
+                    })?;
+                    // Child outputs have already been joined. Transfer observes
+                    // that completed frame and publishes one atomic update.
+                    frame.transfer_slots(slots).map_err(|error| {
+                        WorkflowRunError::InvalidTransitionFrame {
+                            node: node.clone(),
+                            error,
+                        }
+                    })?;
+                }
+                cursor.step = next.clone();
             }
             PlanStep::Exit { .. } => {}
         }
