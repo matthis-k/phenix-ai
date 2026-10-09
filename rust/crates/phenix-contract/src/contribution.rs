@@ -348,6 +348,22 @@ mod tests {
     }
 
     #[test]
+    fn portable_artifact_rejects_ambiguous_nested_payload_keys() {
+        let owner = PluginId::parse("acme.fixture").unwrap();
+        let ambiguous = br#"[{"owner":"acme.fixture","id":"acme.fixture.payload@1","kind":"acme.fixture.kind@1","role":"declare","payload":{"type":"table","value":{"selected":{"type":"string","value":"first"},"selected":{"type":"string","value":"second"}}}}]"#;
+        assert!(matches!(
+            ContributionSet::decode_owned(&owner, ambiguous),
+            Err(ContributionSetError::Serialization(_))
+        ));
+
+        let nested = br#"[{"owner":"acme.fixture","id":"acme.fixture.payload@1","kind":"acme.fixture.kind@1","role":"declare","payload":{"type":"list","value":[{"type":"map","value":{"selected":{"type":"bool","value":true},"selected":{"type":"bool","value":true}}}]}}]"#;
+        assert!(matches!(
+            ContributionSet::decode_selected([(&owner, nested.as_slice())]),
+            Err(ContributionSetError::Serialization(_))
+        ));
+    }
+
+    #[test]
     fn portable_artifact_decode_rejects_duplicate_declarations() {
         let item = contribution("acme.fixture.duplicate@1");
         let bytes = serde_json::to_vec(&vec![item.clone(), item]).unwrap();
