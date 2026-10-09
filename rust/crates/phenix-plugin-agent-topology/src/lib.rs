@@ -8,7 +8,8 @@ pub use runtime_adapter::run_agent_workflow;
 use phenix_core::{
     Authority, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
     PluginExecution, PluginId, PluginManifest, WorkflowDeclaration, WorkflowEdge, WorkflowNode,
-    WorkflowTopology,
+    WorkflowTopology, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
+    WorkflowProjectionSelector, WORKFLOW_PROJECTION_REVISION,
 };
 use phenix_sdk::{AgentToolBatchInterface, AgentTurnStepInterface};
 use std::collections::BTreeMap;
@@ -96,6 +97,28 @@ pub fn agent_topology_declaration() -> WorkflowDeclaration {
             ]),
         },
     }
+}
+
+/// Portable normal-result projection for the selected standard agent nodes.
+/// State transitions and usage validation remain with the agent adapter.
+pub fn agent_topology_projections() -> Vec<WorkflowProjectionDeclaration> {
+    let owner = ComponentId::parse(AGENT_TOPOLOGY_PLUGIN).expect("static component");
+    [
+        ("turn", &["tool_calls", "final", "cancelled", "failed"][..]),
+        ("tool_batch", &["continue", "cancelled"][..]),
+    ]
+    .into_iter()
+    .map(|(node, variants)| WorkflowProjectionDeclaration {
+        owner: owner.clone(),
+        workflow: "agent.turn".into(),
+        node: node.into(),
+        projection: WorkflowOutcomeProjection {
+            revision: WORKFLOW_PROJECTION_REVISION,
+            selector: WorkflowProjectionSelector::VariantTag,
+            cases: variants.iter().map(|name| ((*name).into(), (*name).into())).collect(),
+        },
+    })
+    .collect()
 }
 
 #[cfg(test)]
