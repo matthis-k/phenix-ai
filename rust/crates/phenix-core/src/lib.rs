@@ -28,6 +28,7 @@ mod tasks;
 mod workflow;
 mod workflow_frame;
 mod workflow_join;
+mod workflow_projection;
 mod workflow_tasks;
 
 extern crate self as phenix_core;
@@ -225,6 +226,10 @@ pub use workflow_frame::{
     WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema,
 };
 
+pub use workflow_projection::{
+    WORKFLOW_PROJECTION_REVISION, WorkflowOutcomeProjection, WorkflowProjectionError,
+    WorkflowProjectionSelector,
+};
 pub use workflow_tasks::{
     WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
 };
