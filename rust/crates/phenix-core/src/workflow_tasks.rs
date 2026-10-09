@@ -209,6 +209,10 @@ pub enum WorkflowNativeDispatchError {
     Invoke(KernelError),
 }
 
+/// Pending result of one generation-pinned component import invocation.
+pub type WorkflowPendingImport =
+    WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>;
+
 pub struct WorkflowNativeTaskGroup {
     root: RootExecutionHandle,
     shared: Arc<Mutex<NativeTaskLedger>>,
@@ -338,8 +342,7 @@ impl WorkflowNativeTaskGroup {
         scope: &str,
         import: ResolvedImportHandle,
         request: Vec<u8>,
-    ) -> Result<WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>, WorkflowTaskError>
-    {
+    ) -> Result<WorkflowPendingImport, WorkflowTaskError> {
         let bound_root = self.root.clone();
         self.spawn_classified(
             scope,
