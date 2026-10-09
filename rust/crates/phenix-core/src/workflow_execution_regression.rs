@@ -1463,9 +1463,9 @@ fn started_kernel(resolved: &ResolvedGeneration, log: &Arc<Mutex<Vec<&'static st
 #[test]
 fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retry() {
     use crate::{
-        WorkflowNodeDispatchError, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
-        WorkflowProjectionSelector, WorkflowRunError, WorkflowBoundCallError,
-        WORKFLOW_PROJECTION_REVISION,
+        WORKFLOW_PROJECTION_REVISION, WorkflowBoundCallError, WorkflowNodeDispatchError,
+        WorkflowOutcomeProjection, WorkflowProjectionDeclaration, WorkflowProjectionSelector,
+        WorkflowRunError,
     };
 
     let typed = InterfaceSchema::new(Type::Unit, Type::String);
@@ -1494,7 +1494,12 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
                 WorkflowNode {
                     import: InterfaceId::parse(MODEL).unwrap(),
                     branches: BTreeMap::from([
-                        ("tools".into(), WorkflowEdge::Next { node: "model".into() }),
+                        (
+                            "tools".into(),
+                            WorkflowEdge::Next {
+                                node: "model".into(),
+                            },
+                        ),
                         ("final".into(), WorkflowEdge::Finish),
                     ]),
                 },
@@ -1515,7 +1520,10 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
         },
     };
     let baseline = ResolvedGeneration::resolve(
-        [manifest(TOPOLOGY, PluginExecution::ResourceOnly), manifest(BASIC, PluginExecution::Embedded)],
+        [
+            manifest(TOPOLOGY, PluginExecution::ResourceOnly),
+            manifest(BASIC, PluginExecution::Embedded),
+        ],
         [owner.clone(), selected_provider],
         [],
         &Authority::default(),
@@ -1548,7 +1556,8 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
     assert_eq!(rebound.generation(), selected.generation());
     assert_eq!(rebound.workflow_projections(), &[selector.clone()]);
     assert_eq!(
-        rebound.generation_topology()
+        rebound
+            .generation_topology()
             .workflow(&component_id(TOPOLOGY), "portable")
             .unwrap()
             .outcome_projection("model"),
@@ -1564,9 +1573,14 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
 
     let mut kernel = Kernel::new(selected.kernel_config().clone());
     kernel.activate_resolved_generation(&selected).unwrap();
-    kernel.register_embedded_factory(plugin_id(BASIC), move || {
-        Box::new(MockNode { kind: "basic", model_calls: 0 })
-    }).unwrap();
+    kernel
+        .register_embedded_factory(plugin_id(BASIC), move || {
+            Box::new(MockNode {
+                kind: "basic",
+                model_calls: 0,
+            })
+        })
+        .unwrap();
     kernel.activate_all().unwrap();
     let root = kernel.root_execution_handle(&Authority::default());
     let result = root.execute_workflow(
@@ -1594,23 +1608,24 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
     // provider again and consumes its next response without implicit replay.
     let next_root = kernel.root_execution_handle(&Authority::default());
     let mut visited = Vec::new();
-    let report = next_root.execute_workflow(
-        (&component_id(TOPOLOGY), "portable"),
-        &mut visited,
-        |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
-        |node, _, bytes, state| {
-            state.push(node.to_owned());
-            match serde_json::from_slice::<PhenixValue>(bytes).unwrap() {
-                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                _ => Err("not a typed string outcome".into()),
-            }
-        },
-        || false,
-        None,
-    ).unwrap();
+    let report = next_root
+        .execute_workflow(
+            (&component_id(TOPOLOGY), "portable"),
+            &mut visited,
+            |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+            |node, _, bytes, state| {
+                state.push(node.to_owned());
+                match serde_json::from_slice::<PhenixValue>(bytes).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("not a typed string outcome".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.final_outcome, "final");
     assert_eq!(visited, ["model"]);
-
 }
 
 #[test]
@@ -1860,7 +1875,12 @@ fn reconciled_generation_preserves_typed_frame_contract_for_retained_workflows()
             &Authority::default(),
         )
         .unwrap();
-    assert!(retired.generation_topology().workflow(&owner, "turn").is_none());
+    assert!(
+        retired
+            .generation_topology()
+            .workflow(&owner, "turn")
+            .is_none()
+    );
 }
 
 #[test]
