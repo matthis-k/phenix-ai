@@ -190,6 +190,31 @@ impl WorkflowFrame {
         Ok(())
     }
 
+    /// Copy declared source fields into target fields as one atomic handoff.
+    ///
+    /// All reads observe the same pre-handoff snapshot, including swaps and
+    /// overlapping aliases. No partial target mutation is exposed if a slot
+    /// is missing or fails schema validation. This only moves data; it never
+    /// delegates authority or references to live host objects.
+    pub fn transfer_slots(
+        &mut self,
+        mappings: &BTreeMap<Key, Key>,
+    ) -> Result<(), WorkflowFrameError> {
+        let mut candidate = self.clone();
+        let mut destinations = BTreeSet::new();
+        for (source, target) in mappings {
+            if !destinations.insert(target) {
+                return Err(WorkflowFrameError::DuplicateOutputSlot(target.clone()));
+            }
+            let value = self
+                .get(source)
+                .ok_or_else(|| WorkflowFrameError::UnknownSlot(source.clone()))?;
+            candidate.set(target, value.clone())?;
+        }
+        *self = candidate;
+        Ok(())
+    }
+
     /// Explicitly select branch-produced data by slot. Unselected parent
     /// values remain intact. The caller must supply a schema-compatible branch.
     /// Core never combines or elevates the branches' authority.
@@ -241,6 +266,34 @@ mod tests {
             ]),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn mapped_handoff_is_atomic_and_sources_are_snapshot_isolated() {
+        let mut frame = frame();
+        frame.set(&key("counter"), PhenixValue::U64(42)).unwrap();
+        frame.set(&key("payload"), PhenixValue::U64(7)).unwrap();
+        let original = frame.clone();
+        assert!(frame.transfer_slots(&BTreeMap::from([
+            (key("counter"), key("payload")),
+            (key("payload"), key("missing")),
+        ])).is_err());
+        assert_eq!(frame, original);
+        assert!(matches!(
+            frame.transfer_slots(&BTreeMap::from([
+                (key("counter"), key("payload")),
+                (key("payload"), key("payload")),
+            ])),
+            Err(WorkflowFrameError::DuplicateOutputSlot(_))
+        ));
+        let mut frame = original.clone();
+        frame.transfer_slots(&BTreeMap::from([
+            (key("counter"), key("payload")),
+            (key("payload"), key("counter")),
+        ])).unwrap();
+        assert_eq!(frame.get(&key("counter")), Some(&PhenixValue::U64(7)));
+        assert_eq!(frame.get(&key("payload")), Some(&PhenixValue::U64(42)));
+        assert_eq!(original.get(&key("counter")), Some(&PhenixValue::U64(42)));
     }
 
     #[test]
