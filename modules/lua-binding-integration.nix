@@ -6,7 +6,7 @@ _: {
       observableCallbackFixture = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-observable-callback-fixture";
         version = "0";
-        src = (import ./cargo-source.nix { inherit pkgs; }).sourceFor "phenix-acp-stdio";
+        src = (import ./cargo-source.nix { inherit pkgs; }).sourceForWithDev "phenix-acp-stdio";
         cargoLock.lockFile = ../rust/Cargo.lock;
         doCheck = false;
 
