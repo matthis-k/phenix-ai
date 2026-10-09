@@ -92,6 +92,17 @@ pub enum WorkflowEdge {
         node: String,
     },
     Finish,
+    /// Admit named child scopes with independent frame snapshots. A generated
+    /// Join step resolves the closed policy and explicitly selected outputs.
+    Fork {
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        branches: BTreeMap<String, String>,
+        policy: crate::WorkflowJoinPolicy,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        outputs: BTreeMap<String, Vec<crate::Key>>,
+        on_success: Box<WorkflowEdge>,
+        on_failure: Box<WorkflowEdge>,
+    },
     /// Compile-time inclusion of a workflow authored by the same component.
     /// Each child finish outcome must map to one declared continuation.
     Include {
@@ -109,6 +120,8 @@ pub enum WorkflowEdge {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum PlanStepId {
     Invoke(String),
+    Fork { node: String, outcome: String },
+    Join { node: String, outcome: String },
     Exit { node: String, outcome: String },
 }
 
@@ -117,6 +130,16 @@ enum PlanStep {
     Invoke {
         import: InterfaceId,
         on_result: BTreeMap<String, PlanStepId>,
+    },
+    Fork {
+        branches: BTreeMap<String, PlanStepId>,
+        join: PlanStepId,
+    },
+    Join {
+        policy: crate::WorkflowJoinPolicy,
+        outputs: BTreeMap<String, Vec<crate::Key>>,
+        on_success: PlanStepId,
+        on_failure: PlanStepId,
     },
     Exit,
 }
@@ -145,6 +168,57 @@ impl LoweredPlan {
                         };
                         steps.insert(exit.clone(), PlanStep::Exit);
                         exit
+                    }
+                    WorkflowEdge::Fork {
+                        branches,
+                        policy,
+                        outputs,
+                        on_success,
+                        on_failure,
+                    } => {
+                        let fork = PlanStepId::Fork {
+                            node: name.clone(),
+                            outcome: outcome.clone(),
+                        };
+                        let join = PlanStepId::Join {
+                            node: name.clone(),
+                            outcome: outcome.clone(),
+                        };
+                        let lower_join_edge = |edge: &WorkflowEdge, suffix: &str, steps: &mut BTreeMap<PlanStepId, PlanStep>| {
+                            match edge {
+                                WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
+                                WorkflowEdge::Finish => {
+                                    let exit = PlanStepId::Exit {
+                                        node: name.clone(),
+                                        outcome: format!("{outcome}/{suffix}"),
+                                    };
+                                    steps.insert(exit.clone(), PlanStep::Exit);
+                                    exit
+                                }
+                                _ => unreachable!("join continuation is validated as Next or Finish"),
+                            }
+                        };
+                        let success = lower_join_edge(on_success, "success", &mut steps);
+                        let failure = lower_join_edge(on_failure, "failure", &mut steps);
+                        steps.insert(
+                            fork.clone(),
+                            PlanStep::Fork {
+                                branches: branches.iter().map(|(branch, entry)| (
+                                    branch.clone(), PlanStepId::Invoke(entry.clone())
+                                )).collect(),
+                                join: join.clone(),
+                            },
+                        );
+                        steps.insert(
+                            join,
+                            PlanStep::Join {
+                                policy: *policy,
+                                outputs: outputs.clone(),
+                                on_success: success,
+                                on_failure: failure,
+                            },
+                        );
+                        fork
                     }
                 };
                 on_result.insert(outcome.clone(), target);
@@ -207,6 +281,9 @@ pub enum WorkflowCompileError {
         node: String,
         outcome: String,
     },
+    InvalidFork { node: String, outcome: String, reason: String },
+    InvalidJoinContinuation { node: String, outcome: String },
+    NestedForkNotSupported { node: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -279,6 +356,8 @@ pub enum WorkflowRunError<E> {
         outcome: String,
     },
     StepCounterOverflow,
+    StructuredFrameRequired { node: String },
+    InvalidJoin { node: String, error: crate::WorkflowJoinError },
 }
 
 impl WorkflowTopology {
