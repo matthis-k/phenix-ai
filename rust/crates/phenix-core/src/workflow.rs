@@ -800,13 +800,15 @@ impl WorkflowTopology {
                     return Err(WorkflowCompileError::EmptyBranch { node: name.clone() });
                 }
                 match edge {
-                    WorkflowEdge::Next { node: target } if !self.nodes.contains_key(target) => {
+                    WorkflowEdge::Next { node: target }
+                    | WorkflowEdge::Transfer { node: target, .. }
+                        if !self.nodes.contains_key(target) => {
                         return Err(WorkflowCompileError::UnknownTarget {
                             from: name.clone(),
                             target: target.clone(),
                         });
                     }
-                    WorkflowEdge::Include { .. } => {
+                    WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
                         return Err(WorkflowCompileError::UnexpandedInclude {
                             node: name.clone(),
                             outcome: outcome.clone(),
@@ -951,7 +953,9 @@ impl WorkflowTopology {
             }
             for edge in self.nodes[&name].branches.values() {
                 match edge {
-                    WorkflowEdge::Next { node } => pending.push(node.clone()),
+                    WorkflowEdge::Next { node } | WorkflowEdge::Transfer { node, .. } => {
+                        pending.push(node.clone());
+                    },
                     WorkflowEdge::Fork {
                         branches,
                         on_success,
@@ -978,7 +982,8 @@ impl WorkflowTopology {
                             }
                         }
                     }
-                    WorkflowEdge::Finish | WorkflowEdge::Fail | WorkflowEdge::Include { .. } => {}
+                    WorkflowEdge::Finish | WorkflowEdge::Fail
+                    | WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {}
                 }
             }
         }
@@ -1032,7 +1037,8 @@ impl WorkflowTopology {
                         }
                         for next in self.nodes[&current].branches.values() {
                             match next {
-                                WorkflowEdge::Next { node } => visit.push(node.clone()),
+                                WorkflowEdge::Next { node }
+                                | WorkflowEdge::Transfer { node, .. } => visit.push(node.clone()),
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {}
                                 WorkflowEdge::MapFork {
                                     on_success,
@@ -1053,7 +1059,7 @@ impl WorkflowTopology {
                                         }
                                     }
                                 }
-                                WorkflowEdge::Include { .. } => {
+                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
                                     unreachable!("includes are rejected before reachability")
                                 }
                             }
@@ -1095,7 +1101,8 @@ impl WorkflowTopology {
                         continue;
                     }
                     for other_edge in other_node.branches.values() {
-                        if let WorkflowEdge::Next { node: target } = other_edge
+                        if let WorkflowEdge::Next { node: target }
+                        | WorkflowEdge::Transfer { node: target, .. } = other_edge
                             && owner_of.contains_key(target)
                         {
                             return Err(WorkflowCompileError::InvalidFork {
@@ -1217,10 +1224,11 @@ impl CompiledWorkflow {
     }
 
     pub(crate) fn requires_frame(&self) -> bool {
-        self.plan
-            .steps
-            .values()
-            .any(|step| matches!(step, PlanStep::Fork { .. }))
+        self.plan.steps.values().any(|step| match step {
+            PlanStep::Fork { .. } => true,
+            PlanStep::Invoke { transfers, .. } => !transfers.is_empty(),
+            _ => false,
+        })
     }
 
     pub(crate) fn validate_frame_schema(
