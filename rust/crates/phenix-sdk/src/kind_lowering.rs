@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
 //! Portable, data-only kind-template lowering during candidate preparation.
 //!
 //! This is Stage D's pure lowering kernel, not a registry of Tool, Skill or
 //! Agent kinds. Selected contributions and owner authenticity come from
 //! Stage B; Core still validates all emitted canonical contracts and grants.
 
+use serde::{Deserialize, Serialize};
 use crate::{PhenixValue, Type};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
