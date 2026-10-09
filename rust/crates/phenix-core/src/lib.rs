@@ -238,6 +238,7 @@ pub use workflow_projection::{
     WorkflowProjectionError, WorkflowProjectionSelector,
 };
 pub use workflow_tasks::{
-    WorkflowNativeDispatchError, WorkflowNativeTask, WorkflowNativeTaskGroup, WorkflowPendingImport, WorkflowPendingTasks,
-    WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
+    WorkflowNativeDispatchError, WorkflowNativeTask, WorkflowNativeTaskGroup,
+    WorkflowPendingImport, WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId,
+    WorkflowTaskState,
 };
