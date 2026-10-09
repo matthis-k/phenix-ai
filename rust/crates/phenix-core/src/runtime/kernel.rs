@@ -744,6 +744,25 @@ impl RootExecutionHandle {
         WorkflowRunReport,
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
+        let (owner, name) = workflow;
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        let expected = compiled.frame_schema().ok_or_else(|| {
+            WorkflowRunError::MissingFrameSchema {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        if expected != frame.schema() {
+            return Err(WorkflowRunError::FrameSchemaMismatch {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            });
+        }
         self.execute_workflow(
             workflow,
             &mut (state, frame),
