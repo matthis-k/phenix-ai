@@ -5,7 +5,8 @@
 //! must retain the root's existing generation lease while these are live.
 
 use crate::{
-    Authority, CancellationToken, RootExecutionHandle, TaskCancellationHandle, TaskHandle,
+    Authority, CancellationToken, KernelError, ResolvedImportHandle, RootExecutionHandle,
+    TaskCancellationHandle, TaskHandle,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -200,6 +201,15 @@ impl WorkflowPendingTasks {
 /// A single workflow root's host-side native tasks. Every admitted worker
 /// owns a clone of the pinned root lease until its callback settles, even if
 /// the caller drops its task result or cancels the enclosing group.
+/// Errors from a pending bound provider call never become normal plan
+/// outcomes. The caller resumes the original compiled Invoke with this
+/// result, or settles the root with a typed invocation failure.
+#[derive(Debug)]
+pub enum WorkflowNativeDispatchError {
+    Cancelled,
+    Invoke(KernelError),
+}
+
 pub struct WorkflowNativeTaskGroup {
     root: RootExecutionHandle,
     shared: Arc<Mutex<NativeTaskLedger>>,
@@ -216,13 +226,14 @@ struct NativeTaskLedger {
 struct NativeTaskSettlement {
     id: WorkflowTaskId,
     shared: Arc<Mutex<NativeTaskLedger>>,
-    complete: bool,
+    terminal: WorkflowTaskState,
     completion_tx: Sender<WorkflowTaskId>,
 }
 
 impl NativeTaskSettlement {
-    fn completed(&mut self) {
-        self.complete = true;
+    fn settle_as(&mut self, terminal: WorkflowTaskState) {
+        debug_assert!(terminal.terminal());
+        self.terminal = terminal;
     }
 }
 
@@ -232,12 +243,7 @@ impl Drop for NativeTaskSettlement {
         shared.signals.remove(&self.id);
         // A provider panic is a failed terminal settlement, not a
         // completed normal result. Cancellation alone is not settlement.
-        let terminal = if self.complete {
-            WorkflowTaskState::Completed
-        } else {
-            WorkflowTaskState::Failed
-        };
-        let result = shared.pending.settle(&self.id, terminal);
+        let result = shared.pending.settle(&self.id, self.terminal);
         debug_assert!(result.is_ok(), "a worker must settle its ticket once");
         drop(shared);
         // The scheduler receives a wakeup only after actual settlement.
@@ -321,6 +327,58 @@ impl WorkflowNativeTaskGroup {
         T: Send + 'static,
         F: FnOnce(CancellationToken) -> T + Send + 'static,
     {
+        self.spawn_classified(scope, requested_authority, worker, |_| {
+            WorkflowTaskState::Completed
+        })
+    }
+
+    /// Admit a real selected provider call into a native worker. The existing
+    /// kernel performs all import, authority, and Layer checks against this
+    /// group's pinned generation. The callback result is never fabricated
+    /// as a normal plan edge and failure never triggers provider fallback.
+    pub fn dispatch_import_pending(
+        &self,
+        scope: &str,
+        import: ResolvedImportHandle,
+        request: Vec<u8>,
+    ) -> Result<WorkflowNativeTask<Result<Vec<u8>, WorkflowNativeDispatchError>>, WorkflowTaskError>
+    {
+        let bound_root = self.root.clone();
+        self.spawn_classified(
+            scope,
+            self.root.authority(),
+            move |token| {
+                if token.is_cancelled() {
+                    return Err(WorkflowNativeDispatchError::Cancelled);
+                }
+                let response = bound_root
+                    .invoke_import(&import, &request)
+                    .map_err(WorkflowNativeDispatchError::Invoke)?;
+                if token.is_cancelled() {
+                    return Err(WorkflowNativeDispatchError::Cancelled);
+                }
+                Ok(response)
+            },
+            |result| match result {
+                Ok(_) => WorkflowTaskState::Completed,
+                Err(WorkflowNativeDispatchError::Cancelled) => WorkflowTaskState::Cancelled,
+                Err(WorkflowNativeDispatchError::Invoke(_)) => WorkflowTaskState::Failed,
+            },
+        )
+    }
+
+    fn spawn_classified<T, F, C>(
+        &self,
+        scope: &str,
+        requested_authority: &Authority,
+        worker: F,
+        classify: C,
+    ) -> Result<WorkflowNativeTask<T>, WorkflowTaskError>
+    where
+        T: Send + 'static,
+        F: FnOnce(CancellationToken) -> T + Send + 'static,
+        C: FnOnce(&T) -> WorkflowTaskState + Send + 'static,
+    {
         let call = self
             .next_call
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -341,7 +399,7 @@ impl WorkflowNativeTaskGroup {
         let settlement = NativeTaskSettlement {
             id: id.clone(),
             shared: Arc::clone(&self.shared),
-            complete: false,
+            terminal: WorkflowTaskState::Failed,
             completion_tx: self.completion_tx.clone(),
         };
         let task = self.root.spawn_native_workflow_task(requested_authority, move |token| {
@@ -350,7 +408,7 @@ impl WorkflowNativeTaskGroup {
             let _lease = lease;
             let mut settlement = settlement;
             let result = worker(token);
-            settlement.completed();
+            settlement.settle_as(classify(&result));
             result
         });
         shared.signals.insert(id.clone(), task.cancellation_handle());
