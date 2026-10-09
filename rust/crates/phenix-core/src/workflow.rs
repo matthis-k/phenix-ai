@@ -1367,15 +1367,37 @@ impl CompiledWorkflow {
                                 });
                             }
                         };
-                        if items.is_empty() || items.len() > spec.max_children {
+                        if items.len() > spec.max_children {
                             return Err(WorkflowRunError::InvalidMapInput {
                                 node: node.clone(),
                                 reason: format!(
-                                    "map admits 1..={} children; got {}",
+                                    "map admits at most {} children; got {}",
                                     spec.max_children,
                                     items.len()
                                 ),
                             });
+                        }
+                        if items.is_empty() {
+                            if !matches!(policy, crate::WorkflowJoinPolicy::All(_)) {
+                                return Err(WorkflowRunError::InvalidMapInput {
+                                    node: node.clone(),
+                                    reason: "empty map needs an All join policy".into(),
+                                });
+                            }
+                            let mut candidate = data.clone();
+                            candidate
+                                .set(&spec.output_slot, crate::PhenixValue::List(Vec::new()))
+                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
+                                    node: node.clone(),
+                                    error,
+                                })?;
+                            *data = candidate;
+                            join_result = Some(crate::WorkflowJoinDecision::Succeeded {
+                                selected: Vec::new(),
+                                cancel_remaining: false,
+                            });
+                            current = join.clone();
+                            continue;
                         }
                         if let crate::WorkflowJoinPolicy::Quorum(required) = policy
                             && required.get() > items.len()
