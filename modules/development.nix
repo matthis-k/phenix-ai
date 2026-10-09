@@ -168,6 +168,10 @@
           inherit name;
           needs = [ ];
           runtimeInputs = rustUnitRuntimeInputs;
+          impact = {
+            kind = "cargo";
+            inherit packages;
+          };
           exec = ''
             ${rustRoot}
 
@@ -280,39 +284,57 @@
               '';
             };
 
-            adapter-domain = {
-              name = "Adapter and domain tests";
-              needs = [ ];
-              runtimeInputs = pkgs: [
-                pkgs.cargo
-                pkgs.git
-                pkgs.rustc
-              ];
-              exec = ''
-                ${rustRoot}
-                cargo test --quiet --locked \
-                  -p phenix-adapter-acp \
-                  -p phenix-domain \
-                  --tests
-              '';
-            };
+            adapter-domain =
+              let
+                packages = [
+                  "phenix-adapter-acp"
+                  "phenix-domain"
+                ];
+              in
+              {
+                name = "Adapter and domain tests";
+                impact = {
+                  kind = "cargo";
+                  inherit packages;
+                };
+                needs = [ ];
+                runtimeInputs = pkgs: [
+                  pkgs.cargo
+                  pkgs.git
+                  pkgs.rustc
+                ];
+                exec = ''
+                  ${rustRoot}
+                  cargo test --quiet --locked \
+                    ${pkgs.lib.concatMapStringsSep " " (package: "-p ${package}") packages} \
+                    --tests
+                '';
+              };
 
-            harness = {
-              name = "Harness code tests";
-              needs = [ ];
-              runtimeInputs = pkgs: [
-                pkgs.cargo
-                pkgs.git
-                pkgs.rustc
-              ];
-              exec = ''
-                ${rustRoot}
-                cargo test --quiet --locked -p phenix-harness \
-                  --test acp_session_lifecycle \
-                  --test component_graph \
-                  --test supported_product_journeys
-              '';
-            };
+            harness =
+              let
+                package = "phenix-harness";
+              in
+              {
+                name = "Harness code tests";
+                impact = {
+                  kind = "cargo";
+                  packages = [ package ];
+                };
+                needs = [ ];
+                runtimeInputs = pkgs: [
+                  pkgs.cargo
+                  pkgs.git
+                  pkgs.rustc
+                ];
+                exec = ''
+                  ${rustRoot}
+                  cargo test --quiet --locked -p ${package} \
+                    --test acp_session_lifecycle \
+                    --test component_graph \
+                    --test supported_product_journeys
+                '';
+              };
           };
 
           runtime = {
@@ -402,6 +424,10 @@
           enable = true;
           outputName = "phenix-maintenance";
           # Fast feedback on PRs; full semantic CI runs on main and workflow_dispatch.
+          prImpact = {
+            enable = true;
+            workspace = "rust";
+          };
           pullRequestJobs = [
             "source"
             "clippy"
@@ -619,6 +645,10 @@
                 ci = {
                   enable = true;
                   stage = "clippy";
+                  impact = {
+                    kind = "cargo";
+                    packages = null;
+                  };
                   name = "Clippy";
                   stepName = "Clippy";
                   timeoutMinutes = 60;
