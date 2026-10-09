@@ -40,6 +40,7 @@ pub enum WorkflowProjectionError {
     UnknownDiscriminant(String),
     UnknownEdge { discriminant: String, outcome: String },
     MissingVariantCase(String),
+    UnknownVariantCase(String),
     InvalidResult,
 }
 
@@ -64,6 +65,11 @@ impl WorkflowOutcomeProjection {
                         return Err(WorkflowProjectionError::MissingVariantCase(name.to_string()));
                     }
                 }
+                for name in self.cases.keys() {
+                    if !variants.keys().any(|candidate| candidate.as_str() == name) {
+                        return Err(WorkflowProjectionError::UnknownVariantCase(name.clone()));
+                    }
+                }
             }
             (WorkflowProjectionSelector::TableString(field), Type::Table(fields))
                 if fields.get(field) == Some(&Type::String) => {}
@@ -79,6 +85,19 @@ impl WorkflowOutcomeProjection {
             }
         }
         Ok(())
+    }
+
+    /// Validate the complete structural result before reading its discriminant.
+    /// A provider cannot return a valid tag with an invalid typed payload.
+    pub fn project_checked(
+        &self,
+        result_schema: &Type,
+        result: &PhenixValue,
+    ) -> Result<String, WorkflowProjectionError> {
+        result_schema
+            .parse(result)
+            .map_err(|_| WorkflowProjectionError::InvalidResult)?;
+        self.project(result)
     }
 
     /// Runtime normal-result projection. Unrecognized results do not become
@@ -137,6 +156,15 @@ mod tests {
             projection.project(&PhenixValue::String("answer".into())),
             Err(WorkflowProjectionError::InvalidResult)
         ));
+        let forged_payload = PhenixValue::Variant {
+            tag: key("request_tool"),
+            value: Box::new(PhenixValue::U64(3)),
+        };
+        assert_eq!(
+            projection.project_checked(&schema, &forged_payload),
+            Err(WorkflowProjectionError::InvalidResult)
+        );
+        assert_eq!(projection.project_checked(&schema, &value), Ok("continue".into()));
         let bytes = serde_json::to_vec(&projection).unwrap();
         assert_eq!(serde_json::from_slice::<WorkflowOutcomeProjection>(&bytes).unwrap(), projection);
     }
