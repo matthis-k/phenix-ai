@@ -992,11 +992,20 @@ impl ResolvedGeneration {
                 already_bound += 1;
             }
         }
-        if already_bound == declarations.len() {
-            return Ok(self);
-        }
-        if already_bound != 0 {
-            return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
+        // Publish the complete frame-contract set in one batch. Otherwise
+        // attaching A then B would hash in a different order from B then A.
+        let selected_bound = self
+            .runtime
+            .workflows
+            .values()
+            .filter(|workflow| workflow.frame_schema().is_some())
+            .count();
+        if selected_bound != 0 {
+            return if already_bound == selected_bound && already_bound == declarations.len() {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::FrameSchemasAlreadyBound)
+            };
         }
         const FRAME_CONTRACT_REVISION: u32 = 1;
         self.runtime.incorporate_semantic_metadata(
