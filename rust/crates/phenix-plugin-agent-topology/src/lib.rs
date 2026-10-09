@@ -7,9 +7,9 @@ pub use runtime_adapter::run_agent_workflow;
 
 use phenix_core::{
     Authority, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginExecution, PluginId, PluginManifest, WorkflowDeclaration, WorkflowEdge, WorkflowNode,
-    WorkflowTopology, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
-    WorkflowProjectionSelector, WORKFLOW_PROJECTION_REVISION,
+    PluginExecution, PluginId, PluginManifest, WORKFLOW_PROJECTION_REVISION, WorkflowDeclaration,
+    WorkflowEdge, WorkflowNode, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
+    WorkflowProjectionSelector, WorkflowTopology,
 };
 use phenix_sdk::{AgentToolBatchInterface, AgentTurnStepInterface};
 use std::collections::BTreeMap;
@@ -115,7 +115,10 @@ pub fn agent_topology_projections() -> Vec<WorkflowProjectionDeclaration> {
         projection: WorkflowOutcomeProjection {
             revision: WORKFLOW_PROJECTION_REVISION,
             selector: WorkflowProjectionSelector::VariantTag,
-            cases: variants.iter().map(|name| ((*name).into(), (*name).into())).collect(),
+            cases: variants
+                .iter()
+                .map(|name| ((*name).into(), (*name).into()))
+                .collect(),
         },
     })
     .collect()
@@ -271,7 +274,10 @@ mod tests {
             .cases
             .insert("final".into(), "undeclared".into());
         let base = ResolvedGeneration::resolve(
-            [agent_topology_manifest(authority.clone()), providers.clone()],
+            [
+                agent_topology_manifest(authority.clone()),
+                providers.clone(),
+            ],
             components.clone(),
             [],
             &authority,
