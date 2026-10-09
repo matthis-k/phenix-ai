@@ -24,11 +24,26 @@ pub struct SlotInsertion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SlotOrderError {
     DuplicateContribution(String),
-    DuplicateNode { slot: String, node: String },
-    MissingDependency { contribution: String, dependency: String },
-    CrossSlotDependency { contribution: String, dependency: String },
-    CyclicOrder { slot: String },
-    AmbiguousEffects { slot: String, first: String, second: String },
+    DuplicateNode {
+        slot: String,
+        node: String,
+    },
+    MissingDependency {
+        contribution: String,
+        dependency: String,
+    },
+    CrossSlotDependency {
+        contribution: String,
+        dependency: String,
+    },
+    CyclicOrder {
+        slot: String,
+    },
+    AmbiguousEffects {
+        slot: String,
+        first: String,
+        second: String,
+    },
 }
 
 /// Resolve slot order without depending on plugin enumeration order.
@@ -44,7 +59,9 @@ pub fn resolve_slot_order(
     let mut node_identities = BTreeSet::new();
     for item in insertions {
         if all.insert(item.contribution.clone(), item).is_some() {
-            return Err(SlotOrderError::DuplicateContribution(item.contribution.clone()));
+            return Err(SlotOrderError::DuplicateContribution(
+                item.contribution.clone(),
+            ));
         }
         if !node_identities.insert((item.slot.clone(), item.node.clone())) {
             return Err(SlotOrderError::DuplicateNode {
@@ -56,7 +73,10 @@ pub fn resolve_slot_order(
     let mut slots: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut successors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for item in all.values() {
-        slots.entry(item.slot.clone()).or_default().insert(item.contribution.clone());
+        slots
+            .entry(item.slot.clone())
+            .or_default()
+            .insert(item.contribution.clone());
         for dependency in &item.after {
             let Some(prerequisite) = all.get(dependency) else {
                 return Err(SlotOrderError::MissingDependency {
@@ -70,21 +90,20 @@ pub fn resolve_slot_order(
                     dependency: dependency.clone(),
                 });
             }
-            successors.entry(dependency.clone()).or_default().insert(item.contribution.clone());
+            successors
+                .entry(dependency.clone())
+                .or_default()
+                .insert(item.contribution.clone());
         }
     }
     let mut result = BTreeMap::new();
     for (slot, members) in slots {
         // An explicit path is required between *every* effectful pair. A
         // deterministic implementation tie-breaker cannot authorize order.
-        let effects: Vec<_> = members
-            .iter()
-            .filter(|id| all[*id].effectful)
-            .collect();
+        let effects: Vec<_> = members.iter().filter(|id| all[*id].effectful).collect();
         for (index, first) in effects.iter().enumerate() {
             for second in effects.iter().skip(index + 1) {
-                if !reachable(first, second, &successors)
-                    && !reachable(second, first, &successors)
+                if !reachable(first, second, &successors) && !reachable(second, first, &successors)
                 {
                     return Err(SlotOrderError::AmbiguousEffects {
                         slot,
@@ -98,7 +117,9 @@ pub fn resolve_slot_order(
             members.iter().map(|id| (id.clone(), 0)).collect();
         for member in &members {
             for next in successors.get(member).into_iter().flatten() {
-                *indegree.get_mut(next).expect("validated same-slot ordering") += 1;
+                *indegree
+                    .get_mut(next)
+                    .expect("validated same-slot ordering") += 1;
             }
         }
         let mut ready: BTreeSet<String> = indegree
@@ -127,11 +148,7 @@ pub fn resolve_slot_order(
     Ok(result)
 }
 
-fn reachable(
-    start: &str,
-    target: &str,
-    successors: &BTreeMap<String, BTreeSet<String>>,
-) -> bool {
+fn reachable(start: &str, target: &str, successors: &BTreeMap<String, BTreeSet<String>>) -> bool {
     let mut visited = BTreeSet::new();
     let mut pending = vec![start.to_owned()];
     while let Some(node) = pending.pop() {
@@ -175,7 +192,10 @@ mod tests {
         let mut reversed = original.clone();
         reversed.reverse();
         let expected = BTreeMap::from([
-            ("tools.before".into(), vec!["a".into(), "b".into(), "c".into()]),
+            (
+                "tools.before".into(),
+                vec!["a".into(), "b".into(), "c".into()],
+            ),
             ("audit".into(), vec!["z".into()]),
         ]);
         assert_eq!(resolve_slot_order(&original), Ok(expected.clone()));
