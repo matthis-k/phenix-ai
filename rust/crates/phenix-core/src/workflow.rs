@@ -603,11 +603,17 @@ impl WorkflowTopology {
             for (parent_name, parent_node) in &source.nodes {
                 for (outcome, edge) in &parent_node.branches {
                     let (workflow, site, on_exit, inputs, outputs) = match edge {
-                        WorkflowEdge::Include { workflow, site, on_exit } => {
-                            (workflow, site, on_exit, None, None)
-                        }
+                        WorkflowEdge::Include {
+                            workflow,
+                            site,
+                            on_exit,
+                        } => (workflow, site, on_exit, None, None),
                         WorkflowEdge::IncludeMapped {
-                            workflow, site, on_exit, inputs, outputs,
+                            workflow,
+                            site,
+                            on_exit,
+                            inputs,
+                            outputs,
                         } => (workflow, site, on_exit, Some(inputs), Some(outputs)),
                         _ => continue,
                     };
@@ -644,19 +650,23 @@ impl WorkflowTopology {
                                     }
                                     declared_exits.insert(child_outcome.clone());
                                     match on_exit.get(child_outcome) {
-                                        Some(WorkflowEdge::Next { node }) => {
-                                            match outputs {
-                                                Some(slots) if !slots.is_empty() => WorkflowEdge::Transfer {
+                                        Some(WorkflowEdge::Next { node }) => match outputs {
+                                            Some(slots) if !slots.is_empty() => {
+                                                WorkflowEdge::Transfer {
                                                     node: node.clone(),
                                                     slots: (*slots).clone(),
-                                                },
-                                                _ => WorkflowEdge::Next { node: node.clone() },
+                                                }
                                             }
-                                        }
+                                            _ => WorkflowEdge::Next { node: node.clone() },
+                                        },
                                         Some(WorkflowEdge::Transfer { .. }) => {
-                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                            return Err(
+                                                WorkflowCompileError::UnsupportedReturnInclude,
+                                            );
                                         }
-                                        Some(WorkflowEdge::Finish) if outputs.is_some_and(|slots| !slots.is_empty()) => {
+                                        Some(WorkflowEdge::Finish)
+                                            if outputs.is_some_and(|slots| !slots.is_empty()) =>
+                                        {
                                             return Err(WorkflowCompileError::InvalidFork {
                                                 node: child_name.clone(),
                                                 outcome: child_outcome.clone(),
@@ -671,7 +681,10 @@ impl WorkflowTopology {
                                                 reason: "subplan return cannot produce a scoped child failure".into(),
                                             });
                                         }
-                                        Some(WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. }) => {
+                                        Some(
+                                            WorkflowEdge::Include { .. }
+                                            | WorkflowEdge::IncludeMapped { .. },
+                                        ) => {
                                             return Err(
                                                 WorkflowCompileError::UnsupportedReturnInclude,
                                             );
@@ -700,7 +713,8 @@ impl WorkflowTopology {
                                         }
                                     }
                                 }
-                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
+                                WorkflowEdge::Include { .. }
+                                | WorkflowEdge::IncludeMapped { .. } => {
                                     return Err(WorkflowCompileError::UnexpandedInclude {
                                         node: child_name.clone(),
                                         outcome: child_outcome.clone(),
@@ -839,7 +853,8 @@ impl WorkflowTopology {
                 match edge {
                     WorkflowEdge::Next { node: target }
                     | WorkflowEdge::Transfer { node: target, .. }
-                        if !self.nodes.contains_key(target) => {
+                        if !self.nodes.contains_key(target) =>
+                    {
                         return Err(WorkflowCompileError::UnknownTarget {
                             from: name.clone(),
                             target: target.clone(),
@@ -992,7 +1007,7 @@ impl WorkflowTopology {
                 match edge {
                     WorkflowEdge::Next { node } | WorkflowEdge::Transfer { node, .. } => {
                         pending.push(node.clone());
-                    },
+                    }
                     WorkflowEdge::Fork {
                         branches,
                         on_success,
@@ -1019,8 +1034,10 @@ impl WorkflowTopology {
                             }
                         }
                     }
-                    WorkflowEdge::Finish | WorkflowEdge::Fail
-                    | WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {}
+                    WorkflowEdge::Finish
+                    | WorkflowEdge::Fail
+                    | WorkflowEdge::Include { .. }
+                    | WorkflowEdge::IncludeMapped { .. } => {}
                 }
             }
         }
@@ -1096,7 +1113,8 @@ impl WorkflowTopology {
                                         }
                                     }
                                 }
-                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
+                                WorkflowEdge::Include { .. }
+                                | WorkflowEdge::IncludeMapped { .. } => {
                                     unreachable!("includes are rejected before reachability")
                                 }
                             }
@@ -1481,7 +1499,8 @@ impl CompiledWorkflow {
             import,
             on_result,
             transfers,
-        } = &self.plan.steps[cursor] else {
+        } = &self.plan.steps[cursor]
+        else {
             unreachable!("compiled Invoke has an Invoke step")
         };
         if cancelled() {
@@ -1514,17 +1533,16 @@ impl CompiledWorkflow {
         *count = count
             .checked_add(1)
             .ok_or(WorkflowRunError::StepCounterOverflow)?;
-        let target = on_result
-            .get(&outcome)
-            .cloned()
-            .ok_or_else(|| WorkflowRunError::UndeclaredOutcome {
+        let target = on_result.get(&outcome).cloned().ok_or_else(|| {
+            WorkflowRunError::UndeclaredOutcome {
                 node: name.clone(),
                 outcome: outcome.clone(),
-            })?;
+            }
+        })?;
         if let Some(mappings) = transfers.get(&outcome) {
-            let frame = data.as_deref_mut().ok_or_else(|| {
-                WorkflowRunError::StructuredFrameRequired { node: name.clone() }
-            })?;
+            let frame = data
+                .as_deref_mut()
+                .ok_or_else(|| WorkflowRunError::StructuredFrameRequired { node: name.clone() })?;
             frame.transfer_slots(mappings).map_err(|error| {
                 WorkflowRunError::InvalidTransitionFrame {
                     node: name.clone(),
