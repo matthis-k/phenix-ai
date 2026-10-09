@@ -5,6 +5,7 @@ use crate::{
     ResolvedComponentGraph, ResolvedCompositionMetadata, ResolvedConfigContributions,
     ResolvedGeneration, ResolvedListener, ServiceId, SkillResourceMetadata, WorkflowDeclaration,
 };
+use phenix_contract::ContributionSet;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -14,6 +15,7 @@ pub struct ResolvedGenerationInspection {
     components: Vec<ComponentManifest>,
     workflows: Vec<WorkflowDeclaration>,
     workflow_node_providers: BTreeMap<(ComponentId, String, String), ComponentId>,
+    portable_contributions: Option<ContributionSet>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
     resources: Vec<SkillResourceMetadata>,
@@ -61,6 +63,7 @@ impl ResolvedGenerationInspection {
             components: resolved.components().to_vec(),
             workflows: resolved.workflows().to_vec(),
             workflow_node_providers,
+            portable_contributions: resolved.portable_contributions().cloned(),
             entry_triggers: resolved.entry_triggers().to_vec(),
             process_arguments: resolved.process_arguments().to_vec(),
             resources: resolved.resources().to_vec(),
@@ -117,6 +120,10 @@ impl ResolvedGenerationInspection {
         Ok(self
             .workflow_node_providers
             .get(&(owner.clone(), name.to_owned(), node.to_owned())))
+    }
+
+    pub fn portable_contributions(&self) -> Option<&ContributionSet> {
+        self.portable_contributions.as_ref()
     }
 
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {

@@ -8,6 +8,7 @@ use crate::{
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
     WorkflowCompileError, WorkflowDeclaration,
 };
+use phenix_contract::{ContributionSet, ContributionSetError};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,7 +20,11 @@ use std::{
 #[derive(Clone, Debug)]
 enum GenerationTopologyIdentity {
     Bootstrap,
-    Resolved(GenerationId),
+    Resolved {
+        base: GenerationId,
+        id: GenerationId,
+        metadata: BTreeMap<&'static str, serde_json::Value>,
+    },
 }
 
 /// One coherent runtime topology.
@@ -83,7 +88,11 @@ impl GenerationTopology {
             .resolved_dispatch_topology()
             .with_component_graph(&component_graph);
         Self {
-            identity: GenerationTopologyIdentity::Resolved(id),
+            identity: GenerationTopologyIdentity::Resolved {
+                base: id.clone(),
+                id,
+                metadata: BTreeMap::new(),
+            },
             config,
             component_graph,
             dispatch_topology,
@@ -97,7 +106,7 @@ impl GenerationTopology {
     pub fn generation(&self) -> Option<&GenerationId> {
         match &self.identity {
             GenerationTopologyIdentity::Bootstrap => None,
-            GenerationTopologyIdentity::Resolved(id) => Some(id),
+            GenerationTopologyIdentity::Resolved { id, .. } => Some(id),
         }
     }
 
@@ -134,13 +143,17 @@ impl GenerationTopology {
         self.workflows.get(&(owner.clone(), name.to_owned()))
     }
 
-    fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
-        let id = match &mut self.identity {
-            GenerationTopologyIdentity::Bootstrap => None,
-            GenerationTopologyIdentity::Resolved(id) => Some(id),
-        }
-        .expect("bootstrap runtime generation cannot absorb resolved semantic metadata");
-        let bytes = serde_json::to_vec(&(id.as_str(), metadata))
+    fn incorporate_semantic_metadata<T: Serialize>(&mut self, name: &'static str, value: &T) {
+        let GenerationTopologyIdentity::Resolved { base, id, metadata } = &mut self.identity else {
+            unreachable!("bootstrap runtime generation cannot absorb resolved semantic metadata");
+        };
+        metadata.insert(
+            name,
+            serde_json::to_value(value).expect("resolved composition metadata is serializable"),
+        );
+        // Hash the complete named snapshot from the original graph identity.
+        // Preparation order and repeated attachment cannot change its meaning.
+        let bytes = serde_json::to_vec(&(base.as_str(), metadata))
             .expect("resolved composition metadata is serializable");
         *id = GenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
     }
@@ -227,6 +240,10 @@ pub enum GenerationResolutionError {
         service: ServiceId,
         plugin: PluginId,
     },
+    PortableContributions(ContributionSetError),
+    UnselectedContributionOwner(PluginId),
+    PortableContributionsAlreadyBound,
+    PortableContributionsRequireReselection,
 }
 
 impl Display for GenerationResolutionError {
@@ -370,6 +387,16 @@ impl Display for GenerationResolutionError {
                     "required layer {plugin} is unavailable for service {service}"
                 )
             }
+            Self::PortableContributions(error) => Display::fmt(error, f),
+            Self::UnselectedContributionOwner(owner) => {
+                write!(f, "contribution artifact owner {owner} is not selected")
+            }
+            Self::PortableContributionsAlreadyBound => {
+                f.write_str("portable contributions already bound to this generation")
+            }
+            Self::PortableContributionsRequireReselection => {
+                f.write_str("reselect portable contributions for the next graph generation")
+            }
         }
     }
 }
@@ -407,6 +434,7 @@ pub struct ResolvedGeneration {
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
     authority_ceiling: Authority,
+    portable_contributions: Option<ContributionSet>,
 }
 
 struct ResolutionInputs {
@@ -748,6 +776,7 @@ impl ResolvedGeneration {
             layer_policies: inputs.layer_policies,
             provider_policy: inputs.provider_policy,
             authority_ceiling: authority_ceiling.clone(),
+            portable_contributions: None,
         })
     }
 
@@ -802,6 +831,44 @@ impl ResolvedGeneration {
 
     pub fn plugins(&self) -> &[PluginManifest] {
         &self.plugins
+    }
+
+    /// Frozen, owner-verified contribution metadata for this candidate.
+    ///
+    /// Attaching metadata does not lower kinds or install providers.
+    pub fn portable_contributions(&self) -> Option<&ContributionSet> {
+        self.portable_contributions.as_ref()
+    }
+
+    /// Bind authenticated artifact envelopes to this resolved generation.
+    /// The verified artifact owners must already be selected plugins.
+    /// This accepts inert metadata, not executable graph edits.
+    pub fn with_portable_contributions<'a>(
+        mut self,
+        selected: impl IntoIterator<Item = (&'a PluginId, &'a [u8])>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut selected: Vec<_> = selected.into_iter().collect();
+        selected.sort_by_key(|(owner, _)| *owner);
+        for (owner, _) in &selected {
+            if !self.plugins.iter().any(|plugin| &plugin.id == *owner) {
+                return Err(GenerationResolutionError::UnselectedContributionOwner(
+                    (*owner).clone(),
+                ));
+            }
+        }
+        let contributions = ContributionSet::decode_selected(selected)
+            .map_err(GenerationResolutionError::PortableContributions)?;
+        if let Some(existing) = &self.portable_contributions {
+            return if *existing == contributions {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::PortableContributionsAlreadyBound)
+            };
+        }
+        self.runtime
+            .incorporate_semantic_metadata("phenix.portable-contributions", &contributions);
+        self.portable_contributions = Some(contributions);
+        Ok(self)
     }
 
     pub fn components(&self) -> &[ComponentManifest] {
@@ -892,11 +959,10 @@ impl ResolvedGeneration {
         // authored plan bytes. Version the canonical execution contract in
         // every pinned generation, not just the plugin-provided declarations.
         const INVOKE_EXIT_LOWERING_REVISION: u32 = 1;
-        self.runtime.incorporate_semantic_metadata(&(
+        self.runtime.incorporate_semantic_metadata(
             "phenix.workflow-ir",
-            INVOKE_EXIT_LOWERING_REVISION,
-            &declarations,
-        ));
+            &(INVOKE_EXIT_LOWERING_REVISION, &declarations),
+        );
         self.runtime.workflows = compiled;
         self.workflows = declarations;
         Ok(self)
@@ -934,8 +1000,48 @@ impl ResolvedGeneration {
         &self.authority_ceiling
     }
 
-    pub(crate) fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
-        self.runtime.incorporate_semantic_metadata(metadata);
+    pub(crate) fn incorporate_semantic_metadata<T: Serialize>(
+        &mut self,
+        name: &'static str,
+        metadata: &T,
+    ) {
+        self.runtime.incorporate_semantic_metadata(name, metadata);
+    }
+
+    /// Prepare a replacement graph with a fresh authenticated contribution set.
+    ///
+    /// The caller supplies the complete desired graph and independently verified
+    /// artifact owners and bytes. No contribution metadata is inherited from the
+    /// previous generation, even if a plugin retains the same identity. All
+    /// validation and selection occur on a new candidate; failure cannot modify
+    /// this pinned generation or partially publish the candidate.
+    ///
+    /// The ordinary `with_plugin_set` path continues to fail closed when old
+    /// portable contributions are bound and no new envelopes were supplied.
+    pub(crate) fn with_plugin_set_and_portable_contributions<'a>(
+        &self,
+        plugins: Vec<PluginManifest>,
+        components: Vec<ComponentManifest>,
+        entry_triggers: Vec<ComponentEntryTrigger>,
+        process_arguments: Vec<ComponentProcessArgument>,
+        authority_ceiling: &Authority,
+        selected: impl IntoIterator<Item = (&'a PluginId, &'a [u8])>,
+    ) -> Result<Self, GenerationResolutionError> {
+        // Reconfiguration reconstructs the topology and semantic identity
+        // from the new selection. Clearing the old contribution snapshot here
+        // only allows that fresh preparation; it does not reuse any old bytes
+        // or remove the old generation's pinned identity in place.
+        let mut source = self.clone();
+        source.portable_contributions = None;
+        source
+            .with_plugin_set(
+                plugins,
+                components,
+                entry_triggers,
+                process_arguments,
+                authority_ceiling,
+            )?
+            .with_portable_contributions(selected)
     }
 
     /// Re-resolve a sibling harness that shares this harness's resources,
@@ -950,6 +1056,11 @@ impl ResolvedGeneration {
         process_arguments: Vec<ComponentProcessArgument>,
         authority_ceiling: &Authority,
     ) -> Result<Self, GenerationResolutionError> {
+        // A new selected graph needs its own authenticated artifact envelopes.
+        // Reusing the old candidate must not discard these bytes silently.
+        if self.portable_contributions.is_some() {
+            return Err(GenerationResolutionError::PortableContributionsRequireReselection);
+        }
         let mut plugins = plugins;
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components = components;
@@ -1033,6 +1144,7 @@ impl ResolvedGeneration {
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
             authority_ceiling: authority_ceiling.clone(),
+            portable_contributions: None,
         }
         .with_workflows(retained_workflows)
     }
@@ -1427,6 +1539,199 @@ mod tests {
 
     fn plugin(value: &str) -> PluginId {
         PluginId::parse(value).unwrap()
+    }
+
+    fn portable_fixture(owner: &str, value: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!([{
+            "owner": owner,
+            "id": format!("{owner}.record@1"),
+            "kind": "fixture.record-kind@1",
+            "role": "provide",
+            "payload": { "type": "string", "value": value }
+        }]))
+        .unwrap()
+    }
+
+    #[test]
+    fn selected_portable_contributions_are_canonical_generation_metadata() {
+        let alpha = plugin("fixture.alpha");
+        let beta = plugin("fixture.beta");
+        let basic = ResolvedGeneration::resolve(
+            [
+                owner("fixture.alpha", Authority::default()),
+                owner("fixture.beta", Authority::default()),
+            ],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let a = portable_fixture("fixture.alpha", "one");
+        let b = portable_fixture("fixture.beta", "two");
+        let forward = basic
+            .clone()
+            .with_portable_contributions([(&alpha, a.as_slice()), (&beta, b.as_slice())])
+            .unwrap();
+        let reversed = basic
+            .clone()
+            .with_portable_contributions([(&beta, b.as_slice()), (&alpha, a.as_slice())])
+            .unwrap();
+        assert_eq!(forward.generation(), reversed.generation());
+        assert_ne!(forward.generation(), basic.generation());
+        assert_eq!(
+            forward.portable_contributions(),
+            crate::ResolvedGenerationInspection::from_resolved(&forward).portable_contributions()
+        );
+
+        let idempotent = forward
+            .clone()
+            .with_portable_contributions([(&beta, b.as_slice()), (&alpha, a.as_slice())])
+            .unwrap();
+        assert_eq!(forward.generation(), idempotent.generation());
+
+        let changed = portable_fixture("fixture.beta", "changed");
+        let different = basic
+            .with_portable_contributions([(&alpha, a.as_slice()), (&beta, changed.as_slice())])
+            .unwrap();
+        assert_ne!(forward.generation(), different.generation());
+        assert!(matches!(
+            forward
+                .clone()
+                .with_portable_contributions([(&alpha, a.as_slice()), (&beta, changed.as_slice())]),
+            Err(GenerationResolutionError::PortableContributionsAlreadyBound)
+        ));
+        assert!(matches!(
+            forward.with_plugin_set(
+                vec![
+                    owner("fixture.alpha", Authority::default()),
+                    owner("fixture.beta", Authority::default()),
+                ],
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+            ),
+            Err(GenerationResolutionError::PortableContributionsRequireReselection)
+        ));
+    }
+
+    #[test]
+    fn portable_reselection_is_atomic_and_uses_fresh_authenticated_envelopes() {
+        let alpha = plugin("fixture.alpha");
+        let beta = plugin("fixture.beta");
+        let plugins = vec![
+            owner("fixture.alpha", Authority::default()),
+            owner("fixture.beta", Authority::default()),
+        ];
+        let a = portable_fixture("fixture.alpha", "one");
+        let b = portable_fixture("fixture.beta", "two");
+        let initial = ResolvedGeneration::resolve(plugins.clone(), [], [], &Authority::default())
+            .unwrap()
+            .with_portable_contributions([(&alpha, a.as_slice()), (&beta, b.as_slice())])
+            .unwrap();
+        let original_identity = initial.generation().clone();
+
+        // Reordering the separately verified artifact envelopes cannot change
+        // an otherwise identical selected generation.
+        let unchanged = initial
+            .with_plugin_set_and_portable_contributions(
+                plugins.clone(),
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+                [(&beta, b.as_slice()), (&alpha, a.as_slice())],
+            )
+            .unwrap();
+        assert_eq!(unchanged.generation(), &original_identity);
+        assert_eq!(
+            unchanged.portable_contributions(),
+            initial.portable_contributions()
+        );
+
+        let updated = portable_fixture("fixture.beta", "updated");
+        let replacement = initial
+            .with_plugin_set_and_portable_contributions(
+                plugins.clone(),
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+                [(&alpha, a.as_slice()), (&beta, updated.as_slice())],
+            )
+            .unwrap();
+        assert_ne!(replacement.generation(), &original_identity);
+        assert_eq!(initial.generation(), &original_identity);
+
+        // An old owner cannot smuggle a declaration into a replacement graph
+        // from which that owner has been removed.
+        let removed = vec![owner("fixture.beta", Authority::default())];
+        assert!(matches!(
+            initial.with_plugin_set_and_portable_contributions(
+                removed,
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+                [(&alpha, a.as_slice())],
+            ),
+            Err(GenerationResolutionError::UnselectedContributionOwner(owner)) if owner == alpha
+        ));
+
+        let forged = portable_fixture("fixture.beta", "forged");
+        assert!(matches!(
+            initial.with_plugin_set_and_portable_contributions(
+                plugins,
+                vec![],
+                vec![],
+                vec![],
+                &Authority::default(),
+                [(&alpha, forged.as_slice())],
+            ),
+            Err(GenerationResolutionError::PortableContributions(
+                ContributionSetError::OwnerMismatch { .. }
+            ))
+        ));
+        assert_eq!(initial.generation(), &original_identity);
+    }
+
+    #[test]
+    fn portable_contribution_ownership_rejects_before_generation_mutation() {
+        let alpha = plugin("fixture.alpha");
+        let rogue = plugin("fixture.unselected");
+        let basic = ResolvedGeneration::resolve(
+            [owner("fixture.alpha", Authority::default())],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            basic
+                .clone()
+                .with_portable_contributions([(&rogue, &b"malformed"[..])]),
+            Err(GenerationResolutionError::UnselectedContributionOwner(owner))
+                if owner == rogue
+        ));
+        let forged = portable_fixture("fixture.unselected", "forged");
+        assert!(matches!(
+            basic
+                .clone()
+                .with_portable_contributions([(&alpha, forged.as_slice())]),
+            Err(GenerationResolutionError::PortableContributions(
+                ContributionSetError::OwnerMismatch { .. }
+            ))
+        ));
+        let valid = portable_fixture("fixture.alpha", "valid");
+        assert!(matches!(
+            basic.with_portable_contributions([
+                (&alpha, valid.as_slice()),
+                (&alpha, valid.as_slice()),
+            ]),
+            Err(GenerationResolutionError::PortableContributions(
+                ContributionSetError::DuplicateSelectedOwner { .. }
+            ))
+        ));
     }
 
     fn component(value: &str) -> ComponentId {

@@ -184,7 +184,7 @@ impl CompositionMetadataInput {
 
         let frontend_metadata: Vec<_> = metadata_by_id.into_values().collect();
         let mut resolved = self.resolve(authority_ceiling)?;
-        resolved.incorporate_semantic_metadata(&frontend_metadata);
+        resolved.incorporate_semantic_metadata("phenix.frontend-metadata", &frontend_metadata);
         Ok(resolved)
     }
 }

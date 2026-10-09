@@ -1105,7 +1105,7 @@ mod tests {
         // identity: identical declarations under a different Core lowering
         // contract are not interchangeable pinned executions.
         let mut unversioned = baseline.clone();
-        unversioned.incorporate_semantic_metadata(&vec![declaration.clone()]);
+        unversioned.incorporate_semantic_metadata("phenix.workflow-ir", &vec![declaration.clone()]);
         assert_ne!(unversioned.generation(), selected.generation());
         assert_ne!(baseline.generation(), selected.generation());
         let bound = selected
@@ -1128,6 +1128,49 @@ mod tests {
             .unwrap();
         assert_eq!(forward.generation(), reverse.generation());
         assert_eq!(forward.workflows(), reverse.workflows());
+        let envelope = serde_json::to_vec(&serde_json::json!([{
+            "owner": owner.as_str(),
+            "id": "fixture.workflow-record@1",
+            "kind": "fixture.record-kind@1",
+            "role": "provide",
+            "payload": { "type": "string", "value": "frozen" }
+        }]))
+        .unwrap();
+        let workflows_first = selected
+            .clone()
+            .with_portable_contributions([(&owner, envelope.as_slice())])
+            .unwrap();
+        let contributions_first = baseline
+            .clone()
+            .with_portable_contributions([(&owner, envelope.as_slice())])
+            .unwrap()
+            .with_workflows([declaration.clone()])
+            .unwrap();
+        assert_eq!(
+            workflows_first.generation(),
+            contributions_first.generation()
+        );
+        assert_eq!(
+            workflows_first.portable_contributions(),
+            contributions_first.portable_contributions(),
+        );
+        for candidate in [&workflows_first, &contributions_first] {
+            assert!(
+                candidate
+                    .generation_topology()
+                    .workflow(&consumer, "turn")
+                    .unwrap()
+                    .bound_import(&interface)
+                    .is_some()
+            );
+            let inspection = crate::ResolvedGenerationInspection::from_resolved(candidate);
+            assert_eq!(inspection.generation(), workflows_first.generation());
+            assert_eq!(inspection.workflows(), std::slice::from_ref(&declaration));
+            assert_eq!(
+                inspection.portable_contributions(),
+                candidate.portable_contributions(),
+            );
+        }
         assert_ne!(forward.generation(), selected.generation());
 
         // A reconfiguration cannot retain a live topology after its required
