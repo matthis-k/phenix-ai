@@ -1971,6 +1971,60 @@ mod tests {
     }
 
     #[test]
+    fn a_join_cannot_resume_inside_its_child_without_a_new_fork() {
+        let topology = WorkflowTopology {
+            entry: "model".into(),
+            nodes: BTreeMap::from([
+                node("model", &[(
+                    "spawn",
+                    WorkflowEdge::Fork {
+                        branches: BTreeMap::from([("one".into(), "child".into())]),
+                        policy: crate::WorkflowJoinPolicy::All(
+                            crate::WorkflowJoinAllPolicy::CollectAll,
+                        ),
+                        outputs: BTreeMap::new(),
+                        on_success: Box::new(WorkflowEdge::Next {
+                            node: "child".into(),
+                        }),
+                        on_failure: Box::new(WorkflowEdge::Finish),
+                    },
+                )]),
+                node("child", &[("done", WorkflowEdge::Finish)]),
+            ]),
+        };
+        assert!(matches!(
+            topology.compile(|_| true),
+            Err(WorkflowCompileError::InvalidFork { reason, .. })
+                if reason.contains("re-enters child")
+        ));
+    }
+
+    #[test]
+    fn explicit_failure_is_not_synthesized_from_an_invocation_error() {
+        let topology = WorkflowTopology {
+            entry: "model".into(),
+            nodes: BTreeMap::from([node("model", &[(
+                "failed", WorkflowEdge::Fail,
+            )])]),
+        };
+        let workflow = topology.compile(|_| true).unwrap();
+        let report = workflow.execute(
+            &mut (),
+            |_, _| Ok::<String, String>("failed".into()),
+            || false,
+            None,
+        );
+        assert!(matches!(
+            report,
+            Err(WorkflowRunError::ExplicitFailure {
+                node,
+                outcome,
+                executed_nodes: 1
+            }) if node == "model" && outcome == "failed"
+        ));
+    }
+
+    #[test]
     fn compiles_and_executes_loop_and_conditional_exit() {
         let workflow = sample().compile(|_| true).unwrap();
         let mut calls = Vec::new();
