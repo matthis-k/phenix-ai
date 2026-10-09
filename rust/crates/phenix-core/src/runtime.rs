@@ -8,7 +8,7 @@ use crate::{
     ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
     ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener,
     ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace,
-    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskHandle, TaskRuntime, TaskScope,
     TransactionOp,
     plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
 };
