@@ -1268,6 +1268,23 @@ impl ResolvedGeneration {
             })
             .cloned()
             .collect::<Vec<_>>();
+        // A retained workflow keeps its typed frame contract. Dropping the
+        // schema here would leave the compiled plan requiring a frame while
+        // the promoted generation exposes no schema to construct that frame.
+        // Source the contract from the already selected, immutable plan.
+        let retained_frames = retained_workflows
+            .iter()
+            .filter_map(|declaration| {
+                self.runtime
+                    .workflow(&declaration.owner, &declaration.name)
+                    .and_then(|compiled| compiled.frame_schema())
+                    .map(|schema| crate::WorkflowFrameDeclaration {
+                        owner: declaration.owner.clone(),
+                        name: declaration.name.clone(),
+                        schema: schema.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
         let retained_projections = self
             .workflow_projections
             .iter()
@@ -1299,6 +1316,7 @@ impl ResolvedGeneration {
             authority_ceiling: authority_ceiling.clone(),
         }
         .with_workflows(retained_workflows)?
+        .with_workflow_frame_schemas(retained_frames)?
         .with_workflow_projections(retained_projections)
     }
 }
