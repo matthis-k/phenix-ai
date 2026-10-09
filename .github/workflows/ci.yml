@@ -21,7 +21,7 @@ jobs:
     name: Dependency impact plan
     runs-on: ubuntu-latest
     outputs:
-      jobs: ${ steps.select.outputs.jobs }
+      jobs: ${{ steps.select.outputs.jobs }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -30,13 +30,13 @@ jobs:
       - name: Plan affected checks
         id: select
         env:
-          GITHUB_BASE_REF: ${ github.base_ref }
+          GITHUB_BASE_REF: ${{ github.base_ref }}
           PHENIX_IMPACT_CONFIG: "{\"jobs\":{\"clippy\":{\"kind\":\"cargo\",\"packages\":null},\"test-adapter-domain\":{\"kind\":\"cargo\",\"packages\":[\"phenix-adapter-acp\",\"phenix-domain\"]},\"test-harness\":{\"kind\":\"cargo\",\"packages\":[\"phenix-harness\"]},\"test-unit-agent-product\":{\"kind\":\"cargo\",\"packages\":[\"phenix-agent-configurations\",\"phenix-harness\",\"phenix-plugin-basic-agent\",\"phenix-plugin-efficiency-evaluation\",\"phenix-plugin-memory\",\"phenix-plugin-models\",\"phenix-plugin-openai-codex\",\"phenix-plugin-planning\",\"phenix-plugin-providers\",\"phenix-plugin-repository-workers\"]},\"test-unit-core\":{\"kind\":\"cargo\",\"packages\":[\"phenix-application-interface\",\"phenix-model-adapter\",\"phenix-client\",\"phenix-contract\",\"phenix-core\",\"phenix-domain\",\"phenix-provider-sdk\",\"phenix-runtime\"]},\"test-unit-plugin-foundation\":{\"kind\":\"cargo\",\"packages\":[\"phenix-plugin-artifacts\",\"phenix-plugin-basic-context\",\"phenix-plugin-basic-model\",\"phenix-plugin-basic-skills\",\"phenix-plugin-basic-tools\",\"phenix-plugin-catalog\",\"phenix-plugin-command-toolbelt\",\"phenix-plugin-debug\",\"phenix-plugin-environment-local\",\"phenix-plugin-frontend\",\"phenix-plugin-interactive-ui\",\"phenix-plugin-hooks\",\"phenix-plugin-invocation-defaults\"]},\"test-unit-protocol-sdk\":{\"kind\":\"cargo\",\"packages\":[\"phenix-acp-stdio\",\"phenix-adapter-acp\",\"phenix-model-adapter-acp\",\"phenix-model-adapter-native\",\"phenix-binding-generator\",\"phenix-client-acp\",\"phenix-sdk\",\"phenix-sdk-macros\"]}},\"workspace\":\"rust\"}"
         run: |
           set -euo pipefail
           python3 - <<'PY'
           """Conservative affected-check selection from Cargo's authoritative workspace metadata.
-          
+
           Generated GitHub Actions workflows inline this program. It has no third-party
           Python dependencies. Uncertain inputs fail open to running the declared checks.
           """
@@ -45,8 +45,8 @@ jobs:
           from pathlib import Path
           import subprocess
           import sys
-          
-          
+
+
           def cargo_closure(metadata, changed):
               """Changed workspace crates plus all reverse path-dependency consumers."""
               workspace = set(metadata["workspace_members"])
@@ -81,8 +81,8 @@ jobs:
                           affected.add(dependent)
                           pending.append(dependent)
               return {packages[ident]["name"] for ident in affected}
-          
-          
+
+
           def select_jobs(config, files, metadata):
               """Return job selection without conflating source changes with test targets."""
               plans = config["jobs"]
@@ -118,8 +118,8 @@ jobs:
                           raise ValueError("CI target is not a selected workspace package: " + job)
                   results[job] = bool(affected) and (targets is None or bool(affected.intersection(targets)))
               return results, sorted(affected)
-          
-          
+
+
           def run():
               config = json.loads(os.environ["PHENIX_IMPACT_CONFIG"])
               if not isinstance(config["workspace"], str) or not config["workspace"]:
@@ -139,8 +139,8 @@ jobs:
               ))
               selected, crates = select_jobs(config, changed, metadata)
               return selected, changed, crates
-          
-          
+
+
           def main():
               config = json.loads(os.environ["PHENIX_IMPACT_CONFIG"])
               try:
@@ -165,11 +165,11 @@ jobs:
                       stream.write("| Check | Run |\n| --- | --- |\n")
                       for name, run_job in sorted(selected.items()):
                           stream.write("| " + name + " | " + ("yes" if run_job else "no") + " |\n")
-          
-          
+
+
           if __name__ == "__main__":
               main()
-          
+
           PY
 
   source:
@@ -999,25 +999,24 @@ jobs:
       - name: Verify all maintenance jobs passed
         run: |
           set -euo pipefail
-          [[ '${ github.event_name }}' != pull_request || '${ needs.impact.result }}' == success ]]
-          [[ '${ needs.source.result }}' == success ]]
-          [[ '${ needs.clippy.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['clippy'] }}' == false && '${ needs.clippy.result }}' == skipped ) ]]
-          [[ '${ needs.build-rust-workspace.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.build-rust-workspace.result }}' == skipped ) ]]
-          [[ '${ needs.build-stitch-mcp.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.build-stitch-mcp.result }}' == skipped ) ]]
-          [[ '${ needs.integration-model-adapter-acp.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.integration-model-adapter-acp.result }}' == skipped ) ]]
-          [[ '${ needs.integration-plugin-packaging.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.integration-plugin-packaging.result }}' == skipped ) ]]
-          [[ '${ needs.product-phenix-lua-binding.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.product-phenix-lua-binding.result }}' == skipped ) ]]
-          [[ '${ needs.product-phenix-runtime.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.product-phenix-runtime.result }}' == skipped ) ]]
-          [[ '${ needs.product-phenix-standalone-runtime.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.product-phenix-standalone-runtime.result }}' == skipped ) ]]
-          [[ '${ needs.runtime-process-roundtrip.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.runtime-process-roundtrip.result }}' == skipped ) ]]
-          [[ '${ needs.runtime-stitch.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.runtime-stitch.result }}' == skipped ) ]]
-          [[ '${ needs.test-adapter-domain.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-adapter-domain'] }}' == false && '${ needs.test-adapter-domain.result }}' == skipped ) ]]
-          [[ '${ needs.test-docs.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.test-docs.result }}' == skipped ) ]]
-          [[ '${ needs.test-harness.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-harness'] }}' == false && '${ needs.test-harness.result }}' == skipped ) ]]
-          [[ '${ needs.test-sdk.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.test-sdk.result }}' == skipped ) ]]
-          [[ '${ needs.test-unit-agent-product.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-agent-product'] }}' == false && '${ needs.test-unit-agent-product.result }}' == skipped ) ]]
-          [[ '${ needs.test-unit-core.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-core'] }}' == false && '${ needs.test-unit-core.result }}' == skipped ) ]]
-          [[ '${ needs.test-unit-plugin-foundation.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-plugin-foundation'] }}' == false && '${ needs.test-unit-plugin-foundation.result }}' == skipped ) ]]
-          [[ '${ needs.test-unit-plugin-state.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.test-unit-plugin-state.result }}' == skipped ) ]]
-          [[ '${ needs.test-unit-protocol-sdk.result }}' == success || ( '${ github.event_name }}' == pull_request && '${ needs.impact.result }}' == success && '${ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-protocol-sdk'] }}' == false && '${ needs.test-unit-protocol-sdk.result }}' == skipped ) ]]
-
+          [[ '${{ github.event_name }}' != pull_request || '${{ needs.impact.result }}' == success ]]
+          [[ '${{ needs.source.result }}' == success ]]
+          [[ '${{ needs.clippy.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['clippy'] }}' == false && '${{ needs.clippy.result }}' == skipped ) ]]
+          [[ '${{ needs.build-rust-workspace.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.build-rust-workspace.result }}' == skipped ) ]]
+          [[ '${{ needs.build-stitch-mcp.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.build-stitch-mcp.result }}' == skipped ) ]]
+          [[ '${{ needs.integration-model-adapter-acp.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.integration-model-adapter-acp.result }}' == skipped ) ]]
+          [[ '${{ needs.integration-plugin-packaging.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.integration-plugin-packaging.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-lua-binding.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-lua-binding.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-runtime.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-runtime.result }}' == skipped ) ]]
+          [[ '${{ needs.product-phenix-standalone-runtime.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.product-phenix-standalone-runtime.result }}' == skipped ) ]]
+          [[ '${{ needs.runtime-process-roundtrip.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.runtime-process-roundtrip.result }}' == skipped ) ]]
+          [[ '${{ needs.runtime-stitch.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.runtime-stitch.result }}' == skipped ) ]]
+          [[ '${{ needs.test-adapter-domain.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-adapter-domain'] }}' == false && '${{ needs.test-adapter-domain.result }}' == skipped ) ]]
+          [[ '${{ needs.test-docs.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-docs.result }}' == skipped ) ]]
+          [[ '${{ needs.test-harness.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-harness'] }}' == false && '${{ needs.test-harness.result }}' == skipped ) ]]
+          [[ '${{ needs.test-sdk.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-sdk.result }}' == skipped ) ]]
+          [[ '${{ needs.test-unit-agent-product.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-agent-product'] }}' == false && '${{ needs.test-unit-agent-product.result }}' == skipped ) ]]
+          [[ '${{ needs.test-unit-core.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-core'] }}' == false && '${{ needs.test-unit-core.result }}' == skipped ) ]]
+          [[ '${{ needs.test-unit-plugin-foundation.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-plugin-foundation'] }}' == false && '${{ needs.test-unit-plugin-foundation.result }}' == skipped ) ]]
+          [[ '${{ needs.test-unit-plugin-state.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.test-unit-plugin-state.result }}' == skipped ) ]]
+          [[ '${{ needs.test-unit-protocol-sdk.result }}' == success || ( '${{ github.event_name }}' == pull_request && '${{ needs.impact.result }}' == success && '${{ fromJSON(needs.impact.outputs.jobs || '{}')['test-unit-protocol-sdk'] }}' == false && '${{ needs.test-unit-protocol-sdk.result }}' == skipped ) ]]
