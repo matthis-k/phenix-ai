@@ -860,7 +860,8 @@ impl RootExecutionHandle {
         F: FnOnce(CancellationToken) -> T + Send + 'static,
     {
         self.tasks.spawn(
-            self.generation().expect("workflow roots require a selected generation"),
+            self.generation()
+                .expect("workflow roots require a selected generation"),
             self.authority(),
             requested_authority,
             worker,
