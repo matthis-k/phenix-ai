@@ -136,7 +136,10 @@ fn fixed_fork_workflow(policy: WorkflowJoinPolicy) -> WorkflowDeclaration {
                     "alpha-tool".into(),
                     WorkflowNode {
                         import: InterfaceId::parse(TOOL).unwrap(),
-                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                        branches: BTreeMap::from([
+                            ("done".into(), WorkflowEdge::Finish),
+                            ("failed".into(), WorkflowEdge::Fail),
+                        ]),
                     },
                 ),
                 (
@@ -272,7 +275,7 @@ fn fork_fail_fast_does_not_invoke_sibling_after_failed_first_child() {
             },
             |node, _, output, _, _| {
                 if node == "alpha-tool" {
-                    return Err::<String, String>("branch failed".into());
+                    return Ok::<String, String>("failed".into());
                 }
                 match serde_json::from_slice::<PhenixValue>(output).unwrap() {
                     PhenixValue::String(outcome) => Ok(outcome),
@@ -284,6 +287,43 @@ fn fork_fail_fast_does_not_invoke_sibling_after_failed_first_child() {
         )
         .unwrap();
     assert_eq!(result.final_outcome, "tools/failure");
+    assert_eq!(seen, ["model", "alpha-tool"]);
+}
+
+#[test]
+fn fork_adapter_error_is_not_treated_as_declared_failure() {
+    let resolved =
+        selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::FailFast));
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap().frame_schema().unwrap().clone();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+    ])).unwrap();
+    let mut seen = Vec::new();
+    let result = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut seen, &mut frame),
+        |node, _, _, seen| {
+            seen.push(node.to_owned());
+            if node == "alpha-tool" {
+                return Err::<Vec<u8>, String>("invalid request preparation".into());
+            }
+            Ok(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+            PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+            _ => Err("unrecognized provider result".into()),
+        },
+        || false, None,
+    );
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::NodeFailed { node, .. }) if node == "alpha-tool"
+    ));
     assert_eq!(seen, ["model", "alpha-tool"]);
 }
 
