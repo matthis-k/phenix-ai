@@ -5,7 +5,7 @@ _: {
       rustRoot = ../rust;
       rustSource = selectedProductSource;
       cargoSource = import ./cargo-source.nix { inherit pkgs rustRoot; };
-      dependencySkeleton = cargoSource.dependencySkeleton;
+      inherit (cargoSource) dependencySkeleton;
       productClosure = cargoSource.membersFor "phenix-harness";
       selectedProductSource = cargoSource.sourceFor "phenix-harness";
 
