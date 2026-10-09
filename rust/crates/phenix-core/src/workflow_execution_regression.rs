@@ -266,10 +266,10 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
         )
         .unwrap();
     assert_eq!(report.final_outcome, "final");
-    assert_eq!(report.executed_nodes, 5);
+    assert_eq!(report.executed_nodes, 6);
     assert_eq!(
         seen,
-        ["model", "inner-one", "beta-tool", "inner-two", "model"]
+        ["model", "alpha-tool", "beta-tool", "inner-one", "inner-two", "model"]
     );
     // Inner child-only modifications never escape an unselected Join slot.
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
