@@ -48,14 +48,11 @@ _: {
           (manifest."build-dependencies" or { })
           (manifest."dev-dependencies" or { })
         ]
-        ++ pkgs.lib.concatMap (
-          target:
-          [
-            (target.dependencies or { })
-            (target."build-dependencies" or { })
-            (target."dev-dependencies" or { })
-          ]
-        ) (builtins.attrValues (manifest.target or { }));
+        ++ pkgs.lib.concatMap (target: [
+          (target.dependencies or { })
+          (target."build-dependencies" or { })
+          (target."dev-dependencies" or { })
+        ]) (builtins.attrValues (manifest.target or { }));
 
       localDependencies =
         manifest:
@@ -72,10 +69,7 @@ _: {
                   else
                     declared;
               in
-              if builtins.isAttrs inherited && inherited ? path then
-                [ (inherited.package or alias) ]
-              else
-                [ ]
+              if builtins.isAttrs inherited && inherited ? path then [ (inherited.package or alias) ] else [ ]
             ) (builtins.attrNames declarations)
           ) (dependencySets manifest)
         );
@@ -98,13 +92,9 @@ _: {
               if builtins.elem package seen then
                 visit seen (builtins.tail pending)
               else
-                visit (seen ++ [ package ]) (
-                  (builtins.tail pending) ++ localDependencies entry.manifest
-                );
+                visit (seen ++ [ package ]) ((builtins.tail pending) ++ localDependencies entry.manifest);
         in
-        map (package: (builtins.getAttr package manifestIndex).member) (
-          visit [ ] [ "phenix-harness" ]
-        );
+        map (package: (builtins.getAttr package manifestIndex).member) (visit [ ] [ "phenix-harness" ]);
 
       explicitTargetPaths =
         member:
