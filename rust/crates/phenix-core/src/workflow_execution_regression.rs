@@ -945,6 +945,15 @@ fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
             slots: BTreeMap::from([(counter.clone(), Type::U64)]),
         },
     };
+    assert_eq!(
+        ordinary
+            .clone()
+            .with_workflow_frame_schemas(std::iter::empty())
+            .unwrap()
+            .generation(),
+        ordinary.generation(),
+        "an absent contribution cannot change generation identity"
+    );
     let typed = ordinary
         .clone()
         .with_workflow_frame_schemas([declaration.clone()])
