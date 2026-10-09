@@ -667,6 +667,220 @@ impl CompiledWorkflow {
 }
 
 #[cfg(test)]
+mod inclusion_tests {
+    use super::*;
+
+    fn owner() -> ComponentId {
+        ComponentId::parse("fixture.subplan-owner").unwrap()
+    }
+
+    fn service(name: &str, outcomes: &[(&str, WorkflowEdge)]) -> WorkflowNode {
+        WorkflowNode {
+            import: InterfaceId::parse(name).unwrap(),
+            branches: outcomes
+                .iter()
+                .map(|(name, edge)| ((*name).to_owned(), edge.clone()))
+                .collect(),
+        }
+    }
+
+    fn include(workflow: &str, site: &str, on_exit: &[(&str, WorkflowEdge)]) -> WorkflowEdge {
+        WorkflowEdge::Include {
+            workflow: workflow.to_owned(),
+            site: site.to_owned(),
+            on_exit: on_exit
+                .iter()
+                .map(|(name, edge)| ((*name).to_owned(), edge.clone()))
+                .collect(),
+        }
+    }
+
+    fn selected() -> BTreeMap<(ComponentId, String), WorkflowTopology> {
+        let child = WorkflowTopology {
+            entry: "work".into(),
+            nodes: BTreeMap::from([(
+                "work".into(),
+                service("fixture.child@1", &[("returned", WorkflowEdge::Finish)]),
+            )]),
+        };
+        let main = WorkflowTopology {
+            entry: "start".into(),
+            nodes: BTreeMap::from([
+                (
+                    "start".into(),
+                    service(
+                        "fixture.start@1",
+                        &[(
+                            "delegate",
+                            include(
+                                "child",
+                                "one",
+                                &[("returned", WorkflowEdge::Next { node: "after".into() })],
+                            ),
+                        )],
+                    ),
+                ),
+                (
+                    "after".into(),
+                    service("fixture.after@1", &[("done", WorkflowEdge::Finish)]),
+                ),
+            ]),
+        };
+        BTreeMap::from([
+            ((owner(), "main".into()), main),
+            ((owner(), "child".into()), child),
+        ])
+    }
+
+    #[test]
+    fn included_plan_runs_on_the_same_invoke_exit_executor() {
+        let all = selected();
+        let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
+        assert_eq!(flattened.nodes.len(), 3);
+        assert!(flattened.nodes.contains_key("__include__/one/work"));
+        assert!(flattened
+            .nodes
+            .values()
+            .all(|node| node.branches.values().all(|edge| !matches!(edge, WorkflowEdge::Include { .. }))));
+        let compiled = flattened.compile(|_| true).unwrap();
+        let mut order = Vec::new();
+        let report = compiled
+            .execute(
+                &mut order,
+                |import, visited| {
+                    visited.push(import.as_str().to_owned());
+                    Ok::<_, ()>(match import.as_str() {
+                        "fixture.start@1" => "delegate".into(),
+                        "fixture.child@1" => "returned".into(),
+                        "fixture.after@1" => "done".into(),
+                        unexpected => panic!("unexpected import {unexpected}"),
+                    })
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(order, ["fixture.start@1", "fixture.child@1", "fixture.after@1"]);
+        assert_eq!(report.last_node, "after");
+        assert_eq!(report.final_outcome, "done");
+        assert_eq!(report.executed_nodes, 3);
+        assert!(matches!(
+            all[&(owner(), "main".to_owned())].nodes["start"].branches["delegate"],
+            WorkflowEdge::Include { .. }
+        ));
+    }
+
+    #[test]
+    fn nested_inclusion_and_child_terminal_handoff_are_compiled() {
+        let mut all = selected();
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert(
+                "delegate".into(),
+                include("child", "first", &[("returned", WorkflowEdge::Finish)]),
+            );
+        let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
+        assert!(flattened
+            .nodes
+            .contains_key("__include__/first/work"));
+        let compiled = flattened.compile(|_| true).unwrap();
+        let report = compiled
+            .execute(
+                &mut (),
+                |import, _| {
+                    Ok::<_, ()>(if import.as_str() == "fixture.start@1" {
+                        "delegate".into()
+                    } else {
+                        "returned".into()
+                    })
+                },
+                || false,
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(report, WorkflowRunError::UndeclaredOutcome { .. }) == false);
+        // The trailing parent node is intentionally unreachable in this
+        // fixture, so validation rejects the authored dead continuation.
+    }
+
+    #[test]
+    fn recursive_and_unresolved_subplans_fail_closed() {
+        let mut all = selected();
+        all.get_mut(&(owner(), "child".into()))
+            .unwrap()
+            .nodes
+            .get_mut("work")
+            .unwrap()
+            .branches
+            .insert(
+                "returned".into(),
+                include("main", "back", &[("done", WorkflowEdge::Finish)]),
+            );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::RecursiveSubplan(_))
+        ));
+        let mut missing = selected();
+        missing
+            .get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert(
+                "delegate".into(),
+                include("not-selected", "one", &[("returned", WorkflowEdge::Finish)]),
+            );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &missing),
+            Err(WorkflowCompileError::MissingSubplan(plan)) if plan == "not-selected"
+        ));
+    }
+
+    #[test]
+    fn incomplete_return_mapping_and_identity_conflicts_reject() {
+        let mut all = selected();
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert("delegate".into(), include("child", "one", &[]));
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::MissingSubplanExit { outcome, .. }) if outcome == "returned"
+        ));
+        let mut all = selected();
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .insert(
+                "__include__/one/work".into(),
+                service("fixture.conflict@1", &[("done", WorkflowEdge::Finish)]),
+            );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::InclusionIdentityConflict(_))
+        ));
+    }
+
+    #[test]
+    fn unmapped_include_cannot_enter_unbound_compiler() {
+        let topology = selected().remove(&(owner(), "main".into())).unwrap();
+        assert!(matches!(
+            topology.compile(|_| true),
+            Err(WorkflowCompileError::UnexpandedInclude { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
