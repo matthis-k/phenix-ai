@@ -1,9 +1,24 @@
 # Plugin-defined tools and skills: consumer migration and non-agent canary
 
-status: specification-only
+status: partial implementation (independent non-agent provider canary)
 stage: E of spec/microkernel-composition-roadmap.md
 depends-on: #727, #728, Stage C graph-patch PR, Stage D plugin-defined-kind PR
 prerequisite: #726 must be semantically complete through Stage C
+
+## Implementation slice: headless non-agent Core canary
+
+The new `plugin_template_consumer_canary` Core regression instantiates one
+resource-only composition owner importing two independently authored
+application interfaces from two embedded provider plugins. It asserts both
+typed imports resolve without selecting any first-party Tool, Skill, Model
+or Agent plugin and that removing a required provider fails admission rather
+than silently reinstalling a default. This is the *prerequisite neutral
+execution boundary* for Stage E, not a substitute for plugin kind templates.
+
+Remaining: wait for #729 and #730 to provide actual selected templates,
+migrate Tool and Skill declarations and catalog consumers, prove dynamic
+compatibility/model visibility, exercise runtime provider execution, and
+retire stale first-party registrations. This PR remains blocked on those APIs.
 
 ## Goal
 
