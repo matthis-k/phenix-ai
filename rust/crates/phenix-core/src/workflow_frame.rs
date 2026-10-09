@@ -24,7 +24,7 @@ pub struct WorkflowFrameDeclaration {
     pub schema: WorkflowFrameSchema,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkflowFrameError {
     InvalidRevision,
     MissingSlot(Key),
