@@ -463,6 +463,13 @@ impl WorkflowTopology {
                                                 WorkflowCompileError::UnsupportedReturnInclude,
                                             );
                                         }
+                                        Some(WorkflowEdge::Fork { .. }) => {
+                                            return Err(WorkflowCompileError::InvalidFork {
+                                                node: child_name.clone(),
+                                                outcome: child_outcome.clone(),
+                                                reason: "subplan return cannot directly admit a fork".into(),
+                                            });
+                                        }
                                         None => {
                                             return Err(WorkflowCompileError::MissingSubplanExit {
                                                 workflow: workflow.clone(),
