@@ -742,14 +742,14 @@ impl WorkflowTopology {
                                 target: branch_entry.clone(),
                             });
                         }
-                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy {
-                            if k.get() > *max_children {
+                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy
+                            && k.get() > *max_children
+                        {
                                 return Err(WorkflowCompileError::InvalidFork {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
                                     reason: "quorum exceeds maximum admitted map children".into(),
                                 });
-                            }
                         }
                         for continuation in [on_success, on_failure] {
                             match continuation.as_ref() {
@@ -788,14 +788,14 @@ impl WorkflowTopology {
                                 reason: "fork needs 1..=256 named children".into(),
                             });
                         }
-                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy {
-                            if k.get() > branches.len() {
+                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy
+                            && k.get() > branches.len()
+                        {
                                 return Err(WorkflowCompileError::InvalidFork {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
                                     reason: "quorum exceeds admitted children".into(),
                                 });
-                            }
                         }
                         let mut emitted = BTreeSet::new();
                         for (branch, slots) in outputs {
@@ -927,8 +927,9 @@ impl WorkflowTopology {
                                 reason: "child escapes into its fork or the root entry".into(),
                             });
                         }
-                        if let Some(previous) = owner_of.insert(current.clone(), branch.clone()) {
-                            if previous != *branch {
+                        if let Some(previous) = owner_of.insert(current.clone(), branch.clone())
+                            && previous != *branch
+                        {
                                 return Err(WorkflowCompileError::InvalidFork {
                                     node: fork_owner.clone(),
                                     outcome: fork_outcome.clone(),
@@ -936,7 +937,6 @@ impl WorkflowTopology {
                                         "child {branch} crosses into child {previous} at {current}"
                                     ),
                                 });
-                            }
                         }
                         for next in self.nodes[&current].branches.values() {
                             match next {
@@ -965,8 +965,9 @@ impl WorkflowTopology {
                         continue;
                     }
                     for other_edge in other_node.branches.values() {
-                        if let WorkflowEdge::Next { node: target } = other_edge {
-                            if owner_of.contains_key(target) {
+                        if let WorkflowEdge::Next { node: target } = other_edge
+                            && owner_of.contains_key(target)
+                        {
                                 return Err(WorkflowCompileError::InvalidFork {
                                     node: fork_owner.clone(),
                                     outcome: fork_outcome.clone(),
@@ -974,7 +975,6 @@ impl WorkflowTopology {
                                         "parent node {other_name} enters child {target} outside its fork"
                                     ),
                                 });
-                            }
                         }
                     }
                 }
