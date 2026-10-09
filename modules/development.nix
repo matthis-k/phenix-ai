@@ -427,6 +427,12 @@
           prImpact = {
             enable = true;
             workspace = "rust";
+            verifiedShardChange = {
+              source = "modules/development.nix";
+              list = "pluginFoundation";
+              job = "test-unit-plugin-foundation";
+              workflow = ".github/workflows/ci.yml";
+            };
           };
           pullRequestJobs = [
             "source"
