@@ -1,5 +1,5 @@
 use crate::{
-    ArtifactRevision, Authority, CallCancellationToken, ComponentGraphError, ComponentId,
+    ArtifactRevision, Authority, CallCancellationToken, CancellationToken, ComponentGraphError, ComponentId,
     ComponentInterface, ComponentInvocationError, DurableSchema, DurableSchemaRegistration,
     EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
     EventTypeId, GenerationId, GenerationTopology, InterfaceId, KernelConfig, KernelError,
