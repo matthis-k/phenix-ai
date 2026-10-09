@@ -988,6 +988,29 @@ impl WorkflowTopology {
                         }
                     }
                 }
+                // Join continuations are parent-owned. Letting one point
+                // at a child would restart it outside the child scope with
+                // the parent's frame and bypass structured settlement.
+                let (on_success, on_failure) = match edge {
+                    WorkflowEdge::Fork { on_success, on_failure, .. }
+                    | WorkflowEdge::MapFork { on_success, on_failure, .. } => {
+                        (on_success, on_failure)
+                    }
+                    _ => unreachable!("only forks have admitted child scopes"),
+                };
+                for continuation in [on_success, on_failure] {
+                    if let WorkflowEdge::Next { node: target } = continuation.as_ref()
+                        && owner_of.contains_key(target)
+                    {
+                        return Err(WorkflowCompileError::InvalidFork {
+                            node: fork_owner.clone(),
+                            outcome: fork_outcome.clone(),
+                            reason: format!(
+                                "join continuation re-enters child {target} without a new fork"
+                            ),
+                        });
+                    }
+                }
                 // The parent cannot jump into children except through its fork.
                 for (other_name, other_node) in &self.nodes {
                     if owner_of.contains_key(other_name) {
