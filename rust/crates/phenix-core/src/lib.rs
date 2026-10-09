@@ -25,6 +25,7 @@ mod reconciliation;
 mod runtime;
 mod sdk;
 mod tasks;
+mod workflow;
 
 extern crate self as phenix_core;
 #[cfg(test)]
@@ -64,6 +65,8 @@ mod runtime_topology_generation_regression;
 mod service_layer_dispatch_regression;
 #[cfg(test)]
 mod third_party_component_regression;
+#[cfg(test)]
+mod workflow_execution_regression;
 
 pub use agent::{
     CONTEXT_SERVICE, ContextCommand, ContextDescriptor, ContextResourceKind,
@@ -210,3 +213,8 @@ pub use sdk::{
     observable_delivery_schema,
 };
 pub use tasks::{CallCancellationToken, CancellationToken, TaskHandle, TaskRuntime, TaskScope};
+pub use workflow::{
+    CompiledWorkflow, WorkflowBoundCallError, WorkflowCompileError, WorkflowDeclaration,
+    WorkflowEdge, WorkflowNode, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
+    WorkflowTopology,
+};

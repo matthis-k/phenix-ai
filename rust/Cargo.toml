@@ -21,6 +21,8 @@ members = [
   "crates/phenix-sdk-macros",
   "crates/phenix-plugin-artifacts",
   "crates/phenix-plugin-basic-agent",
+  "crates/phenix-plugin-basic-agent-nodes",
+  "crates/phenix-plugin-agent-topology",
   "crates/phenix-plugin-basic-context",
   "crates/phenix-plugin-basic-model",
   "crates/phenix-plugin-basic-skills",

@@ -13,16 +13,16 @@ use phenix_harness::{
 };
 use phenix_plugin_catalog::{
     OptionStartupPrecedence, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_manifest, artifact_manifest, basic_agent_configuration_manifest,
-    basic_context_manifest, basic_model_manifest, basic_product_configuration_manifest,
-    basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
-    common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, expand_profile_defaults, frontend_manifest,
-    full_product_configuration_manifest, hook_manifest, interactive_ui_manifest, job_manifest,
-    language_manifest, local_environment_manifest, memory_manifest, model_routing_manifest,
-    openai_codex_manifest, options_manifest, planning_manifest, providers_manifest,
-    repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
-    step_runner_manifest, workspace_manifest,
+    agent_loop_manifest, agent_topology_manifest, artifact_manifest,
+    basic_agent_configuration_manifest, basic_agent_nodes_manifest, basic_context_manifest,
+    basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
+    basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
+    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
+    expand_profile_defaults, frontend_manifest, full_product_configuration_manifest, hook_manifest,
+    interactive_ui_manifest, job_manifest, language_manifest, local_environment_manifest,
+    memory_manifest, model_routing_manifest, openai_codex_manifest, options_manifest,
+    planning_manifest, providers_manifest, repository_worker_manifest, sdk_manifest,
+    session_manifest, session_tree_manifest, step_runner_manifest, workspace_manifest,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -492,6 +492,8 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (efficiency_evaluation_manifest(), true),
         (benchmark_outcome_manifest(), false),
         (agent_loop_manifest(authority.clone()), true),
+        (agent_topology_manifest(authority.clone()), false),
+        (basic_agent_nodes_manifest(authority.clone()), false),
         (application_agent_tool_manifest(authority.clone()), true),
         (language_manifest(), true),
         (memory_manifest(), true),
@@ -1166,6 +1168,30 @@ mod tests {
     }
 
     #[test]
+    fn bundled_cli_registry_covers_every_named_product_default() {
+        let available = first_party_plugins()
+            .into_iter()
+            .map(|(manifest, _)| manifest.id.as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        for profile in [
+            basic_agent_configuration_manifest(),
+            advanced_agent_configuration_manifest(),
+            basic_product_configuration_manifest(),
+            full_product_configuration_manifest(),
+        ] {
+            let selected = BTreeSet::from([profile.id.as_str().to_owned()]);
+            let defaults = expand_profile_defaults(&selected, &BTreeSet::new());
+            for id in defaults {
+                assert!(
+                    available.contains(&id),
+                    "bundled CLI lacks {id}, selected by {}",
+                    profile.id
+                );
+            }
+        }
+    }
+
+    #[test]
     fn configured_advanced_agent_closes_through_basic_configuration() {
         let advanced = advanced_agent_configuration_manifest()
             .id
@@ -1178,7 +1204,9 @@ mod tests {
 
         assert!(enabled.contains(&advanced));
         assert!(enabled.contains(&basic));
-        assert!(enabled.contains("phenix.agent-loop"));
+        assert!(enabled.contains("phenix.agent-topology"));
+        assert!(enabled.contains("phenix.basic-agent-nodes"));
+        assert!(!enabled.contains("phenix.agent-loop"));
         assert!(enabled.contains("phenix.options"));
         assert!(enabled.contains("phenix.memory"));
         assert!(enabled.contains("phenix.planning"));

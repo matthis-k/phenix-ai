@@ -10,22 +10,25 @@ use phenix_core::{
     ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
-    artifact_component_manifest, artifact_factory, artifact_manifest,
-    basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
-    basic_context_manifest, basic_model_component_manifest, basic_model_factory,
-    basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,
-    basic_skills_factory, basic_skills_manifest, basic_tools_component_manifest,
-    basic_tools_factory, basic_tools_manifest, benchmark_outcome_component_manifest,
-    benchmark_outcome_factory, benchmark_outcome_manifest, cli_component_manifest, cli_factory,
-    cli_manifest, common_provider_definitions, context_component_manifest, context_factory,
-    context_manifest, debug_component_manifest, debug_factory, debug_manifest,
-    debug_runtime_trace_sink, efficiency_evaluation_component_manifest,
-    efficiency_evaluation_factory, efficiency_evaluation_manifest, execution_component_manifest,
-    execution_factory, execution_manifest, expand_profile_defaults,
-    first_party_durable_schema_registrations, frontend_component_manifest, frontend_factory,
-    frontend_manifest, full_product_configuration_manifest, helper_invocation_component_manifest,
+    AGENT_TOPOLOGY_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
+    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, agent_topology_component_manifest, agent_topology_declaration,
+    agent_topology_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
+    basic_agent_configuration_manifest, basic_agent_nodes_component_manifest,
+    basic_agent_nodes_factory, basic_agent_nodes_manifest, basic_context_component_manifest,
+    basic_context_factory, basic_context_manifest, basic_model_component_manifest,
+    basic_model_factory, basic_model_manifest, basic_product_configuration_manifest,
+    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
+    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
+    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
+    cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
+    context_component_manifest, context_factory, context_manifest, debug_component_manifest,
+    debug_factory, debug_manifest, debug_runtime_trace_sink,
+    efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
+    efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
+    execution_manifest, expand_profile_defaults, first_party_durable_schema_registrations,
+    frontend_component_manifest, frontend_factory, frontend_manifest,
+    full_product_configuration_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, interactive_ui_component_manifest,
     interactive_ui_factory, interactive_ui_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
@@ -117,6 +120,7 @@ pub struct PhenixRuntimeBuilder {
     provider_policy: ProviderCompositionPolicy,
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
+    pub(crate) workflows: Vec<phenix_core::WorkflowDeclaration>,
     process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
@@ -243,6 +247,8 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_manifest(),
             benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
+            basic_agent_nodes_manifest(authority.clone()),
+            agent_topology_manifest(authority.clone()),
             application::application_agent_tool_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
@@ -360,6 +366,10 @@ impl PhenixRuntimeBuilder {
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
+        if enabled.contains(AGENT_TOPOLOGY_PLUGIN) {
+            builder.add_manifest(agent_topology_manifest(authority.clone()));
+            builder.add_workflow(agent_topology_declaration());
+        }
         if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             let application_agent_tools = builder.application_agent_tools.clone();
             builder
@@ -415,6 +425,11 @@ impl PhenixRuntimeBuilder {
             invocation_defaults::invocation_defaults_factory,
         )?;
         builder.add_selected(&enabled, sdk_manifest(authority.clone()), sdk_factory)?;
+        builder.add_selected(
+            &enabled,
+            basic_agent_nodes_manifest(authority.clone()),
+            basic_agent_nodes_factory,
+        )?;
         builder.add_selected(&enabled, basic_model_manifest(), basic_model_factory)?;
         builder.add_selected(&enabled, basic_tools_manifest(), basic_tools_factory)?;
         builder.add_selected(&enabled, basic_skills_manifest(), basic_skills_factory)?;
@@ -430,6 +445,8 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_component_manifest(),
             benchmark_outcome_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
+            basic_agent_nodes_component_manifest(authority.clone()),
+            agent_topology_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
             planning_component_manifest(),
@@ -492,6 +509,11 @@ impl PhenixRuntimeBuilder {
 
     pub fn add_durable_schema(&mut self, registration: DurableSchemaRegistration) {
         self.durable_schemas.push(registration);
+    }
+
+    /// Register a declarative workflow owned by a component in this selection.
+    pub fn add_workflow(&mut self, declaration: phenix_core::WorkflowDeclaration) {
+        self.workflows.push(declaration);
     }
 
     pub fn add_component(&mut self, manifest: ComponentManifest) {
@@ -661,7 +683,8 @@ impl PhenixRuntimeBuilder {
             self.layer_policies,
             self.provider_policy,
             &self.component_authority,
-        )?;
+        )?
+        .with_workflows(self.workflows)?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());

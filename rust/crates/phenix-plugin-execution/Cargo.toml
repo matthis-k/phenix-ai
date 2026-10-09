@@ -19,4 +19,6 @@ sha2.workspace = true
 [dev-dependencies]
 phenix-plugin-environment-local = { path = "../phenix-plugin-environment-local" }
 phenix-plugin-basic-agent = { path = "../phenix-plugin-basic-agent" }
+phenix-plugin-basic-agent-nodes = { path = "../phenix-plugin-basic-agent-nodes" }
+phenix-plugin-agent-topology = { path = "../phenix-plugin-agent-topology" }
 phenix-plugin-workspace = { path = "../phenix-plugin-workspace" }

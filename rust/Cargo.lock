@@ -1796,6 +1796,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-agent-topology"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-basic-agent-nodes"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-basic-agent"
 version = "0.1.0"
 dependencies = [
@@ -1856,7 +1874,9 @@ dependencies = [
  "phenix-core",
  "phenix-plugin-api",
  "phenix-plugin-artifacts",
+ "phenix-plugin-agent-topology",
  "phenix-plugin-basic-agent",
+ "phenix-plugin-basic-agent-nodes",
  "phenix-plugin-basic-context",
  "phenix-plugin-basic-model",
  "phenix-plugin-basic-skills",
@@ -1954,7 +1974,9 @@ version = "0.1.0"
 dependencies = [
  "phenix-application-interface",
  "phenix-core",
+ "phenix-plugin-agent-topology",
  "phenix-plugin-basic-agent",
+ "phenix-plugin-basic-agent-nodes",
  "phenix-plugin-environment-local",
  "phenix-plugin-workspace",
  "phenix-sdk",

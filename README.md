@@ -60,6 +60,8 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 `phenix-full` is the supported full Harness composition and is also exposed as `phenix`. `phenix-basic` uses the smaller basic product composition. Both packages use the same executable and select the frontend with `--mode`; the mode does not change the plugin graph.
 
+Basic includes the workspace and local-environment providers used by its public shell and workspace tools. Full additionally selects the Advanced agent, memory and planning providers. Both products select the same declarative agent topology and Basic node providers by default; the legacy agent loop is an explicit option.
+
 Nix exposes independently packaged first-party runtime plugins, including adapters, through `phenixPlugins.<system>.*`. `wrappers.phenix.wrap` and `lib.mkPhenix` assemble a runtime with an explicit plugin selection. Omitting a plugin removes its service unless another selected provider supplies the same contract.
 
 The resolved component graph is the canonical runtime composition for component imports and event listeners. A `ComponentExport` identifies the executable endpoint. It does not need a duplicate terminal `ServiceContribution`. Plugin service contributions remain available for ordinary service dispatch and explicit interposition layers. Embedded and bridged runtimes execute the same graph-selected component identity. Development reconciliation replaces kernel configuration, component graph, listener bindings, resources, and generation as one resolved runtime topology.

@@ -326,7 +326,11 @@ impl ResolvedComponentGraph {
                     plugin: manifest.owner.clone(),
                 }
             })?;
-            if matches!(owner.execution, PluginExecution::ResourceOnly) {
+            // A resource-only plugin may declare contract imports and topology,
+            // but it cannot export executable services or own listeners.
+            if matches!(owner.execution, PluginExecution::ResourceOnly)
+                && (!manifest.exports.is_empty() || !manifest.listeners.is_empty())
+            {
                 return Err(ComponentGraphError::ResourceOnlyComponentOwner {
                     component: manifest.id.clone(),
                     plugin: manifest.owner.clone(),

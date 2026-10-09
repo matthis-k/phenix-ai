@@ -452,6 +452,9 @@ in
             jq -e '
               (.plugins | index("phenix.product.basic") != null)
               and (.plugins | index("phenix.agent.basic") != null)
+              and (.plugins | index("phenix.agent-topology") != null)
+              and (.plugins | index("phenix.basic-agent-nodes") != null)
+              and (.plugins | index("phenix.agent-loop") == null)
               and (.plugins | index("phenix.agent.advanced") == null)
               and (.plugins | index("phenix.api") != null)
               and (.plugins | index("phenix.options") != null)
@@ -461,7 +464,9 @@ in
               and (.plugins | index("phenix.sessions") != null)
               and (.plugins | index("phenix.memory") == null)
               and (.plugins | index("phenix.planning") == null)
-              and (.plugins | index("phenix.workspace") == null)
+              and (.plugins | index("phenix.workspace") != null)
+              and (.plugins | index("phenix.environment.local") != null)
+              and (.services | index("phenix.workspace@1") != null)
             ' "$TMPDIR/basic-services.json" >/dev/null
 
             export PHENIX_STATE_DB="$TMPDIR/resource.sqlite"

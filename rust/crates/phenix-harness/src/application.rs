@@ -5282,28 +5282,43 @@ fn run_agent_execution(
             input,
             tools,
         };
-        let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = root
-            .invoke(&agent_loop_service(), &encoded, agent_binding.as_ref())
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
+        // A bound agent contract is authoritative when present. When the
+        // pinned generation has no agent-loop import but has selected the
+        // declarative topology, the pre-admission resolver selects that
+        // topology instead. Never retry one path on failure of the other.
+        let response = if let Some(binding) = agent_binding.as_ref() {
+            let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+                ApplicationError::InvalidInput {
+                    message: error.to_string(),
+                }
             })?;
+            let output = root
+                .invoke(&agent_loop_service(), &encoded, Some(binding))
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            let value: PhenixValue = serde_json::from_slice(&output).map_err(|error| {
+                ApplicationError::InvalidResponse {
+                    message: error.to_string(),
+                }
+            })?;
+            AgentLoopResponse::try_from(Project(&value)).map_err(|error| {
+                ApplicationError::InvalidResponse {
+                    message: error.to_string(),
+                }
+            })?
+        } else {
+            phenix_plugin_catalog::run_agent_workflow(
+                &root,
+                command,
+                || cancellation.load(Ordering::Acquire),
+                None,
+            )
+            .map_err(|message| ApplicationError::Failed { message })?
+        };
         if cancellation.load(Ordering::Acquire) {
             return Err(ApplicationError::Cancelled);
         }
-        let value: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        let response = AgentLoopResponse::try_from(Project(&value)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })?;
         match response {
             AgentLoopResponse::Completed { output, .. } => {
                 String::from_utf8(output.as_ref().to_vec()).map_err(|error| {
@@ -5510,10 +5525,24 @@ pub(crate) fn bound_application_agent_plugin(
         .import_handle(&application_agent_tool_component_id(), &interface)
         .map_err(|error| ApplicationError::Failed {
             message: format!("cannot resolve application agent import: {error}"),
-        })?
-        .ok_or_else(|| ApplicationError::Failed {
-            message: "application has no resolved agent execution provider".to_owned(),
         })?;
+    let Some(binding) = binding else {
+        // A workflow is a selected generation artifact, never discovered at
+        // prompt execution by searching plugin names or trying a fallback.
+        // The compiled topology can run only through its validated imports.
+        let owner = ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN)
+            .expect("static declarative agent topology component id");
+        if resolved
+            .generation_topology()
+            .workflow(&owner, "agent.turn")
+            .is_some()
+        {
+            return Ok(None);
+        }
+        return Err(ApplicationError::Failed {
+            message: "application has no resolved agent execution provider".to_owned(),
+        });
+    };
     let target = binding.exporter();
     let component = resolved
         .components()
@@ -11014,6 +11043,280 @@ mod tests {
             events.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn application_agent_selection_is_pinned_to_the_resolved_execution_contract() {
+        let legacy = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
+            "phenix.agent-loop".to_owned(),
+        ]))
+        .unwrap()
+        .build()
+        .unwrap();
+        let bound = bound_application_agent_plugin(
+            legacy.resolved_generation(),
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            bound.as_ref().map(PluginId::as_str),
+            Some("phenix.agent-loop"),
+            "explicitly selected legacy contract remains supported and authoritative"
+        );
+
+        let declarative = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap()
+        .build()
+        .unwrap();
+        assert!(
+            bound_application_agent_plugin(
+                declarative.resolved_generation(),
+                &default_suite_authority(),
+            )
+            .unwrap()
+            .is_none(),
+            "without a bound agent service, the resolved declarative topology is selected"
+        );
+
+        let neither = crate::PhenixRuntimeBuilder::with_selected_suite_excluding(
+            &BTreeSet::from([phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned()]),
+            &BTreeSet::from([
+                "phenix.agent-loop".to_owned(),
+                "phenix.agent-topology".to_owned(),
+                "phenix.basic-agent-nodes".to_owned(),
+            ]),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert!(
+            bound_application_agent_plugin(
+                neither.resolved_generation(),
+                &default_suite_authority(),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no resolved agent execution provider"),
+            "missing both routes must fail before admitting the user prompt"
+        );
+    }
+
+    struct DeclarativeApplicationTurn {
+        cancel_next: bool,
+    }
+
+    impl PluginInstance for DeclarativeApplicationTurn {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            use phenix_sdk::{
+                AgentTurnStepRequest, AgentTurnStepResponse, agent_turn_step_service,
+            };
+            if service != &agent_turn_step_service() {
+                return Err(format!("unexpected declarative turn service: {service}"));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = AgentTurnStepRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            let mut state = request.state;
+            if state.session_id.is_none() {
+                return Err("application declarative turn lost session identity".into());
+            }
+            // Session history includes earlier prompts. Cancellation belongs to
+            // this invocation, not any matching text in the full transcript.
+            let cancel = std::mem::take(&mut self.cancel_next);
+            let response = if cancel {
+                // This is a provider-initiated cancellation, not a caller
+                // Cancel request. It must not consume a model invocation.
+                AgentTurnStepResponse::Cancelled { state }
+            } else {
+                state.usage.model_calls += 1;
+                AgentTurnStepResponse::Final {
+                    state,
+                    output: Bytes::from(b"declarative-client-output".to_vec()),
+                }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn application_prompt_executes_selected_declarative_only_graph() {
+        use phenix_sdk::{AgentTurnStepInterface, agent_turn_step_service};
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
+            phenix_plugin_catalog::SDK_PLUGIN.to_owned(),
+            phenix_plugin_catalog::OPTIONS_PLUGIN.to_owned(),
+            "phenix.environment.local".to_owned(),
+            "phenix.workspace".to_owned(),
+        ]))
+        .unwrap();
+        let owner = PluginId::parse("fixture.application-declarative-turn").unwrap();
+        let component = ComponentId::parse("fixture.application-declarative-turn").unwrap();
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: owner.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: vec![ServiceContribution {
+                        role: ServiceRole::Terminal,
+                        service: agent_turn_step_service(),
+                        priority: 200,
+                        required_authority: Authority::default(),
+                    }],
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: default_suite_authority(),
+                },
+                || Box::new(DeclarativeApplicationTurn { cancel_next: true }),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: component.clone(),
+            owner,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: AgentTurnStepInterface::interface_id(),
+                schema: AgentTurnStepInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: default_suite_authority(),
+        });
+        builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
+        let mut harness = builder.build().unwrap();
+        assert!(
+            harness
+                .resolved_generation()
+                .plugins()
+                .iter()
+                .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
+        );
+        harness.activate().unwrap();
+        let worker = ApplicationWorker::new(harness).unwrap();
+        let (sdk, generation) = {
+            let harness = worker.harness.lock();
+            (
+                harness
+                    .resolved_generation()
+                    .resolve_sdk_contributions([sdk_contribution()])
+                    .unwrap(),
+                ReferenceGenerationId::from(harness.generation()),
+            )
+        };
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.declarative-app-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-declarative-app-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-declarative-app-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+        let cancelled = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "declarative-cancel".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("provider-initiated declarative cancellation must not hang")
+        .expect("typed cancellation must be a terminal prompt response");
+        assert_eq!(cancelled.stop_reason, StopReason::Cancelled);
+
+        let completed = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "declarative application prompt".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("declarative application prompt must not hang")
+        .expect("resolved declarative agent turn must complete");
+        assert_eq!(completed.stop_reason, StopReason::EndTurn);
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. } if text == "declarative-client-output"
+            )
+        }));
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State { state: ExecutionState::Completed },
+                } if execution_id == &completed.execution_id
+            )
+        }));
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State { state: ExecutionState::Cancelled },
+                } if execution_id == &cancelled.execution_id
+            )
+        }));
+        drop(transport);
+        worker_task.await.unwrap();
     }
 
     /// Verify the terminal agent contract through the application dispatch,

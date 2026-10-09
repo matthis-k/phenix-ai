@@ -19,6 +19,15 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.entry_triggers()
     }
 
+    /// A compiled declarative workflow bound to the caller's graph generation.
+    pub fn workflow(
+        &self,
+        owner: &crate::ComponentId,
+        name: &str,
+    ) -> Option<&crate::CompiledWorkflow> {
+        self.scope.generation.workflow(owner, name)
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }

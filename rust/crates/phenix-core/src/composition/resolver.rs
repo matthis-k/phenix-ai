@@ -1,11 +1,12 @@
 use crate::{
-    Authority, ComponentEntryTrigger, ComponentGraphError, ComponentManifest,
+    Authority, CompiledWorkflow, ComponentEntryTrigger, ComponentGraphError, ComponentManifest,
     ComponentProcessArgument, CompositionMetadataError, ConfigContribution, ConfigMergeError,
     ConfigurationFrontendId, ConfigurationFrontendMetadata, DurableSchemaRegistration,
     EntryTriggerKind, FrontendConfigContribution, FrontendConfigError, GenerationId, InterfaceId,
     KernelConfig, KernelError, LayerPolicy, PermissionId, PersistenceBackendFeature, PluginId,
     PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
+    WorkflowCompileError, WorkflowDeclaration,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -35,6 +36,7 @@ pub struct GenerationTopology {
     dispatch_topology: ResolvedDispatchTopology,
     resources: Vec<SkillResourceMetadata>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    workflows: BTreeMap<(crate::ComponentId, String), CompiledWorkflow>,
 }
 
 impl GenerationTopology {
@@ -47,6 +49,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -65,6 +68,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -85,6 +89,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources,
             entry_triggers,
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -125,6 +130,9 @@ impl GenerationTopology {
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
         &self.entry_triggers
     }
+    pub fn workflow(&self, owner: &crate::ComponentId, name: &str) -> Option<&CompiledWorkflow> {
+        self.workflows.get(&(owner.clone(), name.to_owned()))
+    }
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
         let id = match &mut self.identity {
@@ -154,6 +162,18 @@ pub enum GenerationResolutionError {
         error: FrontendConfigError,
     },
     DuplicateResource(String),
+    MissingWorkflowOwner(crate::ComponentId),
+    InvalidWorkflowName(crate::ComponentId),
+    WorkflowAlreadyBound,
+    DuplicateWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    InvalidWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+        error: WorkflowCompileError,
+    },
     DuplicateDurableSchema(ResourceNamespace),
     UndeclaredDurableSchema {
         plugin: PluginId,
@@ -229,6 +249,24 @@ impl Display for GenerationResolutionError {
                     f,
                     "configuration frontend {frontend} rejected contribution: {error:?}"
                 )
+            }
+            Self::MissingWorkflowOwner(owner) => {
+                write!(f, "workflow owner {owner} is absent from resolved graph")
+            }
+            Self::InvalidWorkflowName(owner) => {
+                write!(f, "workflow owner {owner} has empty workflow name")
+            }
+            Self::WorkflowAlreadyBound => {
+                write!(
+                    f,
+                    "workflow declarations already belong to this resolved generation"
+                )
+            }
+            Self::DuplicateWorkflow { owner, name } => {
+                write!(f, "duplicate workflow {owner}:{name}")
+            }
+            Self::InvalidWorkflow { owner, name, error } => {
+                write!(f, "workflow {owner}:{name} is invalid: {error:?}")
             }
             Self::DuplicateResource(resource) => {
                 write!(f, "duplicate skill/resource metadata: {resource}")
@@ -363,6 +401,7 @@ pub struct ResolvedGeneration {
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
+    workflows: Vec<WorkflowDeclaration>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
@@ -703,6 +742,7 @@ impl ResolvedGeneration {
             components,
             entry_triggers,
             process_arguments,
+            workflows: Vec::new(),
             durable_schemas,
             configuration,
             layer_policies: inputs.layer_policies,
@@ -774,6 +814,92 @@ impl ResolvedGeneration {
 
     pub fn process_arguments(&self) -> &[ComponentProcessArgument] {
         &self.process_arguments
+    }
+
+    pub fn workflows(&self) -> &[WorkflowDeclaration] {
+        &self.workflows
+    }
+
+    /// Bind workflow nodes to the canonical resolved component imports.
+    pub fn with_workflows(
+        mut self,
+        declarations: impl IntoIterator<Item = WorkflowDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|left, right| {
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        // Generation metadata is immutable once workflows are attached.
+        // A new selection must re-resolve the candidate generation.
+        if !self.workflows.is_empty() {
+            return if self.workflows == declarations {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::WorkflowAlreadyBound)
+            };
+        }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
+        // Reject conflicting authorship before inspecting a provider graph.
+        // Two declarations for one owner/name are ambiguous even when one is
+        // malformed. Their input enumeration must not decide which failure
+        // wins or which selected import is inspected first.
+        for pair in declarations.windows(2) {
+            if pair[0].owner == pair[1].owner && pair[0].name == pair[1].name {
+                return Err(GenerationResolutionError::DuplicateWorkflow {
+                    owner: pair[0].owner.clone(),
+                    name: pair[0].name.clone(),
+                });
+            }
+        }
+        let mut compiled = BTreeMap::new();
+        for declaration in &declarations {
+            if declaration.name.trim().is_empty() {
+                return Err(GenerationResolutionError::InvalidWorkflowName(
+                    declaration.owner.clone(),
+                ));
+            }
+            if self
+                .component_graph()
+                .component(&declaration.owner)
+                .is_none()
+            {
+                return Err(GenerationResolutionError::MissingWorkflowOwner(
+                    declaration.owner.clone(),
+                ));
+            }
+            let workflow = declaration
+                .topology
+                .clone()
+                .compile_for_component(self.component_graph(), &declaration.owner)
+                .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error,
+                })?;
+            let key = (declaration.owner.clone(), declaration.name.clone());
+            if compiled.insert(key.clone(), workflow).is_some() {
+                return Err(GenerationResolutionError::DuplicateWorkflow {
+                    owner: key.0,
+                    name: key.1,
+                });
+            }
+        }
+        // A compiler semantic revision changes the meaning of identical
+        // authored plan bytes. Version the canonical execution contract in
+        // every pinned generation, not just the plugin-provided declarations.
+        const INVOKE_EXIT_LOWERING_REVISION: u32 = 1;
+        self.runtime.incorporate_semantic_metadata(&(
+            "phenix.workflow-ir",
+            INVOKE_EXIT_LOWERING_REVISION,
+            &declarations,
+        ));
+        self.runtime.workflows = compiled;
+        self.workflows = declarations;
+        Ok(self)
     }
 
     pub fn durable_schemas(&self) -> &[DurableSchemaRegistration] {
@@ -859,7 +985,37 @@ impl ResolvedGeneration {
             authority_ceiling,
         }
         .identity();
-        Ok(Self {
+        // Workflow definitions belong to their originating plugin revision.
+        // Reusing a component ID does not transfer authorship of its topology.
+        // Until artifact contributions can be reselected, carry a declaration
+        // forward only when both the owning component and plugin manifest are
+        // unchanged. A changed owner must publish its own new declaration.
+        let retained_workflows = self
+            .workflows
+            .iter()
+            .filter(|declaration| {
+                let Some(previous) = self
+                    .components
+                    .iter()
+                    .find(|component| component.id == declaration.owner)
+                else {
+                    return false;
+                };
+                if !components.iter().any(|component| component == previous) {
+                    return false;
+                }
+                let Some(owner) = self
+                    .plugins
+                    .iter()
+                    .find(|plugin| plugin.id == previous.owner)
+                else {
+                    return false;
+                };
+                plugins.iter().any(|plugin| plugin == owner)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        Self {
             runtime: GenerationTopology::resolved(
                 generation,
                 kernel_config,
@@ -871,12 +1027,14 @@ impl ResolvedGeneration {
             components,
             entry_triggers,
             process_arguments,
+            workflows: Vec::new(),
             durable_schemas,
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
             authority_ceiling: authority_ceiling.clone(),
-        })
+        }
+        .with_workflows(retained_workflows)
     }
 }
 

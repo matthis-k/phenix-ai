@@ -243,7 +243,8 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
         .collect::<BTreeSet<_>>();
     for required in [
         BASIC_AGENT_CONFIGURATION,
-        "phenix.agent-loop",
+        "phenix.agent-topology",
+        "phenix.basic-agent-nodes",
         "phenix.basic-skills",
         "phenix.context",
         "phenix.execution",
@@ -263,6 +264,7 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
             "basic configuration unexpectedly included {optional}"
         );
     }
+    assert!(!basic_ids.contains("phenix.agent-loop"));
     basic.build().unwrap();
 
     let advanced = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
@@ -277,7 +279,8 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
     for required in [
         ADVANCED_AGENT_CONFIGURATION,
         BASIC_AGENT_CONFIGURATION,
-        "phenix.agent-loop",
+        "phenix.agent-topology",
+        "phenix.basic-agent-nodes",
         "phenix.options",
         "phenix.memory",
         "phenix.planning",
@@ -292,7 +295,365 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
             "advanced configuration missed {required}"
         );
     }
+    assert!(!advanced_ids.contains("phenix.agent-loop"));
     advanced.build().unwrap();
+}
+
+#[test]
+fn basic_and_advanced_profiles_resolve_one_declarative_agent_topology() {
+    let component = phenix_core::ComponentId::parse("phenix.agent-topology").unwrap();
+    for profile in [BASIC_AGENT_CONFIGURATION, ADVANCED_AGENT_CONFIGURATION] {
+        let selected = BTreeSet::from([profile.to_owned()]);
+        let builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
+        let ids = builder
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            ids.contains("phenix.agent-topology"),
+            "{profile} missed the topology"
+        );
+        assert!(
+            ids.contains("phenix.basic-agent-nodes"),
+            "{profile} missed the Basic node providers"
+        );
+        assert_eq!(
+            builder.workflows.len(),
+            1,
+            "{profile} duplicated the topology"
+        );
+
+        let runtime = builder.build().unwrap();
+        assert!(
+            runtime
+                .resolved_generation()
+                .generation_topology()
+                .workflow(&component, "agent.turn")
+                .is_some(),
+            "{profile} must compile the selected workflow before activation"
+        );
+    }
+}
+
+#[test]
+fn declared_agent_entry_observes_cancellation_before_provider_side_effects() {
+    use phenix_core::Bytes;
+    use phenix_sdk::{AgentLoopCommand, AgentLoopResponse, AgentLoopUsage};
+
+    for profile in [BASIC_AGENT_CONFIGURATION, ADVANCED_AGENT_CONFIGURATION] {
+        let mut runtime =
+            PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([profile.to_owned()]))
+                .unwrap()
+                .build()
+                .unwrap();
+        runtime.activate().unwrap();
+        let outcome = runtime
+            .run_declared_agent_workflow(
+                AgentLoopCommand::Run {
+                    execution_id: format!("cancelled-{profile}"),
+                    session_id: None,
+                    parent_attempt_id: None,
+                    callable_id: None,
+                    input: Bytes::from(b"do not execute model".to_vec()),
+                    tools: Vec::new(),
+                },
+                &default_suite_authority(),
+                || true,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            outcome,
+            AgentLoopResponse::Cancelled {
+                usage: AgentLoopUsage {
+                    model_calls: 0,
+                    tool_calls: 0,
+                },
+            },
+            "{profile} must obey cancellation before any node is invoked"
+        );
+    }
+}
+
+#[test]
+fn declarative_agent_explicit_generation_rejects_unknown_generation_without_fallback() {
+    use phenix_core::Bytes;
+    use phenix_sdk::{AgentLoopCommand, AgentLoopResponse, AgentLoopUsage};
+
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .unwrap();
+    runtime.activate().unwrap();
+
+    let authority = default_suite_authority();
+    let constraints = runtime
+        .capture_root_execution_constraints(&authority, [])
+        .unwrap();
+    let command = AgentLoopCommand::Run {
+        execution_id: "pinned-declarative-agent".into(),
+        session_id: None,
+        parent_attempt_id: None,
+        callable_id: None,
+        input: Bytes::from(b"do not invoke providers".to_vec()),
+        tools: Vec::new(),
+    };
+    let selected = runtime.generation().clone();
+    let expected = AgentLoopResponse::Cancelled {
+        usage: AgentLoopUsage {
+            model_calls: 0,
+            tool_calls: 0,
+        },
+    };
+    assert_eq!(
+        runtime
+            .run_declared_agent_workflow_in_generation(
+                &selected,
+                &constraints,
+                command.clone(),
+                || true,
+                None,
+            )
+            .unwrap(),
+        expected
+    );
+
+    let missing = GenerationId::from("sha256:not-a-selected-generation".to_owned());
+    let error = runtime
+        .run_declared_agent_workflow_in_generation(&missing, &constraints, command, || true, None)
+        .unwrap_err();
+    assert!(
+        error.contains("generation") || error.contains("Generation"),
+        "must reject an unavailable generation before executing or falling back: {error}"
+    );
+}
+
+struct AlternateTurnProvider;
+
+impl PluginInstance for AlternateTurnProvider {
+    fn start(&mut self, _host: &phenix_core::PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        _host: &phenix_core::PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        use phenix_sdk::{AgentTurnStepRequest, AgentTurnStepResponse, agent_turn_step_service};
+
+        if service != &agent_turn_step_service() {
+            return Err(format!(
+                "unexpected service for substitute turn provider: {service}"
+            ));
+        }
+        let wire: PhenixValue = serde_json::from_slice(input).map_err(|error| error.to_string())?;
+        let mut state = AgentTurnStepRequest::try_from(Project(&wire))
+            .map_err(|error| error.to_string())?
+            .state;
+        state.usage.model_calls += 1;
+        let response = AgentTurnStepResponse::Final {
+            state,
+            output: phenix_core::Bytes::from(b"substituted-turn".to_vec()),
+        };
+        serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+    }
+}
+
+#[test]
+fn declarative_product_can_replace_one_node_without_legacy_loop() {
+    use phenix_core::{Bytes, ComponentExport, ComponentInterface, ComponentManifest};
+    use phenix_sdk::{
+        AgentLoopCommand, AgentLoopResponse, AgentLoopUsage, AgentTurnStepInterface,
+        agent_turn_step_service,
+    };
+
+    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
+    let mut builder =
+        PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded).unwrap();
+    let component = phenix_core::ComponentId::parse("fixture.alternate-turn").unwrap();
+    let owner = plugin("fixture.alternate-turn");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_turn_step_service(),
+                200,
+                Authority::default(),
+            ),
+            || Box::new(AlternateTurnProvider),
+        )
+        .unwrap();
+    builder.add_component(ComponentManifest {
+        id: component.clone(),
+        owner,
+        imports: Vec::new(),
+        exports: vec![ComponentExport {
+            interface: AgentTurnStepInterface::interface_id(),
+            schema: AgentTurnStepInterface::schema(),
+            priority: 200,
+            required_authority: Authority::default(),
+        }],
+        listeners: Vec::new(),
+        maximum_authority: Authority::default(),
+    });
+    builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
+    let mut runtime = builder.build().unwrap();
+    let selected_turn = runtime
+        .resolved_generation()
+        .component_graph()
+        .import_handle(
+            &phenix_core::ComponentId::parse("phenix.agent-topology").unwrap(),
+            &AgentTurnStepInterface::interface_id(),
+        )
+        .unwrap()
+        .expect("the declarative turn node has a resolved provider binding");
+    assert_eq!(
+        selected_turn.exporter().as_str(),
+        "fixture.alternate-turn",
+        "provider selection must use the canonical component graph"
+    );
+    assert!(
+        runtime
+            .resolved_generation()
+            .plugins()
+            .iter()
+            .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
+    );
+    runtime.activate().unwrap();
+    let response = runtime
+        .run_declared_agent_workflow(
+            AgentLoopCommand::Run {
+                execution_id: "selected-alternative-turn".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: Bytes::from(b"no legacy model".to_vec()),
+                tools: Vec::new(),
+            },
+            &default_suite_authority(),
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        response,
+        AgentLoopResponse::Completed {
+            output: Bytes::from(b"substituted-turn".to_vec()),
+            usage: AgentLoopUsage {
+                model_calls: 1,
+                tool_calls: 0,
+            },
+        }
+    );
+}
+
+#[test]
+fn declarative_basic_profile_activates_without_legacy_agent_loop() {
+    use phenix_core::Bytes;
+    use phenix_sdk::{AgentLoopCommand, AgentLoopResponse, AgentLoopUsage};
+
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite_excluding(
+        &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
+        &BTreeSet::from(["phenix.agent-loop".to_owned()]),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    assert!(
+        runtime
+            .resolved_generation()
+            .plugins()
+            .iter()
+            .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
+    );
+    runtime.activate().unwrap();
+    let response = runtime
+        .run_declared_agent_workflow(
+            AgentLoopCommand::Run {
+                execution_id: "declarative-only".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: Bytes::from(b"cancel before providers".to_vec()),
+                tools: Vec::new(),
+            },
+            &default_suite_authority(),
+            || true,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        response,
+        AgentLoopResponse::Cancelled {
+            usage: AgentLoopUsage {
+                model_calls: 0,
+                tool_calls: 0,
+            },
+        }
+    );
+}
+
+#[test]
+fn declared_agent_entry_does_not_fall_back_to_legacy_loop_when_topology_is_absent() {
+    use phenix_core::Bytes;
+    use phenix_sdk::AgentLoopCommand;
+
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite_excluding(
+        &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
+        &BTreeSet::from([
+            "phenix.agent-topology".to_owned(),
+            "phenix.basic-agent-nodes".to_owned(),
+        ]),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    runtime.activate().unwrap();
+    let outcome = runtime.run_declared_agent_workflow(
+        AgentLoopCommand::Run {
+            execution_id: "no-declarative-topology".into(),
+            session_id: None,
+            parent_attempt_id: None,
+            callable_id: None,
+            input: Bytes::from(b"no implicit fallback".to_vec()),
+            tools: Vec::new(),
+        },
+        &default_suite_authority(),
+        || false,
+        None,
+    );
+    assert!(
+        outcome.is_err(),
+        "an absent declarative workflow must not silently fall back to legacy service"
+    );
+}
+
+#[test]
+fn basic_declarative_defaults_remain_overrideable_without_replacing_the_kernel() {
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(
+        &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
+        &BTreeSet::from([
+            "phenix.agent-topology".to_owned(),
+            "phenix.basic-agent-nodes".to_owned(),
+        ]),
+    )
+    .unwrap();
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(!ids.contains("phenix.agent-loop"));
+    assert!(!ids.contains("phenix.agent-topology"));
+    assert!(!ids.contains("phenix.basic-agent-nodes"));
+    assert!(builder.workflows.is_empty());
+    builder.build().unwrap();
 }
 
 #[test]
@@ -397,6 +758,18 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
             .manifests
             .iter()
             .any(|manifest| { manifest.id.as_str() == "phenix.agent-loop" })
+    );
+    assert!(
+        builder
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == "phenix.basic-agent-nodes"),
+        "the independent Basic node providers must survive foreign-loop substitution"
+    );
+    assert_eq!(
+        builder.workflows.len(),
+        1,
+        "the independent topology remains selectable alongside a foreign agent provider"
     );
 
     let reply = AgentLoopResponse::Completed {
@@ -529,9 +902,9 @@ fn pinned_application_binding_selects_foreign_agent_over_native_service_priority
 }
 
 #[test]
-fn default_application_agent_route_uses_the_resolved_contract() {
-    use phenix_core::ComponentInterface;
-    use phenix_plugin_catalog::agent_loop_component_id;
+fn default_application_agent_route_uses_the_selected_declarative_topology() {
+    use phenix_core::ComponentId;
+    use phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN;
 
     let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         BASIC_AGENT_CONFIGURATION.to_owned(),
@@ -544,19 +917,31 @@ fn default_application_agent_route_uses_the_resolved_contract() {
         runtime.resolved_generation(),
         &default_suite_authority(),
     )
-    .expect("the Basic product resolves its agent contract");
-    assert_eq!(selected, Some(plugin("phenix.agent-loop")));
+    .expect("the Basic product resolves its selected agent execution entry");
+    assert_eq!(
+        selected, None,
+        "Basic defaults must not bind a legacy agent service"
+    );
 
-    let binding = runtime
+    let workflow = runtime
         .resolved_generation()
-        .component_graph()
-        .import_handle(
-            &phenix_core::ComponentId::parse("phenix.application-agent-tools").unwrap(),
-            &phenix_sdk::AgentLoopInterface::interface_id(),
-        )
-        .unwrap()
-        .expect("application agent import must be resolved");
-    assert_eq!(binding.exporter(), &agent_loop_component_id());
+        .generation_topology()
+        .workflow(
+            &ComponentId::parse(AGENT_TOPOLOGY_PLUGIN).unwrap(),
+            "agent.turn",
+        );
+    assert!(
+        workflow.is_some(),
+        "Basic defaults must compile the declarative agent entry in the resolved generation"
+    );
+    assert!(
+        !runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
+        "Basic defaults must not implicitly install a legacy agent loop"
+    );
 }
 
 #[test]
@@ -614,12 +999,13 @@ fn application_agent_route_obeys_contract_priority_not_service_priority() {
 
 #[test]
 fn application_prompt_does_not_use_installed_agent_service_when_contract_disabled() {
-    use phenix_core::ComponentInterface;
+    use phenix_core::{ComponentId, ComponentInterface};
     use phenix_plugin_catalog::agent_loop_component_id;
     use phenix_sdk::AgentLoopInterface;
 
     let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         BASIC_AGENT_CONFIGURATION.to_owned(),
+        "phenix.agent-loop".to_owned(),
     ]))
     .unwrap();
     builder.disable_provider(
@@ -638,15 +1024,25 @@ fn application_prompt_does_not_use_installed_agent_service_when_contract_disable
             .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
         "native service remains installed to exercise the no-fallback rule"
     );
-    let error = application::bound_application_agent_plugin(
+    let bound = application::bound_application_agent_plugin(
         runtime.resolved_generation(),
         &default_suite_authority(),
     )
-    .expect_err("disabled agent contract must deny the prompt");
+    .expect("the selected declarative topology remains available");
+    assert_eq!(
+        bound, None,
+        "disabling the agent contract must not route through its installed service"
+    );
     assert!(
-        error
-            .to_string()
-            .contains("no resolved agent execution provider")
+        runtime
+            .resolved_generation()
+            .generation_topology()
+            .workflow(
+                &ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap(),
+                "agent.turn",
+            )
+            .is_some(),
+        "the explicit declarative entry remains selected"
     );
 }
 
@@ -1671,7 +2067,9 @@ fn advanced_profile_can_remove_an_inherited_default_before_activation() {
         .collect::<BTreeSet<_>>();
     assert!(ids.contains(ADVANCED_AGENT_CONFIGURATION));
     assert!(ids.contains(BASIC_AGENT_CONFIGURATION));
-    assert!(ids.contains("phenix.agent-loop"));
+    assert!(ids.contains("phenix.agent-topology"));
+    assert!(ids.contains("phenix.basic-agent-nodes"));
+    assert!(!ids.contains("phenix.agent-loop"));
     assert!(
         !ids.contains("phenix.debug"),
         "excluded default must not activate"

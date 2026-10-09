@@ -5,6 +5,10 @@ use super::{
     },
     *,
 };
+use crate::{
+    WorkflowBoundCallError, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
+};
+use std::num::NonZeroU64;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 impl Kernel {
@@ -577,6 +581,138 @@ impl Kernel {
 }
 
 impl RootExecutionHandle {
+    /// Invoke the exact component import selected for this pinned generation.
+    ///
+    /// The import's provider, authority and Layers come from the canonical
+    /// resolved component graph. No provider lookup or fallback occurs after
+    /// this call starts. A stale or foreign binding is rejected.
+    pub fn invoke_import(
+        &self,
+        import: &ResolvedImportHandle,
+        input: &[u8],
+    ) -> Result<Vec<u8>, KernelError> {
+        let key = (import.importer().clone(), import.interface().clone());
+        let selected = self
+            .runtime
+            .component_graph()
+            .import_handle(import.importer(), import.interface())?
+            .ok_or_else(|| KernelError::PinnedBindingUnavailable {
+                component: key.0.clone(),
+                interface: key.1.clone(),
+            })?;
+        let dispatch = self
+            .runtime
+            .dispatch_topology()
+            .component_import(import.importer(), import.interface())
+            .ok_or_else(|| KernelError::PinnedBindingUnavailable {
+                component: key.0.clone(),
+                interface: key.1.clone(),
+            })?;
+        if selected != import
+            || dispatch.providers.primary() != import
+            || self
+                .constraints
+                .pinned_bindings
+                .get(&key)
+                .is_some_and(|pin| pin != import)
+        {
+            return Err(KernelError::PinnedBindingChanged {
+                generation: self
+                    .runtime
+                    .generation()
+                    .expect("resolved workflow has a generation")
+                    .clone(),
+                component: key.0,
+                interface: key.1,
+            });
+        }
+        let authority = self
+            .constraints
+            .authority
+            .attenuate(import.effective_authority());
+        let provenance = ComponentProviderProvenance::from_plan(
+            import.interface().clone(),
+            &dispatch.providers,
+            import,
+            None,
+            authority.clone(),
+        );
+        let prepared_mutations = PreparedMutationScope::new(self.generation());
+        let runtime = RuntimeServices {
+            states: &self.states,
+            instances: &self.instances,
+            invocations: &self.invocations,
+            events: self.events.as_ref(),
+            tasks: self.tasks.as_ref(),
+            persistence: self.persistence.as_ref(),
+            prepared_mutations: &prepared_mutations,
+            trace_sink: self.trace_sink.as_ref(),
+            provenance: self.provenance.as_ref(),
+        };
+        let constraints = self.constraints.with_authority(authority);
+        let scope = CallScope::external_with_constraints(Arc::clone(&self.runtime), &constraints);
+        invoke_component_service_with(
+            runtime,
+            ComponentInvocationPlan {
+                service: &dispatch.service,
+                layers: &dispatch.layers,
+                policy_identity: dispatch.policy_identity,
+            },
+            ComponentDispatchTarget {
+                component: import.exporter(),
+                binding: import.owning_plugin(),
+                provider_provenance: Some(provenance),
+            },
+            input,
+            scope,
+        )
+    }
+
+    /// Execute a workflow declared by a component in this root's pinned generation.
+    ///
+    /// Domain adapters prepare service inputs and project typed results into
+    /// declared outcomes. The kernel owns dispatch, authority and service Layers.
+    pub fn execute_workflow<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        state: &mut State,
+        mut prepare: impl FnMut(&str, &InterfaceId, &mut State) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(&str, &InterfaceId, &[u8], &mut State) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let (owner, name) = workflow;
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        compiled.execute_bound(
+            state,
+            |node, service, import, state, cancelled| {
+                let request = prepare(node, service, state)
+                    .map_err(WorkflowNodeDispatchError::Prepare)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                if cancelled() {
+                    return Err(crate::workflow::WorkflowInvocationError::Cancelled);
+                }
+                let output = self
+                    .invoke_import(import, &request)
+                    .map_err(WorkflowNodeDispatchError::Invoke)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                project(node, service, &output, state)
+                    .map_err(WorkflowNodeDispatchError::Project)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
     pub fn invoke(
         &self,
         service: &ServiceId,

@@ -75,6 +75,23 @@ impl PhenixRuntime {
         self.kernel.root_execution_handle(caller_authority)
     }
 
+    /// Opt in to the resolved declarative agent workflow in the active
+    /// generation. This does not replace the legacy agent-loop service.
+    ///
+    /// Both Basic and Advanced use the same topology. The selected generation
+    /// supplies the node providers and the kernel enforces pinned imports,
+    /// authority and cancellation across every node invocation.
+    pub fn run_declared_agent_workflow(
+        &self,
+        command: phenix_sdk::AgentLoopCommand,
+        caller_authority: &Authority,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<std::num::NonZeroU64>,
+    ) -> Result<phenix_sdk::AgentLoopResponse, String> {
+        let root = self.root_execution_handle(caller_authority);
+        phenix_plugin_catalog::run_agent_workflow(&root, command, cancelled, step_limit)
+    }
+
     pub fn root_execution_handle_in_generation(
         &self,
         generation: &GenerationId,
@@ -82,6 +99,27 @@ impl PhenixRuntime {
     ) -> Result<RootExecutionHandle, KernelError> {
         self.kernel
             .root_execution_handle_in_generation(generation, constraints)
+    }
+
+    /// Execute the selected declarative agent workflow in an explicitly
+    /// retained generation. The supplied root constraints are captured before
+    /// starting the execution; they cannot gain permissions or rebind node
+    /// providers through a later promotion of a different graph.
+    ///
+    /// In particular, an unavailable resident generation must fail instead
+    /// of silently switching to the active generation or legacy agent loop.
+    pub fn run_declared_agent_workflow_in_generation(
+        &self,
+        generation: &GenerationId,
+        constraints: &RootExecutionConstraints,
+        command: phenix_sdk::AgentLoopCommand,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<std::num::NonZeroU64>,
+    ) -> Result<phenix_sdk::AgentLoopResponse, String> {
+        let root = self
+            .root_execution_handle_in_generation(generation, constraints)
+            .map_err(|error| error.to_string())?;
+        phenix_plugin_catalog::run_agent_workflow(&root, command, cancelled, step_limit)
     }
 
     pub fn build_plugin_artifact(
