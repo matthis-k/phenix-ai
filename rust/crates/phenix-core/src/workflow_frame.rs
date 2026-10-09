@@ -274,10 +274,14 @@ mod tests {
         frame.set(&key("counter"), PhenixValue::U64(42)).unwrap();
         frame.set(&key("payload"), PhenixValue::U64(7)).unwrap();
         let original = frame.clone();
-        assert!(frame.transfer_slots(&BTreeMap::from([
-            (key("counter"), key("payload")),
-            (key("payload"), key("missing")),
-        ])).is_err());
+        assert!(
+            frame
+                .transfer_slots(&BTreeMap::from([
+                    (key("counter"), key("payload")),
+                    (key("payload"), key("missing")),
+                ]))
+                .is_err()
+        );
         assert_eq!(frame, original);
         assert!(matches!(
             frame.transfer_slots(&BTreeMap::from([
@@ -287,10 +291,12 @@ mod tests {
             Err(WorkflowFrameError::DuplicateOutputSlot(_))
         ));
         let mut frame = original.clone();
-        frame.transfer_slots(&BTreeMap::from([
-            (key("counter"), key("payload")),
-            (key("payload"), key("counter")),
-        ])).unwrap();
+        frame
+            .transfer_slots(&BTreeMap::from([
+                (key("counter"), key("payload")),
+                (key("payload"), key("counter")),
+            ]))
+            .unwrap();
         assert_eq!(frame.get(&key("counter")), Some(&PhenixValue::U64(7)));
         assert_eq!(frame.get(&key("payload")), Some(&PhenixValue::U64(42)));
         assert_eq!(original.get(&key("counter")), Some(&PhenixValue::U64(42)));
