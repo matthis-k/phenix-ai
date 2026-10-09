@@ -39,6 +39,7 @@ pub struct WorkflowOutcomeProjection {
     pub revision: u32,
     pub selector: WorkflowProjectionSelector,
     /// Structural result discriminant => plan outcome identity.
+    #[serde(deserialize_with = "crate::workflow::deserialize_unique_workflow_map")]
     pub cases: BTreeMap<String, String>,
 }
 
@@ -190,6 +191,16 @@ mod tests {
             serde_json::from_slice::<WorkflowOutcomeProjection>(&bytes).unwrap(),
             projection
         );
+    }
+
+    #[test]
+    fn duplicate_portable_case_discriminants_reject_before_canonicalization() {
+        let repeated = r#"{
+            "revision":1,
+            "selector":{"source":"direct_string"},
+            "cases":{"same":"first","same":"second"}
+        }"#;
+        assert!(serde_json::from_str::<WorkflowOutcomeProjection>(repeated).is_err());
     }
 
     #[test]
