@@ -568,12 +568,23 @@ mod tests {
         assert_eq!(group.state(b.id()), Some(WorkflowTaskState::Pending));
         assert_eq!(group.cancel_root(), vec![b.id().clone()]);
         assert_eq!(group.outstanding(), 2);
+        assert!(group.poll_settlement().is_none());
         assert_eq!(group.close(), Err(WorkflowTaskError::OutstandingTasks(2)));
+        let a_id = a.id().clone();
+        let b_id = b.id().clone();
         a_tx.send(()).unwrap();
         b_tx.send(()).unwrap();
         assert!(a.join().unwrap());
         assert!(b.join().unwrap());
         assert_eq!(group.outstanding(), 0);
+        let first_wakeup = group.wait_settlement().unwrap();
+        let second_wakeup = group.wait_settlement().unwrap();
+        assert_ne!(first_wakeup, second_wakeup);
+        assert_eq!(
+            BTreeSet::from([first_wakeup, second_wakeup]),
+            BTreeSet::from([a_id, b_id]),
+        );
+        assert!(group.poll_settlement().is_none());
         group.close().unwrap();
         assert!(matches!(
             group.spawn("root/late", &Authority::default(), |_| 1_u64),
