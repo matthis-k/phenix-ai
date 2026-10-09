@@ -160,9 +160,14 @@ providers* now runs the declarative Basic path and checks final responses,
 tool continuation, activated tool descriptors, progress and cancellation
 against the legacy path. These tests have not yet passed a full CI round.
 
-The adapter currently resides in Rust; fully portable JSON-configured
-topologies still need a versioned projection schema so other runtimes can
-understand typed transitions without writing a Rust adapter.
+The agent adapter still owns turn and tool-batch state checks. Core now
+validates selected portable outcome projections against the canonical bound
+service result schema and declared edges, freezes their canonical data in
+generation identity, and checks the result before invoking the Rust adapter.
+The adapter must agree with the selected branch. A mismatched branch fails
+instead of choosing either adapter or projection output silently. General
+plugin-artifact discovery and full portable plan activation remain separate
+gates.
 
 ## Remaining migration work
 
@@ -177,8 +182,10 @@ The next integration must:
 
 1. Discover workflow declarations from plugin artifacts, including resource-only
    topology plugins, without product-specific builder registration.
-2. Generalize the typed response-to-outcome adapter into portable, versioned
-   projection metadata, with startup validation against declared outcomes.
+2. Complete portable contribution-based selection of versioned outcome
+   projections. The first-party topology now binds them through the builder,
+   with canonical startup validation and runtime enforcement. Artifact
+   discovery and all portable entry authoring remain incomplete.
 3. Replace the legacy agent-loop entry with the declared workflow after
    validating and closing gaps in cancellation, provenance, usage,
    tool-call identity, observation projection, continuation, error
@@ -382,10 +389,15 @@ Fork continuations require an explicit child node, not an implicit subplan
 return. Typed inclusion tests exercise real provider-pinned input/output
 handoffs and child map Fork settlement within the same root.
 
+Mapped output handoffs now work on an immediate parent Finish; the output
+copy executes after the child Invoke and before root settlement. An explicit
+parent Transfer can also compose with child outputs when the sources and
+destinations are independent. Alias-dependent sequential return mappings
+reject candidate compilation rather than reading stale values.
+
 **Still outstanding:** private frame-slot qualification and per-subplan
-published-slot/export visibility, cross-owner subplan selection, output
-handoffs from an immediate Finish continuation, and portable EntryBinding
-activation. The current contract makes frame mapping explicit rather than
+published-slot/export visibility, cross-owner subplan selection, arbitrary
+sequential return mapping composition, and portable EntryBinding activation. The current contract makes frame mapping explicit rather than
 quietly sharing or defaulting unknown fields. It does not claim those
 remaining name/ownership semantics are complete.
 
@@ -410,9 +422,13 @@ unsupported revisions, omitted or invented variant cases, and outcomes not
 declared by the plan node. Runtime checked projection rejects incorrect
 structural payloads and unknown discriminants instead of turning them into
 normal recovery edges. Tests cover round-trip portable bytes, typed results,
-and negative cases. Binding selected projection descriptors to service
-response schemas and removing the Rust-only agent response adapters is a
-separate, still-open migration gate.
+and negative cases. The selected projection binding now validates against
+the bound import response schema during candidate preparation, contributes
+to generation identity, and is enforced on the active pinned execution route.
+The first-party agent topology publishes its two normal-result selectors.
+Its Rust adapter still handles typed state, tool usage and side-effect
+conformance. Portable artifact discovery and replacing that adapter with
+portable state handling remain open.
 
 ## Target-state Core IR boundary and migration gate
 
