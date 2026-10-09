@@ -501,6 +501,41 @@ fn selected_map_generation() -> ResolvedGeneration {
 }
 
 #[test]
+fn empty_map_all_is_vacuously_successful_without_child_invocation() {
+    let resolved = selected_map_generation();
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap().frame_schema().unwrap().clone();
+    let output = Key::parse("results").unwrap();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (Key::parse("items").unwrap(), PhenixValue::List(Vec::new())),
+        (Key::parse("item").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("result").unwrap(), PhenixValue::U64(0)),
+        (output.clone(), PhenixValue::List(vec![PhenixValue::U64(42)])),
+    ])).unwrap();
+    let mut executed = Vec::new();
+    let report = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut executed, &mut frame),
+        |node, _, _, executed| {
+            executed.push(node.to_owned());
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+            PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+            _ => Err("invalid outcome".into()),
+        },
+        || false, None,
+    ).unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(report.executed_nodes, 2);
+    assert_eq!(executed, ["model", "model"]);
+    assert_eq!(frame.get(&output), Some(&PhenixValue::List(Vec::new())));
+}
+
+#[test]
 fn non_agent_bounded_map_fanout_collects_typed_results_without_leaking_child_frames() {
     let resolved = selected_map_generation();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
