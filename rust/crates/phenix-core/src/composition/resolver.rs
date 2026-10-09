@@ -1025,7 +1025,7 @@ impl ResolvedGeneration {
     ///
     /// The ordinary `with_plugin_set` path continues to fail closed when old
     /// portable contributions are bound and no new envelopes were supplied.
-    pub(crate) fn with_plugin_set_and_portable_contributions<'a>(
+    pub fn with_plugin_set_and_portable_contributions<'a>(
         &self,
         plugins: Vec<PluginManifest>,
         components: Vec<ComponentManifest>,
