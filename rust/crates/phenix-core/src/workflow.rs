@@ -760,7 +760,7 @@ mod inclusion_tests {
                 None,
             )
             .unwrap();
-        assert_eq!(order, ["fixture.start@1", "fixture.child@1", "fixture.after@1"]);
+        assert_eq!(order, vec!["fixture.start@1", "fixture.child@1", "fixture.after@1"]);
         assert_eq!(report.last_node, "after");
         assert_eq!(report.final_outcome, "done");
         assert_eq!(report.executed_nodes, 3);
@@ -773,6 +773,26 @@ mod inclusion_tests {
     #[test]
     fn nested_inclusion_and_child_terminal_handoff_are_compiled() {
         let mut all = selected();
+        all.insert(
+            (owner(), "leaf".into()),
+            WorkflowTopology {
+                entry: "finish".into(),
+                nodes: BTreeMap::from([(
+                    "finish".into(),
+                    service("fixture.leaf@1", &[("leaf_done", WorkflowEdge::Finish)]),
+                )]),
+            },
+        );
+        all.get_mut(&(owner(), "child".into()))
+            .unwrap()
+            .nodes
+            .get_mut("work")
+            .unwrap()
+            .branches
+            .insert(
+                "returned".into(),
+                include("leaf", "inner", &[("leaf_done", WorkflowEdge::Finish)]),
+            );
         all.get_mut(&(owner(), "main".into()))
             .unwrap()
             .nodes
@@ -781,30 +801,35 @@ mod inclusion_tests {
             .branches
             .insert(
                 "delegate".into(),
-                include("child", "first", &[("returned", WorkflowEdge::Finish)]),
+                include(
+                    "child",
+                    "outer",
+                    &[("leaf_done", WorkflowEdge::Next { node: "after".into() })],
+                ),
             );
         let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
         assert!(flattened
             .nodes
-            .contains_key("__include__/first/work"));
+            .contains_key("__include__/outer/__include__/inner/finish"));
         let compiled = flattened.compile(|_| true).unwrap();
         let report = compiled
             .execute(
                 &mut (),
                 |import, _| {
-                    Ok::<_, ()>(if import.as_str() == "fixture.start@1" {
-                        "delegate".into()
-                    } else {
-                        "returned".into()
+                    Ok::<_, ()>(match import.as_str() {
+                        "fixture.start@1" => "delegate".into(),
+                        "fixture.child@1" => "returned".into(),
+                        "fixture.leaf@1" => "leaf_done".into(),
+                        "fixture.after@1" => "done".into(),
+                        unexpected => panic!("unexpected import {unexpected}"),
                     })
                 },
                 || false,
                 None,
             )
-            .unwrap_err();
-        assert!(matches!(report, WorkflowRunError::UndeclaredOutcome { .. }) == false);
-        // The trailing parent node is intentionally unreachable in this
-        // fixture, so validation rejects the authored dead continuation.
+            .unwrap();
+        assert_eq!(report.executed_nodes, 4);
+        assert_eq!(report.final_outcome, "done");
     }
 
     #[test]
