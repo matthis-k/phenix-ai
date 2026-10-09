@@ -1723,7 +1723,10 @@ fn pending_native_workflow_import_uses_pinned_provider_and_never_reselects() {
         serde_json::from_slice::<PhenixValue>(&output).unwrap(),
         PhenixValue::String("tools".into()),
     );
-    assert_eq!(group.state(&ticket), Some(crate::WorkflowTaskState::Completed));
+    assert_eq!(
+        group.state(&ticket),
+        Some(crate::WorkflowTaskState::Completed)
+    );
     assert_eq!(group.wait_settlement(), Some(ticket));
 
     // A foreign binding cannot be accepted as an alternate provider in
