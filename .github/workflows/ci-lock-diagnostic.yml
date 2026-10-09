@@ -1,0 +1,25 @@
+name: Temporary flake lock resolver
+
+on:
+  push:
+    branches:
+      - perf/ci-default-branch-caches
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Resolve pinned flake input
+        run: |
+          nix flake lock
+          cat flake.lock
