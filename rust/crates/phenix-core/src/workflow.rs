@@ -755,13 +755,16 @@ impl WorkflowTopology {
                                             if outputs.is_some_and(|slots| !slots.is_empty()) =>
                                         {
                                             WorkflowEdge::FinishTransfer {
-                                                slots: (*outputs.expect("nonempty mapping")).clone(),
+                                                slots: (*outputs.expect("nonempty mapping"))
+                                                    .clone(),
                                             }
                                         }
                                         Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
                                         Some(WorkflowEdge::FinishTransfer { .. }) => {
-                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
-                                        },
+                                            return Err(
+                                                WorkflowCompileError::UnsupportedReturnInclude,
+                                            );
+                                        }
                                         Some(WorkflowEdge::Fail) => {
                                             return Err(WorkflowCompileError::InvalidFork {
                                                 node: child_name.clone(),
@@ -1431,7 +1434,8 @@ impl CompiledWorkflow {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
                 if let WorkflowEdge::Transfer { slots, .. }
-                | WorkflowEdge::FinishTransfer { slots } = edge {
+                | WorkflowEdge::FinishTransfer { slots } = edge
+                {
                     let mut destinations = BTreeSet::new();
                     for (source, target) in slots {
                         if !destinations.insert(target) {
@@ -1862,25 +1866,34 @@ mod inclusion_tests {
                 (child_output.clone(), crate::PhenixValue::U64(0)),
                 (parent_output.clone(), crate::PhenixValue::U64(0)),
             ]),
-        ).unwrap();
-        let report = compiled.execute_nodes(
-            &mut (),
-            Some(&mut frame),
-            |node, _, _, frame, _| {
-                if node == "__include__/terminal/work" {
-                    frame.unwrap().set(&child_output, crate::PhenixValue::U64(42)).unwrap();
-                    Ok::<_, WorkflowInvocationError<String>>("returned".to_owned())
-                } else {
-                    assert_eq!(node, "start");
-                    Ok::<_, WorkflowInvocationError<String>>("delegate".to_owned())
-                }
-            },
-            || false,
-            None,
-        ).unwrap();
+        )
+        .unwrap();
+        let report = compiled
+            .execute_nodes(
+                &mut (),
+                Some(&mut frame),
+                |node, _, _, frame, _| {
+                    if node == "__include__/terminal/work" {
+                        frame
+                            .unwrap()
+                            .set(&child_output, crate::PhenixValue::U64(42))
+                            .unwrap();
+                        Ok::<_, WorkflowInvocationError<String>>("returned".to_owned())
+                    } else {
+                        assert_eq!(node, "start");
+                        Ok::<_, WorkflowInvocationError<String>>("delegate".to_owned())
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
         assert_eq!(report.final_outcome, "returned");
         assert_eq!(report.executed_nodes, 2);
-        assert_eq!(frame.get(&parent_output), Some(&crate::PhenixValue::U64(42)));
+        assert_eq!(
+            frame.get(&parent_output),
+            Some(&crate::PhenixValue::U64(42))
+        );
     }
 
     #[test]
