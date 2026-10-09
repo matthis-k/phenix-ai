@@ -328,12 +328,20 @@ frame snapshot. Core advances one Invoke per runnable child in deterministic
 round-robin order, reuses the root's pinned imports and authority, and checks
 cancellation and optional step limits across branches.
 
-The closed Join policies settle after each child completion. Early decisions
-cancel pending siblings before another provider dispatch. The parent receives
-only declared, schema-checked branch outputs or a typed list of mapped results.
-Map admission validates the item bound and its typed source. This is
-**cooperative execution**: there are no in-flight child invocations at a Join
-boundary. The root's generation lease covers every admitted child.
+The closed Join policies settle **in the same scheduling turn** as the child's
+final Invoke, before an unnecessary sibling dispatch. A declared child `Fail`
+is a normal, typed settlement; provider errors, denied authority, invalid
+outcomes and adapter failures propagate as execution errors and never enter
+an ordinary Join failure continuation. The parent receives only declared,
+schema-checked branch outputs or a typed list of mapped results. Map admission
+validates the explicitly authored positive fan-out bound and typed collection;
+there is no implicit 256-child Core ceiling. Empty maps settle vacuously for
+`All` policies without invoking child providers.
+
+This is **cooperative execution**: at a Join boundary there are no in-flight
+child invocations. A root's generation lease covers each child throughout
+dispatch. Nested scopes and native asynchronous settlement remain separate
+semantic acceptance gates, not implied by the closed Join policy tests.
 
 This is not yet full structured native-async execution. Nested forks currently
 fail candidate validation, and forks inside inlined subplans require typed
