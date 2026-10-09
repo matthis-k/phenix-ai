@@ -413,16 +413,20 @@ impl WorkflowNativeTaskGroup {
             terminal: WorkflowTaskState::Failed,
             completion_tx: self.completion_tx.clone(),
         };
-        let task = self.root.spawn_native_workflow_task(requested_authority, move |token| {
-            // The lease is deliberately retained until after the actual
-            // worker result, including late results after cancellation.
-            let _lease = lease;
-            let mut settlement = settlement;
-            let result = worker(token);
-            settlement.settle_as(classify(&result));
-            result
-        });
-        shared.signals.insert(id.clone(), task.cancellation_handle());
+        let task = self
+            .root
+            .spawn_native_workflow_task(requested_authority, move |token| {
+                // The lease is deliberately retained until after the actual
+                // worker result, including late results after cancellation.
+                let _lease = lease;
+                let mut settlement = settlement;
+                let result = worker(token);
+                settlement.settle_as(classify(&result));
+                result
+            });
+        shared
+            .signals
+            .insert(id.clone(), task.cancellation_handle());
         Ok(WorkflowNativeTask {
             id,
             task,
