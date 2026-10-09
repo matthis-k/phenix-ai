@@ -393,7 +393,10 @@ impl Display for GenerationResolutionError {
                 write!(f, "contribution artifact owner {owner} is not selected")
             }
             Self::MissingReselectedContributionOwner(owner) => {
-                write!(f, "selected plugin {owner} must supply a fresh contribution envelope")
+                write!(
+                    f,
+                    "selected plugin {owner} must supply a fresh contribution envelope"
+                )
             }
             Self::PortableContributionsAlreadyBound => {
                 f.write_str("portable contributions already bound to this generation")
@@ -1046,9 +1049,11 @@ impl ResolvedGeneration {
             for contribution in previous.iter() {
                 let owner = &contribution.owner;
                 if new_owners.contains(owner) && !supplied.contains(owner) {
-                    return Err(GenerationResolutionError::MissingReselectedContributionOwner(
-                        owner.clone(),
-                    ));
+                    return Err(
+                        GenerationResolutionError::MissingReselectedContributionOwner(
+                            owner.clone(),
+                        ),
+                    );
                 }
             }
         }
