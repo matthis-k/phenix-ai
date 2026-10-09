@@ -1554,7 +1554,10 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
         )
         .unwrap();
     assert_eq!(rebound.generation(), selected.generation());
-    assert_eq!(rebound.workflow_projections(), std::slice::from_ref(&selector));
+    assert_eq!(
+        rebound.workflow_projections(),
+        std::slice::from_ref(&selector)
+    );
     assert_eq!(
         rebound
             .generation_topology()
