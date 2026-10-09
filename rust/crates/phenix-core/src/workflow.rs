@@ -417,6 +417,11 @@ pub enum WorkflowCompileError {
         node: String,
         outcome: String,
     },
+    InvalidFrameTransfer {
+        node: String,
+        outcome: String,
+        reason: String,
+    },
     NestedForkNotSupported {
         node: String,
     },
@@ -1237,6 +1242,43 @@ impl CompiledWorkflow {
     ) -> Result<(), WorkflowCompileError> {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
+                if let WorkflowEdge::Transfer { slots, .. } = edge {
+                    let mut destinations = BTreeSet::new();
+                    for (source, target) in slots {
+                        if !destinations.insert(target) {
+                            return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: format!("target field {target} is written twice"),
+                            });
+                        }
+                        let from = schema.slots.get(source).ok_or_else(|| {
+                            WorkflowCompileError::InvalidFrameTransfer {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: format!("source field {source} is undeclared"),
+                            }
+                        })?;
+                        let to = schema.slots.get(target).ok_or_else(|| {
+                            WorkflowCompileError::InvalidFrameTransfer {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: format!("target field {target} is undeclared"),
+                            }
+                        })?;
+                        if !matches!(
+                            to.accepts(from),
+                            crate::SchemaCompatibility::Exact
+                                | crate::SchemaCompatibility::Compatible
+                        ) {
+                            return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: format!("incompatible handoff {source} to {target}"),
+                            });
+                        }
+                    }
+                }
                 if let WorkflowEdge::MapFork {
                     collection,
                     item_slot,
