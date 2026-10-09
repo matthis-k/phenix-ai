@@ -156,6 +156,12 @@ impl ResolvedImportHandle {
         &self.interface
     }
 
+    /// Result schema promised by this resolved consumer import. The selected
+    /// provider was checked against it during candidate preparation.
+    pub fn response_schema(&self) -> &crate::PhenixSchema {
+        self.import_schema.response()
+    }
+
     pub fn exporter(&self) -> &ComponentId {
         &self.exporter
     }
