@@ -6,8 +6,8 @@
 //! No worker is detached and no provider resolver or generation is recreated.
 //! The kernel root owns all pinned invocation and generation leases.
 use super::{
-    CompiledWorkflow, InterfaceId, NonZeroU64, PlanStep, PlanStepId,
-    WorkflowInvocationError, WorkflowRunError, WorkflowRunReport,
+    CompiledWorkflow, InterfaceId, NonZeroU64, PlanStep, PlanStepId, WorkflowInvocationError,
+    WorkflowRunError, WorkflowRunReport,
 };
 use crate::{
     PhenixValue, WorkflowChildSettlement, WorkflowFrame, WorkflowJoinDecision,
@@ -71,15 +71,21 @@ impl CompiledWorkflow {
         node: &str,
         cursor: &Cursor,
     ) -> Result<ActiveFork, WorkflowRunError<E>> {
-        let PlanStep::Fork { branches, map, join } = &self.plan.steps[&cursor.step] else {
+        let PlanStep::Fork {
+            branches,
+            map,
+            join,
+        } = &self.plan.steps[&cursor.step]
+        else {
             unreachable!("admission starts only at a compiled Fork");
         };
-        let frame = cursor
-            .frame
-            .as_ref()
-            .ok_or_else(|| WorkflowRunError::StructuredFrameRequired {
-                node: node.to_owned(),
-            })?;
+        let frame =
+            cursor
+                .frame
+                .as_ref()
+                .ok_or_else(|| WorkflowRunError::StructuredFrameRequired {
+                    node: node.to_owned(),
+                })?;
         let mut children = branches
             .iter()
             .map(|(key, step)| (key.clone(), Cursor::at(step.clone(), Some(frame.clone()))))
@@ -175,12 +181,12 @@ impl CompiledWorkflow {
                     .frame
                     .as_ref()
                     .expect("a child inherits its parent's typed frame");
-                candidate
-                    .collect_from(source, slots)
-                    .map_err(|error| WorkflowRunError::InvalidJoinFrame {
+                candidate.collect_from(source, slots).map_err(|error| {
+                    WorkflowRunError::InvalidJoinFrame {
                         node: node.to_owned(),
                         error,
-                    })?;
+                    }
+                })?;
             }
         }
         if let Some((child_output, output_slot)) = map_output {
@@ -279,7 +285,10 @@ impl CompiledWorkflow {
                     .next_ready()
                     .expect("an undecided join always has a runnable child");
                 let settlement = self.tick(
-                    active.children.get_mut(&branch).expect("selected child exists"),
+                    active
+                        .children
+                        .get_mut(&branch)
+                        .expect("selected child exists"),
                     state,
                     invoke,
                     cancelled,
@@ -302,7 +311,8 @@ impl CompiledWorkflow {
                     unreachable!("Fork refers to a Join");
                 };
                 let admitted = active.children.keys().cloned().collect();
-                let decision = policy.decide(&admitted, &active.observations)
+                let decision = policy
+                    .decide(&admitted, &active.observations)
                     .map_err(|error| WorkflowRunError::InvalidJoin {
                         node: node.clone(),
                         error,
@@ -333,7 +343,9 @@ impl CompiledWorkflow {
                 {
                     WorkflowJoinDecision::Succeeded { .. } => on_success.clone(),
                     WorkflowJoinDecision::Failed { .. } => on_failure.clone(),
-                    WorkflowJoinDecision::Pending => unreachable!("Join cannot resume pending scope"),
+                    WorkflowJoinDecision::Pending => {
+                        unreachable!("Join cannot resume pending scope")
+                    }
                 };
             }
             PlanStep::Exit { .. } => {}
@@ -374,15 +386,16 @@ impl CompiledWorkflow {
         let mut count = 0u64;
         let result = (|| {
             loop {
-                if self.tick(
-                    &mut root,
-                    state,
-                    &mut invoke,
-                    &mut cancelled,
-                    (&mut count, step_limit),
-                    0,
-                )?
-                .is_some()
+                if self
+                    .tick(
+                        &mut root,
+                        state,
+                        &mut invoke,
+                        &mut cancelled,
+                        (&mut count, step_limit),
+                        0,
+                    )?
+                    .is_some()
                 {
                     let PlanStepId::Exit { node, outcome } = &root.step else {
                         unreachable!("a settled root has an Exit identity");
