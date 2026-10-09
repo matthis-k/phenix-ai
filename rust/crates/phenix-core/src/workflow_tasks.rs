@@ -12,6 +12,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
     },
     thread,
 };
@@ -203,6 +204,8 @@ pub struct WorkflowNativeTaskGroup {
     root: RootExecutionHandle,
     shared: Arc<Mutex<NativeTaskLedger>>,
     next_call: AtomicU64,
+    completion_tx: Sender<WorkflowTaskId>,
+    completion_rx: Mutex<Receiver<WorkflowTaskId>>,
 }
 
 struct NativeTaskLedger {
@@ -214,6 +217,7 @@ struct NativeTaskSettlement {
     id: WorkflowTaskId,
     shared: Arc<Mutex<NativeTaskLedger>>,
     complete: bool,
+    completion_tx: Sender<WorkflowTaskId>,
 }
 
 impl NativeTaskSettlement {
@@ -235,6 +239,9 @@ impl Drop for NativeTaskSettlement {
         };
         let result = shared.pending.settle(&self.id, terminal);
         debug_assert!(result.is_ok(), "a worker must settle its ticket once");
+        drop(shared);
+        // The scheduler receives a wakeup only after actual settlement.
+        let _ = self.completion_tx.send(self.id.clone());
     }
 }
 
@@ -287,6 +294,7 @@ impl WorkflowNativeTaskGroup {
             .ok_or(WorkflowTaskError::MissingGeneration)?
             .as_str()
             .to_owned();
+        let (completion_tx, completion_rx) = mpsc::channel();
         Ok(Self {
             root,
             shared: Arc::new(Mutex::new(NativeTaskLedger {
@@ -294,6 +302,8 @@ impl WorkflowNativeTaskGroup {
                 signals: BTreeMap::new(),
             })),
             next_call: AtomicU64::new(0),
+            completion_tx,
+            completion_rx: Mutex::new(completion_rx),
         })
     }
 
@@ -332,6 +342,7 @@ impl WorkflowNativeTaskGroup {
             id: id.clone(),
             shared: Arc::clone(&self.shared),
             complete: false,
+            completion_tx: self.completion_tx.clone(),
         };
         let task = self.root.spawn_native_workflow_task(requested_authority, move |token| {
             // The lease is deliberately retained until after the actual
@@ -376,6 +387,26 @@ impl WorkflowNativeTaskGroup {
         let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
         let ids = shared.pending.cancel_root();
         Self::signal(&mut shared, ids)
+    }
+
+    /// Drain one real callback settlement without waiting. Each ticket is
+    /// delivered once and names its original scope and pinned generation.
+    pub fn poll_settlement(&self) -> Option<WorkflowTaskId> {
+        self.completion_rx
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .try_recv()
+            .ok()
+    }
+
+    /// Sleep until a native worker settles. This explicit wakeup does not
+    /// create another plan scheduler or poll a blocking provider in a loop.
+    pub fn wait_settlement(&self) -> Option<WorkflowTaskId> {
+        self.completion_rx
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .recv()
+            .ok()
     }
 
     pub fn outstanding(&self) -> usize {
