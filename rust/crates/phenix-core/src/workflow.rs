@@ -456,6 +456,13 @@ impl WorkflowTopology {
                                         outcome: child_outcome.clone(),
                                     });
                                 }
+                                WorkflowEdge::Fork { .. } => {
+                                    return Err(WorkflowCompileError::InvalidFork {
+                                        node: child_name.clone(),
+                                        outcome: child_outcome.clone(),
+                                        reason: "fork inside a compile-time subplan inclusion requires scoped frame mappings".into(),
+                                    });
+                                }
                             };
                         }
                         inserted.push((qualified, node));
@@ -576,6 +583,75 @@ impl WorkflowTopology {
                             outcome: outcome.clone(),
                         });
                     }
+                    WorkflowEdge::Fork {
+                        branches,
+                        outputs,
+                        on_success,
+                        on_failure,
+                        policy,
+                    } => {
+                        if branches.is_empty() || branches.len() > 256
+                            || branches.keys().any(|key| key.trim().is_empty())
+                        {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: "fork needs 1..=256 named children".into(),
+                            });
+                        }
+                        if let crate::WorkflowJoinPolicy::Quorum(k) = policy {
+                            if k.get() > branches.len() {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: "quorum exceeds admitted children".into(),
+                                });
+                            }
+                        }
+                        let mut emitted = BTreeSet::new();
+                        for (branch, slots) in outputs {
+                            if !branches.contains_key(branch) {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("outputs refer to unknown branch {branch}"),
+                                });
+                            }
+                            for slot in slots {
+                                if !emitted.insert(slot) {
+                                    return Err(WorkflowCompileError::InvalidFork {
+                                        node: name.clone(),
+                                        outcome: outcome.clone(),
+                                        reason: format!("slot {slot} is produced by multiple branches"),
+                                    });
+                                }
+                            }
+                        }
+                        for continuation in [on_success, on_failure] {
+                            match continuation.as_ref() {
+                                WorkflowEdge::Next { node: target } if !self.nodes.contains_key(target) => {
+                                    return Err(WorkflowCompileError::UnknownTarget {
+                                        from: name.clone(),
+                                        target: target.clone(),
+                                    });
+                                }
+                                WorkflowEdge::Next { .. } | WorkflowEdge::Finish => {}
+                                _ => {
+                                    return Err(WorkflowCompileError::InvalidJoinContinuation {
+                                        node: name.clone(),
+                                        outcome: outcome.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        for entry in branches.values() {
+                            if !self.nodes.contains_key(entry) {
+                                return Err(WorkflowCompileError::UnknownTarget {
+                                    from: name.clone(), target: entry.clone(),
+                                });
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -589,8 +665,17 @@ impl WorkflowTopology {
                 continue;
             }
             for edge in self.nodes[&name].branches.values() {
-                if let WorkflowEdge::Next { node } = edge {
-                    pending.push(node.clone());
+                match edge {
+                    WorkflowEdge::Next { node } => pending.push(node.clone()),
+                    WorkflowEdge::Fork { branches, on_success, on_failure, .. } => {
+                        pending.extend(branches.values().cloned());
+                        for continuation in [on_success, on_failure] {
+                            if let WorkflowEdge::Next { node } = continuation.as_ref() {
+                                pending.push(node.clone());
+                            }
+                        }
+                    }
+                    WorkflowEdge::Finish | WorkflowEdge::Include { .. } => {}
                 }
             }
         }
@@ -603,6 +688,64 @@ impl WorkflowTopology {
                 .collect();
             return Err(WorkflowCompileError::UnreachableNodes(unreachable));
         }
+        // A fork owns disjoint child regions. No child may escape to the parent
+        // or cross into a sibling region before returning through its own Exit.
+        // Nested forks are not admitted until nested scope scheduling is wired.
+        for (fork_owner, node) in &self.nodes {
+            for (fork_outcome, edge) in &node.branches {
+                let WorkflowEdge::Fork { branches, outputs, .. } = edge else { continue };
+                let mut owner_of = BTreeMap::<String, String>::new();
+                for (branch, entry) in branches {
+                    let mut visit = vec![entry.clone()];
+                    let mut visited = BTreeSet::new();
+                    while let Some(current) = visit.pop() {
+                        if !visited.insert(current.clone()) { continue; }
+                        if current == *fork_owner || current == self.entry {
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: fork_owner.clone(), outcome: fork_outcome.clone(),
+                                reason: "child escapes into its fork or the root entry".into(),
+                            });
+                        }
+                        if let Some(previous) = owner_of.insert(current.clone(), branch.clone()) {
+                            if previous != *branch {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: fork_owner.clone(), outcome: fork_outcome.clone(),
+                                    reason: format!("child {branch} crosses into child {previous} at {current}"),
+                                });
+                            }
+                        }
+                        for next in self.nodes[&current].branches.values() {
+                            match next {
+                                WorkflowEdge::Next { node } => visit.push(node.clone()),
+                                WorkflowEdge::Finish => {}
+                                WorkflowEdge::Fork { .. } => return Err(
+                                    WorkflowCompileError::NestedForkNotSupported { node: current.clone() }
+                                ),
+                                WorkflowEdge::Include { .. } => unreachable!("includes are rejected before reachability"),
+                            }
+                        }
+                    }
+                }
+                // The parent cannot jump into children except through its fork.
+                for (other_name, other_node) in &self.nodes {
+                    if owner_of.contains_key(other_name) { continue; }
+                    for other_edge in other_node.branches.values() {
+                        if let WorkflowEdge::Next { node: target } = other_edge {
+                            if owner_of.contains_key(target) {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: fork_owner.clone(), outcome: fork_outcome.clone(),
+                                    reason: format!("parent node {other_name} enters child {target} outside its fork"),
+                                });
+                            }
+                        }
+                    }
+                }
+                // Frame slot names must be selected and validated against the
+                // chosen schema before this plan can run via the framed root.
+                let _ = outputs;
+            }
+        }
+
         // A workflow can have no Exit when it is a long-running service loop.
         // Every cycle in this interim IR invokes a service, so cancellation
         // and optional step limits are checked on every back edge.
