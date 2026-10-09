@@ -1025,6 +1025,9 @@ impl ResolvedGeneration {
                 Err(GenerationResolutionError::FrameSchemasAlreadyBound)
             };
         }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
         const FRAME_CONTRACT_REVISION: u32 = 1;
         self.runtime
             .incorporate_semantic_metadata(&(FRAME_CONTRACT_REVISION, &declarations));
