@@ -11,6 +11,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const WORKFLOW_PROJECTION_REVISION: u32 = 1;
 
+/// One owner-authored projection bound to a selected plan Invoke node.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowProjectionDeclaration {
+    pub owner: crate::ComponentId,
+    pub workflow: String,
+    pub node: String,
+    pub projection: WorkflowOutcomeProjection,
+}
+
 /// The selector may inspect only a structurally typed, versioned result.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "source", content = "field", rename_all = "snake_case")]
