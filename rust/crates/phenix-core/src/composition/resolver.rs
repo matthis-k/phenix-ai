@@ -946,10 +946,10 @@ impl ResolvedGeneration {
         // A compiler semantic revision changes the meaning of identical
         // authored plan bytes. Version the canonical execution contract in
         // every pinned generation, not just the plugin-provided declarations.
-        const INVOKE_EXIT_LOWERING_REVISION: u32 = 2;
+        const CLOSED_PLAN_IR_SEMANTICS_REVISION: u32 = 3;
         self.runtime.incorporate_semantic_metadata(&(
             "phenix.workflow-ir",
-            INVOKE_EXIT_LOWERING_REVISION,
+            CLOSED_PLAN_IR_SEMANTICS_REVISION,
             &declarations,
         ));
         self.runtime.workflows = compiled;
