@@ -1653,6 +1653,3 @@ mod tests {
         drop(receiver);
     }
 }
-
-// Dependency-impact CI probe: isolated ACP client source change.
-
