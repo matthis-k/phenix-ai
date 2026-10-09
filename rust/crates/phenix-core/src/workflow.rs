@@ -53,6 +53,38 @@ where
     deserializer.deserialize_map(UniqueEntries(PhantomData))
 }
 
+/// A typed handoff must also reject repeated slot keys, including identical
+/// duplicate mappings. BTreeMap's default JSON decoding loses this evidence.
+fn deserialize_unique_transfer_slots<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<crate::Key, crate::Key>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueSlots;
+    impl<'de> serde::de::Visitor<'de> for UniqueSlots {
+        type Value = BTreeMap<crate::Key, crate::Key>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a typed frame transfer without duplicate source fields")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut entries: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut result = BTreeMap::new();
+            while let Some((source, target)) = entries.next_entry::<crate::Key, crate::Key>()? {
+                if result.insert(source.clone(), target).is_some() {
+                    return Err(M::Error::custom(format!("duplicate transfer source {source}")));
+                }
+            }
+            Ok(result)
+        }
+    }
+    deserializer.deserialize_map(UniqueSlots)
+}
+
 /// A workflow belongs to the component that imports its node services.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -95,7 +127,7 @@ pub enum WorkflowEdge {
     /// Compilation retains this as data on an Invoke edge, not a fifth step.
     Transfer {
         node: String,
-        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
         slots: BTreeMap<crate::Key, crate::Key>,
     },
     Finish,
@@ -141,9 +173,9 @@ pub enum WorkflowEdge {
         site: String,
         #[serde(deserialize_with = "deserialize_unique_workflow_map")]
         on_exit: BTreeMap<String, WorkflowEdge>,
-        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
         inputs: BTreeMap<crate::Key, crate::Key>,
-        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
         outputs: BTreeMap<crate::Key, crate::Key>,
     },
 }
