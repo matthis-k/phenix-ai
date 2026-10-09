@@ -996,6 +996,13 @@ impl ResolvedGeneration {
                     owner: declaration.owner.clone(),
                     name: declaration.name.clone(),
                 })?;
+            compiled.validate_frame_schema(&declaration.schema).map_err(|error| {
+                GenerationResolutionError::InvalidWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error,
+                }
+            })?;
             if let Some(existing) = compiled.frame_schema() {
                 if existing != &declaration.schema {
                     return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
