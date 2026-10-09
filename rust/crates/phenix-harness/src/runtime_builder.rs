@@ -724,3 +724,150 @@ impl PhenixRuntimeBuilder {
         ))
     }
 }
+
+#[cfg(test)]
+mod workflow_frame_selection_tests {
+    use super::*;
+    use phenix_core::{
+        ComponentExport, ComponentImport, InterfaceSchema, Key, PluginHost, Type,
+        WorkflowEdge, WorkflowFrameDeclaration, WorkflowFrameSchema, WorkflowNode,
+        WorkflowTopology, WorkflowDeclaration, WorkflowOutcomeProjection,
+        WorkflowProjectionDeclaration, WorkflowProjectionSelector,
+        WORKFLOW_PROJECTION_REVISION,
+    };
+
+    struct NoopProvider;
+
+    impl PluginInstance for NoopProvider {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn builder_with_typed_workflow() -> PhenixRuntimeBuilder {
+        let owner = ComponentId::parse("fixture.builder-topology").unwrap();
+        let provider_id = PluginId::parse("fixture.builder-provider").unwrap();
+        let service = InterfaceId::parse("fixture.builder-service@1").unwrap();
+        let contract = InterfaceSchema::new(Type::Unit, Type::String);
+        let mut builder = PhenixRuntimeBuilder::new();
+        builder.add_manifest(PluginManifest {
+            id: PluginId::parse("fixture.builder-topology").unwrap(),
+            version: 1,
+            execution: PluginExecution::ResourceOnly,
+            dependencies: Vec::new(),
+            services: Vec::new(),
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: provider_id.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                || Box::new(NoopProvider),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: owner.clone(),
+            owner: PluginId::parse("fixture.builder-topology").unwrap(),
+            imports: vec![ComponentImport {
+                interface: service.clone(),
+                schema: contract.clone(),
+                required: true,
+                authority: Authority::default(),
+            }],
+            exports: Vec::new(),
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_component(ComponentManifest {
+            id: ComponentId::parse("fixture.builder-provider").unwrap(),
+            owner: provider_id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: service.clone(),
+                schema: contract,
+                priority: 1,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_workflow(WorkflowDeclaration {
+            owner: owner.clone(),
+            name: "selected".into(),
+            topology: WorkflowTopology {
+                entry: "node".into(),
+                nodes: BTreeMap::from([(
+                    "node".into(),
+                    WorkflowNode {
+                        import: service,
+                        branches: BTreeMap::from([(
+                            "done".into(),
+                            WorkflowEdge::Finish,
+                        )]),
+                    },
+                )]),
+            },
+        });
+        builder.add_workflow_projection(WorkflowProjectionDeclaration {
+            owner,
+            workflow: "selected".into(),
+            node: "node".into(),
+            projection: WorkflowOutcomeProjection {
+                revision: WORKFLOW_PROJECTION_REVISION,
+                selector: WorkflowProjectionSelector::DirectString,
+                cases: BTreeMap::from([("done".into(), "done".into())]),
+            },
+        });
+        builder
+    }
+
+    #[test]
+    fn builder_selects_typed_workflow_frame_before_generation_activation() {
+        let mut builder = builder_with_typed_workflow();
+        let owner = ComponentId::parse("fixture.builder-topology").unwrap();
+        let counter = Key::parse("counter").unwrap();
+        let schema = WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([(counter, Type::U64)]),
+        };
+        builder.add_workflow_frame_schema(WorkflowFrameDeclaration {
+            owner: owner.clone(),
+            name: "selected".into(),
+            schema: schema.clone(),
+        });
+        let runtime = builder.build().unwrap();
+        let compiled = runtime.resolved_generation()
+            .generation_topology()
+            .workflow(&owner, "selected")
+            .unwrap();
+        assert_eq!(compiled.frame_schema(), Some(&schema));
+        assert!(compiled.outcome_projection("node").is_some());
+    }
+
+    #[test]
+    fn builder_rejects_undeclared_frame_workflow_during_resolution() {
+        let mut builder = builder_with_typed_workflow();
+        builder.add_workflow_frame_schema(WorkflowFrameDeclaration {
+            owner: ComponentId::parse("fixture.builder-topology").unwrap(),
+            name: "unselected".into(),
+            schema: WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::new(),
+            },
+        });
+        assert!(matches!(
+            builder.build(),
+            Err(PhenixRuntimeBuildError::Resolution(
+                GenerationResolutionError::MissingFrameWorkflow { .. }
+            ))
+        ));
+    }
+}
