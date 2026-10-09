@@ -239,7 +239,10 @@ impl NativeTaskSettlement {
 
 impl Drop for NativeTaskSettlement {
     fn drop(&mut self) {
-        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         shared.signals.remove(&self.id);
         // A provider panic is a failed terminal settlement, not a
         // completed normal result. Cancellation alone is not settlement.
@@ -283,7 +286,10 @@ impl<T> WorkflowNativeTask<T> {
     }
 
     pub fn cancel(&self) -> Result<bool, WorkflowTaskError> {
-        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if shared.pending.cancel_ticket(&self.id)? {
             self.task.cancel();
             Ok(true)
@@ -314,7 +320,9 @@ impl WorkflowNativeTaskGroup {
     }
 
     pub fn generation(&self) -> &crate::GenerationId {
-        self.root.generation().expect("native root generation was checked")
+        self.root
+            .generation()
+            .expect("native root generation was checked")
     }
 
     pub fn spawn<T, F>(
@@ -393,7 +401,10 @@ impl WorkflowNativeTaskGroup {
         };
         // Admission and signal registration are one transaction. A concurrent
         // cancel can never observe a ticket without a cancellable worker.
-        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         shared.pending.admit(id.clone())?;
         let lease = self.root.clone();
         let settlement = NativeTaskSettlement {
@@ -419,10 +430,7 @@ impl WorkflowNativeTaskGroup {
         })
     }
 
-    fn signal(
-        shared: &mut NativeTaskLedger,
-        ids: Vec<WorkflowTaskId>,
-    ) -> Vec<WorkflowTaskId> {
+    fn signal(shared: &mut NativeTaskLedger, ids: Vec<WorkflowTaskId>) -> Vec<WorkflowTaskId> {
         for id in &ids {
             // The same mutex guards admission, settlement, and signaling:
             // cancellation can never race a worker's signal deregistration.
@@ -436,13 +444,19 @@ impl WorkflowNativeTaskGroup {
     }
 
     pub fn cancel_scope(&self, scope: &str) -> Vec<WorkflowTaskId> {
-        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let ids = shared.pending.cancel_scope(scope);
         Self::signal(&mut shared, ids)
     }
 
     pub fn cancel_root(&self) -> Vec<WorkflowTaskId> {
-        let mut shared = self.shared.lock().unwrap_or_else(|error| error.into_inner());
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let ids = shared.pending.cancel_root();
         Self::signal(&mut shared, ids)
     }
@@ -569,10 +583,7 @@ mod tests {
         assert_eq!(group.cancel_root(), vec![ticket.clone()]);
         assert!(group.cancel_root().is_empty());
         assert_eq!(group.state(&ticket), Some(WorkflowTaskState::Cancelling));
-        assert_eq!(
-            group.close(),
-            Err(WorkflowTaskError::OutstandingTasks(1))
-        );
+        assert_eq!(group.close(), Err(WorkflowTaskError::OutstandingTasks(1)));
         drop(group);
         // The client and the task group are gone, but the native callback
         // still pins the old runtime generation until the worker settles.
@@ -660,9 +671,11 @@ mod tests {
             .root_execution_handle(&Authority::default())
             .native_workflow_tasks()
             .unwrap();
-        let task = group.spawn("root/panic", &Authority::default(), |_| -> () {
-            panic!("deliberately failed native invocation");
-        }).unwrap();
+        let task = group
+            .spawn("root/panic", &Authority::default(), |_| -> () {
+                panic!("deliberately failed native invocation");
+            })
+            .unwrap();
         let id = task.id().clone();
         assert!(task.join().is_err());
         assert_eq!(group.state(&id), Some(WorkflowTaskState::Failed));
