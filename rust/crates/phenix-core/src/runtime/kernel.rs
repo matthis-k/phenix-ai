@@ -789,7 +789,7 @@ impl RootExecutionHandle {
                     Err(error) => {
                         *frame = snapshot;
                         Err(crate::workflow::WorkflowInvocationError::Failed(
-                            WorkflowNodeDispatchError::Project(error)
+                            WorkflowNodeDispatchError::Project(error),
                         ))
                     }
                 }
