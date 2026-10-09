@@ -321,8 +321,8 @@
 
 mod api;
 mod authoring;
-pub mod kind_lowering;
 pub mod contracts;
+pub mod kind_lowering;
 mod providers;
 mod public_projection;
 
