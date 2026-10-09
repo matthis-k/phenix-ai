@@ -250,15 +250,23 @@ impl LoweredPlan {
                         fork
                     }
                     WorkflowEdge::MapFork {
-                        collection, item_slot, child_output_slot,
-                        output_slot, max_children, branch_entry, policy,
-                        on_success, on_failure,
+                        collection,
+                        item_slot,
+                        child_output_slot,
+                        output_slot,
+                        max_children,
+                        branch_entry,
+                        policy,
+                        on_success,
+                        on_failure,
                     } => {
                         let fork = PlanStepId::Fork {
-                            node: name.clone(), outcome: outcome.clone(),
+                            node: name.clone(),
+                            outcome: outcome.clone(),
                         };
                         let join = PlanStepId::Join {
-                            node: name.clone(), outcome: outcome.clone(),
+                            node: name.clone(),
+                            outcome: outcome.clone(),
                         };
                         let lower_continuation = |edge: &WorkflowEdge, suffix: &str, steps: &mut BTreeMap<PlanStepId, PlanStep>| {
                             match edge {
@@ -275,25 +283,31 @@ impl LoweredPlan {
                         };
                         let success = lower_continuation(on_success, "success", &mut steps);
                         let failure = lower_continuation(on_failure, "failure", &mut steps);
-                        steps.insert(fork.clone(), PlanStep::Fork {
-                            branches: BTreeMap::new(),
-                            map: Some(WorkflowMapFork {
-                                collection: collection.clone(),
-                                item_slot: item_slot.clone(),
-                                child_output_slot: child_output_slot.clone(),
-                                output_slot: output_slot.clone(),
-                                max_children: *max_children,
-                                branch_entry: PlanStepId::Invoke(branch_entry.clone()),
-                            }),
-                            join: join.clone(),
-                        });
-                        steps.insert(join, PlanStep::Join {
-                            policy: *policy,
-                            outputs: BTreeMap::new(),
-                            map_output: Some((child_output_slot.clone(), output_slot.clone())),
-                            on_success: success,
-                            on_failure: failure,
-                        });
+                        steps.insert(
+                            fork.clone(),
+                            PlanStep::Fork {
+                                branches: BTreeMap::new(),
+                                map: Some(WorkflowMapFork {
+                                    collection: collection.clone(),
+                                    item_slot: item_slot.clone(),
+                                    child_output_slot: child_output_slot.clone(),
+                                    output_slot: output_slot.clone(),
+                                    max_children: *max_children,
+                                    branch_entry: PlanStepId::Invoke(branch_entry.clone()),
+                                }),
+                                join: join.clone(),
+                            },
+                        );
+                        steps.insert(
+                            join,
+                            PlanStep::Join {
+                                policy: *policy,
+                                outputs: BTreeMap::new(),
+                                map_output: Some((child_output_slot.clone(), output_slot.clone())),
+                                on_success: success,
+                                on_failure: failure,
+                            },
+                        );
                         fork
                     }
                 };
@@ -452,7 +466,10 @@ pub enum WorkflowRunError<E> {
         node: String,
         error: crate::WorkflowFrameError,
     },
-    InvalidMapInput { node: String, reason: String },
+    InvalidMapInput {
+        node: String,
+        reason: String,
+    },
 }
 
 impl WorkflowTopology {
@@ -548,7 +565,9 @@ impl WorkflowTopology {
                                             return Err(WorkflowCompileError::InvalidFork {
                                                 node: child_name.clone(),
                                                 outcome: child_outcome.clone(),
-                                                reason: "subplan return cannot directly admit a fork".into(),
+                                                reason:
+                                                    "subplan return cannot directly admit a fork"
+                                                        .into(),
                                             });
                                         }
                                         None => {
@@ -700,9 +719,15 @@ impl WorkflowTopology {
                         });
                     }
                     WorkflowEdge::MapFork {
-                        collection: _, item_slot: _, child_output_slot: _,
-                        output_slot: _, max_children, branch_entry, policy,
-                        on_success, on_failure,
+                        collection: _,
+                        item_slot: _,
+                        child_output_slot: _,
+                        output_slot: _,
+                        max_children,
+                        branch_entry,
+                        policy,
+                        on_success,
+                        on_failure,
                     } => {
                         if *max_children == 0 || *max_children > 256 {
                             return Err(WorkflowCompileError::InvalidFork {
@@ -713,28 +738,36 @@ impl WorkflowTopology {
                         }
                         if !self.nodes.contains_key(branch_entry) {
                             return Err(WorkflowCompileError::UnknownTarget {
-                                from: name.clone(), target: branch_entry.clone(),
+                                from: name.clone(),
+                                target: branch_entry.clone(),
                             });
                         }
                         if let crate::WorkflowJoinPolicy::Quorum(k) = policy {
                             if k.get() > *max_children {
                                 return Err(WorkflowCompileError::InvalidFork {
-                                    node: name.clone(), outcome: outcome.clone(),
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
                                     reason: "quorum exceeds maximum admitted map children".into(),
                                 });
                             }
                         }
                         for continuation in [on_success, on_failure] {
                             match continuation.as_ref() {
-                                WorkflowEdge::Next { node: target } if !self.nodes.contains_key(target) => {
+                                WorkflowEdge::Next { node: target }
+                                    if !self.nodes.contains_key(target) =>
+                                {
                                     return Err(WorkflowCompileError::UnknownTarget {
-                                        from: name.clone(), target: target.clone(),
+                                        from: name.clone(),
+                                        target: target.clone(),
                                     });
                                 }
                                 WorkflowEdge::Next { .. } | WorkflowEdge::Finish => {}
-                                _ => return Err(WorkflowCompileError::InvalidJoinContinuation {
-                                    node: name.clone(), outcome: outcome.clone(),
-                                }),
+                                _ => {
+                                    return Err(WorkflowCompileError::InvalidJoinContinuation {
+                                        node: name.clone(),
+                                        outcome: outcome.clone(),
+                                    });
+                                }
                             }
                         }
                     }
@@ -841,7 +874,12 @@ impl WorkflowTopology {
                             }
                         }
                     }
-                    WorkflowEdge::MapFork { branch_entry, on_success, on_failure, .. } => {
+                    WorkflowEdge::MapFork {
+                        branch_entry,
+                        on_success,
+                        on_failure,
+                        ..
+                    } => {
                         pending.push(branch_entry.clone());
                         for continuation in [on_success, on_failure] {
                             if let WorkflowEdge::Next { node } = continuation.as_ref() {
@@ -942,7 +980,6 @@ impl WorkflowTopology {
                 }
                 // Frame slot names must be selected and validated against the
                 // chosen schema before this plan can run via the framed root.
-
             }
         }
 
@@ -988,26 +1025,29 @@ impl CompiledWorkflow {
         for (name, node) in &self.topology.nodes {
             for (outcome, edge) in &node.branches {
                 if let WorkflowEdge::MapFork {
-                    collection, item_slot, child_output_slot, output_slot, ..
-                } = edge {
+                    collection,
+                    item_slot,
+                    child_output_slot,
+                    output_slot,
+                    ..
+                } = edge
+                {
                     let required = [collection, item_slot, child_output_slot, output_slot];
                     for slot in required {
                         if !schema.slots.contains_key(slot) {
                             return Err(WorkflowCompileError::InvalidFork {
-                                node: name.clone(), outcome: outcome.clone(),
+                                node: name.clone(),
+                                outcome: outcome.clone(),
                                 reason: format!("map frame slot {slot} is absent"),
                             });
                         }
                     }
-                    if !matches!(
-                        schema.slots.get(collection),
-                        Some(crate::Type::List(_))
-                    ) || !matches!(
-                        schema.slots.get(output_slot),
-                        Some(crate::Type::List(_))
-                    ) {
+                    if !matches!(schema.slots.get(collection), Some(crate::Type::List(_)))
+                        || !matches!(schema.slots.get(output_slot), Some(crate::Type::List(_)))
+                    {
                         return Err(WorkflowCompileError::InvalidFork {
-                            node: name.clone(), outcome: outcome.clone(),
+                            node: name.clone(),
+                            outcome: outcome.clone(),
                             reason: "map collection and output must have list schemas".into(),
                         });
                     }
@@ -1015,11 +1055,14 @@ impl CompiledWorkflow {
                         let slot_type = &schema.slots[item_slot];
                         if !matches!(
                             slot_type.accepts(item),
-                            crate::SchemaCompatibility::Exact | crate::SchemaCompatibility::Compatible
+                            crate::SchemaCompatibility::Exact
+                                | crate::SchemaCompatibility::Compatible
                         ) {
                             return Err(WorkflowCompileError::InvalidFork {
-                                node: name.clone(), outcome: outcome.clone(),
-                                reason: "map item slot cannot accept collection element schema".into(),
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: "map item slot cannot accept collection element schema"
+                                    .into(),
                             });
                         }
                     }
@@ -1027,10 +1070,12 @@ impl CompiledWorkflow {
                         let produced = &schema.slots[child_output_slot];
                         if !matches!(
                             item.accepts(produced),
-                            crate::SchemaCompatibility::Exact | crate::SchemaCompatibility::Compatible
+                            crate::SchemaCompatibility::Exact
+                                | crate::SchemaCompatibility::Compatible
                         ) {
                             return Err(WorkflowCompileError::InvalidFork {
-                                node: name.clone(), outcome: outcome.clone(),
+                                node: name.clone(),
+                                outcome: outcome.clone(),
                                 reason: "map output cannot accept child result slot".into(),
                             });
                         }
@@ -1255,7 +1300,11 @@ impl CompiledWorkflow {
                         (&mut count, step_limit),
                     )?;
                 }
-                PlanStep::Fork { branches, map, join } => {
+                PlanStep::Fork {
+                    branches,
+                    map,
+                    join,
+                } => {
                     let PlanStepId::Fork { node, .. } = &current else {
                         unreachable!("Fork step has a typed identity")
                     };
@@ -1263,7 +1312,10 @@ impl CompiledWorkflow {
                         WorkflowRunError::StructuredFrameRequired { node: node.clone() }
                     })?;
                     let PlanStep::Join {
-                        policy, outputs, map_output, ..
+                        policy,
+                        outputs,
+                        map_output,
+                        ..
                     } = &self.plan.steps[join]
                     else {
                         unreachable!("Fork step always refers to a Join")
@@ -1275,22 +1327,34 @@ impl CompiledWorkflow {
                     if let Some(spec) = map {
                         let items = match data.get(&spec.collection) {
                             Some(crate::PhenixValue::List(items)) => items,
-                            _ => return Err(WorkflowRunError::InvalidMapInput {
-                                node: node.clone(),
-                                reason: format!("map source {} must be a list", spec.collection),
-                            }),
+                            _ => {
+                                return Err(WorkflowRunError::InvalidMapInput {
+                                    node: node.clone(),
+                                    reason: format!(
+                                        "map source {} must be a list",
+                                        spec.collection
+                                    ),
+                                });
+                            }
                         };
                         if items.is_empty() || items.len() > spec.max_children {
                             return Err(WorkflowRunError::InvalidMapInput {
                                 node: node.clone(),
-                                reason: format!("map admits 1..={} children; got {}", spec.max_children, items.len()),
+                                reason: format!(
+                                    "map admits 1..={} children; got {}",
+                                    spec.max_children,
+                                    items.len()
+                                ),
                             });
                         }
                         for (index, item) in items.iter().enumerate() {
                             let mut snapshot = data.clone();
-                            snapshot.set(&spec.item_slot, item.clone()).map_err(|error| {
-                                WorkflowRunError::InvalidJoinFrame { node: node.clone(), error }
-                            })?;
+                            snapshot
+                                .set(&spec.item_slot, item.clone())
+                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
+                                    node: node.clone(),
+                                    error,
+                                })?;
                             children.insert(
                                 format!("{index:06}"),
                                 (spec.branch_entry.clone(), snapshot),
@@ -1322,7 +1386,7 @@ impl CompiledWorkflow {
                                         Some(child_data),
                                         &mut invoke,
                                         &mut cancelled,
-                        (&mut count, step_limit),
+                                        (&mut count, step_limit),
                                     )
                                     .map(|next| {
                                         *cursor = next;
@@ -1406,9 +1470,11 @@ impl CompiledWorkflow {
                                     }
                                 })
                             }).collect::<Result<Vec<_>, _>>()?;
-                            candidate.set(output_slot, crate::PhenixValue::List(collected))
+                            candidate
+                                .set(output_slot, crate::PhenixValue::List(collected))
                                 .map_err(|error| WorkflowRunError::InvalidJoinFrame {
-                                    node: node.clone(), error,
+                                    node: node.clone(),
+                                    error,
                                 })?;
                         }
                         *data = candidate;
