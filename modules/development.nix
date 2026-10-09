@@ -424,26 +424,6 @@
           enable = true;
           outputName = "phenix-maintenance";
           # Fast feedback on PRs; full semantic CI runs on main and workflow_dispatch.
-          prImpact = {
-            enable = true;
-            workspace = "rust";
-            verifiedShardChange = {
-              source = "modules/development.nix";
-              list = "pluginFoundation";
-              job = "test-unit-plugin-foundation";
-              workflow = ".github/workflows/ci.yml";
-            };
-          };
-          pullRequestJobs = [
-            "source"
-            "clippy"
-            "test-unit-core"
-            "test-unit-protocol-sdk"
-            "test-unit-plugin-foundation"
-            "test-unit-agent-product"
-            "test-harness"
-            "test-adapter-domain"
-          ];
           nixCache = {
             enable = true;
             jobs = [ "product-phenix-runtime" ];
