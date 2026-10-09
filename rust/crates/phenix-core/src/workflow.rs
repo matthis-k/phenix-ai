@@ -18,7 +18,7 @@ use std::num::NonZeroU64;
 /// Reject duplicate author-owned identities before canonicalizing portable
 /// workflow JSON. Deserializing directly into BTreeMap would silently keep
 /// the last node or normal-result edge, changing the authored control flow.
-fn deserialize_unique_workflow_map<'de, D, V>(
+pub(crate) fn deserialize_unique_workflow_map<'de, D, V>(
     deserializer: D,
 ) -> Result<BTreeMap<String, V>, D::Error>
 where
