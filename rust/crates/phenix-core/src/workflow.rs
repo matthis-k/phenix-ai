@@ -233,6 +233,7 @@ impl LoweredPlan {
                                         (branch.clone(), PlanStepId::Invoke(entry.clone()))
                                     })
                                     .collect(),
+                                map: None,
                                 join: join.clone(),
                             },
                         );
@@ -241,10 +242,58 @@ impl LoweredPlan {
                             PlanStep::Join {
                                 policy: *policy,
                                 outputs: outputs.clone(),
+                                map_output: None,
                                 on_success: success,
                                 on_failure: failure,
                             },
                         );
+                        fork
+                    }
+                    WorkflowEdge::MapFork {
+                        collection, item_slot, child_output_slot,
+                        output_slot, max_children, branch_entry, policy,
+                        on_success, on_failure,
+                    } => {
+                        let fork = PlanStepId::Fork {
+                            node: name.clone(), outcome: outcome.clone(),
+                        };
+                        let join = PlanStepId::Join {
+                            node: name.clone(), outcome: outcome.clone(),
+                        };
+                        let lower_continuation = |edge: &WorkflowEdge, suffix: &str, steps: &mut BTreeMap<PlanStepId, PlanStep>| {
+                            match edge {
+                                WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
+                                WorkflowEdge::Finish => {
+                                    let exit = PlanStepId::Exit {
+                                        node: name.clone(), outcome: format!("{outcome}/{suffix}"),
+                                    };
+                                    steps.insert(exit.clone(), PlanStep::Exit);
+                                    exit
+                                }
+                                _ => unreachable!("map join continuation was validated"),
+                            }
+                        };
+                        let success = lower_continuation(on_success, "success", &mut steps);
+                        let failure = lower_continuation(on_failure, "failure", &mut steps);
+                        steps.insert(fork.clone(), PlanStep::Fork {
+                            branches: BTreeMap::new(),
+                            map: Some(WorkflowMapFork {
+                                collection: collection.clone(),
+                                item_slot: item_slot.clone(),
+                                child_output_slot: child_output_slot.clone(),
+                                output_slot: output_slot.clone(),
+                                max_children: *max_children,
+                                branch_entry: PlanStepId::Invoke(branch_entry.clone()),
+                            }),
+                            join: join.clone(),
+                        });
+                        steps.insert(join, PlanStep::Join {
+                            policy: *policy,
+                            outputs: BTreeMap::new(),
+                            map_output: Some((child_output_slot.clone(), output_slot.clone())),
+                            on_success: success,
+                            on_failure: failure,
+                        });
                         fork
                     }
                 };
