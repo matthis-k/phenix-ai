@@ -197,10 +197,7 @@ mod tests {
         KindDefinition {
             kind: "example.note@1".into(),
             provider_owner: "example.kind-provider".into(),
-            schema: Type::Table(BTreeMap::from([(
-                crate::Key::parse("name").unwrap(),
-                Type::String,
-            )])),
+            schema: Type::Map(Box::new(Type::String)),
             templates: vec![KindEmissionTemplate {
                 target: TemplateTarget::Canonical("example.resource@1".into()),
                 fields: BTreeMap::from([("label".into(), TemplateField::Field("name".into()))]),
