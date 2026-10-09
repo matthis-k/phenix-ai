@@ -720,19 +720,66 @@ impl WorkflowTopology {
                                         outcome: child_outcome.clone(),
                                     });
                                 }
-                                WorkflowEdge::MapFork { .. } => {
-                                    return Err(WorkflowCompileError::InvalidFork {
-                                        node: child_name.clone(),
-                                        outcome: child_outcome.clone(),
-                                        reason: "map fork inside an inline subplan requires scoped frame mappings".into(),
-                                    });
+                                WorkflowEdge::MapFork {
+                                    collection,
+                                    item_slot,
+                                    child_output_slot,
+                                    output_slot,
+                                    max_children,
+                                    branch_entry,
+                                    policy,
+                                    on_success,
+                                    on_failure,
+                                } => {
+                                    let qualify = |edge: &WorkflowEdge| match edge {
+                                        WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
+                                            node: format!("{prefix}{node}"),
+                                        }),
+                                        _ => Err(WorkflowCompileError::InvalidJoinContinuation {
+                                            node: child_name.clone(),
+                                            outcome: child_outcome.clone(),
+                                        }),
+                                    };
+                                    WorkflowEdge::MapFork {
+                                        collection: collection.clone(),
+                                        item_slot: item_slot.clone(),
+                                        child_output_slot: child_output_slot.clone(),
+                                        output_slot: output_slot.clone(),
+                                        max_children: *max_children,
+                                        branch_entry: format!("{prefix}{branch_entry}"),
+                                        policy: *policy,
+                                        on_success: Box::new(qualify(on_success)?),
+                                        on_failure: Box::new(qualify(on_failure)?),
+                                    }
                                 }
-                                WorkflowEdge::Fork { .. } => {
-                                    return Err(WorkflowCompileError::InvalidFork {
-                                        node: child_name.clone(),
-                                        outcome: child_outcome.clone(),
-                                        reason: "fork inside a compile-time subplan inclusion requires scoped frame mappings".into(),
-                                    });
+                                WorkflowEdge::Fork {
+                                    branches,
+                                    policy,
+                                    outputs,
+                                    on_success,
+                                    on_failure,
+                                } => {
+                                    let qualify = |edge: &WorkflowEdge| match edge {
+                                        WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
+                                            node: format!("{prefix}{node}"),
+                                        }),
+                                        _ => Err(WorkflowCompileError::InvalidJoinContinuation {
+                                            node: child_name.clone(),
+                                            outcome: child_outcome.clone(),
+                                        }),
+                                    };
+                                    WorkflowEdge::Fork {
+                                        branches: branches
+                                            .iter()
+                                            .map(|(branch, entry)| {
+                                                (branch.clone(), format!("{prefix}{entry}"))
+                                            })
+                                            .collect(),
+                                        policy: *policy,
+                                        outputs: outputs.clone(),
+                                        on_success: Box::new(qualify(on_success)?),
+                                        on_failure: Box::new(qualify(on_failure)?),
+                                    }
                                 }
                             };
                         }
