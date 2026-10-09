@@ -388,10 +388,11 @@ An included workflow rewrites root-scope Finish outcomes through its declared
 parent continuation. Root-scope Fork and MapFork Join terminals use explicit
 `<outcome>/success` and `<outcome>/failure` mappings. Nested child-scope
 Finish outcomes still settle their owning Fork. The compiler rejects missing
-return cases before activation. Direct Join returns with mapped output slots
-remain unsupported because their transfers require an ordered Join operation.
-Tests cover pinned input/output handoffs, nested child settlement, terminal
-Fork returns and ordered MapFork results within the same root.
+return cases before activation. A Join may apply a declared data transfer
+after collecting child outputs and before its Next or Finish continuation.
+The compiler retains this transfer on the Join step, without adding an Invoke.
+Tests cover pinned input/output handoffs, nested child settlement, mapped
+terminal Fork returns and ordered MapFork results within the same root.
 
 Mapped output handoffs now work on an immediate parent Finish; the output
 copy executes after the child Invoke and before root settlement. An explicit
@@ -400,8 +401,8 @@ destinations are independent. Alias-dependent sequential return mappings
 reject candidate compilation rather than reading stale values.
 
 **Still outstanding:** private frame-slot qualification, published fields
-for subplans, cross-owner selection, ordered Join output transfers, alias-dependent
-sequential return mappings, and portable EntryBinding activation.
+for subplans, cross-owner selection, alias-dependent sequential return mappings,
+and portable EntryBinding activation.
 Selected frame and projection declarations survive reconciliation only when
 their workflow author still matches. The resolver validates them again
 before publishing the candidate generation.
