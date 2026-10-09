@@ -1,3 +1,4 @@
+# Temporary CI probe: workspace build input must conservatively select all Cargo checks.
 [workspace]
 resolver = "3"
 exclude = [
