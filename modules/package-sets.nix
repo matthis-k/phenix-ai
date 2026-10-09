@@ -5,12 +5,14 @@ let
     "aarch64-linux"
   ];
 
+  rustSourceFor = pkgs: package: (import ./cargo-source.nix { inherit pkgs; }).sourceFor package;
+
   mkRustPackage =
     pkgs: package:
     pkgs.rustPlatform.buildRustPackage {
       pname = package;
       version = "0";
-      src = pkgs.lib.cleanSource ../rust;
+      src = rustSourceFor pkgs package;
       cargoLock.lockFile = ../rust/Cargo.lock;
       cargoBuildFlags = [
         "--package"
@@ -33,7 +35,7 @@ let
     pkgs.rustPlatform.buildRustPackage {
       pname = package;
       version = "0";
-      src = pkgs.lib.cleanSource ../rust;
+      src = rustSourceFor pkgs package;
       cargoLock.lockFile = ../rust/Cargo.lock;
       cargoBuildFlags = [
         "--package"
@@ -57,7 +59,7 @@ let
     pkgs.rustPlatform.buildRustPackage {
       pname = "phenix-binding-lua";
       version = "0";
-      src = pkgs.lib.cleanSource ../rust;
+      src = rustSourceFor pkgs "phenix-binding-lua";
       cargoLock.lockFile = ../rust/Cargo.lock;
       cargoBuildFlags = [
         "--package"
