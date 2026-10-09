@@ -4,7 +4,8 @@ use crate::{
     InterfaceSchema, Kernel, KernelError, LayerPolicy, LayerResult, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ProviderCompositionPolicy,
     ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
-    WorkflowDeclaration, WorkflowEdge, WorkflowNode, WorkflowTopology,
+    WorkflowDeclaration, WorkflowEdge, WorkflowFrame, WorkflowFrameSchema,
+    WorkflowNode, WorkflowTopology, Key, Type,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -306,6 +307,84 @@ fn basic_and_advanced_execute_identical_topology_with_different_providers() {
     }
     assert_eq!(histories[0], histories[1]);
     assert_eq!(histories[0], ["model", "tool", "model"]);
+}
+
+#[test]
+fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
+    let resolved = resolve(BASIC, false);
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let counter = Key::parse("counter").unwrap();
+    let mut frame = WorkflowFrame::new(
+        WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+        },
+        BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    let report = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        &mut seen,
+        &mut frame,
+        |_, _, frame, _| {
+            assert!(matches!(
+                frame.get(&counter),
+                Some(PhenixValue::U64(count)) if *count <= 2
+            ));
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |node, _, output, frame, seen| {
+            seen.push(node.to_owned());
+            let count = match frame.get(&counter) {
+                Some(PhenixValue::U64(count)) => *count,
+                _ => return Err("missing frame counter".into()),
+            };
+            frame
+                .set(&counter, PhenixValue::U64(count + 1))
+                .map_err(|error| error.to_string())?;
+            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                _ => Err("invalid outcome".into()),
+            }
+        },
+        || false,
+        None,
+    ).unwrap();
+    assert_eq!(report.executed_nodes, 3);
+    assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(3)));
+    assert_eq!(seen, ["model", "tool", "model"]);
+}
+
+#[test]
+fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects() {
+    let resolved = resolve(BASIC, false);
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let counter = Key::parse("counter").unwrap();
+    let mut frame = WorkflowFrame::new(
+        WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+        },
+        BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
+    )
+    .unwrap();
+    let result = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        &mut (),
+        &mut frame,
+        |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+        |_, _, _, frame, _| {
+            frame.set(&counter, PhenixValue::U64(17)).unwrap();
+            Err::<String, _>("intentional invalid projection".into())
+        },
+        || false,
+        None,
+    );
+    assert!(matches!(result, Err(crate::WorkflowRunError::NodeFailed { .. })));
+    assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(0)));
 }
 
 #[test]
