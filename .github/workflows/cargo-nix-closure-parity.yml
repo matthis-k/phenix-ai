@@ -1,0 +1,62 @@
+# Temporary cross-check. Never merge this probe.
+name: Cargo versus Nix source closure parity
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  closure-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+      - name: Compare Nix-selected source against Cargo metadata
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --locked --offline --format-version 1 \
+            --manifest-path rust/Cargo.toml > "$RUNNER_TEMP/cargo.json"
+          nix eval --json --impure --expr '
+            let
+              f = builtins.getFlake (toString ./.);
+            in f.packages.x86_64-linux.phenix-product-rust-artifacts.productCargoSourceMembers
+          ' > "$RUNNER_TEMP/nix-members.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          metadata = json.loads((tmp / "cargo.json").read_text())
+          nix_members = set(json.loads((tmp / "nix-members.json").read_text()))
+          packages = {p["id"]: p for p in metadata["packages"]
+                      if p["id"] in metadata["workspace_members"]}
+          by_path = {Path(p["manifest_path"]).parent.resolve(): ident
+                     for ident, p in packages.items()}
+          root = next(ident for ident, p in packages.items() if p["name"] == "phenix-harness")
+          visited = set()
+          todo = [root]
+          while todo:
+              ident = todo.pop()
+              if ident in visited:
+                  continue
+              visited.add(ident)
+              for dep in packages[ident]["dependencies"]:
+                  if dep.get("path"):
+                      dependency_id = by_path.get(Path(dep["path"]).resolve())
+                      if dependency_id is None:
+                          raise SystemExit(f"Cargo path dep missing in workspace: {dep}")
+                      todo.append(dependency_id)
+
+          cargo_members = {
+              "crates/" + Path(packages[ident]["manifest_path"]).parent.name
+              for ident in visited
+          }
+          print(f"Cargo closure: {len(cargo_members)} packages")
+          print(f"Nix closure: {len(nix_members)} packages")
+          print("Only in Cargo:", sorted(cargo_members - nix_members))
+          print("Only in Nix:", sorted(nix_members - cargo_members))
+          assert nix_members == cargo_members, "Nix and Cargo disagree about selected product crates"
+          PY
