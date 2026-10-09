@@ -749,10 +749,33 @@ impl WorkflowTopology {
                                             }
                                             _ => WorkflowEdge::Next { node: node.clone() },
                                         },
-                                        Some(WorkflowEdge::Transfer { .. }) => {
-                                            return Err(
-                                                WorkflowCompileError::UnsupportedReturnInclude,
-                                            );
+                                        Some(WorkflowEdge::Transfer { node, slots }) => {
+                                            // These transfers share one immutable source
+                                            // snapshot. Combining them is only sound when
+                                            // the parent transfer neither reads nor rewrites
+                                            // an output written by the included return.
+                                            let mut combined = outputs.cloned().unwrap_or_default();
+                                            let child_targets: BTreeSet<_> =
+                                                combined.values().cloned().collect();
+                                            for (source, target) in slots {
+                                                if child_targets.contains(source)
+                                                    || child_targets.contains(target)
+                                                    || combined.contains_key(source)
+                                                {
+                                                    return Err(
+                                                        WorkflowCompileError::InvalidFrameTransfer {
+                                                            node: child_name.clone(),
+                                                            outcome: child_outcome.clone(),
+                                                            reason: "ordered return transfers require distinct independent sources and destinations".into(),
+                                                        },
+                                                    );
+                                                }
+                                                combined.insert(source.clone(), target.clone());
+                                            }
+                                            WorkflowEdge::Transfer {
+                                                node: node.clone(),
+                                                slots: combined,
+                                            }
                                         }
                                         Some(WorkflowEdge::Finish)
                                             if outputs.is_some_and(|slots| !slots.is_empty()) =>
@@ -1934,6 +1957,115 @@ mod inclusion_tests {
             frame.get(&parent_output),
             Some(&crate::PhenixValue::U64(42))
         );
+    }
+
+    #[test]
+    fn independent_parent_return_transfer_composes_with_child_outputs() {
+        let mut all = selected();
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        parent.nodes.get_mut("start").unwrap().branches.insert(
+            "delegate".into(),
+            WorkflowEdge::IncludeMapped {
+                workflow: "child".into(),
+                site: "composed".into(),
+                inputs: BTreeMap::new(),
+                outputs: BTreeMap::from([(
+                    crate::Key::parse("child_output").unwrap(),
+                    crate::Key::parse("parent_output").unwrap(),
+                )]),
+                on_exit: BTreeMap::from([(
+                    "returned".into(),
+                    WorkflowEdge::Transfer {
+                        node: "after".into(),
+                        slots: BTreeMap::from([(
+                            crate::Key::parse("extra_input").unwrap(),
+                            crate::Key::parse("extra_output").unwrap(),
+                        )]),
+                    },
+                )]),
+            },
+        );
+        let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
+        let WorkflowEdge::Transfer { node, slots } =
+            &flattened.nodes["__include__/composed/work"].branches["returned"]
+        else {
+            panic!("expected a single compiled return transfer");
+        };
+        assert_eq!(node, "after");
+        assert_eq!(slots.len(), 2);
+        let compiled = flattened.compile(|_| true).unwrap();
+        let schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: ["child_output", "parent_output", "extra_input", "extra_output"]
+                .into_iter()
+                .map(|name| (crate::Key::parse(name).unwrap(), crate::Type::U64))
+                .collect(),
+        };
+        compiled.validate_frame_schema(&schema).unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            schema,
+            [
+                ("child_output", 0_u64),
+                ("parent_output", 0),
+                ("extra_input", 17),
+                ("extra_output", 0),
+            ]
+            .into_iter()
+            .map(|(name, value)| {
+                (crate::Key::parse(name).unwrap(), crate::PhenixValue::U64(value))
+            })
+            .collect(),
+        )
+        .unwrap();
+        compiled
+            .execute_nodes(
+                &mut (),
+                Some(&mut frame),
+                |node, _, _, frame, _| {
+                    if node == "__include__/composed/work" {
+                        frame.unwrap()
+                            .set(&crate::Key::parse("child_output").unwrap(), crate::PhenixValue::U64(9))
+                            .unwrap();
+                        Ok::<_, WorkflowInvocationError<String>>("returned".into())
+                    } else if node == "start" {
+                        Ok("delegate".into())
+                    } else {
+                        Ok("done".into())
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            frame.get(&crate::Key::parse("parent_output").unwrap()),
+            Some(&crate::PhenixValue::U64(9))
+        );
+        assert_eq!(
+            frame.get(&crate::Key::parse("extra_output").unwrap()),
+            Some(&crate::PhenixValue::U64(17))
+        );
+        // A downstream mapping that reads a freshly written return target
+        // requires a second phase. Reject it rather than reading stale data.
+        let parent = all.get_mut(&(owner(), "main".into())).unwrap();
+        let WorkflowEdge::IncludeMapped { on_exit, .. } = parent
+            .nodes.get_mut("start").unwrap()
+            .branches.get_mut("delegate").unwrap()
+        else { unreachable!() };
+        on_exit.insert(
+            "returned".into(),
+            WorkflowEdge::Transfer {
+                node: "after".into(),
+                slots: BTreeMap::from([(
+                    crate::Key::parse("parent_output").unwrap(),
+                    crate::Key::parse("extra_output").unwrap(),
+                )]),
+            },
+        );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::InvalidFrameTransfer { .. })
+        ));
     }
 
     #[test]
