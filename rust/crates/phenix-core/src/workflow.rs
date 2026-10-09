@@ -974,10 +974,14 @@ impl WorkflowTopology {
                                 WorkflowEdge::Next { node } => visit.push(node.clone()),
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {}
                                 WorkflowEdge::MapFork {
-                                    on_success, on_failure, ..
+                                    on_success,
+                                    on_failure,
+                                    ..
                                 }
                                 | WorkflowEdge::Fork {
-                                    on_success, on_failure, ..
+                                    on_success,
+                                    on_failure,
+                                    ..
                                 } => {
                                     // Nested children are visited in their own
                                     // declared scope. Their Join continuations
@@ -1352,7 +1356,6 @@ impl CompiledWorkflow {
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
         self.execute_cooperative(state, frame, invoke, cancelled, step_limit)
     }
-
 }
 
 #[path = "workflow_scheduler.rs"]
