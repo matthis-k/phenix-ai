@@ -1469,9 +1469,10 @@ impl CompiledWorkflow {
             .nodes
             .get(node)
             .ok_or(crate::WorkflowProjectionError::UnknownNode(node.to_owned()))?;
-        let binding = self.bindings.get(&node_def.import).ok_or(
-            crate::WorkflowProjectionError::UnboundNode(node.to_owned()),
-        )?;
+        let binding = self
+            .bindings
+            .get(&node_def.import)
+            .ok_or(crate::WorkflowProjectionError::UnboundNode(node.to_owned()))?;
         projection.validate(
             binding.response_schema(),
             &node_def.branches.keys().cloned().collect(),
