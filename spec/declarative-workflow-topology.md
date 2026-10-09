@@ -321,14 +321,26 @@ The decision function accepts the admitted child identities and the scheduler's
 monotonic settlement order. It validates duplicate, missing and foreign
 observations, breaks simultaneous ties by child ID, handles early failure and
 quorum impossibility, and reports when outstanding siblings need cancellation.
-This is a pure decision function. Root-owned child scheduling, cancellation
-completion, lease settlement and Join-step integration are not implemented.
+Core now lowers fixed named forks and bounded list map forks into the
+same compiled `Fork` and `Join` step vocabulary used by the provider-neutral
+`Invoke` and `Exit` dispatcher. Each admitted child runs on a copy-on-write
+frame snapshot. Core advances one Invoke per runnable child in deterministic
+round-robin order, reuses the root's pinned imports and authority, and checks
+cancellation and optional step limits across branches.
 
-These are data and dispatch contracts, not a full structured scheduler.
-Fork/Join nodes, cancellation of sibling scopes, typed input/output handoff
-for inlined subplans, and full selected-plan artifact discovery remain open.
-A new generation currently needs its own selected frame declarations; the
-reconfiguration path does not inherit an old owner's frame authority.
+The closed Join policies settle after each child completion. Early decisions
+cancel pending siblings before another provider dispatch. The parent receives
+only declared, schema-checked branch outputs or a typed list of mapped results.
+Map admission validates the item bound and its typed source. This is
+**cooperative execution**: there are no in-flight child invocations at a Join
+boundary. The root's generation lease covers every admitted child.
+
+This is not yet full structured native-async execution. Nested forks currently
+fail candidate validation, and forks inside inlined subplans require typed
+frame mappings. Typed input/output handoff for inlined subplans, selected-plan
+artifact discovery, runtime lifecycle rebinding, and Basic/Advanced product
+streaming parity remain open. A new generation must select its own frame
+declarations; reconfiguration does not inherit a former owner's frame grants.
 
 ## Target-state Core IR boundary and migration gate
 
