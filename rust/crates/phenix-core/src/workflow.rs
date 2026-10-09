@@ -88,7 +88,9 @@ pub struct WorkflowNode {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkflowEdge {
-    Next { node: String },
+    Next {
+        node: String,
+    },
     Finish,
     /// Compile-time inclusion of a workflow authored by the same component.
     /// Each child finish outcome must map to one declared continuation.
@@ -192,10 +194,19 @@ pub enum WorkflowCompileError {
     InvalidInclusionSite(String),
     DuplicateInclusionSite(String),
     InclusionIdentityConflict(String),
-    MissingSubplanExit { workflow: String, outcome: String },
-    UnknownSubplanExit { workflow: String, outcome: String },
+    MissingSubplanExit {
+        workflow: String,
+        outcome: String,
+    },
+    UnknownSubplanExit {
+        workflow: String,
+        outcome: String,
+    },
     UnsupportedReturnInclude,
-    UnexpandedInclude { node: String, outcome: String },
+    UnexpandedInclude {
+        node: String,
+        outcome: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -339,7 +350,9 @@ impl WorkflowTopology {
                                         }
                                         Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
                                         Some(WorkflowEdge::Include { .. }) => {
-                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                            return Err(
+                                                WorkflowCompileError::UnsupportedReturnInclude,
+                                            );
                                         }
                                         None => {
                                             return Err(WorkflowCompileError::MissingSubplanExit {
@@ -718,7 +731,12 @@ mod inclusion_tests {
                             include(
                                 "child",
                                 "one",
-                                &[("returned", WorkflowEdge::Next { node: "after".into() })],
+                                &[(
+                                    "returned",
+                                    WorkflowEdge::Next {
+                                        node: "after".into(),
+                                    },
+                                )],
                             ),
                         )],
                     ),
@@ -741,10 +759,11 @@ mod inclusion_tests {
         let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
         assert_eq!(flattened.nodes.len(), 3);
         assert!(flattened.nodes.contains_key("__include__/one/work"));
-        assert!(flattened
-            .nodes
-            .values()
-            .all(|node| node.branches.values().all(|edge| !matches!(edge, WorkflowEdge::Include { .. }))));
+        assert!(flattened.nodes.values().all(|node| {
+            node.branches
+                .values()
+                .all(|edge| !matches!(edge, WorkflowEdge::Include { .. }))
+        }));
         let compiled = flattened.compile(|_| true).unwrap();
         let mut order = Vec::new();
         let report = compiled
@@ -763,7 +782,10 @@ mod inclusion_tests {
                 None,
             )
             .unwrap();
-        assert_eq!(order, vec!["fixture.start@1", "fixture.child@1", "fixture.after@1"]);
+        assert_eq!(
+            order,
+            vec!["fixture.start@1", "fixture.child@1", "fixture.after@1"]
+        );
         assert_eq!(report.last_node, "after");
         assert_eq!(report.final_outcome, "done");
         assert_eq!(report.executed_nodes, 3);
@@ -807,13 +829,20 @@ mod inclusion_tests {
                 include(
                     "child",
                     "outer",
-                    &[("leaf_done", WorkflowEdge::Next { node: "after".into() })],
+                    &[(
+                        "leaf_done",
+                        WorkflowEdge::Next {
+                            node: "after".into(),
+                        },
+                    )],
                 ),
             );
         let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
-        assert!(flattened
-            .nodes
-            .contains_key("__include__/outer/__include__/inner/finish"));
+        assert!(
+            flattened
+                .nodes
+                .contains_key("__include__/outer/__include__/inner/finish")
+        );
         let compiled = flattened.compile(|_| true).unwrap();
         let report = compiled
             .execute(
@@ -1572,10 +1601,7 @@ mod tests {
                             WorkflowEdge::Include {
                                 workflow: "child".into(),
                                 site: "selected".into(),
-                                on_exit: BTreeMap::from([(
-                                    "final".into(),
-                                    WorkflowEdge::Finish,
-                                )]),
+                                on_exit: BTreeMap::from([("final".into(), WorkflowEdge::Finish)]),
                             },
                         )]),
                     },
@@ -1586,13 +1612,15 @@ mod tests {
             .clone()
             .with_workflows([parent.clone(), child.clone()])
             .unwrap();
-        assert!(with_subplan
-            .generation_topology()
-            .workflow(&consumer, "parent")
-            .unwrap()
-            .topology()
-            .nodes
-            .contains_key("__include__/selected/model"));
+        assert!(
+            with_subplan
+                .generation_topology()
+                .workflow(&consumer, "parent")
+                .unwrap()
+                .topology()
+                .nodes
+                .contains_key("__include__/selected/model")
+        );
         assert_eq!(
             with_subplan.generation(),
             baseline
