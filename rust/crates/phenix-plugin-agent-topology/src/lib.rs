@@ -207,11 +207,20 @@ mod tests {
             AgentToolBatchResponse::Cancelled { state },
         ];
         let topology = agent_topology_declaration().topology;
+        let projections = agent_topology_projections();
         for outcome in turn_outcomes {
             assert!(
                 topology.nodes["turn"]
                     .branches
                     .contains_key(outcome.workflow_outcome()),
+            );
+            assert_eq!(
+                projections.iter().find(|p| p.node == "turn").unwrap()
+                    .projection.project_checked(
+                        AgentTurnStepInterface::schema().response(),
+                        &phenix_core::PhenixValue::from(&outcome),
+                    ),
+                Ok(outcome.workflow_outcome().to_owned()),
             );
         }
         for outcome in batch_outcomes {
@@ -219,6 +228,14 @@ mod tests {
                 topology.nodes["tool_batch"]
                     .branches
                     .contains_key(outcome.workflow_outcome()),
+            );
+            assert_eq!(
+                projections.iter().find(|p| p.node == "tool_batch").unwrap()
+                    .projection.project_checked(
+                        AgentToolBatchInterface::schema().response(),
+                        &phenix_core::PhenixValue::from(&outcome),
+                    ),
+                Ok(outcome.workflow_outcome().to_owned()),
             );
         }
     }
