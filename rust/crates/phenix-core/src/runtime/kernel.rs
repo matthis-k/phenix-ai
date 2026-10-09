@@ -764,17 +764,28 @@ impl RootExecutionHandle {
                 name: name.to_owned(),
             });
         }
-        self.execute_workflow(
-            workflow,
-            &mut (state, frame),
-            |node, import, context| prepare(node, import, &*context.1, &mut *context.0),
-            |node, import, response, context| {
-                let snapshot = (*context.1).clone();
-                match project(node, import, response, &mut *context.1, &mut *context.0) {
+        compiled.execute_bound_framed(
+            state,
+            frame,
+            |node, interface, binding, state, frame, cancelled| {
+                let request = prepare(node, interface, frame, state)
+                    .map_err(WorkflowNodeDispatchError::Prepare)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                if cancelled() {
+                    return Err(crate::workflow::WorkflowInvocationError::Cancelled);
+                }
+                let output = self
+                    .invoke_import(binding, &request)
+                    .map_err(WorkflowNodeDispatchError::Invoke)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                let snapshot = frame.clone();
+                match project(node, interface, &output, frame, state) {
                     Ok(outcome) => Ok(outcome),
                     Err(error) => {
-                        *context.1 = snapshot;
-                        Err(error)
+                        *frame = snapshot;
+                        Err(crate::workflow::WorkflowInvocationError::Failed(
+                            WorkflowNodeDispatchError::Project(error)
+                        ))
                     }
                 }
             },
