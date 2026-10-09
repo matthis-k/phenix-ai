@@ -154,3 +154,19 @@ jobs:
           PY
 
           git diff --exit-code
+      - name: Show canonical Nix formatting patch
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix shell --impure \
+            --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.nixfmt' \
+            --command nixfmt modules/rust-artifacts.nix
+          git diff -- modules/rust-artifacts.nix
+
+      - name: Build product runtime smoke with selected Cargo sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build --no-link --print-build-logs \
+            .#checks.x86_64-linux.phenix-product-runtime-smoke
