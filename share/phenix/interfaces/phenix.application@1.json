@@ -115,6 +115,12 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.observables@1"
     },
+    "phenix.application.prompt-admit@1": {
+      "input": "phenix.application.type.prompt-admit-input@1",
+      "output": "phenix.application.type.prompt-admission@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.prompt@1"
+    },
     "phenix.application.prompt@1": {
       "input": "phenix.application.type.prompt-input@1",
       "output": "phenix.application.type.prompt-result@1",
@@ -4117,6 +4123,87 @@
         }
       }
     },
+    "phenix.application.type.prompt-admission@1": {
+      "type": "table",
+      "value": {
+        "execution_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "journal_sequence": {
+          "type": "u64"
+        },
+        "revision": {
+          "type": "u64"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      }
+    },
+    "phenix.application.type.prompt-admit-input@1": {
+      "type": "table",
+      "value": {
+        "content": {
+          "type": "list",
+          "value": {
+            "type": "variant",
+            "value": {
+              "Image": {
+                "type": "table",
+                "value": {
+                  "data": {
+                    "type": "bytes"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  }
+                }
+              },
+              "Resource": {
+                "type": "table",
+                "value": {
+                  "mime_type": {
+                    "type": "option",
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "text": {
+                    "type": "option",
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "uri": {
+                    "type": "string"
+                  }
+                }
+              },
+              "Text": {
+                "type": "table",
+                "value": {
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "u64"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      }
+    },
     "phenix.application.type.prompt-input@1": {
       "type": "table",
       "value": {
@@ -5043,6 +5130,83 @@
             }
           }
         },
+        "MessageAdmitted": {
+          "type": "table",
+          "value": {
+            "execution_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "message": {
+              "type": "table",
+              "value": {
+                "content": {
+                  "type": "list",
+                  "value": {
+                    "type": "variant",
+                    "value": {
+                      "Image": {
+                        "type": "table",
+                        "value": {
+                          "data": {
+                            "type": "bytes"
+                          },
+                          "mime_type": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "Resource": {
+                        "type": "table",
+                        "value": {
+                          "mime_type": {
+                            "type": "option",
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "text": {
+                            "type": "option",
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "uri": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "Text": {
+                        "type": "table",
+                        "value": {
+                          "text": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "role": {
+                  "type": "variant",
+                  "value": {
+                    "Assistant": {
+                      "type": "unit"
+                    },
+                    "User": {
+                      "type": "unit"
+                    }
+                  }
+                }
+              }
+            },
+            "revision": {
+              "type": "u64"
+            }
+          }
+        },
         "Renamed": {
           "type": "table",
           "value": {
@@ -5738,6 +5902,83 @@
                             }
                           }
                         },
+                        "MessageAdmitted": {
+                          "type": "table",
+                          "value": {
+                            "execution_id": {
+                              "type": "string"
+                            },
+                            "item_id": {
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "table",
+                              "value": {
+                                "content": {
+                                  "type": "list",
+                                  "value": {
+                                    "type": "variant",
+                                    "value": {
+                                      "Image": {
+                                        "type": "table",
+                                        "value": {
+                                          "data": {
+                                            "type": "bytes"
+                                          },
+                                          "mime_type": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "Resource": {
+                                        "type": "table",
+                                        "value": {
+                                          "mime_type": {
+                                            "type": "option",
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "text": {
+                                            "type": "option",
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "Text": {
+                                        "type": "table",
+                                        "value": {
+                                          "text": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "role": {
+                                  "type": "variant",
+                                  "value": {
+                                    "Assistant": {
+                                      "type": "unit"
+                                    },
+                                    "User": {
+                                      "type": "unit"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "revision": {
+                              "type": "u64"
+                            }
+                          }
+                        },
                         "Renamed": {
                           "type": "table",
                           "value": {
@@ -6343,6 +6584,83 @@
                             }
                           }
                         }
+                      }
+                    }
+                  },
+                  "MessageAdmitted": {
+                    "type": "table",
+                    "value": {
+                      "execution_id": {
+                        "type": "string"
+                      },
+                      "item_id": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "table",
+                        "value": {
+                          "content": {
+                            "type": "list",
+                            "value": {
+                              "type": "variant",
+                              "value": {
+                                "Image": {
+                                  "type": "table",
+                                  "value": {
+                                    "data": {
+                                      "type": "bytes"
+                                    },
+                                    "mime_type": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Resource": {
+                                  "type": "table",
+                                  "value": {
+                                    "mime_type": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "text": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "uri": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Text": {
+                                  "type": "table",
+                                  "value": {
+                                    "text": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "role": {
+                            "type": "variant",
+                            "value": {
+                              "Assistant": {
+                                "type": "unit"
+                              },
+                              "User": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "revision": {
+                        "type": "u64"
                       }
                     }
                   },
@@ -6976,6 +7294,83 @@
                       }
                     }
                   },
+                  "MessageAdmitted": {
+                    "type": "table",
+                    "value": {
+                      "execution_id": {
+                        "type": "string"
+                      },
+                      "item_id": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "table",
+                        "value": {
+                          "content": {
+                            "type": "list",
+                            "value": {
+                              "type": "variant",
+                              "value": {
+                                "Image": {
+                                  "type": "table",
+                                  "value": {
+                                    "data": {
+                                      "type": "bytes"
+                                    },
+                                    "mime_type": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Resource": {
+                                  "type": "table",
+                                  "value": {
+                                    "mime_type": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "text": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "uri": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Text": {
+                                  "type": "table",
+                                  "value": {
+                                    "text": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "role": {
+                            "type": "variant",
+                            "value": {
+                              "Assistant": {
+                                "type": "unit"
+                              },
+                              "User": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "revision": {
+                        "type": "u64"
+                      }
+                    }
+                  },
                   "Renamed": {
                     "type": "table",
                     "value": {
@@ -7553,6 +7948,83 @@
                       }
                     }
                   }
+                }
+              }
+            },
+            "MessageAdmitted": {
+              "type": "table",
+              "value": {
+                "execution_id": {
+                  "type": "string"
+                },
+                "item_id": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "table",
+                  "value": {
+                    "content": {
+                      "type": "list",
+                      "value": {
+                        "type": "variant",
+                        "value": {
+                          "Image": {
+                            "type": "table",
+                            "value": {
+                              "data": {
+                                "type": "bytes"
+                              },
+                              "mime_type": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "Resource": {
+                            "type": "table",
+                            "value": {
+                              "mime_type": {
+                                "type": "option",
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "text": {
+                                "type": "option",
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "uri": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "Text": {
+                            "type": "table",
+                            "value": {
+                              "text": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "role": {
+                      "type": "variant",
+                      "value": {
+                        "Assistant": {
+                          "type": "unit"
+                        },
+                        "User": {
+                          "type": "unit"
+                        }
+                      }
+                    }
+                  }
+                },
+                "revision": {
+                  "type": "u64"
                 }
               }
             },

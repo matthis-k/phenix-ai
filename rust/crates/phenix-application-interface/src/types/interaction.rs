@@ -50,6 +50,7 @@ record!(SessionUpdate, "phenix.application.type.session-update@1", {
 });
 variants!(SessionChange, "phenix.application.type.session-change@1", {
     Message { message: Message },
+    MessageAdmitted { message: Message, item_id: String, revision: u64, execution_id: String },
     TextDelta { execution_id: String, text: String },
     Renamed { title: String },
     Closed,

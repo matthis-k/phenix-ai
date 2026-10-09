@@ -56,6 +56,19 @@ record!(PromptInput, "phenix.application.type.prompt-input@1", {
     session_id: SessionId,
     content: Vec<Content>,
 });
+record!(PromptAdmitInput, "phenix.application.type.prompt-admit-input@1", {
+    session_id: SessionId,
+    item_id: String,
+    revision: u64,
+    content: Vec<Content>,
+});
+record!(PromptAdmission, "phenix.application.type.prompt-admission@1", {
+    session_id: SessionId,
+    item_id: String,
+    revision: u64,
+    execution_id: String,
+    journal_sequence: u64,
+});
 variants!(StopReason, "phenix.application.type.stop-reason@1", {
     EndTurn, Cancelled, MaxTokens, Refused,
 });

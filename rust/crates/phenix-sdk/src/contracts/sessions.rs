@@ -280,6 +280,20 @@ pub enum SessionCommand {
         id: SessionId,
         entry: SessionJournalDraft,
     },
+    /// Atomically append a journal event and claim exclusive ownership of that
+    /// session stream. A second claimant cannot start work until release.
+    AppendJournalClaimed {
+        id: SessionId,
+        entry: SessionJournalDraft,
+        claim: String,
+    },
+    /// Atomically append a terminal event and release the exact stream claim.
+    /// Observers never see the terminal event before the stream is available.
+    AppendJournalReleasingClaim {
+        id: SessionId,
+        entry: SessionJournalDraft,
+        claim: String,
+    },
     Journal {
         id: SessionId,
         stream: ContractId,
@@ -330,6 +344,7 @@ pub enum SessionResponse {
     JournalAppended {
         entry: SessionJournalEntry,
     },
+
     Journal {
         through_sequence: u64,
         entries: Vec<SessionJournalEntry>,

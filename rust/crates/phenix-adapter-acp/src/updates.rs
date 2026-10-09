@@ -86,7 +86,7 @@ fn translate_session_with_descriptor(
     update: &ApplicationSessionUpdate,
 ) -> Result<Vec<TranslatedSessionUpdate>, ApplicationError> {
     match &update.update {
-        SessionChange::Message { message } => {
+        SessionChange::Message { message } | SessionChange::MessageAdmitted { message, .. } => {
             let mut notifications = Vec::with_capacity(message.content.len());
             for content in &message.content {
                 let ApplicationContent::Text { text } = content else {

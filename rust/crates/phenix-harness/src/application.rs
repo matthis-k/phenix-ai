@@ -10,7 +10,7 @@ use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
 };
 use phenix_application_interface::{
-    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
+    AddClientTool, AdmitPrompt, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCallableReference, ListCallables,
     ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
     ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
@@ -21,12 +21,12 @@ use phenix_application_interface::{
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, LogPage, LogQueryInput, LogRecord, LogReferenceContent,
         LogReferenceInput, Message, MessageRole, PageInput, PermissionHandlerRef,
-        PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
-        ReviewRecord, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation,
-        SelectionSelectInput, Selections, SessionChange, SessionCreateInput, SessionInfo,
-        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
-        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput, StopReason,
+        PermissionRequest, PermissionResponse, PromptAdmission, PromptAdmitInput, PromptInput,
+        PromptResult, ReviewDecisionInput, ReviewRecord, SelectionDefaultSelectInput,
+        SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections, SessionChange,
+        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
+        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
+        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
 };
 use phenix_core::{
@@ -936,6 +936,9 @@ pub struct ApplicationWorker {
     harness: Arc<Mutex<PhenixRuntime>>,
     authority: Authority,
     projection: SessionProjectionStore,
+    // Admission tokens are private to this live worker. Public execution IDs
+    // from journal events cannot release another worker's active claim.
+    journal_claims: BTreeMap<String, String>,
     interaction_handlers: InteractionHandlers,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
     log_reader: Result<StructuredLogReader, String>,
@@ -947,6 +950,7 @@ impl ApplicationWorker {
             harness: Arc::new(Mutex::new(harness)),
             authority: default_suite_authority(),
             projection: SessionProjectionStore::new()?,
+            journal_claims: BTreeMap::new(),
             interaction_handlers: InteractionHandlers {
                 permission: None,
                 elicitation: None,
@@ -1881,6 +1885,16 @@ impl ApplicationWorker {
         root: &RootExecutionHandle,
         request: PromptInput,
     ) -> Result<PromptResult, ApplicationError> {
+        self.prompt_on_with_admission(root, request, None)
+            .map(|(prompt, _)| prompt)
+    }
+
+    fn prompt_on_with_admission(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: PromptInput,
+        admission: Option<(&str, u64)>,
+    ) -> Result<(PromptResult, u64), ApplicationError> {
         let session = self.require_open_application_session_on(root, &request.session_id)?;
         let execution_id = self.allocate_root_execution_on(root)?;
         if let Err(error) = self.prepare_execution_context_on(
@@ -1891,23 +1905,36 @@ impl ApplicationWorker {
             let _ = self.finish_root_execution_on(root, &execution_id, false);
             return Err(error);
         }
-        if let Err(error) = self.append_session_change_on(
-            root,
-            &session,
-            SessionChange::Message {
-                message: Message {
-                    role: MessageRole::User,
-                    content: request.content,
-                },
+        let message = Message {
+            role: MessageRole::User,
+            content: request.content,
+        };
+        let change = match admission {
+            Some((item_id, revision)) => SessionChange::MessageAdmitted {
+                message,
+                item_id: item_id.to_owned(),
+                revision,
+                execution_id: execution_id.clone(),
             },
-        ) {
-            let _ = self.finish_root_execution_on(root, &execution_id, false);
-            return Err(error);
-        }
-        Ok(PromptResult {
-            execution_id,
-            stop_reason: StopReason::EndTurn,
-        })
+            None => SessionChange::Message { message },
+        };
+        let update =
+            match self.append_session_change_claimed_on(root, &session, change, &execution_id) {
+                Ok(update) => update,
+                Err(error) => {
+                    // Failed writes do not own a claim. A committed write whose
+                    // projection failed is reconciled by the claimed-append helper.
+                    let _ = self.finish_root_execution_on(root, &execution_id, false);
+                    return Err(error);
+                }
+            };
+        Ok((
+            PromptResult {
+                execution_id,
+                stop_reason: StopReason::EndTurn,
+            },
+            update.sequence,
+        ))
     }
 
     fn cancel(
@@ -2456,6 +2483,99 @@ impl ApplicationWorker {
             return Err(unexpected_session_response("append journal", response));
         };
         self.project_journal_entry_on(root, application_session_info(session)?, entry)
+    }
+
+    fn append_session_change_claimed_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        session: &SessionRecord,
+        change: SessionChange,
+        execution_id: &str,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        self.reserve_session_event_slot()?;
+        let mut entropy = [0u8; 32];
+        getrandom::fill(&mut entropy).map_err(|error| ApplicationError::InvalidResponse {
+            message: format!("cannot allocate unpredictable journal claim: {error}"),
+        })?;
+        let token = entropy
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::AppendJournalClaimed {
+                id: session.id.clone(),
+                entry: session_change_journal(&change),
+                claim: token.clone(),
+            },
+        )?;
+        let SessionResponse::JournalAppended { entry } = response else {
+            return Err(unexpected_session_response(
+                "append claimed journal",
+                response,
+            ));
+        };
+        self.journal_claims.insert(execution_id.to_owned(), token);
+        match self.project_journal_entry_on(root, application_session_info(session)?, entry) {
+            Ok(update) => Ok(update),
+            Err(error) => {
+                // Admission was committed even if its local projection failed.
+                // Keep the stream claimed unless failure is journaled first.
+                let _ = record_terminal_and_release_claim(
+                    self,
+                    root,
+                    &session.id,
+                    execution_id,
+                    ExecutionState::Failed {
+                        error: error.clone(),
+                    },
+                );
+                Err(error)
+            }
+        }
+    }
+
+    fn append_terminal_and_release_claim_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        session_id: &SessionId,
+        execution_id: &str,
+        state: ExecutionState,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        self.reserve_session_event_slot()?;
+        // A competing client may have closed the session while this worker
+        // was running. Completion still needs to retire its durable claim.
+        let session = self.session_record_on(root, session_id)?.ok_or_else(|| {
+            ApplicationError::NotFound {
+                resource: session_id.to_string(),
+            }
+        })?;
+        let claim = self
+            .journal_claims
+            .get(execution_id)
+            .ok_or_else(|| ApplicationError::Conflict {
+                message: format!("this worker does not own journal claim for {execution_id}"),
+            })?
+            .clone();
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::AppendJournalReleasingClaim {
+                id: session_id.clone(),
+                entry: session_change_journal(&SessionChange::Execution {
+                    execution_id: execution_id.to_owned(),
+                    update: ExecutionChange::State { state },
+                }),
+                claim,
+            },
+        )?;
+        let SessionResponse::JournalAppended { entry } = response else {
+            return Err(unexpected_session_response(
+                "append terminal journal and release claim",
+                response,
+            ));
+        };
+        self.journal_claims.remove(execution_id);
+        self.project_journal_entry_on(root, application_session_info(&session)?, entry)
     }
 
     fn append_execution_change_on(
@@ -3669,7 +3789,7 @@ struct ActiveExecution {
     root: RootExecutionHandle,
     cancellation: Arc<AtomicBool>,
     progress_error: Option<ApplicationError>,
-    prompt: ApplicationInvocation,
+    prompt: Option<ApplicationInvocation>,
 }
 
 struct ExecutionProgress {
@@ -4598,11 +4718,22 @@ async fn serve_application_worker_with_execution_capacity(
         }
     }
 
-    for (_, execution) in active {
+    for (session_key, execution) in active {
         execution.cancellation.store(true, Ordering::Release);
-        execution
-            .prompt
-            .respond(Err(ApplicationError::Disconnected));
+        if let Ok(session_id) = SessionId::parse(session_key) {
+            let _ =
+                worker.finish_root_execution_on(&execution.root, &execution.execution_id, false);
+            let _ = record_terminal_and_release_claim(
+                &mut worker,
+                &execution.root,
+                &session_id,
+                &execution.execution_id,
+                ExecutionState::Cancelled,
+            );
+        }
+        if let Some(invocation) = execution.prompt {
+            invocation.respond(Err(ApplicationError::Disconnected));
+        }
     }
     worker.clear_interaction_handlers();
     service.retire_client();
@@ -4619,7 +4750,7 @@ fn should_defer_application_invocation(
     match invocation.operation.as_str() {
         Cancel::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
             .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
-        Prompt::ID => false,
+        Prompt::ID | AdmitPrompt::ID => false,
         CreateSession::ID | ListSessions::ID | ResumeSession::ID | RenameSession::ID => false,
         CloseSession::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
             .is_ok_and(|request| active.contains_key(request.session_id.as_str())),
@@ -4635,7 +4766,7 @@ fn dispatch_application_invocation(
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
-    if invocation.operation.as_str() == Prompt::ID {
+    if matches!(invocation.operation.as_str(), Prompt::ID | AdmitPrompt::ID) {
         start_prompt(
             worker,
             service,
@@ -4675,6 +4806,56 @@ fn dispatch_application_invocation(
     invocation.respond(result);
 }
 
+fn validate_prompt_admission_key(input: &PromptAdmitInput) -> Result<(), ApplicationError> {
+    if input.item_id.is_empty()
+        || input.item_id.len() > 256
+        || input.item_id.trim() != input.item_id
+        || input.item_id.chars().any(char::is_control)
+        || input.revision == 0
+    {
+        return Err(ApplicationError::InvalidInput {
+            message: "prompt admission needs a stable item id and positive revision".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn existing_prompt_admission(
+    state: &SessionProjectionState,
+    request: &PromptAdmitInput,
+) -> Result<Option<PromptAdmission>, ApplicationError> {
+    let Some(projection) = state.sessions.get(request.session_id.as_str()) else {
+        return Ok(None);
+    };
+    for update in projection.updates.iter().rev() {
+        let SessionChange::MessageAdmitted {
+            message,
+            item_id,
+            revision,
+            execution_id,
+        } = &update.update
+        else {
+            continue;
+        };
+        if item_id != &request.item_id || revision != &request.revision {
+            continue;
+        }
+        if message.role != MessageRole::User || message.content != request.content {
+            return Err(ApplicationError::Conflict {
+                message: "prompt admission key was reused with different content".to_owned(),
+            });
+        }
+        return Ok(Some(PromptAdmission {
+            session_id: request.session_id.clone(),
+            item_id: item_id.clone(),
+            revision: *revision,
+            execution_id: execution_id.clone(),
+            journal_sequence: update.sequence,
+        }));
+    }
+    Ok(None)
+}
+
 fn start_prompt(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
@@ -4683,23 +4864,35 @@ fn start_prompt(
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
-    let request = match decode::<PromptInput>(invocation.input.clone()) {
-        Ok(request) => request,
-        Err(error) => {
-            invocation.respond(Err(error));
-            return;
+    let admission = if invocation.operation.as_str() == AdmitPrompt::ID {
+        match decode::<PromptAdmitInput>(invocation.input.clone()).and_then(|input| {
+            validate_prompt_admission_key(&input)?;
+            Ok(input)
+        }) {
+            Ok(input) => Some(input),
+            Err(error) => {
+                invocation.respond(Err(error));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let request = if let Some(admission) = admission.as_ref() {
+        PromptInput {
+            session_id: admission.session_id.clone(),
+            content: admission.content.clone(),
+        }
+    } else {
+        match decode::<PromptInput>(invocation.input.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                invocation.respond(Err(error));
+                return;
+            }
         }
     };
     let key = request.session_id.as_str().to_owned();
-    if active.contains_key(&key) {
-        invocation.respond(Err(ApplicationError::Conflict {
-            message: format!(
-                "session {} already has a running execution",
-                request.session_id
-            ),
-        }));
-        return;
-    }
 
     let default_authority = if invocation.root.is_none() {
         match worker.application_root_authority(&request.session_id) {
@@ -4739,6 +4932,45 @@ fn start_prompt(
         invocation.respond(Err(error));
         return;
     }
+    if admission.is_some() && !active.contains_key(&key) {
+        // Refresh persisted state: another client may have already admitted this key.
+        if let Err(error) = worker.resume_session_on(
+            &root,
+            SessionResumeInput {
+                session_id: request.session_id.clone(),
+                after_sequence: None,
+            },
+        ) {
+            invocation.respond(Err(error));
+            return;
+        }
+    }
+    if let Some(admission) = admission.as_ref() {
+        match existing_prompt_admission(worker.projection().state(), admission) {
+            Ok(Some(receipt)) => {
+                invocation.respond(Ok(receipt.to_value()));
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                invocation.respond(Err(error));
+                return;
+            }
+        }
+    }
+    if active.contains_key(&key) {
+        invocation.respond(Err(ApplicationError::Conflict {
+            message: format!(
+                "session {} already has a running execution",
+                request.session_id
+            ),
+        }));
+        return;
+    }
+    // The local projection can lag another application worker. Retain its
+    // sequence so admission can detect a concurrent completed turn.
+    let projected_sequence =
+        worker.projection().state().sessions[request.session_id.as_str()].through_sequence;
     let model_input = match model_input_from_session(
         worker.projection().state(),
         &request.session_id,
@@ -4791,9 +5023,68 @@ fn start_prompt(
     let tools = tool_surface.tools;
     let runtime_entry_triggers = tool_surface.runtime_entry_triggers;
 
-    let prompt = match worker.prompt_on(&root, request.clone()) {
-        Ok(prompt) => prompt,
+    let (prompt, journal_sequence) = match worker.prompt_on_with_admission(
+        &root,
+        request.clone(),
+        admission
+            .as_ref()
+            .map(|value| (value.item_id.as_str(), value.revision)),
+    ) {
+        Ok(value) => value,
         Err(error) => {
+            // Concurrent workers serialize journal appends with a durable CAS.
+            // If another worker won this request key, replay its exact receipt.
+            if let Some(admission) = admission.as_ref()
+                && worker
+                    .resume_session_on(
+                        &root,
+                        SessionResumeInput {
+                            session_id: request.session_id.clone(),
+                            after_sequence: None,
+                        },
+                    )
+                    .is_ok()
+            {
+                match existing_prompt_admission(worker.projection().state(), admission) {
+                    Ok(Some(receipt)) => {
+                        invocation.respond(Ok(receipt.to_value()));
+                        return;
+                    }
+                    Err(conflict) => {
+                        invocation.respond(Err(conflict));
+                        return;
+                    }
+                    Ok(None) => {}
+                }
+            }
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    // The durable append/claim serialized this prompt behind every earlier
+    // completed execution. If another worker advanced the journal after the
+    // model input was built, reconstruct it from the repaired projection.
+    // Exclude this prompt's own admitted message to avoid submitting it twice.
+    let model_input = match model_input_after_admission(
+        worker.projection().state(),
+        &request.session_id,
+        &request.content,
+        projected_sequence,
+        journal_sequence,
+        model_input,
+    ) {
+        Ok(input) => input,
+        Err(error) => {
+            let _ = worker.finish_root_execution_on(&root, &prompt.execution_id, false);
+            let _ = record_terminal_and_release_claim(
+                worker,
+                &root,
+                &request.session_id,
+                &prompt.execution_id,
+                ExecutionState::Failed {
+                    error: error.clone(),
+                },
+            );
             invocation.respond(Err(error));
             return;
         }
@@ -4806,11 +5097,34 @@ fn start_prompt(
             state: ExecutionState::Running,
         },
     ) {
+        let _ = worker.finish_root_execution_on(&root, &prompt.execution_id, false);
+        let _ = record_terminal_and_release_claim(
+            worker,
+            &root,
+            &request.session_id,
+            &prompt.execution_id,
+            ExecutionState::Failed {
+                error: error.clone(),
+            },
+        );
         invocation.respond(Err(error));
         return;
     }
 
     let cancellation = Arc::new(AtomicBool::new(false));
+    let completion = if let Some(admission) = admission.as_ref() {
+        invocation.respond(Ok(PromptAdmission {
+            session_id: admission.session_id.clone(),
+            item_id: admission.item_id.clone(),
+            revision: admission.revision,
+            execution_id: prompt.execution_id.clone(),
+            journal_sequence,
+        }
+        .to_value()));
+        None
+    } else {
+        Some(invocation)
+    };
     active.insert(
         key,
         ActiveExecution {
@@ -4818,7 +5132,7 @@ fn start_prompt(
             root: root.clone(),
             cancellation: Arc::clone(&cancellation),
             progress_error: None,
-            prompt: invocation,
+            prompt: completion,
         },
     );
 
@@ -4972,87 +5286,124 @@ fn project_persisted_agent_progress(
     worker.emit_session_update(update)
 }
 
+fn record_terminal_and_release_claim(
+    worker: &mut ApplicationWorker,
+    root: &RootExecutionHandle,
+    session_id: &SessionId,
+    execution_id: &str,
+    state: ExecutionState,
+) -> Result<(), ApplicationError> {
+    worker
+        .append_terminal_and_release_claim_on(root, session_id, execution_id, state)
+        .map(|_| ())
+}
+
 fn finish_prompt(
     worker: &mut ApplicationWorker,
     active: &mut BTreeMap<String, ActiveExecution>,
     completion: ExecutionCompletion,
 ) {
     let key = completion.session_id.as_str().to_owned();
-    let Some(execution) = active.remove(&key) else {
-        return;
-    };
-    if execution.execution_id != completion.execution_id {
-        execution.prompt.respond(Err(ApplicationError::Conflict {
-            message: "execution completion identity changed while the prompt was active".to_owned(),
-        }));
+    // Late events from a retired execution must not evict a newer run.
+    if active
+        .get(&key)
+        .is_none_or(|execution| execution.execution_id != completion.execution_id)
+    {
         return;
     }
+    let execution = active
+        .remove(&key)
+        .expect("validated active execution is still present");
     let root = &execution.root;
     if let Some(error) = execution.progress_error {
         let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
-        let _ = worker.append_execution_change_on(
+        let terminal = record_terminal_and_release_claim(
+            worker,
             root,
             &completion.session_id,
             &completion.execution_id,
-            ExecutionChange::State {
-                state: ExecutionState::Failed {
-                    error: error.clone(),
-                },
+            ExecutionState::Failed {
+                error: error.clone(),
             },
         );
-        execution.prompt.respond(Err(error));
+        if let Some(invocation) = execution.prompt {
+            invocation.respond(Err(terminal.err().unwrap_or(error)));
+        }
         return;
     }
     if execution.cancellation.load(Ordering::Acquire)
         || matches!(&completion.result, Err(ApplicationError::Cancelled))
     {
         let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
-        let _ = worker.append_execution_change_on(
+        let terminal = record_terminal_and_release_claim(
+            worker,
             root,
             &completion.session_id,
             &completion.execution_id,
-            ExecutionChange::State {
-                state: ExecutionState::Cancelled,
-            },
+            ExecutionState::Cancelled,
         );
-        execution.prompt.respond(Ok(PromptResult {
-            execution_id: completion.execution_id,
-            stop_reason: StopReason::Cancelled,
+        if let Some(invocation) = execution.prompt {
+            invocation.respond(terminal.map(|()| {
+                PromptResult {
+                    execution_id: completion.execution_id,
+                    stop_reason: StopReason::Cancelled,
+                }
+                .to_value()
+            }));
         }
-        .to_value()));
         return;
     }
 
     let result = match completion.result {
-        Ok(text) => worker
-            .finish_root_execution_on(root, &completion.execution_id, true)
-            .and_then(|()| {
-                complete_prompt_output_on(
+        Ok(text) => {
+            let result = worker
+                .finish_root_execution_on(root, &completion.execution_id, true)
+                .and_then(|()| {
+                    complete_prompt_output_on(
+                        worker,
+                        root,
+                        &completion.session_id,
+                        &completion.execution_id,
+                        text,
+                    )
+                });
+            if let Err(error) = &result {
+                // Once the model returns, downstream projection or an external
+                // session close may still fail. Never strand this claim: commit
+                // a failed terminal event if it remains held. If the completed
+                // terminal event already committed, the claim CAS rejects a
+                // duplicate terminal event.
+                let _ = record_terminal_and_release_claim(
                     worker,
                     root,
                     &completion.session_id,
                     &completion.execution_id,
-                    text,
-                )
-            }),
+                    ExecutionState::Failed {
+                        error: error.clone(),
+                    },
+                );
+            }
+            result
+        }
         Err(error) => {
             let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
-            let _ = worker.append_execution_change_on(
+            match record_terminal_and_release_claim(
+                worker,
                 root,
                 &completion.session_id,
                 &completion.execution_id,
-                ExecutionChange::State {
-                    state: ExecutionState::Failed {
-                        error: error.clone(),
-                    },
+                ExecutionState::Failed {
+                    error: error.clone(),
                 },
-            );
-            Err(error)
+            ) {
+                Ok(()) => Err(error),
+                Err(terminal_error) => Err(terminal_error),
+            }
         }
     };
-    execution
-        .prompt
-        .respond(result.map(|value| value.to_value()));
+    if let Some(invocation) = execution.prompt {
+        invocation.respond(result.map(|value| value.to_value()));
+    }
 }
 
 fn complete_prompt_output_on(
@@ -5081,13 +5432,12 @@ fn complete_prompt_output_on(
             },
         },
     )?;
-    worker.append_execution_change_on(
+    record_terminal_and_release_claim(
+        worker,
         root,
         session_id,
         execution_id,
-        ExecutionChange::State {
-            state: ExecutionState::Completed,
-        },
+        ExecutionState::Completed,
     )?;
     Ok(PromptResult {
         execution_id: execution_id.to_owned(),
@@ -5140,10 +5490,65 @@ fn ensure_session_projection(
         .map(|_| ())
 }
 
+/// Ensure the model sees the committed predecessor messages, even when this
+/// worker built its initial input before another worker advanced the journal.
+/// The admitting message is already in the repaired projection and must not
+/// appear twice in the final model request.
+fn model_input_after_admission(
+    state: &SessionProjectionState,
+    session_id: &SessionId,
+    current: &[Content],
+    prior_sequence: u64,
+    admitted_sequence: u64,
+    before_claim: Bytes,
+) -> Result<Bytes, ApplicationError> {
+    if prior_sequence.checked_add(1) == Some(admitted_sequence) {
+        return Ok(before_claim);
+    }
+    let projection =
+        state
+            .sessions
+            .get(session_id.as_str())
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: format!("session {session_id}"),
+            })?;
+    let appended = projection
+        .updates
+        .iter()
+        .find(|update| update.sequence == admitted_sequence);
+    let message = appended.and_then(|update| match &update.update {
+        SessionChange::Message { message } | SessionChange::MessageAdmitted { message, .. } => {
+            Some(message)
+        }
+        _ => None,
+    });
+    if projection.through_sequence < admitted_sequence
+        || !message.is_some_and(|message| {
+            message.role == MessageRole::User && message.content.as_slice() == current
+        })
+    {
+        return Err(ApplicationError::Conflict {
+            message: "admitted prompt is missing from repaired session history".to_owned(),
+        });
+    }
+    model_input_from_session_excluding(state, session_id, current, Some(admitted_sequence))
+}
+
 fn model_input_from_session(
     state: &SessionProjectionState,
     session_id: &SessionId,
     current: &[Content],
+) -> Result<Bytes, ApplicationError> {
+    model_input_from_session_excluding(state, session_id, current, None)
+}
+
+/// Build a prompt from committed history while excluding the message that was
+/// just appended under the durable execution claim.
+fn model_input_from_session_excluding(
+    state: &SessionProjectionState,
+    session_id: &SessionId,
+    current: &[Content],
+    excluded_sequence: Option<u64>,
 ) -> Result<Bytes, ApplicationError> {
     let current = validated_model_text(current)?;
     let projection =
@@ -5153,13 +5558,16 @@ fn model_input_from_session(
             .ok_or_else(|| ApplicationError::NotFound {
                 resource: format!("session {session_id}"),
             })?;
-    let messages = projection.updates.iter().filter_map(|update| {
-        if let SessionChange::Message { message } = &update.update {
-            Some(message)
-        } else {
-            None
-        }
-    });
+    let messages = projection
+        .updates
+        .iter()
+        .filter(|update| Some(update.sequence) != excluded_sequence)
+        .filter_map(|update| match &update.update {
+            SessionChange::Message { message } | SessionChange::MessageAdmitted { message, .. } => {
+                Some(message)
+            }
+            _ => None,
+        });
 
     let mut messages = messages.peekable();
     if messages.peek().is_none() {
@@ -11106,6 +11514,7 @@ mod tests {
 
     struct DeclarativeApplicationTurn {
         cancel_next: bool,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl PluginInstance for DeclarativeApplicationTurn {
@@ -11129,6 +11538,7 @@ mod tests {
                 serde_json::from_slice(input).map_err(|error| error.to_string())?;
             let request = AgentTurnStepRequest::try_from(Project(&value))
                 .map_err(|error| error.to_string())?;
+            self.calls.fetch_add(1, Ordering::SeqCst);
             let mut state = request.state;
             if state.session_id.is_none() {
                 return Err("application declarative turn lost session identity".into());
@@ -11163,6 +11573,8 @@ mod tests {
             "phenix.workspace".to_owned(),
         ]))
         .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider_calls = Arc::clone(&calls);
         let owner = PluginId::parse("fixture.application-declarative-turn").unwrap();
         let component = ComponentId::parse("fixture.application-declarative-turn").unwrap();
         builder
@@ -11181,7 +11593,12 @@ mod tests {
                     resource_namespaces: Vec::new(),
                     maximum_authority: default_suite_authority(),
                 },
-                || Box::new(DeclarativeApplicationTurn { cancel_next: true }),
+                move || {
+                    Box::new(DeclarativeApplicationTurn {
+                        cancel_next: true,
+                        calls: Arc::clone(&provider_calls),
+                    })
+                },
             )
             .unwrap();
         builder.add_component(ComponentManifest {
@@ -11282,15 +11699,72 @@ mod tests {
         .expect("declarative application prompt must not hang")
         .expect("resolved declarative agent turn must complete");
         assert_eq!(completed.stop_reason, StopReason::EndTurn);
-        let resumed = invoke_transport_operation::<ResumeSession>(
-            &transport,
-            SessionResumeInput {
-                session_id: created.session_id,
-                after_sequence: None,
-            },
-        )
+
+        let request = PromptAdmitInput {
+            session_id: created.session_id.clone(),
+            item_id: "declarative:follow-up".into(),
+            revision: 1,
+            content: vec![Content::Text {
+                text: "one declarative execution for concurrent retries".into(),
+            }],
+        };
+        let (first, second) = tokio::join!(
+            invoke_transport_operation::<AdmitPrompt>(&transport, request.clone()),
+            invoke_transport_operation::<AdmitPrompt>(&transport, request.clone()),
+        );
+        let first = first.unwrap();
+        assert_eq!(first, second.unwrap());
+        let mut conflicting = request.clone();
+        conflicting.content = vec![Content::Text {
+            text: "changed admitted content".into(),
+        }];
+        assert!(matches!(
+            invoke_transport_operation::<AdmitPrompt>(&transport, conflicting).await,
+            Err(ApplicationError::Conflict { .. })
+        ));
+
+        let resumed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let snapshot = invoke_transport_operation::<ResumeSession>(
+                    &transport,
+                    SessionResumeInput {
+                        session_id: created.session_id.clone(),
+                        after_sequence: None,
+                    },
+                )
+                .await
+                .unwrap();
+                if snapshot.updates.iter().any(|entry| {
+                    matches!(
+                        &entry.update,
+                        SessionChange::Execution {
+                            execution_id,
+                            update: ExecutionChange::State { state: ExecutionState::Completed },
+                        } if execution_id == &first.execution_id
+                    )
+                }) {
+                    break snapshot;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
         .await
-        .unwrap();
+        .expect("admitted declarative execution must commit its terminal journal state");
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            resumed
+                .updates
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        &entry.update,
+                        SessionChange::MessageAdmitted { item_id, revision: 1, .. }
+                            if item_id == &request.item_id
+                    )
+                })
+                .count(),
+            1,
+        );
         assert!(resumed.updates.iter().any(|entry| {
             matches!(
                 &entry.update,
@@ -11443,6 +11917,25 @@ mod tests {
         .await
         .unwrap();
 
+        // Public admission must reject a malformed key before resolving even
+        // a nonexistent session; no root or durable claim may be allocated.
+        let invalid = invoke_transport_operation::<AdmitPrompt>(
+            &transport,
+            PromptAdmitInput {
+                session_id: SessionId::parse("session-missing").unwrap(),
+                item_id: " leading-space".into(),
+                revision: 1,
+                content: vec![Content::Text {
+                    text: "must not execute".into(),
+                }],
+            },
+        )
+        .await;
+        assert!(matches!(
+            invalid,
+            Err(ApplicationError::InvalidInput { .. })
+        ));
+
         for _ in 0..2 {
             let prompt = tokio::time::timeout(
                 Duration::from_secs(5),
@@ -11479,6 +11972,38 @@ mod tests {
         .expect("selected foreign provider must complete the prompt");
         assert_eq!(completed.stop_reason, StopReason::EndTurn);
 
+        // Concurrent transport callers must receive the same committed
+        // admission, not two model executions for one logical queue item.
+        let admitted_request = PromptAdmitInput {
+            session_id: created.session_id.clone(),
+            item_id: "transport:follow-up".into(),
+            revision: 1,
+            content: vec![Content::Text {
+                text: "foreign completion marker".into(),
+            }],
+        };
+        let (first, second) = tokio::join!(
+            invoke_transport_operation::<AdmitPrompt>(&transport, admitted_request.clone()),
+            invoke_transport_operation::<AdmitPrompt>(&transport, admitted_request.clone()),
+        );
+        let first = first.expect("first admitted transport request");
+        let second = second.expect("second admitted transport request");
+        assert_eq!(first.execution_id, second.execution_id);
+        assert_eq!(first.journal_sequence, second.journal_sequence);
+        assert_eq!(first.item_id, admitted_request.item_id);
+        assert_eq!(first.revision, admitted_request.revision);
+
+        // A caller must not be able to reuse an already committed key with
+        // a different payload while the first execution is still in flight.
+        let mut conflicting = admitted_request.clone();
+        conflicting.content = vec![Content::Text {
+            text: "different payload with an identical key".into(),
+        }];
+        assert!(matches!(
+            invoke_transport_operation::<AdmitPrompt>(&transport, conflicting).await,
+            Err(ApplicationError::Conflict { .. })
+        ));
+
         let resumed = invoke_transport_operation::<ResumeSession>(
             &transport,
             SessionResumeInput {
@@ -11488,6 +12013,24 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(
+            resumed
+                .updates
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        &entry.update,
+                        SessionChange::MessageAdmitted {
+                            item_id,
+                            revision: 1,
+                            ..
+                        } if item_id == "transport:follow-up"
+                    )
+                })
+                .count(),
+            1,
+            "concurrent identical receipts must represent one journaled admission"
+        );
         assert!(resumed.updates.iter().any(|entry| {
             matches!(
                 &entry.update,
@@ -13604,6 +14147,107 @@ mod tests {
     }
 
     #[test]
+    fn prompt_admission_key_rejects_unstable_identifiers_before_session_lookup() {
+        let valid = PromptAdmitInput {
+            session_id: SessionId::parse("session-admission-input").unwrap(),
+            item_id: "frontend:message-1".into(),
+            revision: 1,
+            content: Vec::new(),
+        };
+        validate_prompt_admission_key(&valid).unwrap();
+
+        for invalid in [
+            String::new(),
+            " leading".into(),
+            "trailing ".into(),
+            "line\nbreak".to_owned(),
+            "x".repeat(257),
+        ] {
+            let mut request = valid.clone();
+            request.item_id = invalid;
+            assert!(matches!(
+                validate_prompt_admission_key(&request),
+                Err(ApplicationError::InvalidInput { .. })
+            ));
+        }
+
+        let mut revision_zero = valid;
+        revision_zero.revision = 0;
+        assert!(matches!(
+            validate_prompt_admission_key(&revision_zero),
+            Err(ApplicationError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn prompt_admission_replays_exact_revision_from_durable_projection() {
+        let session_id = SessionId::parse("session-admission-test").unwrap();
+        let content = vec![Content::Text {
+            text: "follow up".to_owned(),
+        }];
+        let request = PromptAdmitInput {
+            session_id: session_id.clone(),
+            item_id: "frontend-1:item-3".to_owned(),
+            revision: 2,
+            content: content.clone(),
+        };
+        validate_prompt_admission_key(&request).unwrap();
+        let admitted = SessionUpdate {
+            session_id: session_id.clone(),
+            sequence: 11,
+            update: SessionChange::MessageAdmitted {
+                message: Message {
+                    role: MessageRole::User,
+                    content,
+                },
+                item_id: request.item_id.clone(),
+                revision: 2,
+                execution_id: "execution-99".into(),
+            },
+        };
+        let state = SessionProjectionState {
+            sessions: BTreeMap::from([(
+                session_id.to_string(),
+                SessionProjection {
+                    session: SessionInfo {
+                        session_id: session_id.clone(),
+                        title: None,
+                        working_directory: "/workspace".into(),
+                    },
+                    through_sequence: 11,
+                    updates: vec![admitted],
+                },
+            )]),
+        };
+        let receipt = existing_prompt_admission(&state, &request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.session_id, session_id);
+        assert_eq!(receipt.item_id, request.item_id);
+        assert_eq!(receipt.revision, 2);
+        assert_eq!(receipt.execution_id, "execution-99");
+        assert_eq!(receipt.journal_sequence, 11);
+
+        let mut conflicting = request.clone();
+        conflicting.content = vec![Content::Text {
+            text: "different content".into(),
+        }];
+        assert!(matches!(
+            existing_prompt_admission(&state, &conflicting),
+            Err(ApplicationError::Conflict { .. })
+        ));
+        conflicting.content = request.content.clone();
+        conflicting.revision = 3;
+        assert!(
+            existing_prompt_admission(&state, &conflicting)
+                .unwrap()
+                .is_none()
+        );
+        conflicting.revision = 0;
+        assert!(validate_prompt_admission_key(&conflicting).is_err());
+    }
+
+    #[test]
     fn worker_session_crud_updates_durable_truth_and_projection() {
         let mut worker = application_worker();
         let created = invoke_operation::<CreateSession>(
@@ -13828,6 +14472,174 @@ mod tests {
     }
 
     #[test]
+    fn admitted_prompt_journals_request_identity_before_completion() {
+        let (sender, mut events) = mpsc::channel(4);
+        let mut worker = application_worker().with_event_sender(sender);
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let content = vec![Content::Text {
+            text: "a queued follow-up".into(),
+        }];
+        let root = {
+            let authority = worker
+                .application_root_authority(&session.session_id)
+                .unwrap();
+            worker.harness.lock().root_execution_handle(&authority)
+        };
+        let (prompt, journal_sequence) = worker
+            .prompt_on_with_admission(
+                &root,
+                PromptInput {
+                    session_id: session.session_id.clone(),
+                    content: content.clone(),
+                },
+                Some(("frontend:item", 7)),
+            )
+            .unwrap();
+        assert_eq!(journal_sequence, 1);
+        assert_eq!(prompt.execution_id, "execution-1");
+        let event = events.try_recv().expect("durable admission event");
+        let recorded = SessionUpdate::from_value(&event.payload).unwrap();
+        assert_eq!(recorded.sequence, journal_sequence);
+        assert!(matches!(
+            recorded.update,
+            SessionChange::MessageAdmitted {
+                message: Message { role: MessageRole::User, content: ref sent },
+                item_id,
+                revision: 7,
+                execution_id,
+            } if sent == &content && item_id == "frontend:item" && execution_id == "execution-1"
+        ));
+        let request = PromptAdmitInput {
+            session_id: session.session_id.clone(),
+            item_id: "frontend:item".into(),
+            revision: 7,
+            content,
+        };
+        let receipt = existing_prompt_admission(worker.projection().state(), &request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.journal_sequence, journal_sequence);
+        assert_eq!(receipt.execution_id, "execution-1");
+    }
+
+    #[test]
+    fn prompt_admission_receipt_survives_durable_worker_restart() {
+        let path = temp_db("application-admission-restart");
+        let request;
+        let execution_id;
+        let sequence;
+        {
+            let mut worker = persistent_application_worker(&path);
+            let session = invoke_operation::<CreateSession>(
+                &mut worker,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
+                },
+            )
+            .unwrap();
+            request = PromptAdmitInput {
+                session_id: session.session_id.clone(),
+                item_id: "frontend:queued-item".into(),
+                revision: 1,
+                content: vec![Content::Text {
+                    text: "durable follow-up".into(),
+                }],
+            };
+            let authority = worker
+                .application_root_authority(&session.session_id)
+                .unwrap();
+            let root = worker.harness.lock().root_execution_handle(&authority);
+            let (prompt, admitted_sequence) = worker
+                .prompt_on_with_admission(
+                    &root,
+                    PromptInput {
+                        session_id: request.session_id.clone(),
+                        content: request.content.clone(),
+                    },
+                    Some((&request.item_id, request.revision)),
+                )
+                .unwrap();
+            execution_id = prompt.execution_id;
+            sequence = admitted_sequence;
+        }
+
+        {
+            let mut worker = persistent_application_worker(&path);
+            let snapshot = invoke_operation::<ResumeSession>(
+                &mut worker,
+                SessionResumeInput {
+                    session_id: request.session_id.clone(),
+                    after_sequence: None,
+                },
+            )
+            .unwrap();
+            let receipt = existing_prompt_admission(worker.projection().state(), &request)
+                .unwrap()
+                .expect("committed admission must survive a worker restart");
+            assert_eq!(receipt.execution_id, execution_id);
+            assert_eq!(receipt.journal_sequence, sequence);
+            assert_eq!(snapshot.through_sequence, sequence);
+            assert_eq!(
+                snapshot
+                    .updates
+                    .iter()
+                    .filter(|entry| matches!(&entry.update, SessionChange::MessageAdmitted { .. }))
+                    .count(),
+                1
+            );
+
+            let mut conflicting = request.clone();
+            conflicting.content = vec![Content::Text {
+                text: "different payload".into(),
+            }];
+            assert!(matches!(
+                existing_prompt_admission(worker.projection().state(), &conflicting),
+                Err(ApplicationError::Conflict { .. })
+            ));
+
+            // A restarted worker has no local active entry, but cannot steal
+            // the claim of an execution whose side effects may have happened.
+            let authority = worker
+                .application_root_authority(&request.session_id)
+                .unwrap();
+            let root = worker.harness.lock().root_execution_handle(&authority);
+            assert!(
+                worker
+                    .prompt_on_with_admission(
+                        &root,
+                        PromptInput {
+                            session_id: request.session_id.clone(),
+                            content: vec![Content::Text {
+                                text: "unrelated prompt after crash".into(),
+                            }],
+                        },
+                        Some(("frontend:new-item", 1)),
+                    )
+                    .is_err(),
+                "an interrupted admission must not permit un-fenced re-execution"
+            );
+            let refreshed = invoke_operation::<ResumeSession>(
+                &mut worker,
+                SessionResumeInput {
+                    session_id: request.session_id.clone(),
+                    after_sequence: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(refreshed.through_sequence, sequence);
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn prompt_journal_failure_finishes_prepared_root_execution() {
         let (sender, _events) = mpsc::channel(1);
         let mut worker = application_worker().with_event_sender(sender.clone());
@@ -13990,6 +14802,239 @@ mod tests {
     }
 
     #[test]
+    fn stale_completion_does_not_evict_a_new_active_execution() {
+        let mut worker = application_worker();
+        let root = worker
+            .harness
+            .lock()
+            .root_execution_handle(&default_application_root_authority());
+        let session_id = SessionId::parse("session-late-completion").unwrap();
+        let mut active = BTreeMap::from([(
+            session_id.as_str().to_owned(),
+            ActiveExecution {
+                execution_id: "execution-current".into(),
+                root,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                progress_error: None,
+                prompt: None,
+            },
+        )]);
+        finish_prompt(
+            &mut worker,
+            &mut active,
+            ExecutionCompletion {
+                session_id: session_id.clone(),
+                execution_id: "execution-retired".into(),
+                result: Ok("stale result".into()),
+            },
+        );
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[session_id.as_str()].execution_id,
+            "execution-current"
+        );
+    }
+
+    #[test]
+    fn session_closed_during_execution_writes_failed_terminal_and_frees_claim() {
+        let mut worker = application_worker();
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let session_id = created.session_id;
+        let authority = worker.application_root_authority(&session_id).unwrap();
+        let root = worker.harness.lock().root_execution_handle(&authority);
+        let (admitted, _) = worker
+            .prompt_on_with_admission(
+                &root,
+                PromptInput {
+                    session_id: session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "will close".into(),
+                    }],
+                },
+                Some(("before-close", 1)),
+            )
+            .unwrap();
+
+        invoke_operation::<CloseSession>(
+            &mut worker,
+            ApplicationSessionInput {
+                session_id: session_id.clone(),
+            },
+        )
+        .unwrap();
+
+        let mut active = BTreeMap::from([(
+            session_id.as_str().to_owned(),
+            ActiveExecution {
+                execution_id: admitted.execution_id.clone(),
+                root: root.clone(),
+                cancellation: Arc::new(AtomicBool::new(false)),
+                progress_error: None,
+                prompt: None,
+            },
+        )]);
+        finish_prompt(
+            &mut worker,
+            &mut active,
+            ExecutionCompletion {
+                session_id: session_id.clone(),
+                execution_id: admitted.execution_id.clone(),
+                result: Ok("model completed".into()),
+            },
+        );
+        assert!(active.is_empty());
+        let resumed = invoke_operation::<ResumeSession>(
+            &mut worker,
+            SessionResumeInput {
+                session_id,
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        assert!(resumed.updates.iter().any(|update| {
+            matches!(
+                &update.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Failed { .. },
+                    },
+                } if execution_id == &admitted.execution_id
+            )
+        }));
+    }
+
+    #[test]
+    fn independent_application_workers_cannot_run_two_claimed_prompts() {
+        let path = temp_db("application-cross-worker-claim");
+        let mut first = persistent_application_worker(&path);
+        let created = invoke_operation::<CreateSession>(
+            &mut first,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let session_id = created.session_id;
+        let mut second = persistent_application_worker(&path);
+        let first_authority = first.application_root_authority(&session_id).unwrap();
+        let first_root = first.harness.lock().root_execution_handle(&first_authority);
+        let (admitted, _) = first
+            .prompt_on_with_admission(
+                &first_root,
+                PromptInput {
+                    session_id: session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "first worker".into(),
+                    }],
+                },
+                Some(("client-a:item", 1)),
+            )
+            .unwrap();
+
+        let private_claim = first.journal_claims[&admitted.execution_id].clone();
+        assert_eq!(private_claim.len(), 64);
+        assert_ne!(private_claim, admitted.execution_id);
+
+        let second_authority = second.application_root_authority(&session_id).unwrap();
+        let second_root = second
+            .harness
+            .lock()
+            .root_execution_handle(&second_authority);
+        let other = PromptInput {
+            session_id: session_id.clone(),
+            content: vec![Content::Text {
+                text: "second worker".into(),
+            }],
+        };
+        assert!(
+            second
+                .prompt_on_with_admission(&second_root, other.clone(), Some(("client-b:item", 1)),)
+                .is_err(),
+            "different logical items may not start concurrently in independent workers"
+        );
+        // The execution ID is journal-visible, but the real durable claim
+        // token is private to the originating application worker.
+        assert!(
+            second
+                .invoke_session_on(
+                    &second_root,
+                    SessionCommand::AppendJournalReleasingClaim {
+                        id: session_id.clone(),
+                        entry: session_change_journal(&SessionChange::Execution {
+                            execution_id: admitted.execution_id.clone(),
+                            update: ExecutionChange::State {
+                                state: ExecutionState::Completed,
+                            },
+                        }),
+                        claim: admitted.execution_id.clone(),
+                    },
+                )
+                .is_err(),
+            "public execution identity cannot forge a claim release"
+        );
+        assert!(
+            record_terminal_and_release_claim(
+                &mut second,
+                &second_root,
+                &session_id,
+                &admitted.execution_id,
+                ExecutionState::Completed,
+            )
+            .is_err(),
+            "a second worker cannot impersonate the original journal owner"
+        );
+        let snapshot = invoke_operation::<ResumeSession>(
+            &mut second,
+            SessionResumeInput {
+                session_id: session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot
+                .updates
+                .iter()
+                .filter(|update| {
+                    matches!(&update.update, SessionChange::MessageAdmitted { .. })
+                })
+                .count(),
+            1
+        );
+        assert!(
+            !serde_json::to_string(&snapshot.to_value())
+                .unwrap()
+                .contains(&private_claim),
+            "session history must never reveal the release capability"
+        );
+        record_terminal_and_release_claim(
+            &mut first,
+            &first_root,
+            &session_id,
+            &admitted.execution_id,
+            ExecutionState::Completed,
+        )
+        .unwrap();
+        assert!(!first.journal_claims.contains_key(&admitted.execution_id));
+        let (later, _) = second
+            .prompt_on_with_admission(&second_root, other, Some(("client-b:item", 1)))
+            .unwrap();
+        assert_ne!(later.execution_id, admitted.execution_id);
+        drop(first);
+        drop(second);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn execution_ids_skip_durable_collisions_after_restart() {
         let path = temp_db("application-execution-id-restart");
         let session_id;
@@ -14015,6 +15060,16 @@ mod tests {
             )
             .unwrap();
             assert_eq!(first.execution_id, "execution-1");
+            let authority = worker.application_root_authority(&session_id).unwrap();
+            let root = worker.harness.lock().root_execution_handle(&authority);
+            record_terminal_and_release_claim(
+                &mut worker,
+                &root,
+                &session_id,
+                &first.execution_id,
+                ExecutionState::Completed,
+            )
+            .unwrap();
         }
 
         {
@@ -14354,6 +15409,129 @@ mod tests {
         assert!(input.ends_with("what did I ask you to remember?"));
         drop(worker);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn admission_rebuilds_model_input_from_a_concurrently_advanced_journal() {
+        let path = temp_db("application-concurrent-model-history");
+        let mut writer = persistent_application_worker(&path);
+        let created = invoke_operation::<CreateSession>(
+            &mut writer,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+
+        let mut stale = persistent_application_worker(&path);
+        invoke_operation::<ResumeSession>(
+            &mut stale,
+            SessionResumeInput {
+                session_id: created.session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        let old_sequence =
+            stale.projection().state().sessions[created.session_id.as_str()].through_sequence;
+        assert_eq!(old_sequence, 0);
+
+        let record = writer.session_record(&created.session_id).unwrap().unwrap();
+        for (role, content) in [
+            (MessageRole::User, "other worker question"),
+            (MessageRole::Assistant, "other worker answer"),
+        ] {
+            writer
+                .append_session_change(
+                    &record,
+                    SessionChange::Message {
+                        message: Message {
+                            role,
+                            content: vec![Content::Text {
+                                text: content.into(),
+                            }],
+                        },
+                    },
+                )
+                .unwrap();
+        }
+
+        let current = vec![Content::Text {
+            text: "my follow-up".into(),
+        }];
+        let before_claim =
+            model_input_from_session(stale.projection().state(), &created.session_id, &current)
+                .unwrap();
+        assert_eq!(before_claim.as_ref(), b"my follow-up");
+        let authority = stale
+            .application_root_authority(&created.session_id)
+            .unwrap();
+        let root = stale.harness.lock().root_execution_handle(&authority);
+        let (prompt, admitted_sequence) = stale
+            .prompt_on_with_admission(
+                &root,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: current.clone(),
+                },
+                Some(("frontend:follow-up", 1)),
+            )
+            .unwrap();
+
+        assert_eq!(admitted_sequence, 3);
+        assert_ne!(old_sequence.checked_add(1), Some(admitted_sequence));
+        let repaired = model_input_after_admission(
+            stale.projection().state(),
+            &created.session_id,
+            &current,
+            old_sequence,
+            admitted_sequence,
+            before_claim.clone(),
+        )
+        .unwrap();
+        let repaired = String::from_utf8(repaired.as_ref().to_vec()).unwrap();
+        assert_eq!(
+            repaired,
+            "--- phenix session-history ---\n\
+--- user ---\n\
+other worker question\n\
+--- assistant ---\n\
+other worker answer\n\
+--- phenix current-user ---\n\
+my follow-up"
+        );
+        assert_eq!(
+            repaired.matches("my follow-up").count(),
+            1,
+            "the admitted user message must not be submitted twice"
+        );
+        assert!(
+            matches!(
+                model_input_after_admission(
+                    stale.projection().state(),
+                    &created.session_id,
+                    &current,
+                    old_sequence,
+                    admitted_sequence + 1,
+                    before_claim,
+                ),
+                Err(ApplicationError::Conflict { .. })
+            ),
+            "an unmatched admission sequence must not silently use stale history"
+        );
+
+        record_terminal_and_release_claim(
+            &mut stale,
+            &root,
+            &created.session_id,
+            &prompt.execution_id,
+            ExecutionState::Cancelled,
+        )
+        .unwrap();
+        drop(stale);
+        drop(writer);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
