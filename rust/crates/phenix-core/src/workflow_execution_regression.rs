@@ -295,35 +295,45 @@ fn first_completed_stops_before_the_second_child_invocation() {
     let resolved = selected_fork_generation(WorkflowJoinPolicy::FirstCompleted);
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
-        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
-        .frame_schema().unwrap().clone();
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let alpha = Key::parse("alpha").unwrap();
     let beta = Key::parse("beta").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (alpha.clone(), PhenixValue::U64(0)),
-        (beta.clone(), PhenixValue::U64(0)),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, _, seen| {
-            seen.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "alpha-tool" {
-                frame.set(&alpha, PhenixValue::U64(31)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                _ => Err("invalid result".into()),
-            }
-        },
-        || false,
-        None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, _, seen| {
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "alpha-tool" {
+                    frame.set(&alpha, PhenixValue::U64(31)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("invalid result".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.executed_nodes, 3);
     assert_eq!(report.final_outcome, "final");
     assert_eq!(seen, ["model", "alpha-tool", "model"]);
@@ -336,38 +346,48 @@ fn first_success_ignores_declared_failure_without_swallowing_an_error() {
     let resolved = selected_fork_generation(WorkflowJoinPolicy::FirstSuccess);
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
-        .workflow(&component_id(TOPOLOGY), "turn").unwrap()
-        .frame_schema().unwrap().clone();
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let alpha = Key::parse("alpha").unwrap();
     let beta = Key::parse("beta").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (alpha.clone(), PhenixValue::U64(0)),
-        (beta.clone(), PhenixValue::U64(0)),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, _, seen| {
-            seen.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "alpha-tool" {
-                return Ok::<String, String>("failed".into());
-            }
-            if node == "beta-tool" {
-                frame.set(&beta, PhenixValue::U64(17)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                _ => Err("invalid result".into()),
-            }
-        },
-        || false,
-        None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, _, seen| {
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "alpha-tool" {
+                    return Ok::<String, String>("failed".into());
+                }
+                if node == "beta-tool" {
+                    frame.set(&beta, PhenixValue::U64(17)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("invalid result".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.final_outcome, "final");
     assert_eq!(seen, ["model", "alpha-tool", "beta-tool", "model"]);
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
@@ -380,13 +400,21 @@ fn fork_adapter_error_is_not_treated_as_declared_failure() {
         selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::FailFast));
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
+    let schema = resolved
+        .generation_topology()
         .workflow(&component_id(TOPOLOGY), "turn")
-        .unwrap().frame_schema().unwrap().clone();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
-        (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
-    ])).unwrap();
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+            (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
     let result = root.execute_workflow_with_frame(
         (&component_id(TOPOLOGY), "turn"),
@@ -402,7 +430,8 @@ fn fork_adapter_error_is_not_treated_as_declared_failure() {
             PhenixValue::String(outcome) => Ok::<String, String>(outcome),
             _ => Err("unrecognized provider result".into()),
         },
-        || false, None,
+        || false,
+        None,
     );
     assert!(matches!(
         result,
@@ -505,30 +534,44 @@ fn empty_map_all_is_vacuously_successful_without_child_invocation() {
     let resolved = selected_map_generation();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = resolved.generation_topology()
+    let schema = resolved
+        .generation_topology()
         .workflow(&component_id(TOPOLOGY), "turn")
-        .unwrap().frame_schema().unwrap().clone();
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let output = Key::parse("results").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (Key::parse("items").unwrap(), PhenixValue::List(Vec::new())),
-        (Key::parse("item").unwrap(), PhenixValue::U64(0)),
-        (Key::parse("result").unwrap(), PhenixValue::U64(0)),
-        (output.clone(), PhenixValue::List(vec![PhenixValue::U64(42)])),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (Key::parse("items").unwrap(), PhenixValue::List(Vec::new())),
+            (Key::parse("item").unwrap(), PhenixValue::U64(0)),
+            (Key::parse("result").unwrap(), PhenixValue::U64(0)),
+            (
+                output.clone(),
+                PhenixValue::List(vec![PhenixValue::U64(42)]),
+            ),
+        ]),
+    )
+    .unwrap();
     let mut executed = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut executed, &mut frame),
-        |node, _, _, executed| {
-            executed.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-            PhenixValue::String(outcome) => Ok::<String, String>(outcome),
-            _ => Err("invalid outcome".into()),
-        },
-        || false, None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut executed, &mut frame),
+            |node, _, _, executed| {
+                executed.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |_, _, output, _, _| match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                _ => Err("invalid outcome".into()),
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.final_outcome, "final");
     assert_eq!(report.executed_nodes, 2);
     assert_eq!(executed, ["model", "model"]);
