@@ -588,21 +588,22 @@ fn selected_workflow_outcome<E>(
     node: &str,
     import: &ResolvedImportHandle,
     output: &[u8],
-) -> Result<Option<String>, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<E>>> {
+) -> Result<Option<String>, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<E>>>
+{
     let Some(projection) = workflow.outcome_projection(node) else {
         return Ok(None);
     };
     let result: crate::PhenixValue = serde_json::from_slice(output).map_err(|_| {
-        crate::workflow::WorkflowInvocationError::Failed(
-            WorkflowNodeDispatchError::Projection(crate::WorkflowProjectionError::InvalidResult),
-        )
+        crate::workflow::WorkflowInvocationError::Failed(WorkflowNodeDispatchError::Projection(
+            crate::WorkflowProjectionError::InvalidResult,
+        ))
     })?;
     let outcome = projection
         .project_checked(import.response_schema(), &result)
         .map_err(|error| {
-            crate::workflow::WorkflowInvocationError::Failed(
-                WorkflowNodeDispatchError::Projection(error),
-            )
+            crate::workflow::WorkflowInvocationError::Failed(WorkflowNodeDispatchError::Projection(
+                error,
+            ))
         })?;
     Ok(Some(outcome))
 }
@@ -736,9 +737,7 @@ impl RootExecutionHandle {
                     .invoke_import(import, &request)
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
-                let selected = selected_workflow_outcome::<Error>(
-                    compiled, node, import, &output
-                )?;
+                let selected = selected_workflow_outcome::<Error>(compiled, node, import, &output)?;
                 let reported = project(node, service, &output, state)
                     .map_err(WorkflowNodeDispatchError::Project)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
@@ -824,12 +823,15 @@ impl RootExecutionHandle {
                     .invoke_import(binding, &request)
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
-                let selected = selected_workflow_outcome::<Error>(
-                    compiled, node, binding, &output
-                )?;
+                let selected =
+                    selected_workflow_outcome::<Error>(compiled, node, binding, &output)?;
                 let snapshot = frame.clone();
                 match project(node, interface, &output, frame, state) {
-                    Ok(outcome) if selected.as_ref().is_none_or(|expected| *expected == outcome) => {
+                    Ok(outcome)
+                        if selected
+                            .as_ref()
+                            .is_none_or(|expected| *expected == outcome) =>
+                    {
                         Ok(outcome)
                     }
                     Ok(reported) => {
