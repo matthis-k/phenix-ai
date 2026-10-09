@@ -55,6 +55,8 @@ pub enum WorkflowProjectionError {
     MissingVariantCase(String),
     UnknownVariantCase(String),
     InvalidResult,
+    UnknownNode(String),
+    UnboundNode(String),
 }
 
 impl WorkflowOutcomeProjection {
