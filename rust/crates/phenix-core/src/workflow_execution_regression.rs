@@ -1225,10 +1225,8 @@ fn mapped_subplan_incompatible_type_rejects_before_provider_dispatch() {
     let outcome = declaration.with_workflow_frame_schemas([altered]);
     assert!(matches!(
         outcome,
-        Err(crate::GenerationResolutionError::InvalidWorkflow {
-            error: crate::workflow::WorkflowCompileError::InvalidFrameTransfer { .. },
-            ..
-        })
+        Err(crate::GenerationResolutionError::InvalidWorkflow { error, .. })
+            if matches!(*error, crate::workflow::WorkflowCompileError::InvalidFrameTransfer { .. })
     ));
 }
 
