@@ -91,6 +91,13 @@ pub enum WorkflowEdge {
     Next {
         node: String,
     },
+    /// Copy typed frame fields on an ordinary control-flow transition.
+    /// Compilation retains this as data on an Invoke edge, not a fifth step.
+    Transfer {
+        node: String,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        slots: BTreeMap<crate::Key, crate::Key>,
+    },
     Finish,
     /// Explicit normal failure outcome from an invoked child. Provider,
     /// transport, preparation and projection errors are never synthesized
@@ -127,6 +134,18 @@ pub enum WorkflowEdge {
         #[serde(deserialize_with = "deserialize_unique_workflow_map")]
         on_exit: BTreeMap<String, WorkflowEdge>,
     },
+    /// The same compile-time inclusion, with explicit data-only input/output
+    /// aliasing. The selected parent frame must declare every field and type.
+    IncludeMapped {
+        workflow: String,
+        site: String,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        on_exit: BTreeMap<String, WorkflowEdge>,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        inputs: BTreeMap<crate::Key, crate::Key>,
+        #[serde(deserialize_with = "deserialize_unique_workflow_map")]
+        outputs: BTreeMap<crate::Key, crate::Key>,
+    },
 }
 
 // Internal lowering of the legacy service topology into execution steps.
@@ -156,6 +175,7 @@ enum PlanStep {
     Invoke {
         import: InterfaceId,
         on_result: BTreeMap<String, PlanStepId>,
+        transfers: BTreeMap<String, BTreeMap<crate::Key, crate::Key>>,
     },
     Fork {
         branches: BTreeMap<String, PlanStepId>,
@@ -185,10 +205,15 @@ impl LoweredPlan {
         let mut steps = BTreeMap::new();
         for (name, node) in &topology.nodes {
             let mut on_result = BTreeMap::new();
+            let mut transfers = BTreeMap::new();
             for (outcome, edge) in &node.branches {
                 let target = match edge {
                     WorkflowEdge::Next { node } => PlanStepId::Invoke(node.clone()),
-                    WorkflowEdge::Include { .. } => {
+                    WorkflowEdge::Transfer { node, slots } => {
+                        transfers.insert(outcome.clone(), slots.clone());
+                        PlanStepId::Invoke(node.clone())
+                    }
+                    WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
                         unreachable!("selected subplans were inlined before lowering")
                     }
                     WorkflowEdge::Finish | WorkflowEdge::Fail => {
@@ -329,6 +354,7 @@ impl LoweredPlan {
                 PlanStep::Invoke {
                     import: node.import.clone(),
                     on_result,
+                    transfers,
                 },
             );
         }
@@ -480,6 +506,10 @@ pub enum WorkflowRunError<E> {
     InvalidMapInput {
         node: String,
         reason: String,
+    },
+    InvalidTransitionFrame {
+        node: String,
+        error: crate::WorkflowFrameError,
     },
     ExplicitFailure {
         node: String,
