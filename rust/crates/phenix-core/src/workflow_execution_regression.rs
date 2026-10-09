@@ -1056,6 +1056,157 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
 }
 
 #[test]
+fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit() {
+    let owner = component_id(TOPOLOGY);
+    let parent = WorkflowDeclaration {
+        owner: owner.clone(),
+        name: "turn".into(),
+        topology: WorkflowTopology {
+            entry: "model".into(),
+            nodes: BTreeMap::from([(
+                "model".into(),
+                WorkflowNode {
+                    import: InterfaceId::parse(MODEL).unwrap(),
+                    branches: BTreeMap::from([
+                        ("final".into(), WorkflowEdge::Finish),
+                        ("tools".into(), WorkflowEdge::IncludeMapped {
+                            workflow: "batch".into(),
+                            site: "batch-attempt".into(),
+                            inputs: BTreeMap::from([(
+                                Key::parse("parent_input").unwrap(),
+                                Key::parse("child_input").unwrap(),
+                            )]),
+                            outputs: BTreeMap::from([(
+                                Key::parse("child_output").unwrap(),
+                                Key::parse("parent_output").unwrap(),
+                            )]),
+                            on_exit: BTreeMap::from([(
+                                "done".into(), WorkflowEdge::Next { node: "model".into() }
+                            )]),
+                        }),
+                    ]),
+                }
+            )]),
+        },
+    };
+    let child = WorkflowDeclaration {
+        owner: owner.clone(),
+        name: "batch".into(),
+        topology: WorkflowTopology {
+            entry: "start".into(),
+            nodes: BTreeMap::from([
+                ("start".into(), WorkflowNode {
+                    import: InterfaceId::parse(TOOL).unwrap(),
+                    branches: BTreeMap::from([(
+                        "done".into(), WorkflowEdge::MapFork {
+                            collection: Key::parse("items").unwrap(),
+                            item_slot: Key::parse("item").unwrap(),
+                            child_output_slot: Key::parse("result").unwrap(),
+                            output_slot: Key::parse("collected").unwrap(),
+                            max_children: 2,
+                            branch_entry: "leaf".into(),
+                            policy: WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
+                            on_success: Box::new(WorkflowEdge::Next {node:"complete".into()}),
+                            on_failure: Box::new(WorkflowEdge::Next {node:"complete".into()}),
+                        }
+                    )]),
+                }),
+                ("leaf".into(), WorkflowNode {
+                    import: InterfaceId::parse(TOOL).unwrap(),
+                    branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                }),
+                ("complete".into(), WorkflowNode {
+                    import: InterfaceId::parse(TOOL).unwrap(),
+                    branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                }),
+            ]),
+        },
+    };
+    let resolved = resolve_with_workflows(BASIC, false, vec![parent, child])
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner,
+            name: "turn".into(),
+            schema: WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::from([
+                    (Key::parse("parent_input").unwrap(), Type::U64),
+                    (Key::parse("child_input").unwrap(), Type::U64),
+                    (Key::parse("items").unwrap(), Type::List(Box::new(Type::U64))),
+                    (Key::parse("item").unwrap(), Type::U64),
+                    (Key::parse("result").unwrap(), Type::U64),
+                    (Key::parse("collected").unwrap(), Type::List(Box::new(Type::U64))),
+                    (Key::parse("child_output").unwrap(), Type::U64),
+                    (Key::parse("parent_output").unwrap(), Type::U64),
+                ]),
+            },
+        }]).unwrap();
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved.generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap().frame_schema().unwrap().clone();
+    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
+        (Key::parse("parent_input").unwrap(), PhenixValue::U64(9)),
+        (Key::parse("child_input").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("items").unwrap(), PhenixValue::List(vec![PhenixValue::U64(2), PhenixValue::U64(3)])),
+        (Key::parse("item").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("result").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("collected").unwrap(), PhenixValue::List(Vec::new())),
+        (Key::parse("child_output").unwrap(), PhenixValue::U64(0)),
+        (Key::parse("parent_output").unwrap(), PhenixValue::U64(0)),
+    ])).unwrap();
+    let mut seen = Vec::new();
+    let report = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut seen, &mut frame),
+        |node, _, frame, seen| {
+            if node == "__include__/batch-attempt/start" {
+                assert_eq!(frame.get(&Key::parse("child_input").unwrap()), Some(&PhenixValue::U64(9)));
+            }
+            seen.push(node.to_owned());
+            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+        },
+        |node, _, bytes, frame, _| {
+            if node == "__include__/batch-attempt/leaf" {
+                let item = match frame.get(&Key::parse("item").unwrap()) {
+                    Some(PhenixValue::U64(item)) => *item,
+                    _ => panic!("mapped item missing"),
+                };
+                frame.set(&Key::parse("result").unwrap(), PhenixValue::U64(item * 10)).unwrap();
+            } else if node == "__include__/batch-attempt/complete" {
+                let sum = match frame.get(&Key::parse("collected").unwrap()) {
+                    Some(PhenixValue::List(results)) => results.iter().map(|result| match result {
+                        PhenixValue::U64(value) => *value,
+                        _ => panic!("mapped result must be U64"),
+                    }).sum(),
+                    _ => panic!("mapped child output list missing"),
+                };
+                frame.set(&Key::parse("child_output").unwrap(), PhenixValue::U64(sum)).unwrap();
+            }
+            match serde_json::from_slice::<PhenixValue>(bytes).unwrap() {
+                PhenixValue::String(outcome) => Ok::<String,String>(outcome),
+                _ => Err("mock result missing".into()),
+            }
+        },
+        || false, None,
+    ).unwrap();
+    assert_eq!(report.executed_nodes, 6);
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(seen, [
+        "model",
+        "__include__/batch-attempt/start",
+        "__include__/batch-attempt/leaf",
+        "__include__/batch-attempt/leaf",
+        "__include__/batch-attempt/complete",
+        "model",
+    ]);
+    assert_eq!(
+        frame.get(&Key::parse("parent_output").unwrap()),
+        Some(&PhenixValue::U64(50))
+    );
+}
+
+#[test]
 fn mapped_subplan_incompatible_type_rejects_before_provider_dispatch() {
     let declaration = typed_include_generation_unbound();
     let altered = WorkflowFrameDeclaration {
