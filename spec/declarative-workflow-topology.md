@@ -405,14 +405,15 @@ remaining name/ownership semantics are complete.
 
 The Core now exposes a root/generation-correlated `WorkflowPendingTasks`
 accounting contract: individual task tickets have a selected generation, scoped
-identity and one settlement. Cancellation requests mark outstanding work as
-`Cancelling` and return the tickets to signal, but **do not settle them or
-release the generation lease**. Root closure is rejected until all pending
-native calls actually settle, including callbacks completed after cancellation.
-Late/wrong-generation and duplicate settlement are rejected. These invariants
-have focused Core tests. The current cooperative workflow scheduler and native
-ABI are **not yet wired to this accounting substrate**; native pending
-invocations still cannot progress concurrently through this execution path.
+identity and one settlement. Cancellation marks pending work as
+`Cancelling` and returns each ticket for signalling only once. The tracker
+refuses root closure until every native ticket actually settles, including
+successful completions after cancellation. Late or wrong-generation callbacks
+and duplicate settlements reject. Focused Core tests cover these rules.
+This is task accounting, **not yet physical generation lease retention**.
+The cooperative scheduler, callback dispatcher and native ABI still need to
+attach the tracker to a pinned root and safely retire orphaned tasks; pending
+native invocations cannot yet progress concurrently along this execution path.
 This is a partial native-async lifecycle contract, not a claim of async parity.
 
 The Core also exposes `WorkflowOutcomeProjection` revision 1. It is a
