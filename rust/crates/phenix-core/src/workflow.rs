@@ -478,6 +478,7 @@ pub struct CompiledWorkflow {
     plan: LoweredPlan,
     bindings: BTreeMap<InterfaceId, ResolvedImportHandle>,
     frame_schema: Option<crate::WorkflowFrameSchema>,
+    outcome_projections: BTreeMap<String, crate::WorkflowOutcomeProjection>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -496,6 +497,8 @@ pub enum WorkflowNodeDispatchError<E> {
     Prepare(E),
     Invoke(crate::KernelError),
     Project(E),
+    Projection(crate::WorkflowProjectionError),
+    ProjectionMismatch { selected: String, reported: String },
 }
 
 #[derive(Debug)]
@@ -1400,6 +1403,7 @@ impl WorkflowTopology {
             plan,
             bindings: BTreeMap::new(),
             frame_schema: None,
+            outcome_projections: BTreeMap::new(),
         })
     }
 }
@@ -1413,6 +1417,42 @@ impl CompiledWorkflow {
     /// no frame-aware entry, not that an arbitrary schema can be supplied.
     pub fn frame_schema(&self) -> Option<&crate::WorkflowFrameSchema> {
         self.frame_schema.as_ref()
+    }
+
+    /// Read only the projection selected with this compiled generation.
+    pub fn outcome_projection(&self, node: &str) -> Option<&crate::WorkflowOutcomeProjection> {
+        self.outcome_projections.get(node)
+    }
+
+    pub(crate) fn projection_count(&self) -> usize {
+        self.outcome_projections.len()
+    }
+
+    pub(crate) fn bind_outcome_projection(
+        &mut self,
+        node: String,
+        projection: crate::WorkflowOutcomeProjection,
+    ) {
+        self.outcome_projections.insert(node, projection);
+    }
+
+    pub(crate) fn validate_outcome_projection(
+        &self,
+        node: &str,
+        projection: &crate::WorkflowOutcomeProjection,
+    ) -> Result<(), crate::WorkflowProjectionError> {
+        let node_def = self
+            .topology
+            .nodes
+            .get(node)
+            .ok_or(crate::WorkflowProjectionError::UnknownNode(node.to_owned()))?;
+        let binding = self.bindings.get(&node_def.import).ok_or(
+            crate::WorkflowProjectionError::UnboundNode(node.to_owned()),
+        )?;
+        projection.validate(
+            binding.response_schema(),
+            &node_def.branches.keys().cloned().collect(),
+        )
     }
 
     pub(crate) fn bind_frame_schema(&mut self, schema: crate::WorkflowFrameSchema) {
