@@ -38,6 +38,7 @@ impl Cursor {
 struct ActiveFork {
     join: PlanStepId,
     children: BTreeMap<String, Cursor>,
+    ready_order: Vec<String>,
     settled: BTreeSet<String>,
     observations: Vec<WorkflowJoinObservation>,
     next_index: usize,
@@ -46,17 +47,13 @@ struct ActiveFork {
 
 impl ActiveFork {
     fn next_ready(&mut self) -> Option<String> {
-        if self.children.is_empty() {
+        if self.ready_order.is_empty() {
             return None;
         }
-        for _ in 0..self.children.len() {
+        for _ in 0..self.ready_order.len() {
             let index = self.next_index;
-            self.next_index = (self.next_index + 1) % self.children.len();
-            let name = self
-                .children
-                .keys()
-                .nth(index)
-                .expect("index is bounded by admitted children");
+            self.next_index = (self.next_index + 1) % self.ready_order.len();
+            let name = &self.ready_order[index];
             if !self.settled.contains(name) {
                 return Some(name.clone());
             }
@@ -140,13 +137,14 @@ impl CompiledWorkflow {
                         error,
                     })?;
                 children.insert(
-                    format!("{index:06}"),
+                    format!("{index:020}"),
                     Cursor::at(map.branch_entry.clone(), Some(snapshot)),
                 );
             }
         }
         Ok(ActiveFork {
             join: join.clone(),
+            ready_order: children.keys().cloned().collect(),
             children,
             settled: BTreeSet::new(),
             observations: Vec::new(),
