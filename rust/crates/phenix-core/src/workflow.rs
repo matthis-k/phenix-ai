@@ -707,51 +707,53 @@ impl WorkflowTopology {
                     // Its public outcome is the same one used by normal
                     // lowering: <fork outcome>/<success|failure>. A nested
                     // child-scope Join instead settles its owning fork.
-                    let qualify_join_return = |
-                        edge: &WorkflowEdge,
-                        child_name: &str,
-                        child_outcome: &str,
-                        suffix: &str,
-                        exits: &mut BTreeSet<String>,
-                    | -> Result<WorkflowEdge, WorkflowCompileError> {
-                        match edge {
-                            WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
-                                node: format!("{prefix}{node}"),
-                            }),
-                            WorkflowEdge::Finish if scoped.contains(child_name) => {
-                                Ok(WorkflowEdge::Finish)
-                            }
-                            WorkflowEdge::Finish => {
-                                let terminal = format!("{child_outcome}/{suffix}");
-                                exits.insert(terminal.clone());
-                                if outputs.is_some_and(|slots| !slots.is_empty()) {
-                                    return Err(WorkflowCompileError::InvalidFork {
+                    let qualify_join_return =
+                        |edge: &WorkflowEdge,
+                         child_name: &str,
+                         child_outcome: &str,
+                         suffix: &str,
+                         exits: &mut BTreeSet<String>|
+                         -> Result<WorkflowEdge, WorkflowCompileError> {
+                            match edge {
+                                WorkflowEdge::Next { node } => Ok(WorkflowEdge::Next {
+                                    node: format!("{prefix}{node}"),
+                                }),
+                                WorkflowEdge::Finish if scoped.contains(child_name) => {
+                                    Ok(WorkflowEdge::Finish)
+                                }
+                                WorkflowEdge::Finish => {
+                                    let terminal = format!("{child_outcome}/{suffix}");
+                                    exits.insert(terminal.clone());
+                                    if outputs.is_some_and(|slots| !slots.is_empty()) {
+                                        return Err(WorkflowCompileError::InvalidFork {
                                         node: child_name.to_owned(),
                                         outcome: terminal,
                                         reason: "mapped outputs from a terminal Join need an ordered Join transfer".into(),
                                     });
+                                    }
+                                    match on_exit.get(&terminal) {
+                                        Some(WorkflowEdge::Next { node }) => {
+                                            Ok(WorkflowEdge::Next { node: node.clone() })
+                                        }
+                                        Some(WorkflowEdge::Finish) => Ok(WorkflowEdge::Finish),
+                                        Some(_) => {
+                                            Err(WorkflowCompileError::InvalidJoinContinuation {
+                                                node: child_name.to_owned(),
+                                                outcome: terminal,
+                                            })
+                                        }
+                                        None => Err(WorkflowCompileError::MissingSubplanExit {
+                                            workflow: workflow.clone(),
+                                            outcome: terminal,
+                                        }),
+                                    }
                                 }
-                                match on_exit.get(&terminal) {
-                                    Some(WorkflowEdge::Next { node }) => Ok(WorkflowEdge::Next {
-                                        node: node.clone(),
-                                    }),
-                                    Some(WorkflowEdge::Finish) => Ok(WorkflowEdge::Finish),
-                                    Some(_) => Err(WorkflowCompileError::InvalidJoinContinuation {
-                                        node: child_name.to_owned(),
-                                        outcome: terminal,
-                                    }),
-                                    None => Err(WorkflowCompileError::MissingSubplanExit {
-                                        workflow: workflow.clone(),
-                                        outcome: terminal,
-                                    }),
-                                }
+                                _ => Err(WorkflowCompileError::InvalidJoinContinuation {
+                                    node: child_name.to_owned(),
+                                    outcome: child_outcome.to_owned(),
+                                }),
                             }
-                            _ => Err(WorkflowCompileError::InvalidJoinContinuation {
-                                node: child_name.to_owned(),
-                                outcome: child_outcome.to_owned(),
-                            }),
-                        }
-                    };
+                        };
                     let mut inserted = Vec::with_capacity(child.nodes.len());
                     for (child_name, child_node) in &child.nodes {
                         let qualified = format!("{prefix}{child_name}");
@@ -2042,10 +2044,15 @@ mod inclusion_tests {
         let compiled = flattened.compile(|_| true).unwrap();
         let schema = crate::WorkflowFrameSchema {
             revision: 1,
-            slots: ["child_output", "parent_output", "extra_input", "extra_output"]
-                .into_iter()
-                .map(|name| (crate::Key::parse(name).unwrap(), crate::Type::U64))
-                .collect(),
+            slots: [
+                "child_output",
+                "parent_output",
+                "extra_input",
+                "extra_output",
+            ]
+            .into_iter()
+            .map(|name| (crate::Key::parse(name).unwrap(), crate::Type::U64))
+            .collect(),
         };
         compiled.validate_frame_schema(&schema).unwrap();
         let mut frame = crate::WorkflowFrame::new(
@@ -2058,7 +2065,10 @@ mod inclusion_tests {
             ]
             .into_iter()
             .map(|(name, value)| {
-                (crate::Key::parse(name).unwrap(), crate::PhenixValue::U64(value))
+                (
+                    crate::Key::parse(name).unwrap(),
+                    crate::PhenixValue::U64(value),
+                )
             })
             .collect(),
         )
@@ -2069,8 +2079,12 @@ mod inclusion_tests {
                 Some(&mut frame),
                 |node, _, _, frame, _| {
                     if node == "__include__/composed/work" {
-                        frame.unwrap()
-                            .set(&crate::Key::parse("child_output").unwrap(), crate::PhenixValue::U64(9))
+                        frame
+                            .unwrap()
+                            .set(
+                                &crate::Key::parse("child_output").unwrap(),
+                                crate::PhenixValue::U64(9),
+                            )
                             .unwrap();
                         Ok::<_, WorkflowInvocationError<String>>("returned".into())
                     } else if node == "start" {
@@ -2095,9 +2109,15 @@ mod inclusion_tests {
         // requires a second phase. Reject it rather than reading stale data.
         let parent = all.get_mut(&(owner(), "main".into())).unwrap();
         let WorkflowEdge::IncludeMapped { on_exit, .. } = parent
-            .nodes.get_mut("start").unwrap()
-            .branches.get_mut("delegate").unwrap()
-        else { unreachable!() };
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .get_mut("delegate")
+            .unwrap()
+        else {
+            unreachable!()
+        };
         on_exit.insert(
             "returned".into(),
             WorkflowEdge::Transfer {
@@ -2156,7 +2176,9 @@ mod inclusion_tests {
                 &[
                     (
                         "spawn/success",
-                        WorkflowEdge::Next { node: "after".into() },
+                        WorkflowEdge::Next {
+                            node: "after".into(),
+                        },
                     ),
                     ("spawn/failure", WorkflowEdge::Finish),
                 ],
@@ -2167,7 +2189,10 @@ mod inclusion_tests {
             .compile(|_| true)
             .unwrap();
         let mut frame = crate::WorkflowFrame::new(
-            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            crate::WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::new(),
+            },
             BTreeMap::new(),
         )
         .unwrap();
@@ -2194,7 +2219,12 @@ mod inclusion_tests {
         assert_eq!(report.executed_nodes, 4);
         assert_eq!(
             invoked,
-            ["start", "__include__/subfork/fork", "__include__/subfork/work", "after"]
+            [
+                "start",
+                "__include__/subfork/fork",
+                "__include__/subfork/work",
+                "after"
+            ]
         );
         let parent = all.get_mut(&(owner(), "main".into())).unwrap();
         let WorkflowEdge::Include { on_exit, .. } = parent
@@ -2265,7 +2295,12 @@ mod inclusion_tests {
                     "mapped-child",
                     "batch-return",
                     &[
-                        ("launch/success", WorkflowEdge::Next { node: "after".into() }),
+                        (
+                            "launch/success",
+                            WorkflowEdge::Next {
+                                node: "after".into(),
+                            },
+                        ),
                         ("launch/failure", WorkflowEdge::Finish),
                     ],
                 ),
@@ -2280,56 +2315,71 @@ mod inclusion_tests {
                 (key("items"), crate::Type::List(Box::new(crate::Type::U64))),
                 (key("item"), crate::Type::U64),
                 (key("result"), crate::Type::U64),
-                (key("results"), crate::Type::List(Box::new(crate::Type::U64))),
+                (
+                    key("results"),
+                    crate::Type::List(Box::new(crate::Type::U64)),
+                ),
             ]),
         };
         compiled.validate_frame_schema(&schema).unwrap();
         let mut frame = crate::WorkflowFrame::new(
             schema,
             BTreeMap::from([
-                (key("items"), crate::PhenixValue::List(vec![
-                    crate::PhenixValue::U64(2),
-                    crate::PhenixValue::U64(5),
-                ])),
+                (
+                    key("items"),
+                    crate::PhenixValue::List(vec![
+                        crate::PhenixValue::U64(2),
+                        crate::PhenixValue::U64(5),
+                    ]),
+                ),
                 (key("item"), crate::PhenixValue::U64(0)),
                 (key("result"), crate::PhenixValue::U64(0)),
                 (key("results"), crate::PhenixValue::List(Vec::new())),
             ]),
-        ).unwrap();
+        )
+        .unwrap();
         let mut order = Vec::new();
-        let report = compiled.execute_nodes(
-            &mut order,
-            Some(&mut frame),
-            |node, _, visited, local, _| {
-                visited.push(node.to_owned());
-                if node == "__include__/batch-return/item-task" {
-                    let frame = local.unwrap();
-                    let crate::PhenixValue::U64(value) = frame.get(&key("item")).unwrap() else {
-                        panic!("worker was not given its item");
-                    };
-                    frame.set(&key("result"), crate::PhenixValue::U64(value * 3)).unwrap();
-                    Ok::<_, WorkflowInvocationError<String>>("done".into())
-                } else if node == "start" {
-                    Ok("delegate".into())
-                } else if node == "__include__/batch-return/batch" {
-                    Ok("launch".into())
-                } else {
-                    assert_eq!(node, "after");
-                    Ok("done".into())
-                }
-            },
-            || false,
-            None,
-        ).unwrap();
+        let report = compiled
+            .execute_nodes(
+                &mut order,
+                Some(&mut frame),
+                |node, _, visited, local, _| {
+                    visited.push(node.to_owned());
+                    if node == "__include__/batch-return/item-task" {
+                        let frame = local.unwrap();
+                        let crate::PhenixValue::U64(value) = frame.get(&key("item")).unwrap()
+                        else {
+                            panic!("worker was not given its item");
+                        };
+                        frame
+                            .set(&key("result"), crate::PhenixValue::U64(value * 3))
+                            .unwrap();
+                        Ok::<_, WorkflowInvocationError<String>>("done".into())
+                    } else if node == "start" {
+                        Ok("delegate".into())
+                    } else if node == "__include__/batch-return/batch" {
+                        Ok("launch".into())
+                    } else {
+                        assert_eq!(node, "after");
+                        Ok("done".into())
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
         assert_eq!(report.final_outcome, "done");
         assert_eq!(report.executed_nodes, 5);
-        assert_eq!(order, [
-            "start",
-            "__include__/batch-return/batch",
-            "__include__/batch-return/item-task",
-            "__include__/batch-return/item-task",
-            "after",
-        ]);
+        assert_eq!(
+            order,
+            [
+                "start",
+                "__include__/batch-return/batch",
+                "__include__/batch-return/item-task",
+                "__include__/batch-return/item-task",
+                "after",
+            ]
+        );
         assert_eq!(
             frame.get(&key("results")),
             Some(&crate::PhenixValue::List(vec![
