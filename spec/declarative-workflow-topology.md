@@ -338,14 +338,20 @@ validates the explicitly authored positive fan-out bound and typed collection;
 there is no implicit 256-child Core ceiling. Empty maps settle vacuously for
 `All` policies without invoking child providers.
 
-This is **cooperative execution**: at a Join boundary there are no in-flight
-child invocations. A root's generation lease covers each child throughout
-dispatch. Nested scopes and native asynchronous settlement remain separate
-semantic acceptance gates, not implied by the closed Join policy tests.
+This remains **cooperative execution**: at a Join boundary there are no
+in-flight child invocations. A root's generation lease covers each child
+throughout dispatch. A recursive cursor scheduler now admits nested Fork/Join
+scopes without starting new roots or selecting new providers. Each ready scope
+receives at most one Invoke per scheduler turn, including when a nested child
+loops; outer siblings remain schedulable. Frames are independently snapshot
+per nested scope and only explicitly selected outputs reach the parent.
+Structured nested admission has an explicit maximum active depth of 64,
+reported as a typed error. **Native asynchronous child settlement and native
+provider wakeup remain outstanding**, as does the stronger lifecycle guarantee
+for native calls still running when a root is cancelled.
 
-This is not yet full structured native-async execution. Nested forks currently
-fail candidate validation, and forks inside inlined subplans require typed
-frame mappings. Typed input/output handoff for inlined subplans, selected-plan
+This is not yet full structured native-async execution. Forks inside inlined
+subplans still require typed frame mappings and validated slot handoffs. Typed input/output handoff for inlined subplans, selected-plan
 artifact discovery, runtime lifecycle rebinding, and Basic/Advanced product
 streaming parity remain open. A new generation must select its own frame
 declarations; reconfiguration does not inherit a former owner's frame grants.
