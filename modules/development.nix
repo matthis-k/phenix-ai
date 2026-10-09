@@ -168,6 +168,10 @@
           inherit name;
           needs = [ ];
           runtimeInputs = rustUnitRuntimeInputs;
+          impact = {
+            kind = "cargo";
+            inherit packages;
+          };
           exec = ''
             ${rustRoot}
 
@@ -280,8 +284,11 @@
               '';
             };
 
-            adapter-domain = {
+            adapter-domain = let
+              packages = [ "phenix-adapter-acp" "phenix-domain" ];
+            in {
               name = "Adapter and domain tests";
+              impact = { kind = "cargo"; inherit packages; };
               needs = [ ];
               runtimeInputs = pkgs: [
                 pkgs.cargo
@@ -291,14 +298,16 @@
               exec = ''
                 ${rustRoot}
                 cargo test --quiet --locked \
-                  -p phenix-adapter-acp \
-                  -p phenix-domain \
+                  ${pkgs.lib.concatMapStringsSep " " (package: "-p ${package}") packages} \
                   --tests
               '';
             };
 
-            harness = {
+            harness = let
+              package = "phenix-harness";
+            in {
               name = "Harness code tests";
+              impact = { kind = "cargo"; packages = [ package ]; };
               needs = [ ];
               runtimeInputs = pkgs: [
                 pkgs.cargo
@@ -307,7 +316,7 @@
               ];
               exec = ''
                 ${rustRoot}
-                cargo test --quiet --locked -p phenix-harness \
+                cargo test --quiet --locked -p ${package} \
                   --test acp_session_lifecycle \
                   --test component_graph \
                   --test supported_product_journeys
@@ -402,6 +411,10 @@
           enable = true;
           outputName = "phenix-maintenance";
           # Fast feedback on PRs; full semantic CI runs on main and workflow_dispatch.
+          prImpact = {
+            enable = true;
+            workspace = "rust";
+          };
           pullRequestJobs = [
             "source"
             "clippy"
@@ -619,6 +632,7 @@
                 ci = {
                   enable = true;
                   stage = "clippy";
+                  impact = { kind = "cargo"; packages = null; };
                   name = "Clippy";
                   stepName = "Clippy";
                   timeoutMinutes = 60;
