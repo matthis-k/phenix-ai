@@ -236,9 +236,19 @@ impl CompiledWorkflow {
         depth: usize,
     ) -> Result<Option<WorkflowChildSettlement>, WorkflowRunError<Error>> {
         let (count, step_limit) = budget;
-        if cancelled() {
+        // Invoke performs its own single pre-dispatch cancellation check.
+        // A redundant check here would change cancellation ordering and
+        // turn terminal-after-invoke cancellation into a pre-call failure.
+        if !matches!(&self.plan.steps[&cursor.step], PlanStep::Invoke { .. })
+            && cancelled()
+        {
             return Err(WorkflowRunError::Cancelled {
-                next_node: format!("{:?}", cursor.step),
+                next_node: match &cursor.step {
+                    PlanStepId::Invoke(node)
+                    | PlanStepId::Fork { node, .. }
+                    | PlanStepId::Join { node, .. }
+                    | PlanStepId::Exit { node, .. } => node.clone(),
+                },
                 executed_nodes: *count,
             });
         }
@@ -352,8 +362,11 @@ impl CompiledWorkflow {
             // Cancellation can arrive while the final provider is running.
             // An immediate terminal edge cannot report success in that case.
             if cancelled() {
+                let PlanStepId::Exit { node, .. } = &cursor.step else {
+                    unreachable!("terminal settlement has an Exit identity")
+                };
                 return Err(WorkflowRunError::Cancelled {
-                    next_node: format!("{:?}", cursor.step),
+                    next_node: node.clone(),
                     executed_nodes: *count,
                 });
             }
