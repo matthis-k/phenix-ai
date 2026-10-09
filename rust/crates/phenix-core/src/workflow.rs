@@ -1787,6 +1787,46 @@ mod tests {
     }
 
     #[test]
+    fn excessive_nested_scope_depth_rejects_at_compilation() {
+        let mut nodes = BTreeMap::new();
+        for index in 0..=65usize {
+            let name = format!("nested-{index:02}");
+            let edge = if index == 65 {
+                WorkflowEdge::Finish
+            } else {
+                WorkflowEdge::Fork {
+                    branches: BTreeMap::from([(
+                        "only".into(),
+                        format!("nested-{:02}", index + 1),
+                    )]),
+                    policy: crate::WorkflowJoinPolicy::All(
+                        crate::WorkflowJoinAllPolicy::CollectAll,
+                    ),
+                    outputs: BTreeMap::new(),
+                    on_success: Box::new(WorkflowEdge::Finish),
+                    on_failure: Box::new(WorkflowEdge::Finish),
+                }
+            };
+            nodes.insert(
+                name.clone(),
+                WorkflowNode {
+                    import: interface("fixture.nested@1"),
+                    branches: BTreeMap::from([("done".into(), edge)]),
+                },
+            );
+        }
+        let plan = WorkflowTopology {
+            entry: "nested-00".into(),
+            nodes,
+        };
+        assert!(matches!(
+            plan.compile(|_| true),
+            Err(WorkflowCompileError::InvalidFork { reason, .. })
+                if reason.contains("depth exceeds 64")
+        ));
+    }
+
+    #[test]
     fn a_join_cannot_resume_inside_its_child_without_a_new_fork() {
         let topology = WorkflowTopology {
             entry: "model".into(),
