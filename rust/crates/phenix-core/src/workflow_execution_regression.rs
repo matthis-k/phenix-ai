@@ -363,6 +363,10 @@ fn frame_contracts_change_generation_and_reject_invalid_candidate_inputs() {
         typed.clone().with_workflow_frame_schemas([different]),
         Err(crate::GenerationResolutionError::FrameSchemasAlreadyBound)
     ));
+    assert!(matches!(
+        typed.clone().with_workflow_frame_schemas(std::iter::empty()),
+        Err(crate::GenerationResolutionError::FrameSchemasAlreadyBound)
+    ));
     let mut missing = declaration.clone();
     missing.name = "unselected".into();
     assert!(matches!(
@@ -414,6 +418,49 @@ fn frame_aware_entry_requires_a_selected_schema_before_invocation() {
         result,
         Err(crate::WorkflowRunError::MissingFrameSchema { .. })
     ));
+}
+
+#[test]
+fn frame_entry_rejects_mismatched_schema_before_service_invocation() {
+    let counter = Key::parse("counter").unwrap();
+    let selected = WorkflowFrameSchema {
+        revision: 1,
+        slots: BTreeMap::from([(counter.clone(), Type::U64)]),
+    };
+    let resolved = resolve(BASIC, false)
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner: component_id(TOPOLOGY),
+            name: "turn".into(),
+            schema: selected.clone(),
+        }])
+        .unwrap();
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let mut outdated = selected;
+    outdated.revision = 2;
+    let mut frame = WorkflowFrame::new(
+        outdated,
+        BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
+    )
+    .unwrap();
+    let result = root.execute_workflow_with_frame(
+        (&component_id(TOPOLOGY), "turn"),
+        &mut (),
+        &mut frame,
+        |_, _, _, _| -> Result<Vec<u8>, String> {
+            panic!("mismatched schema must fail before request preparation")
+        },
+        |_, _, _, _, _| -> Result<String, String> {
+            panic!("mismatched schema must fail before provider output")
+        },
+        || false,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::FrameSchemaMismatch { .. })
+    ));
+    assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(0)));
 }
 
 #[test]
