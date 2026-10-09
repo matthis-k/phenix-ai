@@ -656,6 +656,31 @@ mod tests {
     }
 
     #[test]
+    fn independent_roots_never_reuse_native_ticket_identity() {
+        let selected = empty_generation_with(None);
+        let mut kernel = Kernel::new(selected.kernel_config().clone());
+        kernel.activate_resolved_generation(&selected).unwrap();
+        kernel.activate_all().unwrap();
+        let left = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let right = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let a = left.spawn("root/same", &Authority::default(), |_| 1_u64).unwrap();
+        let b = right.spawn("root/same", &Authority::default(), |_| 2_u64).unwrap();
+        assert_eq!(a.id().generation, b.id().generation);
+        assert_eq!(a.id().scope, b.id().scope);
+        assert_ne!(a.id(), b.id());
+        assert_eq!(a.join().unwrap(), 1);
+        assert_eq!(b.join().unwrap(), 2);
+        left.close().unwrap();
+        right.close().unwrap();
+    }
+
+    #[test]
     fn native_worker_receives_only_root_attenuated_authority_and_generation() {
         let read = PermissionId::parse("fixture.permission.read").unwrap();
         let write = PermissionId::parse("fixture.permission.write").unwrap();
