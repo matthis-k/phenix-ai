@@ -988,7 +988,7 @@ impl CompiledWorkflow {
                     let mut observed = Vec::<crate::WorkflowJoinObservation>::new();
                     let mut settled = BTreeSet::new();
                     let mut round = 0u64;
-                    let decision = loop {
+                    let decision = 'settle: loop {
                         // One Invoke per live child per round. Long-running
                         // branch loops cannot starve other admitted children.
                         for (branch, (cursor, child_data)) in &mut children {
@@ -1019,6 +1019,16 @@ impl CompiledWorkflow {
                                 observed.push(crate::WorkflowJoinObservation {
                                     branch: branch.clone(), order: round, settlement,
                                 });
+                                // Evaluate after each settlement, not only
+                                // after a full scheduler round. FailFast and
+                                // FirstCompleted cannot invoke an unnecessary
+                                // sibling after the policy has already settled.
+                                let choice = policy.decide(&admitted, &observed).map_err(|error| {
+                                    WorkflowRunError::InvalidJoin { node: node.clone(), error }
+                                })?;
+                                if choice != crate::WorkflowJoinDecision::Pending {
+                                    break 'settle choice;
+                                }
                             }
                         }
                         let decision = policy.decide(&admitted, &observed).map_err(|error| {
