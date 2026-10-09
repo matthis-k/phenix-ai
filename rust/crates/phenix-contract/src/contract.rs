@@ -626,6 +626,47 @@ fn parse_reference_contract(expected: &ContractId, actual: &ContractId) -> Resul
     })
 }
 
+/// Preserve the identity of every key in portable structural values.
+/// A plain BTreeMap decoder silently replaces earlier JSON members and makes
+/// distinct untrusted envelopes share the same canonical representation.
+fn deserialize_unique_value_map<'de, D, K, V>(
+    deserializer: D,
+) -> Result<BTreeMap<K, V>, D::Error>
+where
+    D: Deserializer<'de>,
+    K: Ord + Deserialize<'de>,
+    V: Deserialize<'de>,
+{
+    struct UniqueMap<K, V>(std::marker::PhantomData<(K, V)>);
+
+    impl<'de, K, V> serde::de::Visitor<'de> for UniqueMap<K, V>
+    where
+        K: Ord + Deserialize<'de>,
+        V: Deserialize<'de>,
+    {
+        type Value = BTreeMap<K, V>;
+
+        fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a structural value map without duplicate keys")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut values = BTreeMap::new();
+            while let Some((key, value)) = map.next_entry::<K, V>()? {
+                if values.insert(key, value).is_some() {
+                    return Err(M::Error::custom("duplicate structural value key"));
+                }
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueMap(std::marker::PhantomData))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum PhenixValue {
@@ -638,8 +679,8 @@ pub enum PhenixValue {
     Bytes(Vec<u8>),
     Option(Option<Box<PhenixValue>>),
     List(Vec<PhenixValue>),
-    Map(BTreeMap<String, PhenixValue>),
-    Table(BTreeMap<Key, PhenixValue>),
+    Map(#[serde(deserialize_with = "deserialize_unique_value_map")] BTreeMap<String, PhenixValue>),
+    Table(#[serde(deserialize_with = "deserialize_unique_value_map")] BTreeMap<Key, PhenixValue>),
     Variant { tag: Key, value: Box<PhenixValue> },
     Callable(CallableRef),
     Object(ObjectRef),
@@ -1339,6 +1380,31 @@ mod tests {
 
     fn key(value: &str) -> Key {
         Key::parse(value).unwrap()
+    }
+
+    #[test]
+    fn structural_values_reject_duplicate_portable_map_and_table_keys() {
+        // Equal duplicates are not harmless: byte-distinct artifact envelopes
+        // must not silently normalize to the same selected contribution.
+        for input in [
+            r#"{"type":"map","value":{"key":{"type":"u64","value":1},"key":{"type":"u64","value":1}}}"#,
+            r#"{"type":"map","value":{"key":{"type":"u64","value":1},"key":{"type":"u64","value":2}}}"#,
+            r#"{"type":"table","value":{"key":{"type":"string","value":"a"},"key":{"type":"string","value":"b"}}}"#,
+            r#"{"type":"list","value":[{"type":"table","value":{"nested":{"type":"bool","value":true},"nested":{"type":"bool","value":true}}}]}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<PhenixValue>(input).is_err(),
+                "duplicate structural keys must fail decoding: {input}"
+            );
+        }
+        let valid = PhenixValue::Table(BTreeMap::from([(
+            key("unique"),
+            PhenixValue::Map(BTreeMap::from([("nested".into(), PhenixValue::Bool(true))])),
+        )]));
+        assert_eq!(
+            serde_json::from_slice::<PhenixValue>(&serde_json::to_vec(&valid).unwrap()).unwrap(),
+            valid
+        );
     }
 
     #[test]
