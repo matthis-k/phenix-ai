@@ -775,6 +775,34 @@ impl CompiledWorkflow {
         self.frame_schema = Some(schema);
     }
 
+    pub(crate) fn requires_frame(&self) -> bool {
+        self.plan.steps.values().any(|step| matches!(step, PlanStep::Fork { .. }))
+    }
+
+    pub(crate) fn validate_frame_schema(
+        &self,
+        schema: &crate::WorkflowFrameSchema,
+    ) -> Result<(), WorkflowCompileError> {
+        for (name, node) in &self.topology.nodes {
+            for (outcome, edge) in &node.branches {
+                if let WorkflowEdge::Fork { outputs, .. } = edge {
+                    for slots in outputs.values() {
+                        for slot in slots {
+                            if !schema.slots.contains_key(slot) {
+                                return Err(WorkflowCompileError::InvalidFork {
+                                    node: name.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: format!("join output slot {slot} is absent from its selected frame"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Selected import handle, including provider, authority and generation
     /// resolution data. Available after compile_for_component.
     pub fn bound_import(&self, import: &InterfaceId) -> Option<&ResolvedImportHandle> {
