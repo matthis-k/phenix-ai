@@ -216,7 +216,10 @@ pub use sdk::{
     ResolvedSdkContributions, SdkContribution, SdkObservableResource, SdkResolutionError, SdkValue,
     observable_delivery_schema,
 };
-pub use tasks::{CallCancellationToken, CancellationToken, TaskHandle, TaskRuntime, TaskScope};
+pub use tasks::{
+    CallCancellationToken, CancellationToken, TaskCancellationHandle, TaskHandle, TaskRuntime,
+    TaskScope,
+};
 pub use workflow::{
     CompiledWorkflow, WorkflowBoundCallError, WorkflowCompileError, WorkflowDeclaration,
     WorkflowEdge, WorkflowNode, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
@@ -235,5 +238,6 @@ pub use workflow_projection::{
     WorkflowProjectionError, WorkflowProjectionSelector,
 };
 pub use workflow_tasks::{
-    WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId, WorkflowTaskState,
+    WorkflowNativeTask, WorkflowNativeTaskGroup, WorkflowPendingTasks, WorkflowTaskError,
+    WorkflowTaskId, WorkflowTaskState,
 };
