@@ -5,7 +5,11 @@
 
 use crate::{Key, PhenixSchema, PhenixValue};
 use serde::{Deserialize, Serialize, de::Error as _};
-use std::{collections::{BTreeMap, BTreeSet}, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::Arc,
+};
 
 /// Portable frame schema decoding must reject repeated keys, including
 /// byte-identical duplicates. Canonicalization cannot silently choose one.
@@ -89,9 +93,9 @@ pub struct WorkflowFrame {
 fn schema_contains_capability(schema: &PhenixSchema) -> bool {
     match schema {
         PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => true,
-        PhenixSchema::Option(inner)
-        | PhenixSchema::List(inner)
-        | PhenixSchema::Map(inner) => schema_contains_capability(inner),
+        PhenixSchema::Option(inner) | PhenixSchema::List(inner) | PhenixSchema::Map(inner) => {
+            schema_contains_capability(inner)
+        }
         PhenixSchema::Array { item, .. } => schema_contains_capability(item),
         PhenixSchema::Table(fields) | PhenixSchema::Variant(fields) => {
             fields.values().any(schema_contains_capability)
@@ -189,11 +193,7 @@ impl WorkflowFrame {
     /// Explicitly select branch-produced data by slot. Unselected parent
     /// values remain intact. The caller must supply a schema-compatible branch.
     /// Core never combines or elevates the branches' authority.
-    pub fn collect_from(
-        &mut self,
-        branch: &Self,
-        slots: &[Key],
-    ) -> Result<(), WorkflowFrameError> {
+    pub fn collect_from(&mut self, branch: &Self, slots: &[Key]) -> Result<(), WorkflowFrameError> {
         if self.schema != branch.schema {
             return Err(WorkflowFrameError::IncompatibleSchema);
         }
@@ -216,7 +216,10 @@ impl WorkflowFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CallableRef, InterfaceId, PluginId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId, Type};
+    use crate::{
+        CallableRef, InterfaceId, PluginId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
+        Type,
+    };
 
     fn key(name: &str) -> Key {
         Key::parse(name).unwrap()
@@ -225,10 +228,7 @@ mod tests {
     fn schema() -> WorkflowFrameSchema {
         WorkflowFrameSchema {
             revision: 1,
-            slots: BTreeMap::from([
-                (key("counter"), Type::U64),
-                (key("payload"), Type::Any),
-            ]),
+            slots: BTreeMap::from([(key("counter"), Type::U64), (key("payload"), Type::Any)]),
         }
     }
 
@@ -285,12 +285,10 @@ mod tests {
             ReferenceId::parse("fixture.callback").unwrap(),
         );
         let mut frame = frame();
-        let payload = PhenixValue::List(vec![
-            PhenixValue::Map(BTreeMap::from([(
-                "hidden".into(),
-                PhenixValue::Callable(reference),
-            )])),
-        ]);
+        let payload = PhenixValue::List(vec![PhenixValue::Map(BTreeMap::from([(
+            "hidden".into(),
+            PhenixValue::Callable(reference),
+        )]))]);
         assert!(matches!(
             frame.set(&key("payload"), payload),
             Err(WorkflowFrameError::CapabilityValue(_))
@@ -312,7 +310,8 @@ mod tests {
 
     #[test]
     fn portable_schema_and_join_outputs_reject_duplicate_identities() {
-        let encoded = r#"{"revision":1,"slots":{"counter":{"type":"u64"},"counter":{"type":"u64"}}}"#;
+        let encoded =
+            r#"{"revision":1,"slots":{"counter":{"type":"u64"},"counter":{"type":"u64"}}}"#;
         assert!(serde_json::from_str::<WorkflowFrameSchema>(encoded).is_err());
         let mut frame = frame();
         let branch = frame.clone();
@@ -327,7 +326,10 @@ mod tests {
     fn wrong_revision_and_cross_schema_join_are_rejected() {
         let mut bad = schema();
         bad.revision = 0;
-        assert!(matches!(bad.validate(), Err(WorkflowFrameError::InvalidRevision)));
+        assert!(matches!(
+            bad.validate(),
+            Err(WorkflowFrameError::InvalidRevision)
+        ));
         let mut different = schema();
         different.revision = 2;
         let other = WorkflowFrame::new(different, (*frame().values).clone()).unwrap();
