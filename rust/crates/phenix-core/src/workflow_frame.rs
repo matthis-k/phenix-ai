@@ -167,7 +167,7 @@ impl WorkflowFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CallableId, CallableRef, InterfaceId, Type};
+    use crate::{CallableRef, InterfaceId, PluginId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId, Type};
 
     fn key(name: &str) -> Key {
         Key::parse(name).unwrap()
@@ -231,7 +231,9 @@ mod tests {
     fn even_any_and_nested_values_cannot_carry_live_capabilities() {
         let reference = CallableRef::new(
             InterfaceId::parse("fixture.capability@1").unwrap(),
-            CallableId::parse("fixture.callback").unwrap(),
+            ReferenceOwnerId::Plugin(PluginId::parse("fixture.owner").unwrap()),
+            ReferenceGenerationId::parse("fixture.generation").unwrap(),
+            ReferenceId::parse("fixture.callback").unwrap(),
         );
         let mut frame = frame();
         let payload = PhenixValue::List(vec![
