@@ -76,7 +76,9 @@ where
             let mut result = BTreeMap::new();
             while let Some((source, target)) = entries.next_entry::<crate::Key, crate::Key>()? {
                 if result.insert(source.clone(), target).is_some() {
-                    return Err(M::Error::custom(format!("duplicate transfer source {source}")));
+                    return Err(M::Error::custom(format!(
+                        "duplicate transfer source {source}"
+                    )));
                 }
             }
             Ok(result)
@@ -658,8 +660,16 @@ impl WorkflowTopology {
                                 | WorkflowEdge::Transfer { node, .. } => {
                                     pending_children.push(node.clone());
                                 }
-                                WorkflowEdge::Fork { on_success, on_failure, .. }
-                                | WorkflowEdge::MapFork { on_success, on_failure, .. } => {
+                                WorkflowEdge::Fork {
+                                    on_success,
+                                    on_failure,
+                                    ..
+                                }
+                                | WorkflowEdge::MapFork {
+                                    on_success,
+                                    on_failure,
+                                    ..
+                                } => {
                                     for continuation in [on_success, on_failure] {
                                         if let WorkflowEdge::Next { node } = continuation.as_ref() {
                                             pending_children.push(node.clone());
@@ -667,7 +677,8 @@ impl WorkflowTopology {
                                     }
                                 }
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {}
-                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
+                                WorkflowEdge::Include { .. }
+                                | WorkflowEdge::IncludeMapped { .. } => {
                                     unreachable!("child workflow inclusions are already expanded");
                                 }
                             }
@@ -689,7 +700,9 @@ impl WorkflowTopology {
                                     node: format!("{prefix}{node}"),
                                     slots: slots.clone(),
                                 },
-                                WorkflowEdge::Finish | WorkflowEdge::Fail if scoped.contains(child_name) => {
+                                WorkflowEdge::Finish | WorkflowEdge::Fail
+                                    if scoped.contains(child_name) =>
+                                {
                                     child_edge.clone()
                                 }
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {
