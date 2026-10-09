@@ -1,0 +1,227 @@
+# Disposable benchmark. This is not part of the production CI.
+name: Crane first-party artifact reuse benchmark
+on:
+  pull_request:
+# Avoid compiling superseded experiment revisions in parallel.
+concurrency:
+  group: crane-artifact-reuse-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  artifact-reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Verify pinned Crane inputs and inspect source identities
+        run: |
+          set -euo pipefail
+          # Benchmark exactly the committed dependency graph. Do not resolve
+          # an updated or incomplete lockfile during the measurement.
+          nix flake metadata --no-update-lock-file --json . \
+            > "$RUNNER_TEMP/flake-metadata.json"
+          git diff --exit-code -- flake.lock
+          echo BEGIN_LOCK
+          cat flake.lock
+          echo END_LOCK
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-deps-probe.drvPath > "$RUNNER_TEMP/deps-before"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-probe.drvPath > "$RUNNER_TEMP/core-before"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-before"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-application-interface-probe.drvPath > "$RUNNER_TEMP/consumer-before"
+          printf '\n// Probe change to first-party source.\n' >> rust/crates/phenix-core/src/lib.rs
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-deps-probe.drvPath > "$RUNNER_TEMP/deps-after"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-probe.drvPath > "$RUNNER_TEMP/core-after"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-after"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-application-interface-probe.drvPath > "$RUNNER_TEMP/consumer-after"
+          cmp "$RUNNER_TEMP/deps-before" "$RUNNER_TEMP/deps-after"
+          if cmp -s "$RUNNER_TEMP/core-before" "$RUNNER_TEMP/core-after"; then
+            echo "Core artifact was not invalidated by its own source edit" >&2
+            exit 1
+          fi
+          if cmp -s "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/reuse-after"; then
+            echo "Reusable core artifact ignored its own source edit" >&2
+            exit 1
+          fi
+          if cmp -s "$RUNNER_TEMP/consumer-before" "$RUNNER_TEMP/consumer-after"; then
+            echo "Downstream artifact ignored a changed core dependency" >&2
+            exit 1
+          fi
+          git restore -- rust/crates/phenix-core/src/lib.rs
+          printf '\n// Downstream-only source edit.\n' >> rust/crates/phenix-application-interface/src/lib.rs
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-consumer-edit"
+          cmp "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/reuse-consumer-edit"
+          git restore -- rust/crates/phenix-application-interface/src/lib.rs
+
+          # A documentation change outside the Cargo source graph must not
+          # invalidate any compiled artifact.
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-runtime-probe.drvPath > "$RUNNER_TEMP/runtime-before"
+          printf '\n<!-- docs-only CI identity probe -->\n' >> spec/incremental-cargo-nix-artifacts.md
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-doc-edit"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-runtime-probe.drvPath > "$RUNNER_TEMP/runtime-doc-edit"
+          cmp "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/reuse-doc-edit"
+          cmp "$RUNNER_TEMP/runtime-before" "$RUNNER_TEMP/runtime-doc-edit"
+          git restore -- spec/incremental-cargo-nix-artifacts.md
+
+          # A source edit in a non-dependent crate should preserve the core
+          # and runtime closures. Dependencies come from Cargo manifests.
+          printf '\n// Unrelated leaf source identity probe.\n' >> rust/crates/phenix-binding-lua/src/lib.rs
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-unrelated-edit"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-runtime-probe.drvPath > "$RUNNER_TEMP/runtime-unrelated-edit"
+          cmp "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/reuse-unrelated-edit"
+          cmp "$RUNNER_TEMP/runtime-before" "$RUNNER_TEMP/runtime-unrelated-edit"
+          git restore -- rust/crates/phenix-binding-lua/src/lib.rs
+
+          # A runtime-only edit must rebuild the runtime, but not core or
+          # the independent application-interface consumer.
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-application-interface-probe.drvPath > "$RUNNER_TEMP/application-before"
+          printf '\n// Runtime-only source identity probe.\n' >> rust/crates/phenix-runtime/src/main.rs
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/reuse-runtime-edit"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-application-interface-probe.drvPath > "$RUNNER_TEMP/application-runtime-edit"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-runtime-probe.drvPath > "$RUNNER_TEMP/runtime-own-edit"
+          cmp "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/reuse-runtime-edit"
+          cmp "$RUNNER_TEMP/application-before" "$RUNNER_TEMP/application-runtime-edit"
+          if cmp -s "$RUNNER_TEMP/runtime-before" "$RUNNER_TEMP/runtime-own-edit"; then
+            echo "Runtime source edit did not invalidate its own artifact" >&2
+            exit 1
+          fi
+          git restore -- rust/crates/phenix-runtime/src/main.rs
+
+          # The runtime depends on core and must react to core changes.
+          printf '\n// Core edit must affect the runtime consumer.\n' >> rust/crates/phenix-core/src/lib.rs
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-runtime-probe.drvPath > "$RUNNER_TEMP/runtime-core-edit"
+          if cmp -s "$RUNNER_TEMP/runtime-before" "$RUNNER_TEMP/runtime-core-edit"; then
+            echo "Runtime was not invalidated by changed core source" >&2
+            exit 1
+          fi
+          git restore -- rust/crates/phenix-core/src/lib.rs
+
+          # Feature declarations and Cargo.lock are compiler inputs. Even if
+          # the edited feature is not enabled, conservative invalidation is
+          # safer than silently using an artifact built under another graph.
+          printf '\n[features]\nartifact-identity-probe = []\n' >> rust/crates/phenix-core/Cargo.toml
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-deps-probe.drvPath > "$RUNNER_TEMP/deps-feature-edit"
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-artifacts-probe.drvPath > "$RUNNER_TEMP/core-feature-edit"
+          if cmp -s "$RUNNER_TEMP/deps-before" "$RUNNER_TEMP/deps-feature-edit"; then
+            echo "Core feature declaration did not invalidate dependency artifacts" >&2
+            exit 1
+          fi
+          if cmp -s "$RUNNER_TEMP/reuse-before" "$RUNNER_TEMP/core-feature-edit"; then
+            echo "Core feature declaration did not invalidate compiled core" >&2
+            exit 1
+          fi
+          git restore -- rust/crates/phenix-core/Cargo.toml
+
+          printf '\n# Lockfile input-identity probe\n' >> rust/Cargo.lock
+          nix eval --raw .#packages.x86_64-linux.phenix-crane-core-deps-probe.drvPath > "$RUNNER_TEMP/deps-lock-edit"
+          if cmp -s "$RUNNER_TEMP/deps-before" "$RUNNER_TEMP/deps-lock-edit"; then
+            echo "Cargo.lock edit did not invalidate dependency artifacts" >&2
+            exit 1
+          fi
+          git restore -- rust/Cargo.lock
+          git diff --exit-code -- flake.lock rust/Cargo.lock rust/crates/phenix-core/Cargo.toml
+          echo "Validated source and Cargo build inputs: dependent edits invalidate artifacts; unrelated and documentation edits preserve them"
+      - name: Build comparable baseline and Crane outputs
+        run: |
+          set -euo pipefail
+          echo "### Original Nix core build" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Legacy core wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-core
+          echo "### Crane cached core build" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Crane core wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-core-probe
+          test "$(nix eval --raw .#packages.x86_64-linux.phenix-crane-core-probe.outPath)" != ""
+          echo "### Existing application-interface product" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Existing application product wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-application-interface
+          echo "Both original and Crane-based source-to-artifact builds succeeded"
+      - name: Verify first-party cross-package Cargo reuse
+        run: |
+          set -euo pipefail
+          echo "### Reusable core artifact" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Reusable core wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-core-artifacts-probe
+          echo "### Downstream application-interface build" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Downstream wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-application-interface-probe
+          existing="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.phenix-application-interface)"
+          reused="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.phenix-crane-application-interface-probe)"
+          test -x "$existing/bin/phenix-application-descriptor"
+          test -x "$reused/bin/phenix-application-descriptor"
+          cmp "$existing/share/phenix/interfaces/phenix.application@1.json" \
+            "$reused/share/phenix/interfaces/phenix.application@1.json"
+          "$reused/bin/phenix-application-descriptor" > "$RUNNER_TEMP/crane-descriptor.json"
+          cmp "$existing/share/phenix/interfaces/phenix.application@1.json" \
+            "$RUNNER_TEMP/crane-descriptor.json"
+          echo "Crane reused compiled core and produced a byte-identical application interface descriptor" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify runtime package reuse and observable parity
+        run: |
+          set -euo pipefail
+          echo "### Existing runtime package" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Existing runtime wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-runtime
+          echo "### Crane runtime with shared core" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Crane runtime wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-runtime-probe
+          existing="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.phenix-runtime)"
+          reused="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.phenix-crane-runtime-probe)"
+          test -x "$existing/bin/phenix-runtime"
+          test -x "$reused/bin/phenix-runtime"
+          "$existing/bin/phenix-runtime" --list-services > "$RUNNER_TEMP/existing-runtime-services.json"
+          "$reused/bin/phenix-runtime" --list-services > "$RUNNER_TEMP/crane-runtime-services.json"
+          cmp "$RUNNER_TEMP/existing-runtime-services.json" "$RUNNER_TEMP/crane-runtime-services.json"
+
+          # Exercise the actual request/response path, including missing
+          # providers, invalid service IDs and malformed JSON lines.
+          printf '%s\n' \
+            '{"id":21,"service":"fixture.missing@1","input":{}}' \
+            '{"id":22,"service":"invalid service id","input":{"x":1}}' \
+            'not-json' \
+            '{"id":23,"service":"fixture.missing@1","input":null}' \
+            > "$RUNNER_TEMP/runtime-requests.jsonl"
+          "$existing/bin/phenix-runtime" \
+            < "$RUNNER_TEMP/runtime-requests.jsonl" > "$RUNNER_TEMP/existing-runtime-responses.jsonl"
+          "$reused/bin/phenix-runtime" \
+            < "$RUNNER_TEMP/runtime-requests.jsonl" > "$RUNNER_TEMP/crane-runtime-responses.jsonl"
+          test "$(wc -l < "$RUNNER_TEMP/existing-runtime-responses.jsonl")" -eq 4
+          cmp "$RUNNER_TEMP/existing-runtime-responses.jsonl" \
+            "$RUNNER_TEMP/crane-runtime-responses.jsonl"
+          echo "Runtime service discovery and JSONL request/error responses match without recompiling shared core" >> "$GITHUB_STEP_SUMMARY"
+      - name: Benchmark consumer-only source change
+        run: |
+          set -euo pipefail
+          printf '\n// Consumer-only artifact invalidation probe.\n' >> rust/crates/phenix-application-interface/src/lib.rs
+          echo "### Consumer-only edit" >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -f 'Existing application consumer-only rebuild wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-application-interface
+          /usr/bin/time -f 'Crane consumer-only rebuild wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-application-interface-probe
+          git restore -- rust/crates/phenix-application-interface/src/lib.rs
+      - name: Benchmark upstream core source change
+        run: |
+          set -euo pipefail
+          printf '\n// Core upstream artifact invalidation probe.\n' >> rust/crates/phenix-core/src/lib.rs
+          echo "### Core edit and dependent rebuild" >> "$GITHUB_STEP_SUMMARY"
+          # Run Crane first in this scenario. The consumer-only edit above
+          # runs the original package first, so warm runner caches do not
+          # consistently favor one backend.
+          /usr/bin/time -f 'Crane core and consumer rebuild wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-crane-application-interface-probe
+          /usr/bin/time -f 'Existing application core-edit rebuild wall %e seconds, peak RSS %M KB' \
+            nix build --no-link --print-build-logs \
+              .#packages.x86_64-linux.phenix-application-interface
+          git restore -- rust/crates/phenix-core/src/lib.rs
