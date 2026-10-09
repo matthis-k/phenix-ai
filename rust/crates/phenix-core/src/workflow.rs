@@ -2216,6 +2216,130 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn included_map_join_finishes_into_parent_without_losing_ordered_results() {
+        let mut all = selected();
+        let key = |name: &str| crate::Key::parse(name).unwrap();
+        all.insert(
+            (owner(), "mapped-child".into()),
+            WorkflowTopology {
+                entry: "batch".into(),
+                nodes: BTreeMap::from([
+                    (
+                        "batch".into(),
+                        service(
+                            "fixture.batch@1",
+                            &[(
+                                "launch",
+                                WorkflowEdge::MapFork {
+                                    collection: key("items"),
+                                    item_slot: key("item"),
+                                    child_output_slot: key("result"),
+                                    output_slot: key("results"),
+                                    max_children: 8,
+                                    branch_entry: "item-task".into(),
+                                    policy: crate::WorkflowJoinPolicy::All(
+                                        crate::WorkflowJoinAllPolicy::CollectAll,
+                                    ),
+                                    on_success: Box::new(WorkflowEdge::Finish),
+                                    on_failure: Box::new(WorkflowEdge::Finish),
+                                },
+                            )],
+                        ),
+                    ),
+                    (
+                        "item-task".into(),
+                        service("fixture.item@1", &[("done", WorkflowEdge::Finish)]),
+                    ),
+                ]),
+            },
+        );
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert(
+                "delegate".into(),
+                include(
+                    "mapped-child",
+                    "batch-return",
+                    &[
+                        ("launch/success", WorkflowEdge::Next { node: "after".into() }),
+                        ("launch/failure", WorkflowEdge::Finish),
+                    ],
+                ),
+            );
+        let compiled = WorkflowTopology::inline_selected(&owner(), "main", &all)
+            .unwrap()
+            .compile(|_| true)
+            .unwrap();
+        let schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([
+                (key("items"), crate::Type::List(Box::new(crate::Type::U64))),
+                (key("item"), crate::Type::U64),
+                (key("result"), crate::Type::U64),
+                (key("results"), crate::Type::List(Box::new(crate::Type::U64))),
+            ]),
+        };
+        compiled.validate_frame_schema(&schema).unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            schema,
+            BTreeMap::from([
+                (key("items"), crate::PhenixValue::List(vec![
+                    crate::PhenixValue::U64(2),
+                    crate::PhenixValue::U64(5),
+                ])),
+                (key("item"), crate::PhenixValue::U64(0)),
+                (key("result"), crate::PhenixValue::U64(0)),
+                (key("results"), crate::PhenixValue::List(Vec::new())),
+            ]),
+        ).unwrap();
+        let mut order = Vec::new();
+        let report = compiled.execute_nodes(
+            &mut order,
+            Some(&mut frame),
+            |node, _, visited, local, _| {
+                visited.push(node.to_owned());
+                if node == "__include__/batch-return/item-task" {
+                    let frame = local.unwrap();
+                    let crate::PhenixValue::U64(value) = frame.get(&key("item")).unwrap() else {
+                        panic!("worker was not given its item");
+                    };
+                    frame.set(&key("result"), crate::PhenixValue::U64(value * 3)).unwrap();
+                    Ok::<_, WorkflowInvocationError<String>>("done".into())
+                } else if node == "start" {
+                    Ok("delegate".into())
+                } else if node == "__include__/batch-return/batch" {
+                    Ok("launch".into())
+                } else {
+                    assert_eq!(node, "after");
+                    Ok("done".into())
+                }
+            },
+            || false,
+            None,
+        ).unwrap();
+        assert_eq!(report.final_outcome, "done");
+        assert_eq!(report.executed_nodes, 5);
+        assert_eq!(order, [
+            "start",
+            "__include__/batch-return/batch",
+            "__include__/batch-return/item-task",
+            "__include__/batch-return/item-task",
+            "after",
+        ]);
+        assert_eq!(
+            frame.get(&key("results")),
+            Some(&crate::PhenixValue::List(vec![
+                crate::PhenixValue::U64(6),
+                crate::PhenixValue::U64(15),
+            ]))
+        );
+    }
+
+    #[test]
     fn included_plan_runs_on_the_same_invoke_exit_executor() {
         let all = selected();
         let flattened = WorkflowTopology::inline_selected(&owner(), "main", &all).unwrap();
