@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 //! Portable, data-only kind-template lowering during candidate preparation.
 //!
 //! This is Stage D's pure lowering kernel, not a registry of Tool, Skill or
@@ -8,7 +9,7 @@ use crate::{PhenixValue, Type};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum TemplateField {
     /// Copy a field from the validated source contribution.
     Field(String),
@@ -16,7 +17,7 @@ pub enum TemplateField {
     Literal(PhenixValue),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum TemplateTarget {
     /// Normalize into an already-supported canonical contribution kind.
     Canonical(String),
@@ -24,13 +25,13 @@ pub enum TemplateTarget {
     Kind(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct KindEmissionTemplate {
     pub target: TemplateTarget,
     pub fields: BTreeMap<String, TemplateField>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct KindDefinition {
     /// Stable, versioned provider-owned kind identity.
     pub kind: String,
@@ -39,7 +40,7 @@ pub struct KindDefinition {
     pub templates: Vec<KindEmissionTemplate>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct KindInput {
     pub contribution: String,
     pub author: String,
@@ -47,7 +48,7 @@ pub struct KindInput {
     pub value: PhenixValue,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct KindOutput {
     pub contribution: String,
     pub original_author: String,
@@ -57,7 +58,7 @@ pub struct KindOutput {
     pub value: PhenixValue,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum KindLoweringError {
     DuplicateKind(String),
     DuplicateContribution(String),
@@ -224,8 +225,10 @@ mod tests {
             NonZeroUsize::new(8).unwrap(),
         ).unwrap();
         assert_eq!(first, second);
-        assert_eq!(serde_json::to_vec(&first).is_ok(), false,
-            "intermediate value projection is not a claimed portable descriptor API");
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
         assert_eq!(first[0].original_author, "author.a");
         assert_eq!(first[1].canonical_kind, "example.resource@1");
     }
