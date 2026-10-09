@@ -121,6 +121,7 @@ pub struct PhenixRuntimeBuilder {
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
     pub(crate) workflows: Vec<phenix_core::WorkflowDeclaration>,
+    workflow_frame_schemas: Vec<phenix_core::WorkflowFrameDeclaration>,
     workflow_projections: Vec<phenix_core::WorkflowProjectionDeclaration>,
     process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
@@ -520,6 +521,15 @@ impl PhenixRuntimeBuilder {
         self.workflows.push(declaration);
     }
 
+    /// Register the typed data contract for a selected workflow.
+    /// The resolver validates all frame slots and transitions before activation.
+    pub fn add_workflow_frame_schema(
+        &mut self,
+        declaration: phenix_core::WorkflowFrameDeclaration,
+    ) {
+        self.workflow_frame_schemas.push(declaration);
+    }
+
     pub fn add_workflow_projection(
         &mut self,
         declaration: phenix_core::WorkflowProjectionDeclaration,
@@ -696,6 +706,7 @@ impl PhenixRuntimeBuilder {
             &self.component_authority,
         )?
         .with_workflows(self.workflows)?
+        .with_workflow_frame_schemas(self.workflow_frame_schemas)?
         .with_workflow_projections(self.workflow_projections)?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
