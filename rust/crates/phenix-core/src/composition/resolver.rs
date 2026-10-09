@@ -277,16 +277,25 @@ impl Display for GenerationResolutionError {
                 )
             }
             Self::FrameSchemasAlreadyBound => {
-                write!(f, "frame schemas already belong to this resolved generation")
+                write!(
+                    f,
+                    "frame schemas already belong to this resolved generation"
+                )
             }
             Self::MissingFrameWorkflow { owner, name } => {
-                write!(f, "frame schema targets an unselected workflow {owner}:{name}")
+                write!(
+                    f,
+                    "frame schema targets an unselected workflow {owner}:{name}"
+                )
             }
             Self::DuplicateFrameSchema { owner, name } => {
                 write!(f, "duplicate frame schema for workflow {owner}:{name}")
             }
             Self::InvalidFrameSchema { owner, name, error } => {
-                write!(f, "invalid frame schema for workflow {owner}:{name}: {error}")
+                write!(
+                    f,
+                    "invalid frame schema for workflow {owner}:{name}: {error}"
+                )
             }
             Self::DuplicateWorkflow { owner, name } => {
                 write!(f, "duplicate workflow {owner}:{name}")
@@ -959,7 +968,9 @@ impl ResolvedGeneration {
     ) -> Result<Self, GenerationResolutionError> {
         let mut declarations: Vec<_> = declarations.into_iter().collect();
         declarations.sort_by(|left, right| {
-            left.owner.cmp(&right.owner).then_with(|| left.name.cmp(&right.name))
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.name.cmp(&right.name))
         });
         for pair in declarations.windows(2) {
             if pair[0].owner == pair[1].owner && pair[0].name == pair[1].name {
@@ -1008,9 +1019,8 @@ impl ResolvedGeneration {
             };
         }
         const FRAME_CONTRACT_REVISION: u32 = 1;
-        self.runtime.incorporate_semantic_metadata(
-            &(FRAME_CONTRACT_REVISION, &declarations),
-        );
+        self.runtime
+            .incorporate_semantic_metadata(&(FRAME_CONTRACT_REVISION, &declarations));
         for declaration in declarations {
             self.runtime
                 .workflows
