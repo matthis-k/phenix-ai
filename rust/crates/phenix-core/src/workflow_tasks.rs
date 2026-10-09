@@ -97,7 +97,7 @@ impl WorkflowPendingTasks {
                     .scope
                     .strip_prefix(scope)
                     .is_some_and(|rest| rest.starts_with('/')))
-                && !state.terminal()
+                && *state == WorkflowTaskState::Pending
             {
                 *state = WorkflowTaskState::Cancelling;
                 signalled.push(id.clone());
@@ -110,7 +110,7 @@ impl WorkflowPendingTasks {
         self.root_cancelled = true;
         let mut signalled = Vec::new();
         for (id, state) in &mut self.active {
-            if !state.terminal() {
+            if *state == WorkflowTaskState::Pending {
                 *state = WorkflowTaskState::Cancelling;
                 signalled.push(id.clone());
             }
@@ -225,6 +225,29 @@ mod tests {
             Err(WorkflowTaskError::RootNotAdmitting)
         );
         tasks.admit(id("root/fork/ab/inner", 4)).unwrap();
+    }
+
+    #[test]
+    fn cancellation_signals_once_and_late_success_still_retains_lease_until_settlement() {
+        let mut tasks = WorkflowPendingTasks::new("gen-a");
+        let a = id("root/fork/alpha", 1);
+        let b = id("root/fork/beta", 2);
+        tasks.admit(a.clone()).unwrap();
+        tasks.admit(b.clone()).unwrap();
+        assert_eq!(tasks.cancel_scope("root/fork/alpha"), vec![a.clone()]);
+        assert!(tasks.cancel_scope("root/fork/alpha").is_empty());
+        assert_eq!(tasks.cancel_root(), vec![b.clone()]);
+        assert!(tasks.cancel_root().is_empty());
+        assert!(tasks.cancel_scope("root").is_empty());
+        assert_eq!(tasks.outstanding(), 2);
+        tasks.settle(&a, WorkflowTaskState::Completed).unwrap();
+        assert_eq!(tasks.outstanding(), 1);
+        assert!(matches!(
+            tasks.close_root(),
+            Err(WorkflowTaskError::OutstandingTasks(1))
+        ));
+        tasks.settle(&b, WorkflowTaskState::Cancelled).unwrap();
+        tasks.close_root().unwrap();
     }
 
     #[test]
