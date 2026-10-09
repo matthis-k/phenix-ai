@@ -417,6 +417,159 @@ impl Drop for WorkflowNativeTaskGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        ComponentManifest, ConfigContribution, Kernel, KernelError, PluginExecution, PluginId,
+        PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
+    };
+    use std::sync::mpsc;
+
+    fn empty_generation_with(plugin: Option<&str>) -> ResolvedGeneration {
+        let plugins: Vec<PluginManifest> = plugin
+            .map(|name| PluginManifest {
+                id: PluginId::parse(name).unwrap(),
+                version: 1,
+                execution: PluginExecution::ResourceOnly,
+                dependencies: Vec::new(),
+                services: Vec::new(),
+                resource_namespaces: Vec::new(),
+                maximum_authority: Authority::default(),
+            })
+            .into_iter()
+            .collect();
+        ResolvedGeneration::resolve(
+            plugins,
+            Vec::<ComponentManifest>::new(),
+            Vec::<ConfigContribution>::new(),
+            &Authority::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn native_worker_retains_physical_generation_lease_after_root_abandonment() {
+        let first = empty_generation_with(None);
+        let second = empty_generation_with(Some("fixture.next-generation"));
+        assert_ne!(first.generation(), second.generation());
+        let old_generation = first.generation().clone();
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_generation(&first).unwrap();
+        kernel.activate_all().unwrap();
+        let group = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        assert_eq!(group.generation(), &old_generation);
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel::<()>();
+        let task = group
+            .spawn("root/map/0", &Authority::default(), move |token| {
+                ready_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+                token.is_cancelled()
+            })
+            .unwrap();
+        ready_rx.recv().unwrap();
+        let ticket = task.id().clone();
+        assert_eq!(group.outstanding(), 1);
+        assert!(matches!(
+            kernel.reconcile_resolved_generation(&second, &BTreeSet::new()),
+            Err(KernelError::GenerationInUse { .. })
+        ));
+        let task = match task.try_join() {
+            Err(task) => task,
+            Ok(_) => panic!("blocked worker cannot be ready"),
+        };
+        assert_eq!(group.cancel_root(), vec![ticket.clone()]);
+        assert!(group.cancel_root().is_empty());
+        assert_eq!(group.state(&ticket), Some(WorkflowTaskState::Cancelling));
+        assert_eq!(
+            group.close(),
+            Err(WorkflowTaskError::OutstandingTasks(1))
+        );
+        drop(group);
+        // The client and the task group are gone, but the native callback
+        // still pins the old runtime generation until the worker settles.
+        assert!(matches!(
+            kernel.reconcile_resolved_generation(&second, &BTreeSet::new()),
+            Err(KernelError::GenerationInUse {
+                generation,
+                active_roots: 1,
+            }) if generation == old_generation
+        ));
+        finish_tx.send(()).unwrap();
+        assert!(task.join().unwrap());
+        kernel
+            .reconcile_resolved_generation(&second, &BTreeSet::new())
+            .unwrap();
+        assert_eq!(kernel.graph_generation(), Some(second.generation()));
+    }
+
+    #[test]
+    fn native_scope_cancellation_is_exact_and_late_completion_settles_once() {
+        let first = empty_generation_with(None);
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_generation(&first).unwrap();
+        kernel.activate_all().unwrap();
+        let group = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let (a_tx, a_rx) = mpsc::channel::<()>();
+        let (b_tx, b_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let ready_b = ready_tx.clone();
+        let a = group
+            .spawn("root/fork/a", &Authority::default(), move |token| {
+                ready_tx.send(()).unwrap();
+                a_rx.recv().unwrap();
+                token.is_cancelled()
+            })
+            .unwrap();
+        let b = group
+            .spawn("root/fork/ab", &Authority::default(), move |token| {
+                ready_b.send(()).unwrap();
+                b_rx.recv().unwrap();
+                token.is_cancelled()
+            })
+            .unwrap();
+        ready_rx.recv().unwrap();
+        ready_rx.recv().unwrap();
+        assert_eq!(group.cancel_scope("root/fork/a"), vec![a.id().clone()]);
+        assert!(group.cancel_scope("root/fork/a").is_empty());
+        assert_eq!(group.state(b.id()), Some(WorkflowTaskState::Pending));
+        assert_eq!(group.cancel_root(), vec![b.id().clone()]);
+        assert_eq!(group.outstanding(), 2);
+        assert_eq!(group.close(), Err(WorkflowTaskError::OutstandingTasks(2)));
+        a_tx.send(()).unwrap();
+        b_tx.send(()).unwrap();
+        assert!(a.join().unwrap());
+        assert!(b.join().unwrap());
+        assert_eq!(group.outstanding(), 0);
+        group.close().unwrap();
+        assert!(matches!(
+            group.spawn("root/late", &Authority::default(), |_| 1_u64),
+            Err(WorkflowTaskError::RootNotAdmitting)
+        ));
+    }
+
+    #[test]
+    fn panicking_native_worker_records_failure_and_releases_lease() {
+        let first = empty_generation_with(None);
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_generation(&first).unwrap();
+        kernel.activate_all().unwrap();
+        let group = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let task = group.spawn("root/panic", &Authority::default(), |_| -> () {
+            panic!("deliberately failed native invocation");
+        }).unwrap();
+        let id = task.id().clone();
+        assert!(task.join().is_err());
+        assert_eq!(group.state(&id), Some(WorkflowTaskState::Failed));
+        group.close().unwrap();
+    }
 
     fn id(scope: &str, call: u64) -> WorkflowTaskId {
         WorkflowTaskId {
