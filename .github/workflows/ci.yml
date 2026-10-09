@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       jobs: ${{ steps.select.outputs.jobs }}
+      packages: ${{ steps.select.outputs.packages }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -152,12 +153,18 @@ jobs:
                   print("Impact analysis uncertain; selecting all configured jobs: " + str(error),
                         file=sys.stderr)
                   selected = {name: True for name in config["jobs"]}
+                  crates = None
               encoded = json.dumps(selected, sort_keys=True, separators=(",", ":"))
+              # null means uncertain: the consumer must retain its full-workspace fallback.
+              # [] is a verified documentation-only change.
+              packages = json.dumps(crates, separators=(",", ":"))
               print("Selected PR jobs:", encoded)
+              print("Affected PR packages:", packages)
               output = os.environ.get("GITHUB_OUTPUT")
               if output:
                   with open(output, "a", encoding="utf-8") as stream:
                       stream.write("jobs=" + encoded + "\n")
+                      stream.write("packages=" + packages + "\n")
               summary = os.environ.get("GITHUB_STEP_SUMMARY")
               if summary:
                   with open(summary, "a", encoding="utf-8") as stream:
@@ -225,6 +232,8 @@ jobs:
     name: "Clippy"
     runs-on: "ubuntu-latest"
     timeout-minutes: 60
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -584,6 +593,8 @@ jobs:
     name: "CI / Test / Adapter and domain tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -670,6 +681,8 @@ jobs:
     name: "CI / Test / Harness code tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -756,6 +769,8 @@ jobs:
     name: "CI / Test / Rust unit tests / agent and product"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -800,6 +815,8 @@ jobs:
     name: "CI / Test / Rust unit tests / core"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -844,6 +861,8 @@ jobs:
     name: "CI / Test / Rust unit tests / plugin foundation"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
@@ -930,6 +949,8 @@ jobs:
     name: "CI / Test / Rust unit tests / protocol and SDK"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
+    env:
+      PHENIX_IMPACT_PACKAGES: ${{ needs.impact.outputs.packages }}
     needs:
       - impact
     steps:
