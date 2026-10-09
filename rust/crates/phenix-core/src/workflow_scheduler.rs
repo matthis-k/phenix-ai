@@ -339,6 +339,14 @@ impl CompiledWorkflow {
             PlanStep::Exit { .. } => {}
         }
         if let PlanStep::Exit { failed } = &self.plan.steps[&cursor.step] {
+            // Cancellation can arrive while the final provider is running.
+            // An immediate terminal edge cannot report success in that case.
+            if cancelled() {
+                return Err(WorkflowRunError::Cancelled {
+                    next_node: format!("{:?}", cursor.step),
+                    executed_nodes: *count,
+                });
+            }
             return Ok(Some(if *failed {
                 WorkflowChildSettlement::Failed
             } else {
