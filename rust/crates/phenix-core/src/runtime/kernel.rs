@@ -713,6 +713,64 @@ impl RootExecutionHandle {
         )
     }
 
+    /// Execute the same pinned workflow with a typed data-only frame.
+    ///
+    /// The frame is caller-owned execution data, not a capability grant or a
+    /// second provider resolver. Every mutation uses WorkflowFrame::set.
+    /// Failed response projection rolls back that node's frame edits; it does
+    /// not undo service side effects. Cancellation retains the last committed
+    /// frame and never retries an invocation.
+    pub fn execute_workflow_with_frame<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        state: &mut State,
+        frame: &mut crate::WorkflowFrame,
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            &crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            &mut crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        self.execute_workflow(
+            workflow,
+            &mut (state, frame),
+            |node, import, context| {
+                prepare(node, import, &*context.1, &mut *context.0)
+            },
+            |node, import, response, context| {
+                let snapshot = (*context.1).clone();
+                match project(
+                    node,
+                    import,
+                    response,
+                    &mut *context.1,
+                    &mut *context.0,
+                ) {
+                    Ok(outcome) => Ok(outcome),
+                    Err(error) => {
+                        *context.1 = snapshot;
+                        Err(error)
+                    }
+                }
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
     pub fn invoke(
         &self,
         service: &ServiceId,
