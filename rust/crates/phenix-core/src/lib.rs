@@ -43,6 +43,8 @@ mod metadata_semantic_identity_regression;
 #[path = "../tests/persistence_backend_conformance.rs"]
 mod persistence_backend_conformance;
 #[cfg(test)]
+mod plugin_template_consumer_canary;
+#[cfg(test)]
 mod plugin_build_loading_regression;
 #[cfg(test)]
 mod plugin_management_regression;
