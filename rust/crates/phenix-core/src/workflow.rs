@@ -1063,8 +1063,16 @@ impl WorkflowTopology {
             nested: &BTreeMap<(String, String), BTreeSet<(String, String)>>,
             visiting: &mut BTreeSet<(String, String)>,
             resolved: &mut BTreeMap<(String, String), usize>,
+            traversal_depth: usize,
         ) -> Result<usize, WorkflowCompileError> {
             const MAX_SCOPE_DEPTH: usize = 64;
+            if traversal_depth > MAX_SCOPE_DEPTH {
+                return Err(WorkflowCompileError::InvalidFork {
+                    node: id.0.clone(),
+                    outcome: id.1.clone(),
+                    reason: "nested scope depth exceeds 64".into(),
+                });
+            }
             if let Some(depth) = resolved.get(id) {
                 return Ok(*depth);
             }
@@ -1079,7 +1087,13 @@ impl WorkflowTopology {
             if let Some(children) = nested.get(id) {
                 for child in children {
                     depth = depth.max(
-                        1 + verify_nesting(child, nested, visiting, resolved)?
+                        1 + verify_nesting(
+                            child,
+                            nested,
+                            visiting,
+                            resolved,
+                            traversal_depth + 1,
+                        )?
                     );
                     if depth > MAX_SCOPE_DEPTH {
                         return Err(WorkflowCompileError::InvalidFork {
@@ -1113,6 +1127,7 @@ impl WorkflowTopology {
                 &nested,
                 &mut BTreeSet::new(),
                 &mut resolved_depths,
+                1,
             )?;
         }
 
