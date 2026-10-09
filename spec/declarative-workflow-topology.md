@@ -357,11 +357,13 @@ reported as a typed error. **Native asynchronous child settlement and native
 provider wakeup remain outstanding**, as does the stronger lifecycle guarantee
 for native calls still running when a root is cancelled.
 
-This is not yet full structured native-async execution. Forks inside inlined
-subplans still require typed frame mappings and validated slot handoffs. Typed input/output handoff for inlined subplans, selected-plan
-artifact discovery, runtime lifecycle rebinding, and Basic/Advanced product
-streaming parity remain open. A new generation must select its own frame
-declarations; reconfiguration does not inherit a former owner's frame grants.
+This is not yet native asynchronous execution. Selected artifact discovery,
+private subplan frame slots, and Basic/Advanced streaming parity remain open.
+During reconciliation, Core carries frame schemas only for workflows whose
+component and owning plugin manifest remain unchanged. It revalidates those
+schemas against the new compiled plan. Replacing the topology author retires
+the workflow and its frame schema. The Harness builder accepts typed frame
+declarations and binds them before generation activation.
 
 ## Typed compile-time subplan frame handoffs
 
@@ -382,12 +384,14 @@ publish only the complete new frame. Failed transfers cannot partially
 modify the frame or replay provider side effects. The unframed entry
 rejects such workflows before invoking the first provider.
 
-Returns from an included workflow rewrite **only root-scope Finish outcomes**
-through the declared parent continuation. A child Fork's own Finish retains
-its child-scope settlement, including bounded map fan-out. Normal nested
-Fork continuations require an explicit child node, not an implicit subplan
-return. Typed inclusion tests exercise real provider-pinned input/output
-handoffs and child map Fork settlement within the same root.
+An included workflow rewrites root-scope Finish outcomes through its declared
+parent continuation. Root-scope Fork and MapFork Join terminals use explicit
+`<outcome>/success` and `<outcome>/failure` mappings. Nested child-scope
+Finish outcomes still settle their owning Fork. The compiler rejects missing
+return cases before activation. Direct Join returns with mapped output slots
+remain unsupported because their transfers require an ordered Join operation.
+Tests cover pinned input/output handoffs, nested child settlement, terminal
+Fork returns and ordered MapFork results within the same root.
 
 Mapped output handoffs now work on an immediate parent Finish; the output
 copy executes after the child Invoke and before root settlement. An explicit
@@ -395,11 +399,12 @@ parent Transfer can also compose with child outputs when the sources and
 destinations are independent. Alias-dependent sequential return mappings
 reject candidate compilation rather than reading stale values.
 
-**Still outstanding:** private frame-slot qualification and per-subplan
-published-slot/export visibility, cross-owner subplan selection, arbitrary
-sequential return mapping composition, and portable EntryBinding activation. The current contract makes frame mapping explicit rather than
-quietly sharing or defaulting unknown fields. It does not claim those
-remaining name/ownership semantics are complete.
+**Still outstanding:** private frame-slot qualification, published fields
+for subplans, cross-owner selection, ordered Join output transfers, alias-dependent
+sequential return mappings, and portable EntryBinding activation.
+Selected frame and projection declarations survive reconciliation only when
+their workflow author still matches. The resolver validates them again
+before publishing the candidate generation.
 
 ## First async and portable outcome contracts (implementation partial)
 
