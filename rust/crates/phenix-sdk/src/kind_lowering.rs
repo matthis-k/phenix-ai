@@ -4,8 +4,8 @@
 //! Agent kinds. Selected contributions and owner authenticity come from
 //! Stage B; Core still validates all emitted canonical contracts and grants.
 
-use serde::{Deserialize, Serialize};
 use crate::{PhenixValue, Type};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
@@ -146,13 +146,13 @@ fn expand(
         for (target, value) in &template.fields {
             let projected = match value {
                 TemplateField::Literal(value) => value.clone(),
-                TemplateField::Field(field) => {
-                    source.and_then(|fields| fields.get(field)).cloned()
-                        .ok_or_else(|| KindLoweringError::MissingInputField {
-                            contribution: input.contribution.clone(),
-                            field: field.clone(),
-                        })?
-                }
+                TemplateField::Field(field) => source
+                    .and_then(|fields| fields.get(field))
+                    .cloned()
+                    .ok_or_else(|| KindLoweringError::MissingInputField {
+                        contribution: input.contribution.clone(),
+                        field: field.clone(),
+                    })?,
             };
             fields.insert(target.clone(), projected);
         }
@@ -187,18 +187,20 @@ mod tests {
     use super::*;
 
     fn value(name: &str) -> PhenixValue {
-        PhenixValue::Map(BTreeMap::from([
-            ("name".into(), PhenixValue::String(name.into())),
-        ]))
+        PhenixValue::Map(BTreeMap::from([(
+            "name".into(),
+            PhenixValue::String(name.into()),
+        )]))
     }
 
     fn fixture() -> KindDefinition {
         KindDefinition {
             kind: "example.note@1".into(),
             provider_owner: "example.kind-provider".into(),
-            schema: Type::Table(BTreeMap::from([
-                (crate::Key::parse("name").unwrap(), Type::String)
-            ])),
+            schema: Type::Table(BTreeMap::from([(
+                crate::Key::parse("name").unwrap(),
+                Type::String,
+            )])),
             templates: vec![KindEmissionTemplate {
                 target: TemplateTarget::Canonical("example.resource@1".into()),
                 fields: BTreeMap::from([("label".into(), TemplateField::Field("name".into()))]),
@@ -221,9 +223,11 @@ mod tests {
         let inputs = [source("b", "second"), source("a", "first")];
         let first = lower_kinds(&definitions, &inputs, NonZeroUsize::new(8).unwrap()).unwrap();
         let second = lower_kinds(
-            &definitions, &[inputs[1].clone(), inputs[0].clone()],
+            &definitions,
+            &[inputs[1].clone(), inputs[0].clone()],
             NonZeroUsize::new(8).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(first, second);
         assert_eq!(
             serde_json::to_vec(&first).unwrap(),
@@ -247,8 +251,11 @@ mod tests {
         ));
         let duplicated = source("a", "x");
         assert!(matches!(
-            lower_kinds(&[fixture()], &[duplicated.clone(), duplicated],
-                NonZeroUsize::new(2).unwrap()),
+            lower_kinds(
+                &[fixture()],
+                &[duplicated.clone(), duplicated],
+                NonZeroUsize::new(2).unwrap()
+            ),
             Err(KindLoweringError::DuplicateContribution(_))
         ));
     }
@@ -257,17 +264,22 @@ mod tests {
     fn recursive_templates_and_expansion_limits_are_rejected() {
         let mut definition = fixture();
         definition.templates[0].target = TemplateTarget::Kind("example.note@1".into());
-        definition.templates[0].fields = BTreeMap::from([
-            ("name".into(), TemplateField::Field("name".into()))
-        ]);
+        definition.templates[0].fields =
+            BTreeMap::from([("name".into(), TemplateField::Field("name".into()))]);
         assert!(matches!(
-            lower_kinds(&[definition], &[source("a", "x")],
-                NonZeroUsize::new(2).unwrap()),
+            lower_kinds(
+                &[definition],
+                &[source("a", "x")],
+                NonZeroUsize::new(2).unwrap()
+            ),
             Err(KindLoweringError::KindCycle(_))
         ));
         assert!(matches!(
-            lower_kinds(&[fixture()], &[source("a", "x"), source("b", "y")],
-                NonZeroUsize::new(1).unwrap()),
+            lower_kinds(
+                &[fixture()],
+                &[source("a", "x"), source("b", "y")],
+                NonZeroUsize::new(1).unwrap()
+            ),
             Err(KindLoweringError::OutputBoundExceeded { .. })
         ));
     }
