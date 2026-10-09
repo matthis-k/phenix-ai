@@ -745,11 +745,11 @@ impl WorkflowTopology {
                         if let crate::WorkflowJoinPolicy::Quorum(k) = policy
                             && k.get() > *max_children
                         {
-                                return Err(WorkflowCompileError::InvalidFork {
-                                    node: name.clone(),
-                                    outcome: outcome.clone(),
-                                    reason: "quorum exceeds maximum admitted map children".into(),
-                                });
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: "quorum exceeds maximum admitted map children".into(),
+                            });
                         }
                         for continuation in [on_success, on_failure] {
                             match continuation.as_ref() {
@@ -791,11 +791,11 @@ impl WorkflowTopology {
                         if let crate::WorkflowJoinPolicy::Quorum(k) = policy
                             && k.get() > branches.len()
                         {
-                                return Err(WorkflowCompileError::InvalidFork {
-                                    node: name.clone(),
-                                    outcome: outcome.clone(),
-                                    reason: "quorum exceeds admitted children".into(),
-                                });
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: name.clone(),
+                                outcome: outcome.clone(),
+                                reason: "quorum exceeds admitted children".into(),
+                            });
                         }
                         let mut emitted = BTreeSet::new();
                         for (branch, slots) in outputs {
@@ -930,13 +930,13 @@ impl WorkflowTopology {
                         if let Some(previous) = owner_of.insert(current.clone(), branch.clone())
                             && previous != *branch
                         {
-                                return Err(WorkflowCompileError::InvalidFork {
-                                    node: fork_owner.clone(),
-                                    outcome: fork_outcome.clone(),
-                                    reason: format!(
-                                        "child {branch} crosses into child {previous} at {current}"
-                                    ),
-                                });
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: fork_owner.clone(),
+                                outcome: fork_outcome.clone(),
+                                reason: format!(
+                                    "child {branch} crosses into child {previous} at {current}"
+                                ),
+                            });
                         }
                         for next in self.nodes[&current].branches.values() {
                             match next {
@@ -968,13 +968,13 @@ impl WorkflowTopology {
                         if let WorkflowEdge::Next { node: target } = other_edge
                             && owner_of.contains_key(target)
                         {
-                                return Err(WorkflowCompileError::InvalidFork {
-                                    node: fork_owner.clone(),
-                                    outcome: fork_outcome.clone(),
-                                    reason: format!(
-                                        "parent node {other_name} enters child {target} outside its fork"
-                                    ),
-                                });
+                            return Err(WorkflowCompileError::InvalidFork {
+                                node: fork_owner.clone(),
+                                outcome: fork_outcome.clone(),
+                                reason: format!(
+                                    "parent node {other_name} enters child {target} outside its fork"
+                                ),
+                            });
                         }
                     }
                 }
