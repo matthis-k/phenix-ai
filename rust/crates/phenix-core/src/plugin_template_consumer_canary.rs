@@ -22,7 +22,12 @@ fn plugin(name: &str, execution: PluginExecution) -> PluginManifest {
     }
 }
 
-fn component(name: &str, owner: &str, import: Vec<ComponentImport>, export: Vec<ComponentExport>) -> ComponentManifest {
+fn component(
+    name: &str,
+    owner: &str,
+    import: Vec<ComponentImport>,
+    export: Vec<ComponentExport>,
+) -> ComponentManifest {
     ComponentManifest {
         id: ComponentId::parse(name).unwrap(),
         owner: PluginId::parse(owner).unwrap(),
@@ -46,10 +51,15 @@ fn resource_only_non_agent_consumer_resolves_two_independent_provider_plugins() 
         plugin("example.archive-plugin", PluginExecution::Embedded),
         plugin("example.workflow-topology", PluginExecution::ResourceOnly),
     ];
-    assert!(manifests.iter().all(|plugin| !plugin.id.as_str().contains("agent")));
+    assert!(
+        manifests
+            .iter()
+            .all(|plugin| !plugin.id.as_str().contains("agent"))
+    );
     let components = [
         component(
-            "example.measurement-provider", "example.measurement-plugin",
+            "example.measurement-provider",
+            "example.measurement-plugin",
             Vec::new(),
             vec![ComponentExport {
                 interface: source.clone(),
@@ -59,7 +69,8 @@ fn resource_only_non_agent_consumer_resolves_two_independent_provider_plugins() 
             }],
         ),
         component(
-            "example.archive-provider", "example.archive-plugin",
+            "example.archive-provider",
+            "example.archive-plugin",
             Vec::new(),
             vec![ComponentExport {
                 interface: sink.clone(),
@@ -69,33 +80,55 @@ fn resource_only_non_agent_consumer_resolves_two_independent_provider_plugins() 
             }],
         ),
         component(
-            "example.measurement-topology", "example.workflow-topology",
-            vec![source.clone(),sink.clone()].into_iter().map(|interface| ComponentImport {
-                interface,
-                schema: Default::default(),
-                required: true,
-                authority: Authority::default(),
-            }).collect(),
+            "example.measurement-topology",
+            "example.workflow-topology",
+            vec![source.clone(), sink.clone()]
+                .into_iter()
+                .map(|interface| ComponentImport {
+                    interface,
+                    schema: Default::default(),
+                    required: true,
+                    authority: Authority::default(),
+                })
+                .collect(),
             Vec::new(),
         ),
     ];
     let graph = ResolvedComponentGraph::compile(
-        manifests.clone(), components.clone(), &Authority::default(),
-    ).unwrap();
+        manifests.clone(),
+        components.clone(),
+        &Authority::default(),
+    )
+    .unwrap();
     let consumer = ComponentId::parse("example.measurement-topology").unwrap();
     assert_eq!(
-        graph.import_handle(&consumer, &source).unwrap().unwrap().exporter(),
+        graph
+            .import_handle(&consumer, &source)
+            .unwrap()
+            .unwrap()
+            .exporter(),
         &ComponentId::parse("example.measurement-provider").unwrap()
     );
     assert_eq!(
-        graph.import_handle(&consumer, &sink).unwrap().unwrap().exporter(),
+        graph
+            .import_handle(&consumer, &sink)
+            .unwrap()
+            .unwrap()
+            .exporter(),
         &ComponentId::parse("example.archive-provider").unwrap()
     );
     // Removing either selected provider fails admission; Core does not
     // synthesize a default tool catalog or an agent-specific fallback.
-    assert!(ResolvedComponentGraph::compile(
-        manifests.into_iter().filter(|plugin| plugin.id.as_str() != "example.archive-plugin"),
-        components.into_iter().filter(|component| component.owner.as_str() != "example.archive-plugin"),
-        &Authority::default(),
-    ).is_err());
+    assert!(
+        ResolvedComponentGraph::compile(
+            manifests
+                .into_iter()
+                .filter(|plugin| plugin.id.as_str() != "example.archive-plugin"),
+            components
+                .into_iter()
+                .filter(|component| component.owner.as_str() != "example.archive-plugin"),
+            &Authority::default(),
+        )
+        .is_err()
+    );
 }
