@@ -565,13 +565,14 @@ impl WorkflowTopology {
             let mut sites = BTreeSet::new();
             for (parent_name, parent_node) in &source.nodes {
                 for (outcome, edge) in &parent_node.branches {
-                    let WorkflowEdge::Include {
-                        workflow,
-                        site,
-                        on_exit,
-                    } = edge
-                    else {
-                        continue;
+                    let (workflow, site, on_exit, inputs, outputs) = match edge {
+                        WorkflowEdge::Include { workflow, site, on_exit } => {
+                            (workflow, site, on_exit, None, None)
+                        }
+                        WorkflowEdge::IncludeMapped {
+                            workflow, site, on_exit, inputs, outputs,
+                        } => (workflow, site, on_exit, Some(inputs), Some(outputs)),
+                        _ => continue,
                     };
                     if site.trim().is_empty() || site.trim() != site {
                         return Err(WorkflowCompileError::InvalidInclusionSite(site.clone()));
@@ -592,6 +593,10 @@ impl WorkflowTopology {
                                 WorkflowEdge::Next { node } => WorkflowEdge::Next {
                                     node: format!("{prefix}{node}"),
                                 },
+                                WorkflowEdge::Transfer { node, slots } => WorkflowEdge::Transfer {
+                                    node: format!("{prefix}{node}"),
+                                    slots: slots.clone(),
+                                },
                                 WorkflowEdge::Finish | WorkflowEdge::Fail => {
                                     if matches!(child_edge, WorkflowEdge::Fail) {
                                         return Err(WorkflowCompileError::InvalidFork {
@@ -603,7 +608,23 @@ impl WorkflowTopology {
                                     declared_exits.insert(child_outcome.clone());
                                     match on_exit.get(child_outcome) {
                                         Some(WorkflowEdge::Next { node }) => {
-                                            WorkflowEdge::Next { node: node.clone() }
+                                            match outputs {
+                                                Some(slots) if !slots.is_empty() => WorkflowEdge::Transfer {
+                                                    node: node.clone(),
+                                                    slots: (*slots).clone(),
+                                                },
+                                                _ => WorkflowEdge::Next { node: node.clone() },
+                                            }
+                                        }
+                                        Some(WorkflowEdge::Transfer { .. }) => {
+                                            return Err(WorkflowCompileError::UnsupportedReturnInclude);
+                                        }
+                                        Some(WorkflowEdge::Finish) if outputs.is_some_and(|slots| !slots.is_empty()) => {
+                                            return Err(WorkflowCompileError::InvalidFork {
+                                                node: child_name.clone(),
+                                                outcome: child_outcome.clone(),
+                                                reason: "mapped return requires a parent continuation to receive output".into(),
+                                            });
                                         }
                                         Some(WorkflowEdge::Finish) => WorkflowEdge::Finish,
                                         Some(WorkflowEdge::Fail) => {
@@ -613,7 +634,7 @@ impl WorkflowTopology {
                                                 reason: "subplan return cannot produce a scoped child failure".into(),
                                             });
                                         }
-                                        Some(WorkflowEdge::Include { .. }) => {
+                                        Some(WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. }) => {
                                             return Err(
                                                 WorkflowCompileError::UnsupportedReturnInclude,
                                             );
@@ -642,7 +663,7 @@ impl WorkflowTopology {
                                         }
                                     }
                                 }
-                                WorkflowEdge::Include { .. } => {
+                                WorkflowEdge::Include { .. } | WorkflowEdge::IncludeMapped { .. } => {
                                     return Err(WorkflowCompileError::UnexpandedInclude {
                                         node: child_name.clone(),
                                         outcome: child_outcome.clone(),
@@ -689,7 +710,16 @@ impl WorkflowTopology {
                         .get_mut(parent_name)
                         .expect("source parent is present in its cloned topology")
                         .branches
-                        .insert(outcome.clone(), WorkflowEdge::Next { node: entry });
+                        .insert(
+                            outcome.clone(),
+                            match inputs {
+                                Some(slots) if !slots.is_empty() => WorkflowEdge::Transfer {
+                                    node: entry,
+                                    slots: (*slots).clone(),
+                                },
+                                _ => WorkflowEdge::Next { node: entry },
+                            },
+                        );
                 }
             }
             stack.pop();
