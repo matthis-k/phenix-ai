@@ -846,6 +846,34 @@ impl RootExecutionHandle {
     pub fn constraints(&self) -> &RootExecutionConstraints {
         &self.constraints
     }
+
+    /// Admit native work in this root's selected generation and authority.
+    /// The caller owns its plan scope; the native worker cannot re-resolve a
+    /// provider or extend its permissions.
+    pub(crate) fn spawn_native_workflow_task<T, F>(
+        &self,
+        requested_authority: &Authority,
+        worker: F,
+    ) -> TaskHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(CancellationToken) -> T + Send + 'static,
+    {
+        self.tasks.spawn(
+            self.generation().expect("workflow roots require a selected generation"),
+            self.authority(),
+            requested_authority,
+            worker,
+        )
+    }
+
+    /// A task group is one pinned workflow-root lifetime. Native tickets
+    /// retain this root's generation even if the client abandons its handle.
+    pub fn native_workflow_tasks(
+        self,
+    ) -> Result<crate::WorkflowNativeTaskGroup, crate::WorkflowTaskError> {
+        crate::WorkflowNativeTaskGroup::new(self)
+    }
 }
 
 impl Drop for RootExecutionHandle {
