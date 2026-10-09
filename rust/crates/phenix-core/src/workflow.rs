@@ -1206,7 +1206,7 @@ impl CompiledWorkflow {
                         (&mut count, step_limit),
                     )?;
                 }
-                PlanStep::Fork { branches, join } => {
+                PlanStep::Fork { branches, map, join } => {
                     let PlanStepId::Fork { node, .. } = &current else {
                         unreachable!("Fork step has a typed identity")
                     };
@@ -1214,16 +1214,41 @@ impl CompiledWorkflow {
                         WorkflowRunError::StructuredFrameRequired { node: node.clone() }
                     })?;
                     let PlanStep::Join {
-                        policy, outputs, ..
+                        policy, outputs, map_output, ..
                     } = &self.plan.steps[join]
                     else {
                         unreachable!("Fork step always refers to a Join")
                     };
-                    let admitted: BTreeSet<_> = branches.keys().cloned().collect();
                     let mut children: BTreeMap<_, _> = branches
                         .iter()
                         .map(|(name, target)| (name.clone(), (target.clone(), data.clone())))
                         .collect();
+                    if let Some(spec) = map {
+                        let items = match data.get(&spec.collection) {
+                            Some(crate::PhenixValue::List(items)) => items,
+                            _ => return Err(WorkflowRunError::InvalidMapInput {
+                                node: node.clone(),
+                                reason: format!("map source {} must be a list", spec.collection),
+                            }),
+                        };
+                        if items.is_empty() || items.len() > spec.max_children {
+                            return Err(WorkflowRunError::InvalidMapInput {
+                                node: node.clone(),
+                                reason: format!("map admits 1..={} children; got {}", spec.max_children, items.len()),
+                            });
+                        }
+                        for (index, item) in items.iter().enumerate() {
+                            let mut snapshot = data.clone();
+                            snapshot.set(&spec.item_slot, item.clone()).map_err(|error| {
+                                WorkflowRunError::InvalidJoinFrame { node: node.clone(), error }
+                            })?;
+                            children.insert(
+                                format!("{index:06}"),
+                                (spec.branch_entry.clone(), snapshot),
+                            );
+                        }
+                    }
+                    let admitted: BTreeSet<_> = children.keys().cloned().collect();
                     let mut observed = Vec::<crate::WorkflowJoinObservation>::new();
                     let mut settled = BTreeSet::new();
                     let mut round = 0u64;
@@ -1322,6 +1347,20 @@ impl CompiledWorkflow {
                                     },
                                 )?;
                             }
+                        }
+                        if let Some((child_output, output_slot)) = map_output {
+                            let collected = selected.iter().map(|branch| {
+                                children[branch].1.get(child_output).cloned().ok_or_else(|| {
+                                    WorkflowRunError::InvalidMapInput {
+                                        node: node.clone(),
+                                        reason: format!("missing output slot {child_output} in map child {branch}"),
+                                    }
+                                })
+                            }).collect::<Result<Vec<_>, _>>()?;
+                            candidate.set(output_slot, crate::PhenixValue::List(collected))
+                                .map_err(|error| WorkflowRunError::InvalidJoinFrame {
+                                    node: node.clone(), error,
+                                })?;
                         }
                         *data = candidate;
                     }
