@@ -927,30 +927,36 @@ fn typed_include_generation_unbound() -> ResolvedGeneration {
         name: "turn".into(),
         topology: WorkflowTopology {
             entry: "model".into(),
-            nodes: BTreeMap::from([
-                ("model".into(), WorkflowNode {
+            nodes: BTreeMap::from([(
+                "model".into(),
+                WorkflowNode {
                     import: InterfaceId::parse(MODEL).unwrap(),
                     branches: BTreeMap::from([
                         ("final".into(), WorkflowEdge::Finish),
-                        ("tools".into(), WorkflowEdge::IncludeMapped {
-                            workflow: "reusable".into(),
-                            site: "answer".into(),
-                            inputs: BTreeMap::from([(
-                                Key::parse("parent_input").unwrap(),
-                                Key::parse("child_input").unwrap(),
-                            )]),
-                            outputs: BTreeMap::from([(
-                                Key::parse("child_output").unwrap(),
-                                Key::parse("parent_output").unwrap(),
-                            )]),
-                            on_exit: BTreeMap::from([(
-                                "done".into(),
-                                WorkflowEdge::Next { node: "model".into() },
-                            )]),
-                        }),
+                        (
+                            "tools".into(),
+                            WorkflowEdge::IncludeMapped {
+                                workflow: "reusable".into(),
+                                site: "answer".into(),
+                                inputs: BTreeMap::from([(
+                                    Key::parse("parent_input").unwrap(),
+                                    Key::parse("child_input").unwrap(),
+                                )]),
+                                outputs: BTreeMap::from([(
+                                    Key::parse("child_output").unwrap(),
+                                    Key::parse("parent_output").unwrap(),
+                                )]),
+                                on_exit: BTreeMap::from([(
+                                    "done".into(),
+                                    WorkflowEdge::Next {
+                                        node: "model".into(),
+                                    },
+                                )]),
+                            },
+                        ),
                     ]),
-                }),
-            ]),
+                },
+            )]),
         },
     };
     let child = WorkflowDeclaration {
@@ -974,7 +980,8 @@ fn typed_include_generation_unbound() -> ResolvedGeneration {
 fn typed_include_generation() -> ResolvedGeneration {
     typed_include_generation_unbound()
         .with_workflow_frame_schemas([WorkflowFrameDeclaration {
-            owner: component_id(TOPOLOGY), name: "turn".into(),
+            owner: component_id(TOPOLOGY),
+            name: "turn".into(),
             schema: WorkflowFrameSchema {
                 revision: 1,
                 slots: BTreeMap::from([
@@ -984,7 +991,8 @@ fn typed_include_generation() -> ResolvedGeneration {
                     (Key::parse("parent_output").unwrap(), Type::U64),
                 ]),
             },
-        }]).unwrap()
+        }])
+        .unwrap()
 }
 
 #[test]
@@ -992,47 +1000,56 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
     let generation = typed_include_generation();
     let kernel = started_kernel(&generation, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let schema = generation.generation_topology()
+    let schema = generation
+        .generation_topology()
         .workflow(&component_id(TOPOLOGY), "turn")
-        .unwrap().frame_schema().unwrap().clone();
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
     let parent_input = Key::parse("parent_input").unwrap();
     let child_input = Key::parse("child_input").unwrap();
     let child_output = Key::parse("child_output").unwrap();
     let parent_output = Key::parse("parent_output").unwrap();
-    let mut frame = WorkflowFrame::new(schema, BTreeMap::from([
-        (parent_input.clone(), PhenixValue::U64(6)),
-        (child_input.clone(), PhenixValue::U64(0)),
-        (child_output.clone(), PhenixValue::U64(0)),
-        (parent_output.clone(), PhenixValue::U64(0)),
-    ])).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (parent_input.clone(), PhenixValue::U64(6)),
+            (child_input.clone(), PhenixValue::U64(0)),
+            (child_output.clone(), PhenixValue::U64(0)),
+            (parent_output.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
     let mut seen = Vec::new();
-    let report = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut seen, &mut frame),
-        |node, _, frame, seen| {
-            if node == "__include__/answer/work" {
-                assert_eq!(frame.get(&child_input), Some(&PhenixValue::U64(6)));
-                assert_eq!(frame.get(&parent_input), Some(&PhenixValue::U64(6)));
-            }
-            seen.push(node.to_owned());
-            Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
-        },
-        |node, _, output, frame, _| {
-            if node == "__include__/answer/work" {
-                frame.set(&child_output, PhenixValue::U64(18)).unwrap();
-            }
-            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                PhenixValue::String(outcome) => Ok::<String,String>(outcome),
-                _ => Err("unexpected mock output".into()),
-            }
-        },
-        || false, None,
-    ).unwrap();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, frame, seen| {
+                if node == "__include__/answer/work" {
+                    assert_eq!(frame.get(&child_input), Some(&PhenixValue::U64(6)));
+                    assert_eq!(frame.get(&parent_input), Some(&PhenixValue::U64(6)));
+                }
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, _| {
+                if node == "__include__/answer/work" {
+                    frame.set(&child_output, PhenixValue::U64(18)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                    _ => Err("unexpected mock output".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
     assert_eq!(report.executed_nodes, 3);
     assert_eq!(report.final_outcome, "final");
-    assert_eq!(seen, [
-        "model", "__include__/answer/work", "model",
-    ]);
+    assert_eq!(seen, ["model", "__include__/answer/work", "model",]);
     assert_eq!(frame.get(&child_input), Some(&PhenixValue::U64(6)));
     assert_eq!(frame.get(&child_output), Some(&PhenixValue::U64(18)));
     assert_eq!(frame.get(&parent_output), Some(&PhenixValue::U64(18)));
