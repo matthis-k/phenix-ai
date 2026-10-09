@@ -5,7 +5,8 @@ use crate::{
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
     ProviderCompositionPolicy, ResolvedGeneration, ResolvedGenerationActivation,
     ServiceContribution, ServiceId, ServiceRole, Type, WorkflowDeclaration, WorkflowEdge,
-    WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameSchema, WorkflowNode, WorkflowTopology,
+    WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameSchema, WorkflowJoinAllPolicy,
+    WorkflowJoinPolicy, WorkflowNode, WorkflowTopology,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -95,6 +96,211 @@ fn topology() -> WorkflowDeclaration {
             ]),
         },
     }
+}
+
+
+fn fixed_fork_workflow(policy: WorkflowJoinPolicy) -> WorkflowDeclaration {
+    WorkflowDeclaration {
+        owner: component_id(TOPOLOGY),
+        name: "turn".into(),
+        topology: WorkflowTopology {
+            entry: "model".into(),
+            nodes: BTreeMap::from([
+                (
+                    "model".into(),
+                    WorkflowNode {
+                        import: InterfaceId::parse(MODEL).unwrap(),
+                        branches: BTreeMap::from([
+                            ("final".into(), WorkflowEdge::Finish),
+                            (
+                                "tools".into(),
+                                WorkflowEdge::Fork {
+                                    branches: BTreeMap::from([
+                                        ("alpha".into(), "alpha-tool".into()),
+                                        ("beta".into(), "beta-tool".into()),
+                                    ]),
+                                    policy,
+                                    outputs: BTreeMap::from([
+                                        ("alpha".into(), vec![Key::parse("alpha").unwrap()]),
+                                        ("beta".into(), vec![Key::parse("beta").unwrap()]),
+                                    ]),
+                                    on_success: Box::new(WorkflowEdge::Next {
+                                        node: "model".into(),
+                                    }),
+                                    on_failure: Box::new(WorkflowEdge::Finish),
+                                },
+                            ),
+                        ]),
+                    },
+                ),
+                (
+                    "alpha-tool".into(),
+                    WorkflowNode {
+                        import: InterfaceId::parse(TOOL).unwrap(),
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                    },
+                ),
+                (
+                    "beta-tool".into(),
+                    WorkflowNode {
+                        import: InterfaceId::parse(TOOL).unwrap(),
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                    },
+                ),
+            ]),
+        },
+    }
+}
+
+fn selected_fork_generation(policy: WorkflowJoinPolicy) -> ResolvedGeneration {
+    resolve_with_workflow(BASIC, false, fixed_fork_workflow(policy))
+        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+            owner: component_id(TOPOLOGY),
+            name: "turn".into(),
+            schema: WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::from([
+                    (Key::parse("alpha").unwrap(), Type::U64),
+                    (Key::parse("beta").unwrap(), Type::U64),
+                ]),
+            },
+        }])
+        .unwrap()
+}
+
+#[test]
+fn non_agent_fork_join_executes_two_pinned_providers_with_isolated_frames() {
+    let resolved = selected_fork_generation(WorkflowJoinPolicy::All(
+        WorkflowJoinAllPolicy::CollectAll,
+    ));
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let alpha = Key::parse("alpha").unwrap();
+    let beta = Key::parse("beta").unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    let report = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, frame, seen| {
+                // Both children see only the state at their fork. The joined
+                // outputs become visible only in the parent continuation.
+                if node == "alpha-tool" || node == "beta-tool" {
+                    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
+                    assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(0)));
+                }
+                seen.push(format!("enter:{node}"));
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, seen| {
+                seen.push(format!("exit:{node}"));
+                if node == "alpha-tool" {
+                    frame.set(&alpha, PhenixValue::U64(7)).unwrap();
+                } else if node == "beta-tool" {
+                    frame.set(&beta, PhenixValue::U64(11)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    value => Err(format!("unrecognized mock outcome: {value:?}")),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(report.executed_nodes, 4);
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(7)));
+    assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(11)));
+    assert_eq!(
+        seen,
+        [
+            "enter:model", "exit:model", "enter:alpha-tool", "exit:alpha-tool",
+            "enter:beta-tool", "exit:beta-tool", "enter:model", "exit:model"
+        ]
+    );
+}
+
+#[test]
+fn fork_fail_fast_does_not_invoke_sibling_after_failed_first_child() {
+    let resolved = selected_fork_generation(WorkflowJoinPolicy::All(
+        WorkflowJoinAllPolicy::FailFast,
+    ));
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+            (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    let result = root
+        .execute_workflow_with_frame(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, _, seen| {
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, _, _| {
+                if node == "alpha-tool" {
+                    return Err::<String, String>("branch failed".into());
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok(outcome),
+                    _ => Err("unrecognized outcome".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(result.final_outcome, "tools/failure");
+    assert_eq!(seen, ["model", "alpha-tool"]);
+}
+
+#[test]
+fn unframed_fork_fails_before_its_first_provider_call() {
+    let resolved = selected_fork_generation(WorkflowJoinPolicy::FirstSuccess);
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let result = root.execute_workflow(
+        (&component_id(TOPOLOGY), "turn"),
+        &mut (),
+        |_, _, _| -> Result<Vec<u8>, String> { panic!("no import may be invoked") },
+        |_, _, _, _| -> Result<String, String> { panic!("no result may be projected") },
+        || false,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(crate::WorkflowRunError::StructuredFrameRequired { .. })
+    ));
 }
 
 fn resolve(selected: &str, logging: bool) -> ResolvedGeneration {
