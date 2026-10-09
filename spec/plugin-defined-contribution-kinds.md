@@ -1,10 +1,29 @@
 # Plugin-defined contribution kinds and templates
 
-status: specification-only
+status: partial implementation (bounded pure lowering; candidate integration pending)
 stage: D of spec/microkernel-composition-roadmap.md
 depends-on: #727, Stage B typed-contribution PR
 parallel-with: Stage C graph patch composition, after Stage B
 blocks: Stage E consumer migration
+
+## Implementation slice: portable pure lowering
+
+`phenix_sdk::kind_lowering::lower_kinds` implements a data-only
+selected-definition/input lowering stage with explicit output bounds,
+versioned kind identity, original author and provider provenance, literal or
+source-field projection, recursive kind expansion and terminal canonical
+output. Definitions and inputs sort independently of enumeration order and
+serialize to stable structural bytes. Missing kinds, duplicate identities,
+schema failures, absent fields, cyclic expansion and exceeded output bounds
+reject preparation. Tests include independent non-agent authors and reversed
+discovery.
+
+This is **not kind selection or live generation activation**. Binding the
+typed definitions to #728's frozen contribution envelope, verifying selected
+provider authority, and passing all terminal output through canonical Core
+resolver validation remain open. No generic Rust `#[phenix(kind)]` macro,
+third-party provider discovery, or end-to-end runtime kind consumption has
+yet been implemented. #730 is not merge-ready.
 
 ## Goal
 
