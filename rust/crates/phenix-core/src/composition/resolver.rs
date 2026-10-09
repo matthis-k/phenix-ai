@@ -186,7 +186,7 @@ pub enum GenerationResolutionError {
     InvalidWorkflow {
         owner: crate::ComponentId,
         name: String,
-        error: WorkflowCompileError,
+        error: Box<WorkflowCompileError>,
     },
     DuplicateDurableSchema(ResourceNamespace),
     UndeclaredDurableSchema {
@@ -926,14 +926,14 @@ impl ResolvedGeneration {
             .map_err(|error| GenerationResolutionError::InvalidWorkflow {
                 owner: declaration.owner.clone(),
                 name: declaration.name.clone(),
-                error,
+                error: Box::new(error),
             })?;
             let workflow = topology
                 .compile_for_component(self.component_graph(), &declaration.owner)
                 .map_err(|error| GenerationResolutionError::InvalidWorkflow {
                     owner: declaration.owner.clone(),
                     name: declaration.name.clone(),
-                    error,
+                    error: Box::new(error),
                 })?;
             let key = (declaration.owner.clone(), declaration.name.clone());
             if compiled.insert(key.clone(), workflow).is_some() {
@@ -1001,7 +1001,7 @@ impl ResolvedGeneration {
                 .map_err(|error| GenerationResolutionError::InvalidWorkflow {
                     owner: declaration.owner.clone(),
                     name: declaration.name.clone(),
-                    error,
+                    error: Box::new(error),
                 })?;
             if let Some(existing) = compiled.frame_schema() {
                 if existing != &declaration.schema {
