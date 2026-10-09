@@ -199,9 +199,10 @@
                 "\${{ runner.temp }}/phenix-cargo-home"
                 "\${{ runner.temp }}/phenix-cargo-target"
               ];
-              key = "phenix-rust-\${{ runner.os }}-\${{ github.sha }}";
-              restoreKeys = [ "phenix-rust-\${{ runner.os }}-" ];
+              key = "phenix-rust-v2-\${{ runner.os }}-\${{ hashFiles('rust/Cargo.lock', 'flake.lock') }}";
+              restoreKeys = [ "phenix-rust-v2-\${{ runner.os }}-" ];
               writer = "build.rust-workspace";
+              saveOnDefaultBranch = true;
             };
           };
 
@@ -400,12 +401,24 @@
         ci.github = {
           enable = true;
           outputName = "phenix-maintenance";
+          # Fast feedback on PRs; full semantic CI runs on main and workflow_dispatch.
+          pullRequestJobs = [
+            "source"
+            "clippy"
+            "test-unit-core"
+            "test-unit-protocol-sdk"
+            "test-unit-plugin-foundation"
+            "test-unit-agent-product"
+            "test-harness"
+            "test-adapter-domain"
+          ];
           nixCache = {
             enable = true;
             jobs = [ "product-phenix-runtime" ];
             primaryKey = "phenix-product-nix-\${{ runner.os }}-\${{ hashFiles('modules/rust-artifacts.nix', 'flake.lock', 'rust/Cargo.lock', 'rust/**/Cargo.toml') }}";
             restorePrefixesFirstMatch = [ "phenix-product-nix-\${{ runner.os }}-" ];
             gcMaxStoreSizeLinux = "4G";
+            saveOnDefaultBranch = true;
           };
         };
         gitHooks = {
