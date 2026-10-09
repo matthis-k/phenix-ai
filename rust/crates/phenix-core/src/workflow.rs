@@ -899,6 +899,47 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn duplicate_sites_and_unknown_child_exits_reject() {
+        let mut all = selected();
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("after")
+            .unwrap()
+            .branches
+            .insert(
+                "second".into(),
+                include("child", "one", &[("returned", WorkflowEdge::Finish)]),
+            );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::DuplicateInclusionSite(site)) if site == "one"
+        ));
+        let mut all = selected();
+        all.get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert(
+                "delegate".into(),
+                include(
+                    "child",
+                    "one",
+                    &[
+                        ("returned", WorkflowEdge::Finish),
+                        ("unknown", WorkflowEdge::Finish),
+                    ],
+                ),
+            );
+        assert!(matches!(
+            WorkflowTopology::inline_selected(&owner(), "main", &all),
+            Err(WorkflowCompileError::UnknownSubplanExit { outcome, .. }) if outcome == "unknown"
+        ));
+    }
+
+    #[test]
     fn unmapped_include_cannot_enter_unbound_compiler() {
         let topology = selected().remove(&(owner(), "main".into())).unwrap();
         assert!(matches!(
