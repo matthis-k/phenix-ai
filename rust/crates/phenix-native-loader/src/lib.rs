@@ -102,7 +102,7 @@ unsafe extern "C" fn native_invoke_import(
     let Some(hub) = hub_for(context) else {
         return host_owned_result(ticket, Err("native host scope has retired".into()));
     };
-    let sender = {
+    let (sender, cancellation) = {
         let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
         match calls.get(&(ticket.root_id, ticket.call_id)) {
             Some(permit) if permit.owner_thread == std::thread::current().id() => {
@@ -111,10 +111,16 @@ unsafe extern "C" fn native_invoke_import(
                     Err("native import cannot block its host dispatch thread".into()),
                 );
             }
-            Some(permit) => permit.import_sender.clone(),
-            None => None,
+            Some(permit) => (permit.import_sender.clone(), permit.cancelled.clone()),
+            None => (None, None),
         }
     };
+    // A guest may ask for an import after its parent call is cancelled.
+    // Reject before admitting another side effect; Core checks cancellation
+    // again when it dispatches a queued request.
+    if cancellation.as_ref().is_some_and(|check| check()) {
+        return host_owned_result(ticket, Err("native import cancelled".into()));
+    }
     let Some(sender) = sender else {
         return host_owned_result(ticket, Err("native import call is not admitted".into()));
     };
@@ -951,6 +957,65 @@ mod tests {
             decode_result(unexpected, wrong).unwrap(),
             NativeInvocation::Failed(_)
         ));
+        HOST_REGISTRY.lock().unwrap().remove(&registry_id);
+    }
+
+    #[test]
+    fn cancelled_native_import_never_reaches_host_dispatch() {
+        use std::sync::atomic::AtomicBool;
+
+        let hub = Arc::new(WakeHub {
+            calls: Mutex::new(BTreeMap::new()),
+            notified: Condvar::new(),
+        });
+        let registry_id = NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed);
+        HOST_REGISTRY
+            .lock()
+            .unwrap()
+            .insert(registry_id, Arc::downgrade(&hub));
+        let ticket = NativeCallTicket {
+            root_id: 31,
+            call_id: 37,
+        };
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let parent = Arc::clone(&cancelled);
+        hub.calls.lock().unwrap().insert(
+            (ticket.root_id, ticket.call_id),
+            CallPermit {
+                wake: false,
+                owner_thread: std::thread::current().id(),
+                cancelled: Some(Arc::new(move || parent.load(Ordering::Acquire))),
+                import_sender: Some(sender),
+            },
+        );
+        let guest = std::thread::spawn(move || {
+            let interface = b"fixture.denied@1";
+            let payload = b"side effect";
+            // SAFETY: both slices outlive this synchronous native callback;
+            // the call ticket is admitted into the live registry.
+            let result = unsafe {
+                native_invoke_import(
+                    registry_id as *mut c_void,
+                    ticket,
+                    NativeSlice {
+                        ptr: interface.as_ptr(),
+                        len: interface.len(),
+                    },
+                    NativeSlice {
+                        ptr: payload.as_ptr(),
+                        len: payload.len(),
+                    },
+                )
+            };
+            decode_result(result, ticket).unwrap()
+        });
+        assert!(matches!(
+            guest.join().unwrap(),
+            NativeInvocation::Failed(message)
+                if String::from_utf8_lossy(&message).contains("cancelled")
+        ));
+        assert!(receiver.try_recv().is_err(), "cancelled import was dispatched");
         HOST_REGISTRY.lock().unwrap().remove(&registry_id);
     }
 

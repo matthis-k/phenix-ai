@@ -12,8 +12,9 @@ use phenix_plugin_abi::NativeCallTicket;
 use std::{
     path::Path,
     sync::{
-        Arc, Mutex, mpsc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
     time::Duration,
 };
@@ -144,12 +145,21 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
             // A guest worker requests declared imports while its native call
             // is pending. Dispatch stays on the owning Core host scope.
             while let Ok(request) = import_receiver.try_recv() {
-                let result = InterfaceId::parse(request.interface)
-                    .map_err(|error| error.to_owned())
-                    .and_then(|interface| {
-                        host.invoke_import_wire(component, &interface, &request.input)
-                            .map_err(|error| error.to_string())
-                    });
+                // A native guest may queue an import immediately before
+                // cancellation. Recheck at the actual side-effect boundary.
+                let result = if host
+                    .cancellation_token()
+                    .is_some_and(|token| token.is_cancelled())
+                {
+                    Err("native import cancelled".to_owned())
+                } else {
+                    InterfaceId::parse(request.interface)
+                        .map_err(|error| error.to_owned())
+                        .and_then(|interface| {
+                            host.invoke_import_wire(component, &interface, &request.input)
+                                .map_err(|error| error.to_string())
+                        })
+                };
                 let _ = request.reply.send(result);
             }
             match next {

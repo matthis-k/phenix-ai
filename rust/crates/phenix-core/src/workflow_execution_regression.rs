@@ -426,55 +426,67 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
         .register_native_shared_library(plugin_id(TOOL_PROVIDER), &library)
         .unwrap();
     kernel.activate_all().unwrap();
-    let mut frame = WorkflowFrame::new(
-        resolved
-            .generation_topology()
-            .workflow(&component_id(TOPOLOGY), "turn")
-            .unwrap()
-            .frame_schema()
-            .unwrap()
-            .clone(),
-        BTreeMap::from([
-            (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
-            (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
-        ]),
-    )
-    .unwrap();
     let root = kernel.root_execution_handle(&Authority::default());
-    let report = root
-        .execute_workflow_with_frame_pending(
-            (&component_id(TOPOLOGY), "turn"),
-            (&mut (), &mut frame),
-            |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
-            |node, _, output, frame, _| {
-                if node == "alpha-tool" {
-                    frame
-                        .set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5))
-                        .unwrap();
-                } else if node == "beta-tool" {
-                    frame
-                        .set(&Key::parse("beta").unwrap(), PhenixValue::U64(7))
-                        .unwrap();
-                }
-                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                    _ => Err("invalid native contract result".to_owned()),
-                }
-            },
-            || false,
-            None,
+    // The real loaded artifact must preserve the same selected provider,
+    // outcomes and typed branch state in both scheduler modes.
+    macro_rules! execute_native {
+        ($method:ident, $frame:expr) => {
+            root.$method(
+                (&component_id(TOPOLOGY), "turn"),
+                (&mut (), $frame),
+                |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+                |node, _, output, frame, _| {
+                    if node == "alpha-tool" {
+                        frame
+                            .set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5))
+                            .unwrap();
+                    } else if node == "beta-tool" {
+                        frame
+                            .set(&Key::parse("beta").unwrap(), PhenixValue::U64(7))
+                            .unwrap();
+                    }
+                    match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                        PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                        _ => Err("invalid native contract result".to_owned()),
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap()
+        };
+    }
+    for pending in [false, true] {
+        let mut frame = WorkflowFrame::new(
+            resolved
+                .generation_topology()
+                .workflow(&component_id(TOPOLOGY), "turn")
+                .unwrap()
+                .frame_schema()
+                .unwrap()
+                .clone(),
+            BTreeMap::from([
+                (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+                (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+            ]),
         )
         .unwrap();
-    assert_eq!(report.final_outcome, "final");
-    assert_eq!(report.executed_nodes, 4);
-    assert_eq!(
-        frame.get(&Key::parse("alpha").unwrap()),
-        Some(&PhenixValue::U64(5))
-    );
-    assert_eq!(
-        frame.get(&Key::parse("beta").unwrap()),
-        Some(&PhenixValue::U64(7))
-    );
+        let report = if pending {
+            execute_native!(execute_workflow_with_frame_pending, &mut frame)
+        } else {
+            execute_native!(execute_workflow_with_frame, &mut frame)
+        };
+        assert_eq!(report.final_outcome, "final", "native pending={pending}");
+        assert_eq!(report.executed_nodes, 4, "native pending={pending}");
+        assert_eq!(
+            frame.get(&Key::parse("alpha").unwrap()),
+            Some(&PhenixValue::U64(5))
+        );
+        assert_eq!(
+            frame.get(&Key::parse("beta").unwrap()),
+            Some(&PhenixValue::U64(7))
+        );
+    }
     drop(root);
     drop(kernel);
     std::fs::remove_dir_all(folder).unwrap();
