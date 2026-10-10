@@ -1009,6 +1009,7 @@ impl RootExecutionHandle {
         // channel. Merely observing a finished thread in branch-map order
         // would violate FirstCompleted/FirstSuccess semantics.
         let ready = RefCell::new(None::<WorkflowTaskId>);
+        let retired_scopes = RefCell::new(Vec::<String>::new());
         let result = compiled.execute_suspending(
             state,
             frame,
@@ -1130,12 +1131,33 @@ impl RootExecutionHandle {
             },
             cancelled,
             |scope| {
+                retired_scopes.borrow_mut().push(scope.to_owned());
                 group.cancel_scope(scope);
+                // A previously observed callback for an abandoned sibling
+                // must not block later live callbacks from waking the root.
+                if ready.borrow().as_ref().is_some_and(|ticket| {
+                    ticket.scope == scope
+                        || ticket
+                            .scope
+                            .strip_prefix(scope)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                }) {
+                    ready.replace(None);
+                }
             },
             || {
                 if let Some(ticket) = group.wait_settlement_for(Duration::from_millis(50)) {
-                    let previous = ready.replace(Some(ticket));
-                    debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                    let retired = retired_scopes.borrow().iter().any(|scope| {
+                        ticket.scope == *scope
+                            || ticket
+                                .scope
+                                .strip_prefix(scope)
+                                .is_some_and(|rest| rest.starts_with('/'))
+                    });
+                    if !retired {
+                        let previous = ready.replace(Some(ticket));
+                        debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                    }
                 }
             },
             step_limit,
