@@ -991,8 +991,8 @@ impl RootExecutionHandle {
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
         use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
-        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport};
-        use std::time::Duration;
+        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport, WorkflowTaskId};
+        use std::{cell::RefCell, time::Duration};
 
         fn failed<E>(
             error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
@@ -1005,14 +1005,19 @@ impl RootExecutionHandle {
             .native_workflow_tasks()
             .expect("selected workflow has a pinned generation");
         let mut in_flight = BTreeMap::<String, WorkflowPendingImport>::new();
+        // Consume only the specific callback selected by the settlement
+        // channel. Merely observing a finished thread in branch-map order
+        // would violate FirstCompleted/FirstSuccess semantics.
+        let ready = RefCell::new(None::<WorkflowTaskId>);
         let result = compiled.execute_suspending(
             state,
             frame,
             |node, interface, scope, state, mut frame, cancellation| {
                 if let Some(inflight) = in_flight.get(scope) {
-                    if !inflight.is_finished() {
+                    if ready.borrow().as_ref() != Some(inflight.id()) {
                         return WorkflowInvokePoll::Waiting;
                     }
+                    ready.replace(None);
                     let task = in_flight
                         .remove(scope)
                         .expect("finished scoped task was registered");
@@ -1128,7 +1133,10 @@ impl RootExecutionHandle {
                 group.cancel_scope(scope);
             },
             || {
-                group.wait_settlement_for(Duration::from_millis(50));
+                if let Some(ticket) = group.wait_settlement_for(Duration::from_millis(50)) {
+                    let previous = ready.replace(Some(ticket));
+                    debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                }
             },
             step_limit,
         );
