@@ -1,6 +1,6 @@
 //! Self-contained compiled native .so fixture. Intentionally does not link
 //! the Rust ABI crate: this catches accidental representation assumptions.
-use std::{ffi::c_void, sync::atomic::{AtomicU64, Ordering}};
+use std::{ffi::c_void, sync::Mutex};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -37,7 +37,7 @@ struct Plugin {
     destroy:Option<unsafe extern "C" fn(*mut c_void,u64)>,
 }
 unsafe impl Sync for Plugin {}
-static CALL: AtomicU64 = AtomicU64::new(0);
+static CALLS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn release(_: *mut c_void, ptr:*mut u8, len:usize) {
     if len != 0 {
@@ -70,12 +70,16 @@ unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
             || (comp == b"fixture.workflow-tool-provider"
                 && iface == b"fixture.workflow-tool@1")
     );
-    CALL.store(request.ticket.call_id,Ordering::Release);
+    CALLS.lock().unwrap().push(request.ticket.call_id);
     pending(request.ticket)
 }
 unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
-    let expected=CALL.swap(0,Ordering::AcqRel);
-    if expected!=ticket.call_id { return Result {status:2,ticket,payload:buffer(b"missing call")}; }
+    let mut calls=CALLS.lock().unwrap();
+    let Some(index)=calls.iter().position(|call| *call==ticket.call_id) else {
+        return Result {status:2,ticket,payload:buffer(b"missing call")};
+    };
+    calls.remove(index);
+    drop(calls);
     Result{status:1,ticket,payload:buffer(
         if ticket.root_id == 3 {
             b"fixture finished"
