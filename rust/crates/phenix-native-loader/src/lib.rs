@@ -545,7 +545,14 @@ impl NativePluginInstance {
         interface: &str,
         input: &[u8],
     ) -> Result<NativeInvocation, NativeLoadError> {
-        self.begin_with_cancellation(ticket, scope, component, interface, input, NativeCallContext::default())
+        self.begin_with_cancellation(
+            ticket,
+            scope,
+            component,
+            interface,
+            input,
+            NativeCallContext::default(),
+        )
     }
 
     /// Register this callback's attenuation/cancellation predicate before
@@ -573,20 +580,20 @@ impl NativePluginInstance {
         }
         {
             let mut calls = self.hub.calls.lock().unwrap_or_else(|e| e.into_inner());
-            if calls
-                .insert(
-                    key,
-                    CallPermit {
-                        wake: false,
-                        owner_thread: std::thread::current().id(),
-                        cancelled: context.cancellation,
-                        import_sender: context.import_sender,
-                    },
-                )
-                .is_some()
-            {
+            // A duplicate admission must leave the first caller's import and
+            // cancellation permissions intact.
+            if calls.contains_key(&key) {
                 return Err(NativeLoadError::MissingOrDuplicateCall(ticket));
             }
+            calls.insert(
+                key,
+                CallPermit {
+                    wake: false,
+                    owner_thread: std::thread::current().id(),
+                    cancelled: context.cancellation,
+                    import_sender: context.import_sender,
+                },
+            );
         }
         let _guard = self.module.gate.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: request's borrowed bytes must remain valid for this call;
