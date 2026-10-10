@@ -19,7 +19,7 @@ The kernel process remains running while plugin artifacts are rebuilt. Rebuildin
 
 The Rust crate named `phenix-harness` is not the native loader. Product composition belongs to portable configuration, with Nix as one deployment frontend.
 
-This document describes the target architecture. **No native ABI loader, Lua adapter or dynamic-library hot replacement is implemented by this specification.** Existing `embedded` and process-backed behavior remains authoritative until migrated and tested.
+This document describes the target architecture. PR #726 implements the first intrinsic native ABI loader and generation-pinned call path. It does not implement the Lua guest adapter or complete portable artifact activation. Existing `embedded` and process-backed paths remain available while migration and conformance testing continue.
 
 ## Existing implementation and the mismatch
 
@@ -99,12 +99,19 @@ Fork/Join workflow. Native factory lookup is keyed by
 same-named old binary. Manual preload also supports future candidate
 generations without activating them.
 
-**Still missing:** C host `invoke_import` callback forwarding through
-the selected component binding (the ABI table has this slot but the current
-loader leaves it unavailable), Lua and other guest-language adapters,
-platform loaders beyond POSIX, and comprehensive interrupt/reentrancy,
-live-product streaming and durability parity. Foreign libraries remain
-trusted native code rather than sandboxed isolation boundaries.
+**Implemented in the current native bridge:** C host `invoke_import`
+callbacks dispatch through the selected component binding, with inherited
+authority and cancellation. The callback uses a correlated ticket and wakes
+the Core dispatch thread when the guest queues an import, avoiding fallback
+poll latency. Late imports from cancelled calls are denied before provider
+dispatch. The loaded-library fixtures prove a real guest-to-host import
+roundtrip, callback settlement, and synchronous/pending workflow parity.
+
+**Still missing:** a native Lua guest-runtime adapter, portable contribution
+and EntryBinding activation, private included-subplan frame scheduling,
+platform loaders beyond POSIX, and full live-product streaming, recovery
+and durable side-effect parity. Foreign libraries remain trusted native code
+rather than sandboxed isolation boundaries.
 The spec lifecycle is still `specification-only` because these stages
 are not production-complete.
 
