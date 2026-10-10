@@ -893,7 +893,10 @@ impl RootExecutionHandle {
     > {
         let (owner, name) = workflow;
         let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow { owner: owner.clone(), name: name.to_owned() }
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
         })?;
         if compiled.requires_frame() {
             return Err(WorkflowRunError::StructuredFrameRequired {
@@ -939,14 +942,18 @@ impl RootExecutionHandle {
         let (state, frame) = execution;
         let (owner, name) = workflow;
         let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow { owner: owner.clone(), name: name.to_owned() }
-        })?;
-        let expected = compiled
-            .frame_schema()
-            .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+            WorkflowRunError::MissingWorkflow {
                 owner: owner.clone(),
                 name: name.to_owned(),
-            })?;
+            }
+        })?;
+        let expected =
+            compiled
+                .frame_schema()
+                .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+                    owner: owner.clone(),
+                    name: name.to_owned(),
+                })?;
         if expected != frame.schema() {
             return Err(WorkflowRunError::FrameSchemaMismatch {
                 owner: owner.clone(),
@@ -1060,29 +1067,30 @@ impl RootExecutionHandle {
                             ));
                         }
                     };
-                    let selected =
-                        match selected_workflow_outcome::<Error>(compiled, node, binding, &output) {
-                            Ok(selected) => selected,
-                            Err(WorkflowInvocationError::Failed(error)) => {
-                                return failed(WorkflowBoundCallError::Invocation(error));
-                            }
-                            Err(WorkflowInvocationError::Cancelled) => {
-                                return WorkflowInvokePoll::Ready(Err(
-                                    WorkflowInvocationError::Cancelled,
-                                ));
-                            }
-                        };
+                    let selected = match selected_workflow_outcome::<Error>(
+                        compiled, node, binding, &output,
+                    ) {
+                        Ok(selected) => selected,
+                        Err(WorkflowInvocationError::Failed(error)) => {
+                            return failed(WorkflowBoundCallError::Invocation(error));
+                        }
+                        Err(WorkflowInvocationError::Cancelled) => {
+                            return WorkflowInvokePoll::Ready(Err(
+                                WorkflowInvocationError::Cancelled,
+                            ));
+                        }
+                    };
                     let snapshot = frame.as_deref().cloned();
                     match project(node, interface, &output, frame.as_deref_mut(), state) {
                         Ok(reported)
-                            if selected.as_ref().is_none_or(|expected| expected == &reported) =>
+                            if selected
+                                .as_ref()
+                                .is_none_or(|expected| expected == &reported) =>
                         {
                             WorkflowInvokePoll::Ready(Ok(reported))
                         }
                         Ok(reported) => {
-                            if let (Some(original), Some(destination)) =
-                                (snapshot, frame)
-                            {
+                            if let (Some(original), Some(destination)) = (snapshot, frame) {
                                 *destination = original;
                             }
                             failed(WorkflowBoundCallError::Invocation(
@@ -1093,9 +1101,7 @@ impl RootExecutionHandle {
                             ))
                         }
                         Err(error) => {
-                            if let (Some(original), Some(destination)) =
-                                (snapshot, frame)
-                            {
+                            if let (Some(original), Some(destination)) = (snapshot, frame) {
                                 *destination = original;
                             }
                             failed(WorkflowBoundCallError::Invocation(
@@ -1113,9 +1119,7 @@ impl RootExecutionHandle {
                         }
                     };
                     if cancellation() {
-                        return WorkflowInvokePoll::Ready(Err(
-                            WorkflowInvocationError::Cancelled,
-                        ));
+                        return WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled));
                     }
                     let binding = match compiled.bound_import(interface) {
                         Some(binding) => binding,
@@ -1125,11 +1129,8 @@ impl RootExecutionHandle {
                             ));
                         }
                     };
-                    let task = match group.dispatch_import_pending(
-                        scope,
-                        binding.clone(),
-                        request,
-                    ) {
+                    let task = match group.dispatch_import_pending(scope, binding.clone(), request)
+                    {
                         Ok(task) => task,
                         Err(error) => {
                             return failed(WorkflowBoundCallError::Invocation(
@@ -1143,36 +1144,36 @@ impl RootExecutionHandle {
             },
             cancelled,
             (
-            |scope| {
-                retired_scopes.borrow_mut().push(scope.to_owned());
-                group.cancel_scope(scope);
-                // A previously observed callback for an abandoned sibling
-                // must not block later live callbacks from waking the root.
-                if ready.borrow().as_ref().is_some_and(|ticket| {
-                    ticket.scope == scope
-                        || ticket
-                            .scope
-                            .strip_prefix(scope)
-                            .is_some_and(|rest| rest.starts_with('/'))
-                }) {
-                    ready.replace(None);
-                }
-            },
-            || {
-                if let Some(ticket) = group.wait_settlement_for(Duration::from_millis(50)) {
-                    let retired = retired_scopes.borrow().iter().any(|scope| {
-                        ticket.scope == *scope
+                |scope| {
+                    retired_scopes.borrow_mut().push(scope.to_owned());
+                    group.cancel_scope(scope);
+                    // A previously observed callback for an abandoned sibling
+                    // must not block later live callbacks from waking the root.
+                    if ready.borrow().as_ref().is_some_and(|ticket| {
+                        ticket.scope == scope
                             || ticket
                                 .scope
                                 .strip_prefix(scope)
                                 .is_some_and(|rest| rest.starts_with('/'))
-                    });
-                    if !retired {
-                        let previous = ready.replace(Some(ticket));
-                        debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                    }) {
+                        ready.replace(None);
                     }
-                }
-            },
+                },
+                || {
+                    if let Some(ticket) = group.wait_settlement_for(Duration::from_millis(50)) {
+                        let retired = retired_scopes.borrow().iter().any(|scope| {
+                            ticket.scope == *scope
+                                || ticket
+                                    .scope
+                                    .strip_prefix(scope)
+                                    .is_some_and(|rest| rest.starts_with('/'))
+                        });
+                        if !retired {
+                            let previous = ready.replace(Some(ticket));
+                            debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                        }
+                    }
+                },
             ),
             step_limit,
         );
@@ -1184,7 +1185,9 @@ impl RootExecutionHandle {
             let _ = task.cancel();
             let _ = task.join();
         }
-        group.close().expect("all admitted native callbacks have settled");
+        group
+            .close()
+            .expect("all admitted native callbacks have settled");
         result
     }
 
