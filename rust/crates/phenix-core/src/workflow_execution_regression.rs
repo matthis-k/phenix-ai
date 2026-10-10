@@ -1532,6 +1532,64 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
 }
 
 #[test]
+fn pending_native_scheduler_preserves_real_mapped_subplan_frame_boundaries() {
+    let generation = typed_include_generation();
+    let kernel = started_kernel(&generation, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = generation
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let key = |name: &str| Key::parse(name).unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (key("parent_input"), PhenixValue::U64(6)),
+            (key("parent_output"), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    let report = root
+        .execute_workflow_with_frame_pending(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, view, seen| {
+                if node == "__include__/answer/work" {
+                    assert_eq!(view.get(&key("child_input")), Some(&PhenixValue::U64(6)));
+                    assert!(view.get(&key("parent_input")).is_none());
+                    assert!(view.get(&key("parent_output")).is_none());
+                }
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, bytes, view, _| {
+                if node == "__include__/answer/work" {
+                    view.set(&key("child_output"), PhenixValue::U64(18))
+                        .unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(bytes).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<String, String>(outcome),
+                    _ => Err("invalid selected provider result".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(report.executed_nodes, 3);
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(seen, ["model", "__include__/answer/work", "model"]);
+    assert_eq!(frame.get(&key("parent_input")), Some(&PhenixValue::U64(6)));
+    assert_eq!(frame.get(&key("parent_output")), Some(&PhenixValue::U64(18)));
+    assert!(frame.get(&key("child_input")).is_none());
+    assert!(frame.get(&key("child_output")).is_none());
+}
+
+#[test]
 fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit() {
     let owner = component_id(TOPOLOGY);
     let parent = WorkflowDeclaration {
