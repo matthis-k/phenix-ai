@@ -433,6 +433,52 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn independently_compiled_native_library_executes_deferred_v1_call() {
+        use std::{process::Command, time::{SystemTime, UNIX_EPOCH}};
+        let unique=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let out=std::env::temp_dir().join(format!(
+            "phenix-native-loader-{}-{unique}",std::process::id()
+        ));
+        std::fs::create_dir_all(&out).unwrap();
+        let lib=out.join(format!("libnative_fixture.{}",std::env::consts::DLL_EXTENSION));
+        let fixture=Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/pending_plugin.rs");
+        let build=Command::new("rustc")
+            .arg("--edition=2024")
+            .arg("--crate-type=cdylib")
+            .arg("--crate-name=phenix_native_test_fixture")
+            .arg(&fixture)
+            .arg("-o")
+            .arg(&lib)
+            .output().unwrap();
+        assert!(build.status.success(),
+            "native fixture could not compile: {}",String::from_utf8_lossy(&build.stderr));
+        let module=NativePluginLibrary::load(&lib).unwrap();
+        let mut instance=module.instance(17);
+        instance.prepare_and_start().unwrap();
+        assert_eq!(instance.state(),NativeInstanceState::Active);
+        let ticket=NativeCallTicket{root_id:3,call_id:9};
+        let first=instance.begin_component(
+            ticket,5,"fixture.native","fixture.test@1",b"hello"
+        ).unwrap();
+        assert_eq!(first,NativeInvocation::Pending);
+        assert_eq!(
+            instance.poll(ticket).unwrap(),
+            NativeInvocation::Ready(b"fixture finished".to_vec())
+        );
+        assert!(matches!(
+            instance.poll(ticket),
+            Err(NativeLoadError::MissingOrDuplicateCall(_))
+        ));
+        instance.stop_and_destroy().unwrap();
+        assert_eq!(instance.state(),NativeInstanceState::Destroyed);
+        drop(instance);
+        drop(module);
+        std::fs::remove_dir_all(out).unwrap();
+    }
+
     #[test]
     fn result_correlations_fail_closed_before_deserialization() {
         let ticket = NativeCallTicket { root_id: 1, call_id: 2 };
