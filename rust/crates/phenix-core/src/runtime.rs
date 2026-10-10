@@ -936,6 +936,9 @@ pub struct Kernel {
     resident_generations: BTreeMap<GenerationId, GenerationRuntimeState>,
     authority_ceiling: Option<Authority>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
+    /// Native code is keyed by exact manifest-selected content revision.
+    /// Reusing an older plugin ID can never select an old ABI image.
+    native_factories: BTreeMap<(PluginId, ArtifactRevision), EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,
