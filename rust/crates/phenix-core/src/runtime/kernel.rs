@@ -555,6 +555,7 @@ impl Kernel {
         state.root_leases.fetch_add(1, Ordering::AcqRel);
         RootExecutionHandle {
             runtime: Arc::new(state.runtime.clone()),
+            root_id: next_runtime_root_id(),
             constraints,
             states: state.states.clone(),
             instances: state.instances.clone(),
@@ -692,6 +693,7 @@ impl RootExecutionHandle {
         let constraints = self.constraints.with_authority(authority);
         let mut scope =
             CallScope::external_with_constraints(Arc::clone(&self.runtime), &constraints);
+        scope.root_id = self.root_id;
         scope.cancellation = cancellation.map(CallCancellationToken::from_task);
         invoke_component_service_with(
             runtime,
@@ -1209,8 +1211,9 @@ impl RootExecutionHandle {
             trace_sink: self.trace_sink.as_ref(),
             provenance: self.provenance.as_ref(),
         };
-        let scope =
+        let mut scope =
             CallScope::external_with_constraints(Arc::clone(&self.runtime), &self.constraints);
+        scope.root_id = self.root_id;
         invoke_service_with(runtime, service, input, binding, scope)
     }
 }
