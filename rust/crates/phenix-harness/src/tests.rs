@@ -264,7 +264,6 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
             "basic configuration unexpectedly included {optional}"
         );
     }
-    assert!(!basic_ids.contains("phenix.agent-loop"));
     basic.build().unwrap();
 
     let advanced = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
@@ -295,7 +294,6 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
             "advanced configuration missed {required}"
         );
     }
-    assert!(!advanced_ids.contains("phenix.agent-loop"));
     advanced.build().unwrap();
 }
 
@@ -670,7 +668,6 @@ fn basic_declarative_defaults_remain_overrideable_without_replacing_the_kernel()
         .iter()
         .map(|manifest| manifest.id.as_str())
         .collect::<BTreeSet<_>>();
-    assert!(!ids.contains("phenix.agent-loop"));
     assert!(!ids.contains("phenix.agent-topology"));
     assert!(!ids.contains("phenix.basic-agent-nodes"));
     assert!(builder.workflows.is_empty());
@@ -690,7 +687,6 @@ fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
 
     assert!(ids.contains("phenix.application-agent-tools"));
     assert!(ids.contains("phenix.sessions"));
-    assert!(!ids.contains("phenix.agent-loop"));
     let runtime = builder
         .build()
         .expect("tools should resolve without an agent loop");
@@ -738,7 +734,6 @@ fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
         .map(|manifest| manifest.id.as_str())
         .collect::<BTreeSet<_>>();
     assert!(ids.contains("phenix.memory"));
-    assert!(!ids.contains("phenix.agent-loop"));
     assert!(!ids.contains("phenix.step-runner"));
 
     let mut runtime = builder.build().expect("memory imports are optional");
@@ -755,171 +750,6 @@ fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
     let value: PhenixValue = serde_json::from_slice(&response).unwrap();
     let decoded = MemoryResponse::try_from(Project(&value)).unwrap();
     assert_eq!(decoded, MemoryResponse::Memory { record: None });
-}
-
-#[test]
-fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
-    use phenix_core::{Bytes, ComponentId, ComponentInterface};
-    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
-    use phenix_sdk::{AgentLoopCommand, AgentLoopInterface, AgentLoopResponse, AgentLoopUsage};
-
-    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
-    let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
-    let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
-        .expect("the agent profile should not force the Basic loop implementation");
-
-    assert!(
-        builder
-            .manifests
-            .iter()
-            .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
-    );
-    assert!(
-        !builder
-            .manifests
-            .iter()
-            .any(|manifest| { manifest.id.as_str() == "phenix.agent-loop" })
-    );
-    assert!(
-        builder
-            .manifests
-            .iter()
-            .any(|manifest| manifest.id.as_str() == "phenix.basic-agent-nodes"),
-        "the independent Basic node providers must survive foreign-loop substitution"
-    );
-    assert_eq!(
-        builder.workflows.len(),
-        1,
-        "the independent topology remains selectable alongside a foreign agent provider"
-    );
-
-    let reply = AgentLoopResponse::Completed {
-        output: Bytes::new(b"foreign-agent".to_vec()),
-        usage: AgentLoopUsage {
-            model_calls: 0,
-            tool_calls: 0,
-        },
-    };
-    let wire_reply = serde_json::to_vec(&PhenixValue::from(&reply)).unwrap();
-    let owner = plugin("fixture.foreign-agent");
-    builder
-        .add_embedded(
-            service_manifest(
-                owner.as_str(),
-                agent_loop_service(),
-                100,
-                default_suite_authority(),
-            ),
-            move || Box::new(FixedResponse(wire_reply.clone())),
-        )
-        .unwrap();
-
-    let mut component = agent_loop_component_manifest(default_suite_authority());
-    component.id = ComponentId::parse("fixture.foreign-agent.component").unwrap();
-    component.owner = owner;
-    component.imports.clear();
-    let component_id = component.id.clone();
-    builder.add_component(component);
-    builder.bind_provider(AgentLoopInterface::interface_id(), component_id.clone());
-
-    let mut runtime = builder
-        .build()
-        .expect("foreign terminal loop may replace Basic without removing tools");
-    assert!(
-        runtime
-            .resolved_generation()
-            .components()
-            .iter()
-            .any(|component| { component.id == component_id })
-    );
-    runtime
-        .activate()
-        .expect("foreign agent graph should activate");
-
-    let command = AgentLoopCommand::Run {
-        execution_id: "fixture-foreign-run".to_owned(),
-        session_id: None,
-        parent_attempt_id: None,
-        callable_id: None,
-        input: Bytes::new(b"fixture".to_vec()),
-        tools: Vec::new(),
-    };
-    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
-    let output = runtime
-        .invoke(
-            &agent_loop_service(),
-            &input,
-            &default_suite_authority(),
-            None,
-        )
-        .unwrap();
-    let value: PhenixValue = serde_json::from_slice(&output).unwrap();
-    let decoded = AgentLoopResponse::try_from(Project(&value)).unwrap();
-    assert_eq!(decoded, reply);
-}
-
-#[test]
-fn pinned_application_binding_selects_foreign_agent_over_native_service_priority() {
-    use phenix_core::{ComponentId, ComponentInterface};
-    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
-    use phenix_sdk::AgentLoopInterface;
-
-    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-        BASIC_AGENT_CONFIGURATION.to_owned(),
-    ]))
-    .unwrap();
-    let owner = plugin("fixture.low-priority-agent");
-    builder
-        .add_embedded(
-            service_manifest(
-                owner.as_str(),
-                agent_loop_service(),
-                -100,
-                default_suite_authority(),
-            ),
-            || Box::new(Echo(b"bound-foreign-agent")),
-        )
-        .unwrap();
-    let mut component = agent_loop_component_manifest(default_suite_authority());
-    component.id = ComponentId::parse("fixture.low-priority-agent.component").unwrap();
-    component.owner = owner.clone();
-    component.imports.clear();
-    component.exports[0].required_authority =
-        Authority::new([capability("kernel.persistence.read")]);
-    let id = component.id.clone();
-    builder.add_component(component);
-    builder.bind_provider(AgentLoopInterface::interface_id(), id);
-
-    let mut runtime = builder
-        .build()
-        .expect("both loop implementations may coexist");
-    let Err(denied) = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &Authority::default(),
-    ) else {
-        panic!("explicit agent binding must not bypass contract export authority");
-    };
-    assert!(
-        denied
-            .to_string()
-            .contains("requires unavailable authority")
-    );
-    let explicit = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &default_suite_authority(),
-    )
-    .expect("the selected generation has an authorized bound terminal");
-    assert_eq!(explicit, Some(owner));
-    runtime.activate().unwrap();
-    let output = runtime
-        .invoke(
-            &agent_loop_service(),
-            b"fixture",
-            &default_suite_authority(),
-            explicit.as_ref(),
-        )
-        .expect("explicit binding selects the foreign terminal despite lower priority");
-    assert_eq!(output, b"bound-foreign-agent");
 }
 
 #[test]
@@ -963,59 +793,6 @@ fn default_application_agent_route_uses_the_selected_declarative_topology() {
             .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
         "Basic defaults must not implicitly install a legacy agent loop"
     );
-}
-
-#[test]
-fn application_agent_route_obeys_contract_priority_not_service_priority() {
-    use phenix_core::{ComponentId, ComponentInterface, ProviderCompositionPolicy};
-    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
-    use phenix_sdk::AgentLoopInterface;
-
-    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-        BASIC_AGENT_CONFIGURATION.to_owned(),
-    ]))
-    .unwrap();
-    let owner = plugin("fixture.preferred-contract-agent");
-    builder
-        .add_embedded(
-            service_manifest(
-                owner.as_str(),
-                agent_loop_service(),
-                -100,
-                default_suite_authority(),
-            ),
-            || Box::new(Echo(b"preferred-contract-agent")),
-        )
-        .unwrap();
-    let mut component = agent_loop_component_manifest(default_suite_authority());
-    component.id = ComponentId::parse("fixture.preferred-contract-agent.component").unwrap();
-    component.owner = owner.clone();
-    component.imports.clear();
-    let id = component.id.clone();
-    builder.add_component(component);
-    builder.set_provider_policy(ProviderCompositionPolicy::new().with_priority(
-        AgentLoopInterface::interface_id(),
-        id.clone(),
-        100,
-    ));
-
-    let mut runtime = builder.build().unwrap();
-    let selected = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &default_suite_authority(),
-    )
-    .expect("the application must follow the resolved contract priority");
-    assert_eq!(selected, Some(owner));
-    runtime.activate().unwrap();
-    let result = runtime
-        .invoke(
-            &agent_loop_service(),
-            b"fixture",
-            &default_suite_authority(),
-            selected.as_ref(),
-        )
-        .expect("selected contract provider must win despite lower service priority");
-    assert_eq!(result, b"preferred-contract-agent");
 }
 
 #[test]
@@ -2090,7 +1867,6 @@ fn advanced_profile_can_remove_an_inherited_default_before_activation() {
     assert!(ids.contains(BASIC_AGENT_CONFIGURATION));
     assert!(ids.contains("phenix.agent-topology"));
     assert!(ids.contains("phenix.basic-agent-nodes"));
-    assert!(!ids.contains("phenix.agent-loop"));
     assert!(
         !ids.contains("phenix.debug"),
         "excluded default must not activate"
