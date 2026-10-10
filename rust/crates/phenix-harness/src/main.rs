@@ -13,16 +13,16 @@ use phenix_harness::{
 };
 use phenix_plugin_catalog::{
     OptionStartupPrecedence, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_manifest, agent_topology_manifest, artifact_manifest,
-    basic_agent_configuration_manifest, basic_agent_nodes_manifest, basic_context_manifest,
-    basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
-    basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
-    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
-    expand_profile_defaults, frontend_manifest, full_product_configuration_manifest, hook_manifest,
-    interactive_ui_manifest, job_manifest, language_manifest, local_environment_manifest,
-    memory_manifest, model_routing_manifest, openai_codex_manifest, options_manifest,
-    planning_manifest, providers_manifest, repository_worker_manifest, sdk_manifest,
-    session_manifest, session_tree_manifest, step_runner_manifest, workspace_manifest,
+    agent_topology_manifest, artifact_manifest, basic_agent_configuration_manifest,
+    basic_agent_nodes_manifest, basic_context_manifest, basic_model_manifest,
+    basic_product_configuration_manifest, basic_skills_manifest, basic_tools_manifest,
+    benchmark_outcome_manifest, cli_manifest, common_provider_definitions, context_manifest,
+    debug_manifest, efficiency_evaluation_manifest, execution_manifest, expand_profile_defaults,
+    frontend_manifest, full_product_configuration_manifest, hook_manifest, interactive_ui_manifest,
+    job_manifest, language_manifest, local_environment_manifest, memory_manifest,
+    model_routing_manifest, openai_codex_manifest, options_manifest, planning_manifest,
+    providers_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
+    session_tree_manifest, step_runner_manifest, workspace_manifest,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -491,7 +491,6 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (execution_manifest(authority.clone()), true),
         (efficiency_evaluation_manifest(), true),
         (benchmark_outcome_manifest(), false),
-        (agent_loop_manifest(authority.clone()), true),
         (agent_topology_manifest(authority.clone()), false),
         (basic_agent_nodes_manifest(authority.clone()), false),
         (application_agent_tool_manifest(authority.clone()), true),
@@ -1279,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn disabling_a_required_contract_provider_fails_core_resolution() {
+    fn disabling_application_tool_adapter_never_restores_a_missing_workflow() {
         let tools = application_agent_tool_manifest(default_suite_authority())
             .id
             .as_str()
@@ -1291,13 +1290,18 @@ mod tests {
         assert!(!selected.contains(&tools));
         let builder =
             PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &cli.disable_plugins)
-                .expect("no hard manifest dependency requires the application tool adapter");
-        let Err(error) = builder.build() else {
-            panic!("the Basic loop's required tool contract must remain satisfiable");
-        };
+                .expect("the application tool adapter is optional");
+        let runtime = builder
+            .build()
+            .expect("a generic Core graph may resolve without an application workflow");
+        let owner = ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap();
         assert!(
-            error.to_string().contains("unresolved required import"),
-            "Core should report missing contract capability: {error}"
+            runtime
+                .resolved_generation()
+                .generation_topology()
+                .workflow(&owner, "agent.turn")
+                .is_none(),
+            "disabled application tools must not silently reselect a different agent workflow"
         );
     }
 

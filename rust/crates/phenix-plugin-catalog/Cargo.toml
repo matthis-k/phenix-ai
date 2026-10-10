@@ -14,7 +14,6 @@ phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-plugin-artifacts = { path = "../phenix-plugin-artifacts" }
 phenix-plugin-agent-topology = { path = "../phenix-plugin-agent-topology" }
-phenix-plugin-basic-agent = { path = "../phenix-plugin-basic-agent" }
 phenix-plugin-basic-agent-nodes = { path = "../phenix-plugin-basic-agent-nodes" }
 phenix-plugin-basic-context = { path = "../phenix-plugin-basic-context" }
 phenix-plugin-basic-model = { path = "../phenix-plugin-basic-model" }

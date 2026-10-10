@@ -1,7 +1,5 @@
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod agent_loop_regression;
 mod attempt_service;
 mod component;
 mod configuration;

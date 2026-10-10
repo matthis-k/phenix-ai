@@ -166,7 +166,6 @@ mod tests {
             &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
             &BTreeSet::new(),
         );
-        assert!(!dependencies.contains("phenix.agent-loop"));
         assert!(dependencies.contains("phenix.agent-topology"));
         assert!(dependencies.contains("phenix.basic-agent-nodes"));
         assert!(dependencies.contains("phenix.application-agent-tools"));
@@ -177,37 +176,14 @@ mod tests {
     }
 
     #[test]
-    fn excluding_legacy_loop_keeps_independent_declarative_defaults() {
-        let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
-        let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
-        let defaults = expand_profile_defaults(&selected, &excluded);
-        assert!(!defaults.contains("phenix.agent-loop"));
-        assert!(defaults.contains("phenix.agent-topology"));
-        assert!(defaults.contains("phenix.basic-agent-nodes"));
-        assert!(defaults.contains("phenix.application-agent-tools"));
-
-        // Exclusions act independently: the declarative topology and Basic
-        // node implementation are replaceable without reinstating the loop.
-        let excluded = BTreeSet::from([
-            "phenix.agent-loop".to_owned(),
-            "phenix.basic-agent-nodes".to_owned(),
-        ]);
-        let defaults = expand_profile_defaults(&selected, &excluded);
-        assert!(defaults.contains("phenix.agent-topology"));
-        assert!(!defaults.contains("phenix.basic-agent-nodes"));
-    }
-
-    #[test]
     fn advanced_agent_inherits_basic_without_repeating_its_implementations() {
         let advanced = profile_defaults(ADVANCED_AGENT_CONFIGURATION).unwrap();
         assert!(advanced.contains(&BASIC_AGENT_CONFIGURATION));
-        assert!(!advanced.contains(&"phenix.agent-loop"));
         let effective = expand_profile_defaults(
             &BTreeSet::from([ADVANCED_AGENT_CONFIGURATION.to_owned()]),
             &BTreeSet::new(),
         );
         assert!(effective.contains(BASIC_AGENT_CONFIGURATION));
-        assert!(!effective.contains("phenix.agent-loop"));
         assert!(effective.contains("phenix.agent-topology"));
         assert!(effective.contains("phenix.basic-agent-nodes"));
         assert!(effective.contains("phenix.memory"));

@@ -118,7 +118,6 @@
         agentProduct = [
           "phenix-agent-configurations"
           "phenix-harness"
-          "phenix-plugin-basic-agent"
           "phenix-plugin-efficiency-evaluation"
           "phenix-plugin-memory"
           "phenix-plugin-models"

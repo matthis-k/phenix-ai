@@ -60,7 +60,7 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 `phenix-full` is the supported full Harness composition and is also exposed as `phenix`. `phenix-basic` uses the smaller basic product composition. Both packages use the same executable and select the frontend with `--mode`; the mode does not change the plugin graph.
 
-Basic includes the workspace and local-environment providers used by its public shell and workspace tools. Full additionally selects the Advanced agent, memory and planning providers. Both products select the same declarative agent topology and Basic node providers by default; the legacy agent loop is an explicit option.
+Basic includes the workspace and local-environment providers used by its public shell and workspace tools. Full additionally selects the Advanced agent, memory and planning providers. Both products select the declarative agent topology and Basic node providers. The imperative agent loop has been removed.
 
 Nix exposes independently packaged first-party runtime plugins, including adapters, through `phenixPlugins.<system>.*`. `wrappers.phenix.wrap` and `lib.mkPhenix` assemble a runtime with an explicit plugin selection. Omitting a plugin removes its service unless another selected provider supplies the same contract.
 

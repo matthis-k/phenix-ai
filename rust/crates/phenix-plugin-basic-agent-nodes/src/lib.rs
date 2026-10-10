@@ -1,10 +1,9 @@
 #![forbid(unsafe_code)]
 
-//! Basic implementations of the replaceable agent-loop workflow nodes.
+//! Basic implementations of the replaceable declarative agent workflow nodes.
 //!
-//! The existing agent-loop driver remains active during parity migration.
-//! This provider reuses its validation and observation helpers rather than
-//! introducing another implementation of those invariants.
+//! Core schedules the selected topology. This plugin implements turn and tool
+//! nodes using shared SDK validation and observation contracts.
 
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
