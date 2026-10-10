@@ -991,7 +991,7 @@ impl ResolvedGeneration {
         // A compiler semantic revision changes the meaning of identical
         // authored plan bytes. Version the canonical execution contract in
         // every pinned generation, not just the plugin-provided declarations.
-        const CLOSED_PLAN_IR_SEMANTICS_REVISION: u32 = 9;
+        const CLOSED_PLAN_IR_SEMANTICS_REVISION: u32 = 10;
         self.runtime.incorporate_semantic_metadata(&(
             "phenix.workflow-ir",
             CLOSED_PLAN_IR_SEMANTICS_REVISION,
@@ -1025,6 +1025,26 @@ impl ResolvedGeneration {
                 });
             }
         }
+        let selected_topologies: BTreeMap<_, _> = self
+            .workflows
+            .iter()
+            .map(|workflow| {
+                (
+                    (workflow.owner.clone(), workflow.name.clone()),
+                    workflow.topology.clone(),
+                )
+            })
+            .collect();
+        let schemas: BTreeMap<_, _> = declarations
+            .iter()
+            .map(|declaration| {
+                (
+                    (declaration.owner.clone(), declaration.name.clone()),
+                    declaration.schema.clone(),
+                )
+            })
+            .collect();
+        let mut scoped_plans = BTreeMap::new();
         let mut already_bound = 0;
         for declaration in &declarations {
             declaration.schema.validate().map_err(|error| {
@@ -1041,13 +1061,27 @@ impl ResolvedGeneration {
                     owner: declaration.owner.clone(),
                     name: declaration.name.clone(),
                 })?;
-            compiled
+            let scopes = crate::WorkflowTopology::selected_scoped_subplans(
+                &declaration.owner,
+                &declaration.name,
+                &selected_topologies,
+                &schemas,
+            )
+            .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                owner: declaration.owner.clone(),
+                name: declaration.name.clone(),
+                error: Box::new(error),
+            })?;
+            let mut candidate = compiled.clone();
+            candidate.bind_scoped_subplans(scopes.clone());
+            candidate
                 .validate_frame_schema(&declaration.schema)
                 .map_err(|error| GenerationResolutionError::InvalidWorkflow {
                     owner: declaration.owner.clone(),
                     name: declaration.name.clone(),
                     error: Box::new(error),
                 })?;
+            scoped_plans.insert((declaration.owner.clone(), declaration.name.clone()), scopes);
             if let Some(existing) = compiled.frame_schema() {
                 if existing != &declaration.schema {
                     return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
@@ -1073,15 +1107,22 @@ impl ResolvedGeneration {
         if declarations.is_empty() {
             return Ok(self);
         }
-        const FRAME_CONTRACT_REVISION: u32 = 1;
+        const FRAME_CONTRACT_REVISION: u32 = 2;
         self.runtime
             .incorporate_semantic_metadata(&(FRAME_CONTRACT_REVISION, &declarations));
         for declaration in declarations {
-            self.runtime
+            let key = (declaration.owner, declaration.name);
+            let compiled = self
+                .runtime
                 .workflows
-                .get_mut(&(declaration.owner, declaration.name))
-                .expect("selected schema target was validated")
-                .bind_frame_schema(declaration.schema);
+                .get_mut(&key)
+                .expect("selected schema target was validated");
+            compiled.bind_scoped_subplans(
+                scoped_plans
+                    .remove(&key)
+                    .expect("the complete candidate was validated"),
+            );
+            compiled.bind_frame_schema(declaration.schema);
         }
         Ok(self)
     }
