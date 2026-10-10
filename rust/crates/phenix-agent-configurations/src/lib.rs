@@ -45,7 +45,6 @@ const ADVANCED_AGENT_DEFAULTS: &[&str] = &[
     "phenix.efficiency-evaluation",
     "phenix.environment.local",
     "phenix.frontend-services",
-    "phenix.hooks",
     "phenix.jobs",
     "phenix.language",
     "phenix.memory",
