@@ -414,15 +414,16 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
     // outcomes and typed branch state in both scheduler modes.
     macro_rules! execute_native {
         ($root:expr, $method:ident, $frame:expr) => {
-            $root.$method(
-                (&component_id(TOPOLOGY), "turn"),
-                (&mut (), $frame),
-                |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
-                |node, _, output, frame, _| {
-                    if node == "alpha-tool" {
-                        frame
-                            .set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5))
-                            .unwrap();
+            $root
+                .$method(
+                    (&component_id(TOPOLOGY), "turn"),
+                    (&mut (), $frame),
+                    |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+                    |node, _, output, frame, _| {
+                        if node == "alpha-tool" {
+                            frame
+                                .set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5))
+                .unwrap();
                     } else if node == "beta-tool" {
                         frame
                             .set(&Key::parse("beta").unwrap(), PhenixValue::U64(7))
