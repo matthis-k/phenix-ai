@@ -375,7 +375,7 @@ impl Kernel {
                             .ok_or_else(|| KernelError::EmbeddedFactoryMissing(plugin.clone())),
                         PluginExecution::Native { artifact } => {
                             self.take_native_instance(plugin, artifact).map(Some)
-                        },
+                        }
                         PluginExecution::Runtime {
                             runtime: runtime_id,
                             artifact,
