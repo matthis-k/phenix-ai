@@ -44,6 +44,7 @@ struct WakeHub {
 
 struct CallPermit {
     wake: bool,
+    owner_thread: std::thread::ThreadId,
     cancelled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     import_sender: Option<Sender<NativeHostImportRequest>>,
 }
@@ -65,7 +66,10 @@ unsafe extern "C" fn native_release_bytes(_: *mut c_void, ptr: *mut u8, len: usi
     }
 }
 
-fn host_owned_result(ticket: NativeCallTicket, result: Result<Vec<u8>, String>) -> NativeCallResult {
+fn host_owned_result(
+    ticket: NativeCallTicket,
+    result: Result<Vec<u8>, String>,
+) -> NativeCallResult {
     let (status, bytes) = match result {
         Ok(value) => (RESULT_READY, value),
         Err(error) => (RESULT_ERROR, error.into_bytes()),
@@ -100,9 +104,16 @@ unsafe extern "C" fn native_invoke_import(
     };
     let sender = {
         let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
-        calls
-            .get(&(ticket.root_id, ticket.call_id))
-            .and_then(|permit| permit.import_sender.clone())
+        match calls.get(&(ticket.root_id, ticket.call_id)) {
+            Some(permit) if permit.owner_thread == std::thread::current().id() => {
+                return host_owned_result(
+                    ticket,
+                    Err("native import cannot block its host dispatch thread".into()),
+                );
+            }
+            Some(permit) => permit.import_sender.clone(),
+            None => None,
+        }
     };
     let Some(sender) = sender else {
         return host_owned_result(ticket, Err("native import call is not admitted".into()));
@@ -391,10 +402,7 @@ impl NativePluginLibrary {
         ));
         std::fs::create_dir(&directory)
             .map_err(|error| NativeLoadError::Open(error.to_string()))?;
-        let staged = directory.join(format!(
-            "module.{}",
-            std::env::consts::DLL_EXTENSION
-        ));
+        let staged = directory.join(format!("module.{}", std::env::consts::DLL_EXTENSION));
         let result = (|| {
             std::fs::write(&staged, content)
                 .map_err(|error| NativeLoadError::Open(error.to_string()))?;
@@ -464,6 +472,14 @@ pub enum NativeInvocation {
     Pending,
 }
 
+/// Per-call capabilities for the native host callback. The import dispatcher
+/// remains with the Core PluginHost that owns the selected root.
+#[derive(Default)]
+pub struct NativeCallContext {
+    pub cancellation: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub import_sender: Option<Sender<NativeHostImportRequest>>,
+}
+
 /// Generation-owned plugin state; the only raw C callbacks are made through a
 /// guarded, validated table resident in NativePluginLibrary.
 pub struct NativePluginInstance {
@@ -529,7 +545,7 @@ impl NativePluginInstance {
         interface: &str,
         input: &[u8],
     ) -> Result<NativeInvocation, NativeLoadError> {
-        self.begin_with_cancellation(ticket, scope, component, interface, input, None, None)
+        self.begin_with_cancellation(ticket, scope, component, interface, input, NativeCallContext::default())
     }
 
     /// Register this callback's attenuation/cancellation predicate before
@@ -541,8 +557,7 @@ impl NativePluginInstance {
         component: &str,
         interface: &str,
         input: &[u8],
-        cancellation: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
-        import_sender: Option<Sender<NativeHostImportRequest>>,
+        context: NativeCallContext,
     ) -> Result<NativeInvocation, NativeLoadError> {
         if self.state != NativeInstanceState::Active {
             return Err(NativeLoadError::Lifecycle("begin requires active instance"));
@@ -563,8 +578,9 @@ impl NativePluginInstance {
                     key,
                     CallPermit {
                         wake: false,
-                        cancelled: cancellation,
-                        import_sender,
+                        owner_thread: std::thread::current().id(),
+                        cancelled: context.cancellation,
+                        import_sender: context.import_sender,
                     },
                 )
                 .is_some()
