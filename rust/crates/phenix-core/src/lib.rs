@@ -170,7 +170,6 @@ pub use persistence::provider::{
     PersistenceCandidateError, PersistenceProvider, PersistenceProviderError, PreparedPersistence,
     prepare_persistence_candidate,
 };
-pub use phenix_plugin_abi as native_plugin_abi;
 pub use phenix_contract::{
     Bytes, CallableId, CallableRef, ClientConnectionId, ComponentId, ComponentInterface,
     ConfigurationFrontendId, ContextResourceId, ContextRevisionId, Contract, ContractId,
@@ -181,6 +180,7 @@ pub use phenix_contract::{
     RoutingProfileId, SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId,
     SessionId, SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
+pub use phenix_plugin_abi as native_plugin_abi;
 pub use plugin::build::{
     BuildArgument, BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
     BuildSourceIdentity, BuildSourceRevision, BuildWorkingDirectory, PluginArtifactInput,
@@ -199,7 +199,9 @@ pub use plugin::management::{
     PluginTrialResult, PluginUnloadRequest, PreparedPluginManagement,
 };
 pub use plugin::prepared_mutation::PreparedMutationHandle;
-pub use plugin_pending::{PluginCallCompletion, PluginCallStart, PluginPendingCall, PluginPendingPoll};
+pub use plugin_pending::{
+    PluginCallCompletion, PluginCallStart, PluginPendingCall, PluginPendingPoll,
+};
 pub use reconciliation::graph::{
     BindingChange, ComponentChange, ComponentChangeKind, GraphDiff, GraphReconciler,
     ReconciliationAction, ReconciliationPreview, ReconciliationResult, ResourceChange,
