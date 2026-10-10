@@ -15,6 +15,6 @@ jobs:
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c
       - name: Print canonical native loader formatting diff
         run: |
-          nix develop --command maintenance fix
+          nix develop --command bash -c 'rustfmt --version; cargo --version; cd rust; cargo fmt --all --verbose'
           git diff -- rust/crates/phenix-native-loader/src/lib.rs
           git diff -- rust/crates/phenix-plugin-abi/src/lib.rs
