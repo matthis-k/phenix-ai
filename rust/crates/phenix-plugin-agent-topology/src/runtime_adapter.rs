@@ -481,22 +481,52 @@ pub fn run_agent_workflow(
     cancelled: impl FnMut() -> bool,
     step_limit: Option<NonZeroU64>,
 ) -> Result<AgentLoopResponse, String> {
+    run_agent_workflow_with_dispatch(root, command, cancelled, step_limit, false)
+}
+
+/// Opt in to the native pending Core scheduler without changing the agent
+/// topology, domain adapter or resolved provider contracts.
+pub fn run_agent_workflow_pending(
+    root: &RootExecutionHandle,
+    command: AgentLoopCommand,
+    cancelled: impl FnMut() -> bool,
+    step_limit: Option<NonZeroU64>,
+) -> Result<AgentLoopResponse, String> {
+    run_agent_workflow_with_dispatch(root, command, cancelled, step_limit, true)
+}
+
+fn run_agent_workflow_with_dispatch(
+    root: &RootExecutionHandle,
+    command: AgentLoopCommand,
+    cancelled: impl FnMut() -> bool,
+    step_limit: Option<NonZeroU64>,
+    native_pending: bool,
+) -> Result<AgentLoopResponse, String> {
     let mut run = TurnRun::from_command(command);
     // Provider substitution must not bypass the entry contract enforced by
     // the Basic node. Reject ambiguous tool identities before dispatch.
     run.validate_initial()?;
-    let result = root.execute_workflow(
-        (
-            &phenix_core::ComponentId::parse(super::AGENT_TOPOLOGY_PLUGIN)
-                .expect("static agent topology component id"),
-            "agent.turn",
-        ),
-        &mut run,
-        |node, _, run| run.prepare(node),
-        |node, _, output, run| run.project(node, output),
-        cancelled,
-        step_limit,
-    );
+    let owner = phenix_core::ComponentId::parse(super::AGENT_TOPOLOGY_PLUGIN)
+        .expect("static agent topology component id");
+    let result = if native_pending {
+        root.execute_workflow_pending(
+            (&owner, "agent.turn"),
+            &mut run,
+            |node, _, run| run.prepare(node),
+            |node, _, output, run| run.project(node, output),
+            cancelled,
+            step_limit,
+        )
+    } else {
+        root.execute_workflow(
+            (&owner, "agent.turn"),
+            &mut run,
+            |node, _, run| run.prepare(node),
+            |node, _, output, run| run.project(node, output),
+            cancelled,
+            step_limit,
+        )
+    };
     match result {
         Ok(report) => run.finish(report),
         Err(WorkflowRunError::Cancelled { .. }) => Ok(AgentLoopResponse::Cancelled {
