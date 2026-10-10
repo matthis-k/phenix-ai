@@ -11221,7 +11221,10 @@ mod tests {
                 maximum_authority: default_suite_authority(),
             });
             builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
-            let mut harness = builder.build().unwrap();
+            let path = temp_db("declarative-pending-replay");
+            let mut harness = builder
+                .build_with_persistence(LocalPersistence::open(&path).unwrap())
+                .unwrap();
             assert!(
                 harness
                     .resolved_generation()
@@ -11308,7 +11311,7 @@ mod tests {
             let resumed = invoke_transport_operation::<ResumeSession>(
                 &transport,
                 SessionResumeInput {
-                    session_id: created.session_id,
+                    session_id: created.session_id.clone(),
                     after_sequence: None,
                 },
             )
@@ -11340,6 +11343,29 @@ mod tests {
             }));
             drop(transport);
             worker_task.await.unwrap();
+
+            // Replay the same real application execution from durable state
+            // after shutting down the worker and its selected generation.
+            let mut restored = crate::PhenixRuntimeBuilder::with_selected_suite(
+                &BTreeSet::from([profile.to_owned()]),
+            )
+            .unwrap()
+            .build_with_persistence(LocalPersistence::open(&path).unwrap())
+            .unwrap();
+            restored.activate().unwrap();
+            let mut restored_worker = ApplicationWorker::new(restored).unwrap();
+            let replay = invoke_operation::<ResumeSession>(
+                &mut restored_worker,
+                SessionResumeInput {
+                    session_id: created.session_id,
+                    after_sequence: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(replay.updates, resumed.updates, "{profile}: journal changed after restart");
+            assert_eq!(replay.through_sequence, resumed.through_sequence);
+            drop(restored_worker);
+            let _ = fs::remove_file(&path);
         }
     }
 
