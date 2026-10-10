@@ -2050,6 +2050,75 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn suspended_fork_admits_both_children_and_cancels_the_unselected_scope() {
+        use std::cell::{Cell, RefCell};
+
+        let compiled = WorkflowTopology {
+            entry: "start".into(),
+            nodes: BTreeMap::from([
+                ("start".into(), service("fixture.start@1", &[(
+                    "spawn",
+                    WorkflowEdge::Fork {
+                        branches: BTreeMap::from([
+                            ("a".into(), "slow".into()),
+                            ("b".into(), "fast".into()),
+                        ]),
+                        policy: crate::WorkflowJoinPolicy::FirstCompleted,
+                        outputs: BTreeMap::new(),
+                        on_success: Box::new(WorkflowEdge::Finish),
+                        on_failure: Box::new(WorkflowEdge::Finish),
+                    },
+                )])),
+                ("slow".into(), service("fixture.slow@1", &[("done", WorkflowEdge::Finish)])),
+                ("fast".into(), service("fixture.fast@1", &[("done", WorkflowEdge::Finish)])),
+            ]),
+        }
+        .compile(|_| true)
+        .unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let admitted = RefCell::new(BTreeSet::new());
+        let cancellations = RefCell::new(Vec::new());
+        let fast_ready = Cell::new(false);
+        let wait_calls = Cell::new(0);
+        let result = compiled.execute_suspending::<_, String>(
+            &mut (),
+            Some(&mut frame),
+            |node, _, _, _, _, _| {
+                if node == "start" {
+                    return WorkflowInvokePoll::Ready(Ok("spawn".into()));
+                }
+                if admitted.borrow_mut().insert(node.to_owned()) {
+                    return WorkflowInvokePoll::Started;
+                }
+                if node == "fast" && fast_ready.get() {
+                    WorkflowInvokePoll::Ready(Ok("done".into()))
+                } else {
+                    WorkflowInvokePoll::Waiting
+                }
+            },
+            || false,
+            |scope| cancellations.borrow_mut().push(scope.to_owned()),
+            || {
+                assert_eq!(admitted.borrow().len(), 2);
+                assert_eq!(wait_calls.get(), 0, "no busy spinning over pending work");
+                wait_calls.set(wait_calls.get() + 1);
+                fast_ready.set(true);
+            },
+            None,
+        ).unwrap();
+        assert_eq!(result.executed_nodes, 2);
+        assert_eq!(result.final_outcome, "spawn/success");
+        assert_eq!(&*admitted.borrow(), &BTreeSet::from(["fast".into(), "slow".into()]));
+        assert_eq!(wait_calls.get(), 1);
+        assert_eq!(cancellations.borrow().len(), 1);
+        assert!(cancellations.borrow()[0].ends_with("/a"));
+    }
+
+    #[test]
     fn mapped_subplan_can_return_directly_to_parent_finish() {
         let mut all = selected();
         let parent = all.get_mut(&(owner(), "main".into())).unwrap();
