@@ -165,12 +165,27 @@ unsafe extern "C" fn native_invoke_import(
             hub.notified.notify_all();
         }
     }
-    host_owned_result(
-        ticket,
-        receiver
-            .recv()
-            .unwrap_or_else(|_| Err("native import dispatcher disconnected".into())),
-    )
+    // Core may cancel this root while the imported provider is still
+    // outstanding. A blocking recv would strand the native guest thread
+    // (and, ultimately, its generation lease) if the dispatcher is stalled.
+    // Cancellation is the only early exit: there is no implicit deadline
+    // for an otherwise live import or native invocation.
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(result) => return host_owned_result(ticket, result),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return host_owned_result(
+                    ticket,
+                    Err("native import dispatcher disconnected".into()),
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancellation.as_ref().is_some_and(|check| check()) {
+                    return host_owned_result(ticket, Err("native import cancelled".into()));
+                }
+            }
+        }
+    }
 }
 
 /// Clonable wake receiver for a root-owned native worker. An untrusted plugin
@@ -1035,6 +1050,78 @@ mod tests {
             receiver.try_recv().is_err(),
             "cancelled import was dispatched"
         );
+        HOST_REGISTRY.lock().unwrap().remove(&registry_id);
+    }
+
+    #[test]
+    fn in_flight_native_import_unblocks_on_cancellation_without_dispatch_reply() {
+        use std::sync::atomic::AtomicBool;
+        use std::time::Instant;
+
+        let hub = Arc::new(WakeHub {
+            calls: Mutex::new(BTreeMap::new()),
+            notified: Condvar::new(),
+        });
+        let registry_id = NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed);
+        HOST_REGISTRY
+            .lock()
+            .unwrap()
+            .insert(registry_id, Arc::downgrade(&hub));
+        let ticket = NativeCallTicket {
+            root_id: 71,
+            call_id: 73,
+        };
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let parent = Arc::clone(&cancelled);
+        hub.calls.lock().unwrap().insert(
+            (ticket.root_id, ticket.call_id),
+            CallPermit {
+                wake: false,
+                owner_thread: std::thread::current().id(),
+                cancelled: Some(Arc::new(move || parent.load(Ordering::Acquire))),
+                import_sender: Some(sender),
+            },
+        );
+        let (finished, completed) = mpsc::channel();
+        let guest = std::thread::spawn(move || {
+            let interface = b"fixture.blocked@1";
+            let bytes = b"ping";
+            // SAFETY: both borrowed inputs remain live through the call,
+            // whose ticket is registered with this host.
+            let result = unsafe {
+                native_invoke_import(
+                    registry_id as *mut c_void,
+                    ticket,
+                    NativeSlice {
+                        ptr: interface.as_ptr(),
+                        len: interface.len(),
+                    },
+                    NativeSlice {
+                        ptr: bytes.as_ptr(),
+                        len: bytes.len(),
+                    },
+                )
+            };
+            let _ = finished.send(decode_result(result, ticket).unwrap());
+        });
+        // Retain the reply handle. This simulates a blocked imported
+        // provider without accidentally releasing the guest via disconnect.
+        let request = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(request.interface, "fixture.blocked@1");
+        cancelled.store(true, Ordering::Release);
+        let completed_at = Instant::now();
+        let reply = completed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("cancelled native import must not wait for a provider reply");
+        assert!(matches!(
+            reply,
+            NativeInvocation::Failed(message)
+                if String::from_utf8_lossy(&message).contains("cancelled")
+        ));
+        assert!(completed_at.elapsed() < Duration::from_secs(5));
+        drop(request);
+        guest.join().unwrap();
         HOST_REGISTRY.lock().unwrap().remove(&registry_id);
     }
 
