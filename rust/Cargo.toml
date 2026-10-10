@@ -47,6 +47,7 @@ members = [
   "crates/phenix-plugin-repository-workers",
   "crates/phenix-plugin-api",
   "crates/phenix-plugin-abi",
+  "crates/phenix-native-loader",
   "crates/phenix-plugin-sessions",
   "crates/phenix-plugin-session-tree",
   "crates/phenix-plugin-step-runner",
