@@ -1883,19 +1883,28 @@ impl CompiledWorkflow {
                                     }
                                 }
                                 if let Some(destination) = destination_scope {
-                                    // The selected child contract already checks these
-                                    // parent-to-child input aliases separately.
-                                    for (parent, child) in &destination.inputs {
-                                        if remaining.get(parent) == Some(child) {
-                                            remaining.remove(parent);
+                                    if source_scope.is_some_and(|source| {
+                                        source.prefix.starts_with(&destination.prefix)
+                                    }) {
+                                        // Returning to an enclosing mapped plan:
+                                        // child outputs were removed above, so only
+                                        // parent-local aliases remain to validate.
+                                        transfer_schema = &destination.schema;
+                                    } else {
+                                        // The selected child contract already checks
+                                        // parent-to-child input aliases separately.
+                                        for (parent, child) in &destination.inputs {
+                                            if remaining.get(parent) == Some(child) {
+                                                remaining.remove(parent);
+                                            }
                                         }
-                                    }
-                                    if !remaining.is_empty() {
-                                        return Err(WorkflowCompileError::InvalidFrameTransfer {
-                                            node: name.clone(),
-                                            outcome: outcome.clone(),
-                                            reason: "cross-scope entry cannot mutate undeclared child fields".into(),
-                                        });
+                                        if !remaining.is_empty() {
+                                            return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                                node: name.clone(),
+                                                outcome: outcome.clone(),
+                                                reason: "cross-scope entry cannot mutate undeclared child fields".into(),
+                                            });
+                                        }
                                     }
                                 } else {
                                     transfer_schema = self.frame_schema_for_node(target, schema);
