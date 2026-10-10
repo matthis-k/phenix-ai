@@ -13,7 +13,10 @@ pub const BASIC_PRODUCT_CONFIGURATION: &str = "phenix.product.basic";
 pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
 const BASIC_AGENT_DEFAULTS: &[&str] = &[
-    "phenix.agent-loop",
+    // Basic and Advanced use the selected topology and naive node providers.
+    // Legacy agent-loop implementations remain explicit, replaceable choices.
+    "phenix.agent-topology",
+    "phenix.basic-agent-nodes",
     "phenix.application-agent-tools",
     "phenix.basic-skills",
     "phenix.context",
@@ -26,8 +29,10 @@ const BASIC_AGENT_DEFAULTS: &[&str] = &[
 const BASIC_PRODUCT_DEFAULTS: &[&str] = &[
     BASIC_AGENT_CONFIGURATION,
     "phenix.api",
+    "phenix.environment.local",
     "phenix.options",
     "phenix.providers",
+    "phenix.workspace",
     "openai-codex",
 ];
 
@@ -161,12 +166,35 @@ mod tests {
             &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
             &BTreeSet::new(),
         );
-        assert!(dependencies.contains("phenix.agent-loop"));
+        assert!(!dependencies.contains("phenix.agent-loop"));
+        assert!(dependencies.contains("phenix.agent-topology"));
+        assert!(dependencies.contains("phenix.basic-agent-nodes"));
         assert!(dependencies.contains("phenix.application-agent-tools"));
         assert!(dependencies.contains("phenix.basic-skills"));
         for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
             assert!(!dependencies.contains(optional));
         }
+    }
+
+    #[test]
+    fn excluding_legacy_loop_keeps_independent_declarative_defaults() {
+        let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+        let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
+        let defaults = expand_profile_defaults(&selected, &excluded);
+        assert!(!defaults.contains("phenix.agent-loop"));
+        assert!(defaults.contains("phenix.agent-topology"));
+        assert!(defaults.contains("phenix.basic-agent-nodes"));
+        assert!(defaults.contains("phenix.application-agent-tools"));
+
+        // Exclusions act independently: the declarative topology and Basic
+        // node implementation are replaceable without reinstating the loop.
+        let excluded = BTreeSet::from([
+            "phenix.agent-loop".to_owned(),
+            "phenix.basic-agent-nodes".to_owned(),
+        ]);
+        let defaults = expand_profile_defaults(&selected, &excluded);
+        assert!(defaults.contains("phenix.agent-topology"));
+        assert!(!defaults.contains("phenix.basic-agent-nodes"));
     }
 
     #[test]
@@ -179,7 +207,9 @@ mod tests {
             &BTreeSet::new(),
         );
         assert!(effective.contains(BASIC_AGENT_CONFIGURATION));
-        assert!(effective.contains("phenix.agent-loop"));
+        assert!(!effective.contains("phenix.agent-loop"));
+        assert!(effective.contains("phenix.agent-topology"));
+        assert!(effective.contains("phenix.basic-agent-nodes"));
         assert!(effective.contains("phenix.memory"));
     }
 
@@ -191,6 +221,7 @@ mod tests {
             "phenix.api",
             "phenix.options",
             "phenix.providers",
+            "phenix.workspace",
             "openai-codex",
         ] {
             assert!(basic.contains(&required), "basic product missed {required}");

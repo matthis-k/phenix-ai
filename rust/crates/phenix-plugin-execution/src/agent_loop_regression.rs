@@ -11,6 +11,10 @@ use phenix_core::{
     ResolvedGenerationActivation, SdkClient, ServiceContribution, ServiceId, ServiceRole,
     SessionId,
 };
+use phenix_plugin_agent_topology::{
+    agent_topology_component_manifest, agent_topology_declaration, agent_topology_manifest,
+    run_agent_workflow,
+};
 use phenix_plugin_basic_agent::{
     AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
     AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
@@ -19,6 +23,9 @@ use phenix_plugin_basic_agent::{
     agent_loop_component_manifest, agent_loop_control_service, agent_loop_factory,
     agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service,
+};
+use phenix_plugin_basic_agent_nodes::{
+    basic_agent_nodes_component_manifest, basic_agent_nodes_factory, basic_agent_nodes_manifest,
 };
 use phenix_sdk::{
     AttemptOutcome, BudgetActual, ContextDemand, DefaultInvocationCommand,
@@ -972,4 +979,153 @@ fn agent_loop_without_default_invocation_fails_at_optional_import_boundary() {
         }
         error => panic!("unexpected error: {error}"),
     }
+}
+
+/// Runs the new topology through exactly the same invocation/tool fixtures used
+/// by the legacy agent loop above. Neither model nor tool fixture is duplicated.
+fn declarative_kernel() -> (Kernel, Arc<AtomicU32>, Arc<Mutex<Vec<String>>>) {
+    let authority = regression_authority();
+    let execution = execution_manifest(authority.clone());
+    let nodes = basic_agent_nodes_manifest(authority.clone());
+    let tools = tool_adapter_manifest();
+    let invocation = provider_manifest();
+    let topology = agent_topology_manifest(authority.clone());
+    let manifests = [
+        execution.clone(),
+        nodes.clone(),
+        tools.clone(),
+        invocation.clone(),
+        topology,
+    ];
+    let resolved = ResolvedGeneration::resolve(
+        manifests.clone(),
+        [
+            execution_component_manifest(authority.clone()),
+            basic_agent_nodes_component_manifest(authority.clone()),
+            tool_adapter_component(),
+            provider_component(),
+            agent_topology_component_manifest(authority.clone()),
+        ],
+        [],
+        &authority,
+    )
+    .unwrap()
+    .with_workflows([agent_topology_declaration()])
+    .unwrap();
+
+    assert!(
+        resolved
+            .plugins()
+            .iter()
+            .all(|plugin| plugin.id.as_str() != "phenix.agent-loop"),
+        "the full declarative model/tool parity fixture must run without a legacy agent provider"
+    );
+
+    let executions = Arc::new(AtomicU32::new(0));
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let cancellation = Arc::new(AtomicBool::new(false));
+
+    let mut kernel = Kernel::new(resolved.kernel_config().clone());
+    kernel.activate_resolved_generation(&resolved).unwrap();
+    kernel
+        .register_embedded_factory(execution.id, execution_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(nodes.id, basic_agent_nodes_factory)
+        .unwrap();
+    let executions_for_factory = Arc::clone(&executions);
+    let progress_for_factory = Arc::clone(&progress);
+    let cancellation_for_factory = Arc::clone(&cancellation);
+    kernel
+        .register_embedded_factory(tools.id, move || {
+            Box::new(ToolAdapter {
+                executions: Arc::clone(&executions_for_factory),
+                progress: Arc::clone(&progress_for_factory),
+                cancel_on_next_control: Arc::clone(&cancellation_for_factory),
+            })
+        })
+        .unwrap();
+    kernel
+        .register_embedded_factory(invocation.id, || Box::new(InvocationProvider { calls: 0 }))
+        .unwrap();
+    kernel.activate_all().unwrap();
+    (kernel, executions, progress)
+}
+
+#[test]
+fn declarative_basic_loop_matches_legacy_final_and_tool_continuation() {
+    for tool in [
+        None,
+        Some("fixture.client.echo"),
+        Some("fixture.activate"),
+        Some("fixture.error"),
+        Some("fixture.mixed"),
+        Some("fixture.many"),
+        Some("fixture.long"),
+        Some("fixture.cancel-between"),
+    ] {
+        let tools = tool.into_iter().map(descriptor).collect::<Vec<_>>();
+
+        let (mut legacy, legacy_id, legacy_calls, legacy_progress) = kernel(true);
+        let legacy_output =
+            invoke_agent_loop(&mut legacy, &legacy_id, command(tools.clone())).unwrap();
+        let legacy_value: PhenixValue = serde_json::from_slice(&legacy_output).unwrap();
+        let expected = AgentLoopResponse::try_from(Project(&legacy_value)).unwrap();
+
+        let (declarative, new_calls, new_progress) = declarative_kernel();
+        let root = declarative.root_execution_handle(&regression_authority());
+        let actual = run_agent_workflow(&root, command(tools), || false, None).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(
+            new_calls.load(Ordering::SeqCst),
+            legacy_calls.load(Ordering::SeqCst),
+        );
+        assert_eq!(
+            new_progress.lock().unwrap().as_slice(),
+            legacy_progress.lock().unwrap().as_slice(),
+        );
+    }
+}
+
+#[test]
+fn declarative_basic_loop_rejects_duplicate_and_reused_call_ids_before_replay() {
+    for tool in ["fixture.duplicate-call-id", "fixture.reuse-call-id"] {
+        let descriptor = descriptor(tool);
+        let (mut legacy, legacy_id, executions, _) = kernel(true);
+        let legacy_error =
+            invoke_agent_loop(&mut legacy, &legacy_id, command(vec![descriptor.clone()]))
+                .unwrap_err()
+                .to_string();
+
+        let (declarative, new_calls, _) = declarative_kernel();
+        let root = declarative.root_execution_handle(&regression_authority());
+        let error =
+            run_agent_workflow(&root, command(vec![descriptor]), || false, None).unwrap_err();
+        assert!(legacy_error.contains("duplicate tool call id"));
+        assert!(error.contains("duplicate tool call id"));
+        assert_eq!(
+            new_calls.load(Ordering::SeqCst),
+            executions.load(Ordering::SeqCst),
+        );
+    }
+}
+
+#[test]
+fn declarative_basic_loop_preserves_tool_cancellation_and_usage() {
+    let tools = vec![descriptor("fixture.cancel-during")];
+    let (mut legacy, legacy_id, legacy_calls, _) = kernel(true);
+    let output = invoke_agent_loop(&mut legacy, &legacy_id, command(tools.clone())).unwrap();
+    let decoded: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let expected = AgentLoopResponse::try_from(Project(&decoded)).unwrap();
+
+    let (declarative, calls, progress) = declarative_kernel();
+    let root = declarative.root_execution_handle(&regression_authority());
+    let actual = run_agent_workflow(&root, command(tools), || false, None).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        legacy_calls.load(Ordering::SeqCst)
+    );
+    assert_eq!(progress.lock().unwrap().as_slice(), ["call:fixture-call-1"]);
 }

@@ -18,6 +18,11 @@ pub struct PluginArtifact {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PluginExecution<A = PluginArtifact> {
     Embedded,
+    /// Independently compiled C-ABI artifact loaded by the kernel's
+    /// intrinsic versioned native loader, not a guest runtime adapter.
+    Native {
+        artifact: A,
+    },
     Runtime {
         runtime: PluginRuntimeId,
         artifact: A,
@@ -146,6 +151,9 @@ impl<A> PluginManifest<A> {
     pub fn map_artifact<B>(self, map: impl FnOnce(A) -> B) -> PluginManifest<B> {
         let execution = match self.execution {
             PluginExecution::Embedded => PluginExecution::Embedded,
+            PluginExecution::Native { artifact } => PluginExecution::Native {
+                artifact: map(artifact),
+            },
             PluginExecution::Runtime { runtime, artifact } => PluginExecution::Runtime {
                 runtime,
                 artifact: map(artifact),

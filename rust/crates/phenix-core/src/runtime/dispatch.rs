@@ -421,7 +421,10 @@ pub(super) fn invoke_resolved_chain_with(
     let live_call = runtime
         .tasks
         .begin_call(&provider.plugin, scope.generation.generation());
-    let call_cancellation = live_call.cancellation_token().clone();
+    let call_cancellation = live_call
+        .cancellation_token()
+        .clone()
+        .with_parent(scope.cancellation.as_ref());
     scope.authority = effective_authority.clone();
     scope.cancellation = Some(call_cancellation.clone());
     let host = PluginHost {

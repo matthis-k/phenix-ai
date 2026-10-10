@@ -1,15 +1,15 @@
 use crate::{
-    ArtifactRevision, Authority, CallCancellationToken, ComponentGraphError, ComponentId,
-    ComponentInterface, ComponentInvocationError, DurableSchema, DurableSchemaRegistration,
-    EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
-    EventTypeId, GenerationId, GenerationTopology, InterfaceId, KernelConfig, KernelError,
-    KernelEvent, KernelPolicyIdentity, LocalPersistence, PermissionId, PersistenceBackend,
-    PluginArtifact, PluginExecution, PluginId, PluginManifest, PluginRuntimeId, ProviderBinding,
-    ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
+    ArtifactRevision, Authority, CallCancellationToken, CancellationToken, ComponentGraphError,
+    ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
+    DurableSchemaRegistration, EventAdmissionReceipt, EventBus, EventEnvelope, EventError,
+    EventHandler, EventSubscription, EventTypeId, GenerationId, GenerationTopology, InterfaceId,
+    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence, PermissionId,
+    PersistenceBackend, PluginArtifact, PluginExecution, PluginId, PluginManifest, PluginRuntimeId,
+    ProviderBinding, ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
     ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener,
     ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace,
-    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
-    TransactionOp,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskHandle, TaskRuntime,
+    TaskScope, TransactionOp,
     plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
 };
 use std::{
@@ -17,7 +17,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -25,6 +25,7 @@ mod dispatch;
 mod host;
 mod kernel;
 mod listener;
+mod native_plugin;
 mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
@@ -34,10 +35,21 @@ mod tests;
 mod trace;
 
 pub use listener::PluginListener;
+pub use native_plugin::NativeRegistrationError;
 pub use trace::{
     DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY, ProvenanceBuffer,
     RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink,
 };
+
+static NEXT_RUNTIME_ROOT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_runtime_root_id() -> u64 {
+    NEXT_RUNTIME_ROOT_ID
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            value.checked_add(1)
+        })
+        .expect("runtime root identity space is exhausted")
+}
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
@@ -81,6 +93,7 @@ impl ProviderEndpointProvenance {
             PluginExecution::Runtime { runtime, artifact } => {
                 (Some(runtime.clone()), Some(artifact.revision.clone()))
             }
+            PluginExecution::Native { artifact } => (None, Some(artifact.revision.clone())),
             PluginExecution::Embedded | PluginExecution::ResourceOnly => (None, None),
         };
         Self {
@@ -293,6 +306,7 @@ impl RootExecutionConstraints {
 #[derive(Clone)]
 pub(super) struct CallScope {
     generation: Arc<GenerationTopology>,
+    root_id: u64,
     authority: Authority,
     pinned_bindings: Arc<BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>>,
     cancellation: Option<CallCancellationToken>,
@@ -318,6 +332,7 @@ impl CallScope {
     ) -> Self {
         Self {
             generation,
+            root_id: next_runtime_root_id(),
             authority: constraints.authority.clone(),
             pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation: None,
@@ -354,6 +369,7 @@ impl CallScope {
     ) -> Self {
         Self {
             generation,
+            root_id: next_runtime_root_id(),
             authority: authority.clone(),
             pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation,
@@ -366,6 +382,7 @@ impl CallScope {
     pub(super) fn delegated(&self, authority: Authority, transactions: TransactionContext) -> Self {
         Self {
             generation: Arc::clone(&self.generation),
+            root_id: self.root_id,
             authority,
             pinned_bindings: Arc::clone(&self.pinned_bindings),
             cancellation: self.cancellation.clone(),
@@ -473,6 +490,25 @@ pub trait SharedPluginInvocation: Send + Sync {
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         self.invoke(service, input, host)
+    }
+
+    /// Start a component call on an async-capable native provider. Legacy
+    /// implementations stay immediate; a provider may instead give Core one
+    /// correlated completion handle that can be settled from a callback.
+    ///
+    /// This runs inside the existing root-owned native worker for pending
+    /// workflows, so a deferred plugin callback never creates another plan
+    /// scheduler or reselects its provider. The host cancellation token remains
+    /// valid throughout this call. Do not spawn untracked worker threads from
+    /// this method: the producer must own and complete the returned handle.
+    fn begin_component(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> crate::PluginCallStart {
+        crate::PluginCallStart::Immediate(self.invoke_component(component, service, input, host))
     }
 
     fn invoke_layer(
@@ -602,7 +638,10 @@ impl PluginInvocation for SharedInvocationEndpoint {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        self.0.invoke_component(component, service, input, host)
+        match self.0.begin_component(component, service, input, host) {
+            crate::PluginCallStart::Immediate(result) => result,
+            crate::PluginCallStart::Pending(response) => response.wait(),
+        }
     }
 
     fn invoke_layer(
@@ -800,6 +839,7 @@ fn constrain_authority_to_ceiling(
 /// generations concurrently.
 pub struct RootExecutionHandle {
     runtime: Arc<GenerationTopology>,
+    root_id: u64,
     constraints: RootExecutionConstraints,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -817,6 +857,7 @@ impl Clone for RootExecutionHandle {
         self.root_leases.fetch_add(1, Ordering::AcqRel);
         Self {
             runtime: Arc::clone(&self.runtime),
+            root_id: self.root_id,
             constraints: self.constraints.clone(),
             states: self.states.clone(),
             instances: self.instances.clone(),
@@ -832,6 +873,12 @@ impl Clone for RootExecutionHandle {
 }
 
 impl RootExecutionHandle {
+    /// Stable identity of this root across native child calls and clones.
+    #[must_use]
+    pub fn root_id(&self) -> u64 {
+        self.root_id
+    }
+
     #[must_use]
     pub fn generation(&self) -> Option<&GenerationId> {
         self.runtime.generation()
@@ -845,6 +892,35 @@ impl RootExecutionHandle {
     #[must_use]
     pub fn constraints(&self) -> &RootExecutionConstraints {
         &self.constraints
+    }
+
+    /// Admit native work in this root's selected generation and authority.
+    /// The caller owns its plan scope; the native worker cannot re-resolve a
+    /// provider or extend its permissions.
+    pub(crate) fn spawn_native_workflow_task<T, F>(
+        &self,
+        requested_authority: &Authority,
+        worker: F,
+    ) -> TaskHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(CancellationToken) -> T + Send + 'static,
+    {
+        self.tasks.spawn(
+            self.generation()
+                .expect("workflow roots require a selected generation"),
+            self.authority(),
+            requested_authority,
+            worker,
+        )
+    }
+
+    /// A task group is one pinned workflow-root lifetime. Native tickets
+    /// retain this root's generation even if the client abandons its handle.
+    pub fn native_workflow_tasks(
+        self,
+    ) -> Result<crate::WorkflowNativeTaskGroup, crate::WorkflowTaskError> {
+        crate::WorkflowNativeTaskGroup::new(self)
     }
 }
 
@@ -860,6 +936,9 @@ pub struct Kernel {
     resident_generations: BTreeMap<GenerationId, GenerationRuntimeState>,
     authority_ceiling: Option<Authority>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
+    /// Native code is keyed by exact manifest-selected content revision.
+    /// Reusing an older plugin ID can never select an old ABI image.
+    native_factories: BTreeMap<(PluginId, ArtifactRevision), EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,

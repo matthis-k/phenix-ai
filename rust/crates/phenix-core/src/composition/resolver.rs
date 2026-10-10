@@ -1,11 +1,12 @@
 use crate::{
-    Authority, ComponentEntryTrigger, ComponentGraphError, ComponentManifest,
+    Authority, CompiledWorkflow, ComponentEntryTrigger, ComponentGraphError, ComponentManifest,
     ComponentProcessArgument, CompositionMetadataError, ConfigContribution, ConfigMergeError,
     ConfigurationFrontendId, ConfigurationFrontendMetadata, DurableSchemaRegistration,
     EntryTriggerKind, FrontendConfigContribution, FrontendConfigError, GenerationId, InterfaceId,
     KernelConfig, KernelError, LayerPolicy, PermissionId, PersistenceBackendFeature, PluginId,
     PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
+    WorkflowCompileError, WorkflowDeclaration,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -35,6 +36,7 @@ pub struct GenerationTopology {
     dispatch_topology: ResolvedDispatchTopology,
     resources: Vec<SkillResourceMetadata>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    workflows: BTreeMap<(crate::ComponentId, String), CompiledWorkflow>,
 }
 
 impl GenerationTopology {
@@ -47,6 +49,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -65,6 +68,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -85,6 +89,7 @@ impl GenerationTopology {
             dispatch_topology,
             resources,
             entry_triggers,
+            workflows: BTreeMap::new(),
         }
     }
 
@@ -125,6 +130,9 @@ impl GenerationTopology {
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
         &self.entry_triggers
     }
+    pub fn workflow(&self, owner: &crate::ComponentId, name: &str) -> Option<&CompiledWorkflow> {
+        self.workflows.get(&(owner.clone(), name.to_owned()))
+    }
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
         let id = match &mut self.identity {
@@ -154,6 +162,48 @@ pub enum GenerationResolutionError {
         error: FrontendConfigError,
     },
     DuplicateResource(String),
+    MissingWorkflowOwner(crate::ComponentId),
+    InvalidWorkflowName(crate::ComponentId),
+    WorkflowAlreadyBound,
+    FrameSchemasAlreadyBound,
+    ProjectionsAlreadyBound,
+    MissingProjectionWorkflow {
+        owner: crate::ComponentId,
+        workflow: String,
+    },
+    DuplicateProjection {
+        owner: crate::ComponentId,
+        workflow: String,
+        node: String,
+    },
+    InvalidProjection {
+        owner: crate::ComponentId,
+        workflow: String,
+        node: String,
+        error: crate::WorkflowProjectionError,
+    },
+    MissingFrameWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    DuplicateFrameSchema {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    InvalidFrameSchema {
+        owner: crate::ComponentId,
+        name: String,
+        error: crate::WorkflowFrameError,
+    },
+    DuplicateWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+    },
+    InvalidWorkflow {
+        owner: crate::ComponentId,
+        name: String,
+        error: Box<WorkflowCompileError>,
+    },
     DuplicateDurableSchema(ResourceNamespace),
     UndeclaredDurableSchema {
         plugin: PluginId,
@@ -229,6 +279,72 @@ impl Display for GenerationResolutionError {
                     f,
                     "configuration frontend {frontend} rejected contribution: {error:?}"
                 )
+            }
+            Self::MissingWorkflowOwner(owner) => {
+                write!(f, "workflow owner {owner} is absent from resolved graph")
+            }
+            Self::InvalidWorkflowName(owner) => {
+                write!(f, "workflow owner {owner} has empty workflow name")
+            }
+            Self::WorkflowAlreadyBound => {
+                write!(
+                    f,
+                    "workflow declarations already belong to this resolved generation"
+                )
+            }
+            Self::FrameSchemasAlreadyBound => {
+                write!(
+                    f,
+                    "frame schemas already belong to this resolved generation"
+                )
+            }
+            Self::ProjectionsAlreadyBound => {
+                f.write_str("outcome projections are already bound in this generation")
+            }
+            Self::MissingProjectionWorkflow { owner, workflow } => {
+                write!(
+                    f,
+                    "projection targets an unselected workflow {owner}:{workflow}"
+                )
+            }
+            Self::DuplicateProjection {
+                owner,
+                workflow,
+                node,
+            } => {
+                write!(f, "duplicate projection for {owner}:{workflow}:{node}")
+            }
+            Self::InvalidProjection {
+                owner,
+                workflow,
+                node,
+                error,
+            } => {
+                write!(
+                    f,
+                    "invalid projection for {owner}:{workflow}:{node}: {error:?}"
+                )
+            }
+            Self::MissingFrameWorkflow { owner, name } => {
+                write!(
+                    f,
+                    "frame schema targets an unselected workflow {owner}:{name}"
+                )
+            }
+            Self::DuplicateFrameSchema { owner, name } => {
+                write!(f, "duplicate frame schema for workflow {owner}:{name}")
+            }
+            Self::InvalidFrameSchema { owner, name, error } => {
+                write!(
+                    f,
+                    "invalid frame schema for workflow {owner}:{name}: {error}"
+                )
+            }
+            Self::DuplicateWorkflow { owner, name } => {
+                write!(f, "duplicate workflow {owner}:{name}")
+            }
+            Self::InvalidWorkflow { owner, name, error } => {
+                write!(f, "workflow {owner}:{name} is invalid: {error:?}")
             }
             Self::DuplicateResource(resource) => {
                 write!(f, "duplicate skill/resource metadata: {resource}")
@@ -363,6 +479,8 @@ pub struct ResolvedGeneration {
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
+    workflows: Vec<WorkflowDeclaration>,
+    workflow_projections: Vec<crate::WorkflowProjectionDeclaration>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
@@ -703,6 +821,8 @@ impl ResolvedGeneration {
             components,
             entry_triggers,
             process_arguments,
+            workflows: Vec::new(),
+            workflow_projections: Vec::new(),
             durable_schemas,
             configuration,
             layer_policies: inputs.layer_policies,
@@ -774,6 +894,309 @@ impl ResolvedGeneration {
 
     pub fn process_arguments(&self) -> &[ComponentProcessArgument] {
         &self.process_arguments
+    }
+
+    pub fn workflows(&self) -> &[WorkflowDeclaration] {
+        &self.workflows
+    }
+
+    /// Bind workflow nodes to the canonical resolved component imports.
+    pub fn with_workflows(
+        mut self,
+        declarations: impl IntoIterator<Item = WorkflowDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|left, right| {
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        // Generation metadata is immutable once workflows are attached.
+        // A new selection must re-resolve the candidate generation.
+        if !self.workflows.is_empty() {
+            return if self.workflows == declarations {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::WorkflowAlreadyBound)
+            };
+        }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
+        // Reject conflicting authorship before inspecting a provider graph.
+        // Two declarations for one owner/name are ambiguous even when one is
+        // malformed. Their input enumeration must not decide which failure
+        // wins or which selected import is inspected first.
+        for pair in declarations.windows(2) {
+            if pair[0].owner == pair[1].owner && pair[0].name == pair[1].name {
+                return Err(GenerationResolutionError::DuplicateWorkflow {
+                    owner: pair[0].owner.clone(),
+                    name: pair[0].name.clone(),
+                });
+            }
+        }
+        // Resolve inclusions from the complete selected declaration set, never
+        // from a runtime provider search. Same-component reuse is the only
+        // permitted ownership scope in this first lowering form.
+        let selected_topologies: BTreeMap<_, _> = declarations
+            .iter()
+            .map(|declaration| {
+                (
+                    (declaration.owner.clone(), declaration.name.clone()),
+                    declaration.topology.clone(),
+                )
+            })
+            .collect();
+        let mut compiled = BTreeMap::new();
+        for declaration in &declarations {
+            if declaration.name.trim().is_empty() {
+                return Err(GenerationResolutionError::InvalidWorkflowName(
+                    declaration.owner.clone(),
+                ));
+            }
+            if self
+                .component_graph()
+                .component(&declaration.owner)
+                .is_none()
+            {
+                return Err(GenerationResolutionError::MissingWorkflowOwner(
+                    declaration.owner.clone(),
+                ));
+            }
+            let topology = crate::WorkflowTopology::inline_selected(
+                &declaration.owner,
+                &declaration.name,
+                &selected_topologies,
+            )
+            .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                owner: declaration.owner.clone(),
+                name: declaration.name.clone(),
+                error: Box::new(error),
+            })?;
+            let workflow = topology
+                .compile_for_component(self.component_graph(), &declaration.owner)
+                .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error: Box::new(error),
+                })?;
+            let key = (declaration.owner.clone(), declaration.name.clone());
+            if compiled.insert(key.clone(), workflow).is_some() {
+                return Err(GenerationResolutionError::DuplicateWorkflow {
+                    owner: key.0,
+                    name: key.1,
+                });
+            }
+        }
+        // A compiler semantic revision changes the meaning of identical
+        // authored plan bytes. Version the canonical execution contract in
+        // every pinned generation, not just the plugin-provided declarations.
+        const CLOSED_PLAN_IR_SEMANTICS_REVISION: u32 = 10;
+        self.runtime.incorporate_semantic_metadata(&(
+            "phenix.workflow-ir",
+            CLOSED_PLAN_IR_SEMANTICS_REVISION,
+            &declarations,
+        ));
+        self.runtime.workflows = compiled;
+        self.workflows = declarations;
+        Ok(self)
+    }
+
+    /// Bind frame types to existing selected workflows as part of a candidate.
+    ///
+    /// All ownership, schema, and duplicate checks happen before publishing
+    /// any new compiled binding or changing generation identity. Legacy plans
+    /// remain frame-free unless their owner explicitly declares a schema.
+    pub fn with_workflow_frame_schemas(
+        mut self,
+        declarations: impl IntoIterator<Item = crate::WorkflowFrameDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|left, right| {
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        for pair in declarations.windows(2) {
+            if pair[0].owner == pair[1].owner && pair[0].name == pair[1].name {
+                return Err(GenerationResolutionError::DuplicateFrameSchema {
+                    owner: pair[0].owner.clone(),
+                    name: pair[0].name.clone(),
+                });
+            }
+        }
+        let selected_topologies: BTreeMap<_, _> = self
+            .workflows
+            .iter()
+            .map(|workflow| {
+                (
+                    (workflow.owner.clone(), workflow.name.clone()),
+                    workflow.topology.clone(),
+                )
+            })
+            .collect();
+        let schemas: BTreeMap<_, _> = declarations
+            .iter()
+            .map(|declaration| {
+                (
+                    (declaration.owner.clone(), declaration.name.clone()),
+                    declaration.schema.clone(),
+                )
+            })
+            .collect();
+        let mut scoped_plans = BTreeMap::new();
+        let mut already_bound = 0;
+        for declaration in &declarations {
+            declaration.schema.validate().map_err(|error| {
+                GenerationResolutionError::InvalidFrameSchema {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error,
+                }
+            })?;
+            let compiled = self
+                .runtime
+                .workflow(&declaration.owner, &declaration.name)
+                .ok_or_else(|| GenerationResolutionError::MissingFrameWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                })?;
+            let scopes = crate::WorkflowTopology::selected_scoped_subplans(
+                &declaration.owner,
+                &declaration.name,
+                &selected_topologies,
+                &schemas,
+            )
+            .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                owner: declaration.owner.clone(),
+                name: declaration.name.clone(),
+                error: Box::new(error),
+            })?;
+            let mut candidate = compiled.clone();
+            candidate.bind_scoped_subplans(scopes.clone());
+            candidate
+                .validate_frame_schema(&declaration.schema)
+                .map_err(|error| GenerationResolutionError::InvalidWorkflow {
+                    owner: declaration.owner.clone(),
+                    name: declaration.name.clone(),
+                    error: Box::new(error),
+                })?;
+            scoped_plans.insert(
+                (declaration.owner.clone(), declaration.name.clone()),
+                scopes,
+            );
+            if let Some(existing) = compiled.frame_schema() {
+                if existing != &declaration.schema {
+                    return Err(GenerationResolutionError::FrameSchemasAlreadyBound);
+                }
+                already_bound += 1;
+            }
+        }
+        // Publish the complete frame-contract set in one batch. Otherwise
+        // attaching A then B would hash in a different order from B then A.
+        let selected_bound = self
+            .runtime
+            .workflows
+            .values()
+            .filter(|workflow| workflow.frame_schema().is_some())
+            .count();
+        if selected_bound != 0 {
+            return if already_bound == selected_bound && already_bound == declarations.len() {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::FrameSchemasAlreadyBound)
+            };
+        }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
+        const FRAME_CONTRACT_REVISION: u32 = 2;
+        self.runtime
+            .incorporate_semantic_metadata(&(FRAME_CONTRACT_REVISION, &declarations));
+        for declaration in declarations {
+            let key = (declaration.owner, declaration.name);
+            let compiled = self
+                .runtime
+                .workflows
+                .get_mut(&key)
+                .expect("selected schema target was validated");
+            compiled.bind_scoped_subplans(
+                scoped_plans
+                    .remove(&key)
+                    .expect("the complete candidate was validated"),
+            );
+            compiled.bind_frame_schema(declaration.schema);
+        }
+        Ok(self)
+    }
+
+    /// Freeze the selected normal-result projection against the exact bound
+    /// import response schema. This never adds a resolver or fallback provider.
+    pub fn with_workflow_projections(
+        mut self,
+        declarations: impl IntoIterator<Item = crate::WorkflowProjectionDeclaration>,
+    ) -> Result<Self, GenerationResolutionError> {
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by(|a, b| {
+            (&a.owner, &a.workflow, &a.node).cmp(&(&b.owner, &b.workflow, &b.node))
+        });
+        for pair in declarations.windows(2) {
+            if (&pair[0].owner, &pair[0].workflow, &pair[0].node)
+                == (&pair[1].owner, &pair[1].workflow, &pair[1].node)
+            {
+                return Err(GenerationResolutionError::DuplicateProjection {
+                    owner: pair[0].owner.clone(),
+                    workflow: pair[0].workflow.clone(),
+                    node: pair[0].node.clone(),
+                });
+            }
+        }
+        if !self.workflow_projections.is_empty() {
+            return if self.workflow_projections == declarations {
+                Ok(self)
+            } else {
+                Err(GenerationResolutionError::ProjectionsAlreadyBound)
+            };
+        }
+        for declaration in &declarations {
+            let compiled = self
+                .runtime
+                .workflow(&declaration.owner, &declaration.workflow)
+                .ok_or_else(|| GenerationResolutionError::MissingProjectionWorkflow {
+                    owner: declaration.owner.clone(),
+                    workflow: declaration.workflow.clone(),
+                })?;
+            compiled
+                .validate_outcome_projection(&declaration.node, &declaration.projection)
+                .map_err(|error| GenerationResolutionError::InvalidProjection {
+                    owner: declaration.owner.clone(),
+                    workflow: declaration.workflow.clone(),
+                    node: declaration.node.clone(),
+                    error,
+                })?;
+        }
+        if declarations.is_empty() {
+            return Ok(self);
+        }
+        const PROJECTION_BINDING_REVISION: u32 = 1;
+        self.runtime.incorporate_semantic_metadata(&(
+            "phenix.workflow-projections",
+            PROJECTION_BINDING_REVISION,
+            &declarations,
+        ));
+        for declaration in &declarations {
+            self.runtime
+                .workflows
+                .get_mut(&(declaration.owner.clone(), declaration.workflow.clone()))
+                .expect("projection target validated")
+                .bind_outcome_projection(declaration.node.clone(), declaration.projection.clone());
+        }
+        self.workflow_projections = declarations;
+        Ok(self)
+    }
+
+    pub fn workflow_projections(&self) -> &[crate::WorkflowProjectionDeclaration] {
+        &self.workflow_projections
     }
 
     pub fn durable_schemas(&self) -> &[DurableSchemaRegistration] {
@@ -859,7 +1282,64 @@ impl ResolvedGeneration {
             authority_ceiling,
         }
         .identity();
-        Ok(Self {
+        // Workflow definitions belong to their originating plugin revision.
+        // Reusing a component ID does not transfer authorship of its topology.
+        // Until artifact contributions can be reselected, carry a declaration
+        // forward only when both the owning component and plugin manifest are
+        // unchanged. A changed owner must publish its own new declaration.
+        let retained_workflows = self
+            .workflows
+            .iter()
+            .filter(|declaration| {
+                let Some(previous) = self
+                    .components
+                    .iter()
+                    .find(|component| component.id == declaration.owner)
+                else {
+                    return false;
+                };
+                if !components.iter().any(|component| component == previous) {
+                    return false;
+                }
+                let Some(owner) = self
+                    .plugins
+                    .iter()
+                    .find(|plugin| plugin.id == previous.owner)
+                else {
+                    return false;
+                };
+                plugins.iter().any(|plugin| plugin == owner)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        // A retained workflow keeps its typed frame contract. Dropping the
+        // schema here would leave the compiled plan requiring a frame while
+        // the promoted generation exposes no schema to construct that frame.
+        // Source the contract from the already selected, immutable plan.
+        let retained_frames = retained_workflows
+            .iter()
+            .filter_map(|declaration| {
+                self.runtime
+                    .workflow(&declaration.owner, &declaration.name)
+                    .and_then(|compiled| compiled.frame_schema())
+                    .map(|schema| crate::WorkflowFrameDeclaration {
+                        owner: declaration.owner.clone(),
+                        name: declaration.name.clone(),
+                        schema: schema.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let retained_projections = self
+            .workflow_projections
+            .iter()
+            .filter(|projection| {
+                retained_workflows.iter().any(|workflow| {
+                    workflow.owner == projection.owner && workflow.name == projection.workflow
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        Self {
             runtime: GenerationTopology::resolved(
                 generation,
                 kernel_config,
@@ -871,12 +1351,17 @@ impl ResolvedGeneration {
             components,
             entry_triggers,
             process_arguments,
+            workflows: Vec::new(),
+            workflow_projections: Vec::new(),
             durable_schemas,
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
             authority_ceiling: authority_ceiling.clone(),
-        })
+        }
+        .with_workflows(retained_workflows)?
+        .with_workflow_frame_schemas(retained_frames)?
+        .with_workflow_projections(retained_projections)
     }
 }
 

@@ -3,7 +3,7 @@ use crate::{
     ComponentProcessArgument, ComponentRuntimeMetadata, ConfigurationFrontendMetadata,
     GenerationId, InterfaceId, LayerPolicy, PluginExecution, PluginManifest, PluginPackageMetadata,
     ResolvedComponentGraph, ResolvedCompositionMetadata, ResolvedConfigContributions,
-    ResolvedGeneration, ResolvedListener, ServiceId, SkillResourceMetadata,
+    ResolvedGeneration, ResolvedListener, ServiceId, SkillResourceMetadata, WorkflowDeclaration,
 };
 use std::collections::BTreeMap;
 
@@ -12,6 +12,8 @@ pub struct ResolvedGenerationInspection {
     generation: GenerationId,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
+    workflows: Vec<WorkflowDeclaration>,
+    workflow_node_providers: BTreeMap<(ComponentId, String, String), ComponentId>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
     resources: Vec<SkillResourceMetadata>,
@@ -31,10 +33,34 @@ pub struct ResolvedListenerInspection<'a> {
 
 impl ResolvedGenerationInspection {
     pub fn from_resolved(resolved: &ResolvedGeneration) -> Self {
+        let mut workflow_node_providers = BTreeMap::new();
+        for declaration in resolved.workflows() {
+            let compiled = resolved
+                .generation_topology()
+                .workflow(&declaration.owner, &declaration.name)
+                .expect("resolved workflow declaration has compiled bindings");
+            for (name, node) in &declaration.topology.nodes {
+                let provider = compiled
+                    .bound_import(&node.import)
+                    .expect("compiled workflow node has a resolved import")
+                    .exporter()
+                    .clone();
+                workflow_node_providers.insert(
+                    (
+                        declaration.owner.clone(),
+                        declaration.name.clone(),
+                        name.clone(),
+                    ),
+                    provider,
+                );
+            }
+        }
         Self {
             generation: resolved.generation().clone(),
             plugins: resolved.plugins().to_vec(),
             components: resolved.components().to_vec(),
+            workflows: resolved.workflows().to_vec(),
+            workflow_node_providers,
             entry_triggers: resolved.entry_triggers().to_vec(),
             process_arguments: resolved.process_arguments().to_vec(),
             resources: resolved.resources().to_vec(),
@@ -71,6 +97,26 @@ impl ResolvedGenerationInspection {
 
     pub fn components(&self) -> &[ComponentManifest] {
         &self.components
+    }
+
+    /// Workflow topology selected in this immutable resolved generation.
+    pub fn workflows(&self) -> &[WorkflowDeclaration] {
+        &self.workflows
+    }
+
+    /// The selected provider component for one declared workflow node.
+    ///
+    /// This reuses the canonical resolved import handle. It cannot select a
+    /// different provider or grant additional authority during inspection.
+    pub fn workflow_node_provider(
+        &self,
+        owner: &ComponentId,
+        name: &str,
+        node: &str,
+    ) -> Result<Option<&ComponentId>, ComponentGraphError> {
+        Ok(self
+            .workflow_node_providers
+            .get(&(owner.clone(), name.to_owned(), node.to_owned())))
     }
 
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
@@ -174,7 +220,7 @@ mod tests {
     use crate::{
         CallableId, CompatibilityMetadata, ComponentExport, ComponentHostKind, ComponentImport,
         ComponentStateClass, CompositionMetadataInput, ConfigNamespace, ConfigurationFrontendId,
-        PermissionId, PluginId, ReloadPolicy,
+        PermissionId, PluginId, ReloadPolicy, WorkflowEdge, WorkflowNode, WorkflowTopology,
     };
     use std::collections::BTreeSet;
 
@@ -222,6 +268,84 @@ mod tests {
             invalidation_targets: BTreeSet::from(["skill-index".into()]),
             reload_policy: ReloadPolicy::Restart,
         }
+    }
+
+    #[test]
+    fn workflow_inspection_reuses_the_compiled_provider_binding() {
+        let plugin = plugin("fixture.workflow-inspection", Authority::default());
+        let consumer = component("fixture.workflow-inspection.consumer");
+        let provider = component("fixture.workflow-inspection.provider");
+        let interface = interface("fixture.workflow-step@1");
+        let resolved = ResolvedGeneration::resolve_with_resources(
+            [plugin.clone()],
+            [
+                ComponentManifest {
+                    id: consumer.clone(),
+                    owner: plugin.id.clone(),
+                    imports: vec![ComponentImport {
+                        interface: interface.clone(),
+                        schema: Default::default(),
+                        required: true,
+                        authority: Authority::default(),
+                    }],
+                    exports: Vec::new(),
+                    listeners: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                ComponentManifest {
+                    id: provider.clone(),
+                    owner: plugin.id,
+                    imports: Vec::new(),
+                    exports: vec![ComponentExport {
+                        interface: interface.clone(),
+                        schema: Default::default(),
+                        priority: 10,
+                        required_authority: Authority::default(),
+                    }],
+                    listeners: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+            ],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap()
+        .with_workflows([WorkflowDeclaration {
+            owner: consumer.clone(),
+            name: "run".into(),
+            topology: WorkflowTopology {
+                entry: "step".into(),
+                nodes: BTreeMap::from([(
+                    "step".into(),
+                    WorkflowNode {
+                        import: interface.clone(),
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                    },
+                )]),
+            },
+        }])
+        .unwrap();
+
+        let compiled = resolved
+            .generation_topology()
+            .workflow(&consumer, "run")
+            .unwrap();
+        let expected = compiled.bound_import(&interface).unwrap().exporter();
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
+        assert_eq!(
+            inspection
+                .workflow_node_provider(&consumer, "run", "step")
+                .unwrap(),
+            Some(expected)
+        );
+        assert_eq!(expected, &provider);
+        assert!(
+            inspection
+                .workflow_node_provider(&consumer, "run", "missing")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -566,6 +690,83 @@ mod tests {
                     configuration: BTreeMap::new(),
                 },
             })
+        );
+    }
+
+    #[test]
+    fn workflow_inspection_reports_declared_topology_and_canonical_binding() {
+        use crate::{WorkflowEdge, WorkflowNode, WorkflowTopology};
+
+        let interface = InterfaceId::parse("fixture.workflow.invoke@1").unwrap();
+        let owner = component("fixture.workflow.owner");
+        let provider = component("fixture.workflow.provider");
+        let consumer_plugin = plugin("fixture.workflow.consumer-plugin", Authority::default());
+        let provider_plugin = plugin("fixture.workflow.provider-plugin", Authority::default());
+        let manifests = [
+            ComponentManifest {
+                id: owner.clone(),
+                owner: consumer_plugin.id.clone(),
+                imports: vec![ComponentImport {
+                    interface: interface.clone(),
+                    schema: Default::default(),
+                    required: true,
+                    authority: Authority::default(),
+                }],
+                exports: Vec::new(),
+                listeners: Vec::new(),
+                maximum_authority: Authority::default(),
+            },
+            ComponentManifest {
+                id: provider.clone(),
+                owner: provider_plugin.id.clone(),
+                imports: Vec::new(),
+                exports: vec![ComponentExport {
+                    interface: interface.clone(),
+                    schema: Default::default(),
+                    priority: 0,
+                    required_authority: Authority::default(),
+                }],
+                listeners: Vec::new(),
+                maximum_authority: Authority::default(),
+            },
+        ];
+        let declaration = WorkflowDeclaration {
+            owner: owner.clone(),
+            name: "fixture.workflow".into(),
+            topology: WorkflowTopology {
+                entry: "invoke".into(),
+                nodes: BTreeMap::from([(
+                    "invoke".into(),
+                    WorkflowNode {
+                        import: interface.clone(),
+                        branches: BTreeMap::from([("complete".into(), WorkflowEdge::Finish)]),
+                    },
+                )]),
+            },
+        };
+        let resolved = ResolvedGeneration::resolve(
+            [consumer_plugin, provider_plugin],
+            manifests,
+            [],
+            &Authority::default(),
+        )
+        .unwrap()
+        .with_workflows([declaration.clone()])
+        .unwrap();
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
+
+        assert_eq!(inspection.workflows(), &[declaration]);
+        assert_eq!(
+            inspection
+                .workflow_node_provider(&owner, "fixture.workflow", "invoke")
+                .unwrap(),
+            Some(&provider),
+        );
+        assert_eq!(
+            inspection
+                .workflow_node_provider(&owner, "fixture.workflow", "missing")
+                .unwrap(),
+            None,
         );
     }
 }

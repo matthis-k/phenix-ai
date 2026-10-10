@@ -90,6 +90,10 @@ pub enum KernelError {
         message: String,
     },
     EmbeddedFactoryMissing(PluginId),
+    NativeArtifactUnavailable {
+        plugin: PluginId,
+        revision: crate::ArtifactRevision,
+    },
     WrongExecutionKind(PluginId),
     ComponentGraph(ComponentGraphError),
     PluginRuntimeAdapterUnavailable(PluginRuntimeId),
@@ -222,6 +226,12 @@ impl Display for KernelError {
             }
             Self::EmbeddedFactoryMissing(plugin) => {
                 write!(f, "embedded plugin has no registered factory: {plugin}")
+            }
+            Self::NativeArtifactUnavailable { plugin, revision } => {
+                write!(
+                    f,
+                    "native plugin {plugin} has no registered artifact revision {revision}"
+                )
             }
             Self::WrongExecutionKind(plugin) => write!(
                 f,

@@ -21,10 +21,16 @@ mod metadata;
 mod observable;
 mod persistence;
 mod plugin;
+mod plugin_pending;
 mod reconciliation;
 mod runtime;
 mod sdk;
 mod tasks;
+mod workflow;
+mod workflow_frame;
+mod workflow_join;
+mod workflow_projection;
+mod workflow_tasks;
 
 extern crate self as phenix_core;
 #[cfg(test)]
@@ -64,6 +70,8 @@ mod runtime_topology_generation_regression;
 mod service_layer_dispatch_regression;
 #[cfg(test)]
 mod third_party_component_regression;
+#[cfg(test)]
+mod workflow_execution_regression;
 
 pub use agent::{
     CONTEXT_SERVICE, ContextCommand, ContextDescriptor, ContextResourceKind,
@@ -172,6 +180,7 @@ pub use phenix_contract::{
     RoutingProfileId, SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId,
     SessionId, SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
+pub use phenix_plugin_abi as native_plugin_abi;
 pub use plugin::build::{
     BuildArgument, BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
     BuildSourceIdentity, BuildSourceRevision, BuildWorkingDirectory, PluginArtifactInput,
@@ -190,6 +199,9 @@ pub use plugin::management::{
     PluginTrialResult, PluginUnloadRequest, PreparedPluginManagement,
 };
 pub use plugin::prepared_mutation::PreparedMutationHandle;
+pub use plugin_pending::{
+    PluginCallCompletion, PluginCallStart, PluginPendingCall, PluginPendingPoll,
+};
 pub use reconciliation::graph::{
     BindingChange, ComponentChange, ComponentChangeKind, GraphDiff, GraphReconciler,
     ReconciliationAction, ReconciliationPreview, ReconciliationResult, ResourceChange,
@@ -199,14 +211,39 @@ pub use reconciliation::inspection::CandidateResolutionInspection;
 pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
-    Kernel, LayerResult, PluginHost, PluginInstance, PluginListener, PluginRuntimeAdapter,
-    PluginRuntimeCandidate, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
-    RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer, RuntimeTraceEvent,
-    RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
+    Kernel, LayerResult, NativeRegistrationError, PluginHost, PluginInstance, PluginListener,
+    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginState, ProvenanceBuffer,
+    ProviderEndpointProvenance, RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer,
+    RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
 };
 pub use sdk::{
     ResolvedSdkContributions, SdkContribution, SdkObservableResource, SdkResolutionError, SdkValue,
     observable_delivery_schema,
 };
-pub use tasks::{CallCancellationToken, CancellationToken, TaskHandle, TaskRuntime, TaskScope};
+pub use tasks::{
+    CallCancellationToken, CancellationToken, TaskCancellationHandle, TaskHandle, TaskRuntime,
+    TaskScope,
+};
+pub use workflow::{
+    CompiledWorkflow, WorkflowBoundCallError, WorkflowCompileError, WorkflowDeclaration,
+    WorkflowEdge, WorkflowNode, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
+    WorkflowTopology,
+};
+pub use workflow_frame::{
+    WorkflowFrame, WorkflowFrameDeclaration, WorkflowFrameError, WorkflowFrameSchema,
+};
+
+pub use workflow_join::{
+    WorkflowChildSettlement, WorkflowJoinAllPolicy, WorkflowJoinDecision, WorkflowJoinError,
+    WorkflowJoinObservation, WorkflowJoinPolicy,
+};
+pub use workflow_projection::{
+    WORKFLOW_PROJECTION_REVISION, WorkflowOutcomeProjection, WorkflowProjectionDeclaration,
+    WorkflowProjectionError, WorkflowProjectionSelector,
+};
+pub use workflow_tasks::{
+    WorkflowNativeDispatchError, WorkflowNativeTask, WorkflowNativeTaskGroup,
+    WorkflowPendingImport, WorkflowPendingTasks, WorkflowTaskError, WorkflowTaskId,
+    WorkflowTaskState,
+};

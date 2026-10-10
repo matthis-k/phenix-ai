@@ -86,7 +86,9 @@
         ];
 
         pluginFoundation = [
+          "phenix-plugin-agent-topology"
           "phenix-plugin-artifacts"
+          "phenix-plugin-basic-agent-nodes"
           "phenix-plugin-basic-context"
           "phenix-plugin-basic-model"
           "phenix-plugin-basic-skills"

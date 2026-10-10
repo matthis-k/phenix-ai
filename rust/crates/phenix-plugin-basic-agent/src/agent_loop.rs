@@ -1,20 +1,16 @@
 use phenix_core::{
     Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
-    PermissionId, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedPluginInvocation, ValueCodec,
+    ComponentInterface, ComponentManifest, ModelToolDescriptor, ModelToolTurn, PermissionId,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
+    SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId, SharedPluginInvocation,
+    ValueCodec,
 };
 use phenix_sdk::{
     AGENT_DIAGNOSTIC_EVENT_VERSION, AgentDiagnosticEvent, DefaultInvocationCommand,
     DefaultInvocationInterface, InvocationRequest, StepRunnerResponse, ToolObservation,
-    agent_diagnostic_event_type,
+    activate_tools, agent_diagnostic_event_type, validate_initial_tools, validate_model_tool_calls,
 };
-use std::{
-    collections::BTreeMap,
-    num::{NonZeroU32, NonZeroU64},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, num::NonZeroU64, sync::Arc};
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
@@ -30,68 +26,7 @@ pub use phenix_sdk::{
     agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AgentLoopPolicy {
-    max_model_turns: Option<NonZeroU32>,
-    max_tool_calls_per_turn: Option<NonZeroU32>,
-    max_tool_observation_model_bytes: Option<NonZeroU64>,
-    result_reduction: bool,
-}
-
-impl AgentLoopPolicy {
-    #[must_use]
-    pub const fn new(max_model_turns: NonZeroU32, max_tool_calls_per_turn: NonZeroU32) -> Self {
-        Self {
-            max_model_turns: Some(max_model_turns),
-            max_tool_calls_per_turn: Some(max_tool_calls_per_turn),
-            max_tool_observation_model_bytes: None,
-            result_reduction: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn max_model_turns(self) -> Option<NonZeroU32> {
-        self.max_model_turns
-    }
-
-    #[must_use]
-    pub const fn max_tool_calls_per_turn(self) -> Option<NonZeroU32> {
-        self.max_tool_calls_per_turn
-    }
-
-    #[must_use]
-    pub const fn max_tool_observation_model_bytes(self) -> Option<NonZeroU64> {
-        self.max_tool_observation_model_bytes
-    }
-
-    #[must_use]
-    pub const fn with_tool_observation_model_bytes(mut self, limit: NonZeroU64) -> Self {
-        self.max_tool_observation_model_bytes = Some(limit);
-        self
-    }
-
-    #[must_use]
-    pub const fn with_result_reduction(mut self, enabled: bool) -> Self {
-        self.result_reduction = enabled;
-        self
-    }
-
-    #[must_use]
-    pub const fn result_reduction(self) -> bool {
-        self.result_reduction
-    }
-}
-
-impl Default for AgentLoopPolicy {
-    fn default() -> Self {
-        Self {
-            max_model_turns: None,
-            max_tool_calls_per_turn: None,
-            max_tool_observation_model_bytes: None,
-            result_reduction: true,
-        }
-    }
-}
+pub use phenix_sdk::AgentLoopPolicy;
 
 #[must_use]
 pub fn agent_loop_component_id() -> ComponentId {
@@ -178,26 +113,35 @@ pub fn agent_loop_factory_with_policy(policy: AgentLoopPolicy) -> Box<dyn Plugin
     Box::new(AgentLoopPlugin { policy })
 }
 
-struct AgentLoopSdk<'host, 'runtime> {
-    invocation: SdkClient<'host, 'runtime, DefaultInvocationInterface>,
-    control: SdkClient<'host, 'runtime, AgentLoopControlInterface>,
-    tools: SdkClient<'host, 'runtime, AgentToolExecutionInterface>,
-    progress: SdkClient<'host, 'runtime, AgentLoopProgressInterface>,
+pub(super) struct AgentLoopSdk<'host, 'runtime> {
+    pub(super) invocation: SdkClient<'host, 'runtime, DefaultInvocationInterface>,
+    pub(super) control: SdkClient<'host, 'runtime, AgentLoopControlInterface>,
+    pub(super) tools: SdkClient<'host, 'runtime, AgentToolExecutionInterface>,
+    pub(super) progress: SdkClient<'host, 'runtime, AgentLoopProgressInterface>,
 }
 
-type AgentLoopContext<'host, 'runtime> =
+pub(super) type AgentLoopContext<'host, 'runtime> =
     PluginContext<'host, 'runtime, AgentLoopSdk<'host, 'runtime>>;
 
 fn context<'host, 'runtime>(
     host: &'host PluginHost<'runtime>,
 ) -> AgentLoopContext<'host, 'runtime> {
+    context_for(host, agent_loop_component_id())
+}
+
+/// Reuse the same typed SDK clients under the concrete node component's
+/// declared imports. Provider replacement must never borrow loop authority.
+pub(super) fn context_for<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+    component: ComponentId,
+) -> AgentLoopContext<'host, 'runtime> {
     PluginContext::new(
         host,
         AgentLoopSdk {
-            invocation: SdkClient::new(host, agent_loop_component_id()),
-            control: SdkClient::new(host, agent_loop_component_id()),
-            tools: SdkClient::new(host, agent_loop_component_id()),
-            progress: SdkClient::new(host, agent_loop_component_id()),
+            invocation: SdkClient::new(host, component.clone()),
+            control: SdkClient::new(host, component.clone()),
+            tools: SdkClient::new(host, component.clone()),
+            progress: SdkClient::new(host, component),
         },
         (),
         (),
@@ -627,73 +571,7 @@ fn run(
     }
 }
 
-fn validate_model_tool_calls(
-    calls: &[ModelToolCall],
-    seen: &mut std::collections::BTreeSet<String>,
-) -> Result<(), String> {
-    let mut current = std::collections::BTreeSet::new();
-    for call in calls {
-        if call.call_id.trim().is_empty() {
-            return Err("model returned a tool call with an empty call id".to_owned());
-        }
-        if seen.contains(&call.call_id) || !current.insert(call.call_id.clone()) {
-            return Err(format!(
-                "model returned duplicate tool call id {}",
-                call.call_id
-            ));
-        }
-    }
-    seen.extend(current);
-    Ok(())
-}
-
-fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
-    let mut ids = std::collections::BTreeSet::new();
-    for tool in tools {
-        if !ids.insert(tool.id.clone()) {
-            return Err(format!(
-                "agent loop received duplicate tool descriptor {}",
-                tool.id
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn activate_tools(
-    active: &mut Vec<ModelToolDescriptor>,
-    activated: Vec<ModelToolDescriptor>,
-) -> Result<(), String> {
-    let mut additions = Vec::new();
-    for tool in activated {
-        if let Some(existing) = active.iter().find(|existing| existing.id == tool.id) {
-            if existing != &tool {
-                return Err(format!(
-                    "tool executor attempted to change active descriptor {}",
-                    tool.id
-                ));
-            }
-            continue;
-        }
-        if let Some(existing) = additions
-            .iter()
-            .find(|existing: &&ModelToolDescriptor| existing.id == tool.id)
-        {
-            if *existing != tool {
-                return Err(format!(
-                    "tool executor returned conflicting activated descriptors {}",
-                    tool.id
-                ));
-            }
-            continue;
-        }
-        additions.push(tool);
-    }
-    active.extend(additions);
-    Ok(())
-}
-
-fn emit_run_failed(
+pub(super) fn emit_run_failed(
     context: &AgentLoopContext<'_, '_>,
     execution_id: &str,
     session_id: &Option<SessionId>,
@@ -712,7 +590,10 @@ fn emit_run_failed(
     );
 }
 
-fn emit_agent_diagnostic(context: &AgentLoopContext<'_, '_>, diagnostic: AgentDiagnosticEvent) {
+pub(super) fn emit_agent_diagnostic(
+    context: &AgentLoopContext<'_, '_>,
+    diagnostic: AgentDiagnosticEvent,
+) {
     let Ok(payload) = serde_json::to_vec(&diagnostic) else {
         return;
     };
@@ -725,7 +606,7 @@ fn emit_agent_diagnostic(context: &AgentLoopContext<'_, '_>, diagnostic: AgentDi
     );
 }
 
-fn emit_progress(
+pub(super) fn emit_progress(
     context: &AgentLoopContext<'_, '_>,
     record: AgentLoopProgressRecord,
 ) -> Result<(), String> {
@@ -742,7 +623,8 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::PhenixValue;
+    use phenix_core::{ModelToolCall, PhenixValue};
+    use std::num::NonZeroU32;
 
     #[test]
     fn model_tool_call_ids_must_be_nonempty_and_unique_for_the_execution() {

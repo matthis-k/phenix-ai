@@ -19,6 +19,15 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.entry_triggers()
     }
 
+    /// A compiled declarative workflow bound to the caller's graph generation.
+    pub fn workflow(
+        &self,
+        owner: &crate::ComponentId,
+        name: &str,
+    ) -> Option<&crate::CompiledWorkflow> {
+        self.scope.generation.workflow(owner, name)
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }
@@ -37,6 +46,12 @@ impl<'a> PluginHost<'a> {
             authority: self.scope.authority.clone(),
             pinned_bindings: self.scope.pinned_bindings.as_ref().clone(),
         }
+    }
+
+    /// Opaque identity assigned by Core, shared by every delegated call
+    /// belonging to the same root. Plugins cannot select their own root ID.
+    pub fn root_id(&self) -> u64 {
+        self.scope.root_id
     }
 
     pub fn cancellation_token(&self) -> Option<&CallCancellationToken> {
@@ -147,6 +162,95 @@ impl<'a> PluginHost<'a> {
         )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
+    }
+
+    /// Dynamic selected-import entry used by the versioned native ABI.
+    ///
+    /// `component` must be owned by the *calling* plugin; `interface`
+    /// must be one of that component's declared imports. Unlike an ordinary
+    /// opt-in fallback import, this pins the resolved primary provider and
+    /// refuses to reselect a fallback after generation activation. Authority,
+    /// service layers, and provider provenance use the canonical dispatcher.
+    #[doc(hidden)]
+    pub fn invoke_import_wire(
+        &self,
+        component: &ComponentId,
+        interface: &InterfaceId,
+        input: &[u8],
+    ) -> Result<Vec<u8>, ComponentInvocationError> {
+        let resolved = self
+            .scope
+            .generation
+            .component_graph()
+            .component(component)
+            .ok_or_else(|| crate::ComponentGraphError::UnknownComponent(component.clone()))?;
+        if &resolved.owning_plugin != self.plugin {
+            return Err(KernelError::HostOperationDenied {
+                plugin: self.plugin.clone(),
+                operation: format!("component import owned by {}", resolved.owning_plugin),
+            }
+            .into());
+        }
+        let dispatch = self
+            .scope
+            .generation
+            .dispatch_topology()
+            .component_import(component, interface)
+            .ok_or_else(|| ComponentInvocationError::UnboundImport {
+                component: component.clone(),
+                interface: interface.clone(),
+            })?;
+        let plan = &dispatch.providers;
+        let pin_key = (component.clone(), interface.clone());
+        if self
+            .scope
+            .pinned_bindings
+            .get(&pin_key)
+            .is_some_and(|pinned| pinned != plan.primary())
+        {
+            return Err(KernelError::PinnedBindingChanged {
+                generation: self
+                    .scope
+                    .generation
+                    .generation()
+                    .expect("native ABI import has a resolved generation")
+                    .clone(),
+                component: component.clone(),
+                interface: interface.clone(),
+            }
+            .into());
+        }
+        let handle = plan.primary();
+        if !self.provider_available(handle) {
+            return Err(KernelError::PluginNotActive(handle.owning_plugin().clone()).into());
+        }
+        let delegated = self.scope.authority.attenuate(handle.effective_authority());
+        let provenance = ComponentProviderProvenance::from_plan(
+            interface.clone(),
+            plan,
+            handle,
+            None,
+            delegated.clone(),
+        );
+        let scope = self
+            .scope
+            .delegated(delegated, TransactionContext::coordinated_by(self.plugin));
+        invoke_component_service_with(
+            self.runtime,
+            ComponentInvocationPlan {
+                service: &dispatch.service,
+                layers: &dispatch.layers,
+                policy_identity: dispatch.policy_identity,
+            },
+            ComponentDispatchTarget {
+                component: handle.exporter(),
+                binding: handle.owning_plugin(),
+                provider_provenance: Some(provenance),
+            },
+            input,
+            scope,
+        )
+        .map_err(Into::into)
     }
 
     fn provider_available(&self, handle: &ResolvedImportHandle) -> bool {

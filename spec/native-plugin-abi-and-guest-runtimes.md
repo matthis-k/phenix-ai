@@ -19,7 +19,7 @@ The kernel process remains running while plugin artifacts are rebuilt. Rebuildin
 
 The Rust crate named `phenix-harness` is not the native loader. Product composition belongs to portable configuration, with Nix as one deployment frontend.
 
-This document describes the target architecture. **No native ABI loader, Lua adapter or dynamic-library hot replacement is implemented by this specification.** Existing `embedded` and process-backed behavior remains authoritative until migrated and tested.
+This document describes the target architecture. PR #726 implements the first intrinsic native ABI loader and generation-pinned call path. It does not implement the Lua guest adapter or complete portable artifact activation. Existing `embedded` and process-backed paths remain available while migration and conformance testing continue.
 
 ## Existing implementation and the mismatch
 
@@ -63,6 +63,64 @@ Kernel/Core
 The Lua and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. Every native or guest plugin registers its own canonical contributions, not services owned by a generic `adapter-lua` proxy.
 
 The kernel selects a runtime provider from the guest's declared runtime requirement. Every executable Guest Runtime provider is a native ABI plugin loaded directly by the intrinsic loader. Guest artifacts cannot themselves provide the executable runtime adapter that bootstraps another guest format. This restriction keeps bootstrap dependency depth finite and avoids a second host-translation lifecycle. Runtime-provider selection and all ordinary plugin dependencies must still be validated for cycles before activation.
+
+## Implemented ABI contract (PR #726)
+
+The loader is the only production crate allowed to contain audited unsafe
+FFI. `scripts/check-rust-safety-policy.sh` checks its exact Cargo package,
+`unsafe_boundary = "native-plugin-abi-v1"` metadata, and library target path.
+That target must declare `#![deny(unsafe_op_in_unsafe_fn)]`. Every other
+production Rust target must declare `#![forbid(unsafe_code)]`. This exception
+does not extend to the Core scheduler, SDK or guest adapters.
+
+The separate, zero-dependency `rust/crates/phenix-plugin-abi` crate now
+defines the **C-compatible ABI v1 table layout**: major/minor and size
+negotiation, required feature bits, opaque call tickets, borrowed inputs,
+producer-owned terminal buffers with explicit release callbacks, host-scoped
+cancellation and wakeup callbacks, and mandatory prepare/start/begin/poll/
+cancel/stop/destroy entries. Validation rejects foreign callback ticket IDs,
+unknown statuses, malformed payload ownership, truncated tables, unknown
+features and incomplete function tables. No Rust trait or allocator-owned
+object crosses the C boundary.
+
+Core's `SharedPluginInvocation::begin_component` also accepts
+`PluginCallStart::Pending`; a `PluginPendingCall` has one terminal
+`PluginCallCompletion`, optional nonblocking poll, and disconnect-as-error.
+This Rust host bridge is exercised by a real provider completing *two*
+concurrent Fork branches. Existing blocking native providers use the same
+canonical dispatch with the default immediate implementation.
+
+**Implemented native loader (in #726):** the separate
+`phenix-native-loader` crate now uses a contained unsafe POSIX dynamic-library
+boundary (`dlopen/dlsym/dlclose`) and validates the ABI header before
+accessing its C function table. Kernel selects explicit
+`PluginExecution::Native { artifact }` with SHA-256 content identity,
+stages and loads exactly the verified bytes, and dispatches calls through
+the existing scoped PluginHost and generation-resident plugin instances.
+Versioned begin/poll/cancel/stop/destroy callbacks, matched host wake and
+cancellation functions, paired buffer copy/release, and quarantining of
+unfinished native instances are implemented. Independently compiled
+shared-library fixtures exercise pending callbacks through a real typed
+Fork/Join workflow. Native factory lookup is keyed by
+`(PluginId, ArtifactRevision)`, so a changed candidate cannot borrow a
+same-named old binary. Manual preload also supports future candidate
+generations without activating them.
+
+**Implemented in the current native bridge:** C host `invoke_import`
+callbacks dispatch through the selected component binding, with inherited
+authority and cancellation. The callback uses a correlated ticket and wakes
+the Core dispatch thread when the guest queues an import, avoiding fallback
+poll latency. Late imports from cancelled calls are denied before provider
+dispatch. The loaded-library fixtures prove a real guest-to-host import
+roundtrip, callback settlement, and synchronous/pending workflow parity.
+
+**Still missing:** a native Lua guest-runtime adapter, portable contribution
+and EntryBinding activation, private included-subplan frame scheduling,
+platform loaders beyond POSIX, and full live-product streaming, recovery
+and durable side-effect parity. Foreign libraries remain trusted native code
+rather than sandboxed isolation boundaries.
+The spec lifecycle is still `specification-only` because these stages
+are not production-complete.
 
 ## Native ABI bootstrap contract
 

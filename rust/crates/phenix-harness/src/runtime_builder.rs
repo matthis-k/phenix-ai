@@ -10,22 +10,25 @@ use phenix_core::{
     ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
-    artifact_component_manifest, artifact_factory, artifact_manifest,
-    basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
-    basic_context_manifest, basic_model_component_manifest, basic_model_factory,
-    basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,
-    basic_skills_factory, basic_skills_manifest, basic_tools_component_manifest,
-    basic_tools_factory, basic_tools_manifest, benchmark_outcome_component_manifest,
-    benchmark_outcome_factory, benchmark_outcome_manifest, cli_component_manifest, cli_factory,
-    cli_manifest, common_provider_definitions, context_component_manifest, context_factory,
-    context_manifest, debug_component_manifest, debug_factory, debug_manifest,
-    debug_runtime_trace_sink, efficiency_evaluation_component_manifest,
-    efficiency_evaluation_factory, efficiency_evaluation_manifest, execution_component_manifest,
-    execution_factory, execution_manifest, expand_profile_defaults,
-    first_party_durable_schema_registrations, frontend_component_manifest, frontend_factory,
-    frontend_manifest, full_product_configuration_manifest, helper_invocation_component_manifest,
+    AGENT_TOPOLOGY_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
+    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, agent_topology_component_manifest, agent_topology_declaration,
+    agent_topology_manifest, agent_topology_projections, artifact_component_manifest,
+    artifact_factory, artifact_manifest, basic_agent_configuration_manifest,
+    basic_agent_nodes_component_manifest, basic_agent_nodes_factory, basic_agent_nodes_manifest,
+    basic_context_component_manifest, basic_context_factory, basic_context_manifest,
+    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
+    basic_product_configuration_manifest, basic_skills_component_manifest, basic_skills_factory,
+    basic_skills_manifest, basic_tools_component_manifest, basic_tools_factory,
+    basic_tools_manifest, benchmark_outcome_component_manifest, benchmark_outcome_factory,
+    benchmark_outcome_manifest, cli_component_manifest, cli_factory, cli_manifest,
+    common_provider_definitions, context_component_manifest, context_factory, context_manifest,
+    debug_component_manifest, debug_factory, debug_manifest, debug_runtime_trace_sink,
+    efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
+    efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
+    execution_manifest, expand_profile_defaults, first_party_durable_schema_registrations,
+    frontend_component_manifest, frontend_factory, frontend_manifest,
+    full_product_configuration_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, interactive_ui_component_manifest,
     interactive_ui_factory, interactive_ui_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
@@ -117,6 +120,9 @@ pub struct PhenixRuntimeBuilder {
     provider_policy: ProviderCompositionPolicy,
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
+    pub(crate) workflows: Vec<phenix_core::WorkflowDeclaration>,
+    workflow_frame_schemas: Vec<phenix_core::WorkflowFrameDeclaration>,
+    workflow_projections: Vec<phenix_core::WorkflowProjectionDeclaration>,
     process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
@@ -243,6 +249,8 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_manifest(),
             benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
+            basic_agent_nodes_manifest(authority.clone()),
+            agent_topology_manifest(authority.clone()),
             application::application_agent_tool_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
@@ -360,6 +368,13 @@ impl PhenixRuntimeBuilder {
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
+        if enabled.contains(AGENT_TOPOLOGY_PLUGIN) {
+            builder.add_manifest(agent_topology_manifest(authority.clone()));
+            builder.add_workflow(agent_topology_declaration());
+            for projection in agent_topology_projections() {
+                builder.add_workflow_projection(projection);
+            }
+        }
         if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             let application_agent_tools = builder.application_agent_tools.clone();
             builder
@@ -415,6 +430,11 @@ impl PhenixRuntimeBuilder {
             invocation_defaults::invocation_defaults_factory,
         )?;
         builder.add_selected(&enabled, sdk_manifest(authority.clone()), sdk_factory)?;
+        builder.add_selected(
+            &enabled,
+            basic_agent_nodes_manifest(authority.clone()),
+            basic_agent_nodes_factory,
+        )?;
         builder.add_selected(&enabled, basic_model_manifest(), basic_model_factory)?;
         builder.add_selected(&enabled, basic_tools_manifest(), basic_tools_factory)?;
         builder.add_selected(&enabled, basic_skills_manifest(), basic_skills_factory)?;
@@ -430,6 +450,8 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_component_manifest(),
             benchmark_outcome_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
+            basic_agent_nodes_component_manifest(authority.clone()),
+            agent_topology_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
             planning_component_manifest(),
@@ -492,6 +514,27 @@ impl PhenixRuntimeBuilder {
 
     pub fn add_durable_schema(&mut self, registration: DurableSchemaRegistration) {
         self.durable_schemas.push(registration);
+    }
+
+    /// Register a declarative workflow owned by a component in this selection.
+    pub fn add_workflow(&mut self, declaration: phenix_core::WorkflowDeclaration) {
+        self.workflows.push(declaration);
+    }
+
+    /// Register the typed data contract for a selected workflow.
+    /// The resolver validates all frame slots and transitions before activation.
+    pub fn add_workflow_frame_schema(
+        &mut self,
+        declaration: phenix_core::WorkflowFrameDeclaration,
+    ) {
+        self.workflow_frame_schemas.push(declaration);
+    }
+
+    pub fn add_workflow_projection(
+        &mut self,
+        declaration: phenix_core::WorkflowProjectionDeclaration,
+    ) {
+        self.workflow_projections.push(declaration);
     }
 
     pub fn add_component(&mut self, manifest: ComponentManifest) {
@@ -661,7 +704,10 @@ impl PhenixRuntimeBuilder {
             self.layer_policies,
             self.provider_policy,
             &self.component_authority,
-        )?;
+        )?
+        .with_workflows(self.workflows)?
+        .with_workflow_frame_schemas(self.workflow_frame_schemas)?
+        .with_workflow_projections(self.workflow_projections)?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());
@@ -676,5 +722,149 @@ impl PhenixRuntimeBuilder {
             reconciler,
             application_agent_tools,
         ))
+    }
+}
+
+#[cfg(test)]
+mod workflow_frame_selection_tests {
+    use super::*;
+    use phenix_core::{
+        ComponentExport, ComponentImport, InterfaceSchema, Key, PluginHost, Type,
+        WORKFLOW_PROJECTION_REVISION, WorkflowDeclaration, WorkflowEdge, WorkflowFrameDeclaration,
+        WorkflowFrameSchema, WorkflowNode, WorkflowOutcomeProjection,
+        WorkflowProjectionDeclaration, WorkflowProjectionSelector, WorkflowTopology,
+    };
+
+    struct NoopProvider;
+
+    impl PluginInstance for NoopProvider {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn builder_with_typed_workflow() -> PhenixRuntimeBuilder {
+        let owner = ComponentId::parse("fixture.builder-topology").unwrap();
+        let provider_id = PluginId::parse("fixture.builder-provider").unwrap();
+        let service = InterfaceId::parse("fixture.builder-service@1").unwrap();
+        let contract = InterfaceSchema::new(Type::Unit, Type::String);
+        let mut builder = PhenixRuntimeBuilder::new();
+        builder.add_manifest(PluginManifest {
+            id: PluginId::parse("fixture.builder-topology").unwrap(),
+            version: 1,
+            execution: PluginExecution::ResourceOnly,
+            dependencies: Vec::new(),
+            services: Vec::new(),
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: provider_id.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                || Box::new(NoopProvider),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: owner.clone(),
+            owner: PluginId::parse("fixture.builder-topology").unwrap(),
+            imports: vec![ComponentImport {
+                interface: service.clone(),
+                schema: contract.clone(),
+                required: true,
+                authority: Authority::default(),
+            }],
+            exports: Vec::new(),
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_component(ComponentManifest {
+            id: ComponentId::parse("fixture.builder-provider").unwrap(),
+            owner: provider_id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: service.clone(),
+                schema: contract,
+                priority: 1,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_workflow(WorkflowDeclaration {
+            owner: owner.clone(),
+            name: "selected".into(),
+            topology: WorkflowTopology {
+                entry: "node".into(),
+                nodes: BTreeMap::from([(
+                    "node".into(),
+                    WorkflowNode {
+                        import: service,
+                        branches: BTreeMap::from([("done".into(), WorkflowEdge::Finish)]),
+                    },
+                )]),
+            },
+        });
+        builder.add_workflow_projection(WorkflowProjectionDeclaration {
+            owner,
+            workflow: "selected".into(),
+            node: "node".into(),
+            projection: WorkflowOutcomeProjection {
+                revision: WORKFLOW_PROJECTION_REVISION,
+                selector: WorkflowProjectionSelector::DirectString,
+                cases: BTreeMap::from([("done".into(), "done".into())]),
+            },
+        });
+        builder
+    }
+
+    #[test]
+    fn builder_selects_typed_workflow_frame_before_generation_activation() {
+        let mut builder = builder_with_typed_workflow();
+        let owner = ComponentId::parse("fixture.builder-topology").unwrap();
+        let counter = Key::parse("counter").unwrap();
+        let schema = WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([(counter, Type::U64)]),
+        };
+        builder.add_workflow_frame_schema(WorkflowFrameDeclaration {
+            owner: owner.clone(),
+            name: "selected".into(),
+            schema: schema.clone(),
+        });
+        let runtime = builder.build().unwrap();
+        let compiled = runtime
+            .resolved_generation()
+            .generation_topology()
+            .workflow(&owner, "selected")
+            .unwrap();
+        assert_eq!(compiled.frame_schema(), Some(&schema));
+        assert!(compiled.outcome_projection("node").is_some());
+    }
+
+    #[test]
+    fn builder_rejects_undeclared_frame_workflow_during_resolution() {
+        let mut builder = builder_with_typed_workflow();
+        builder.add_workflow_frame_schema(WorkflowFrameDeclaration {
+            owner: ComponentId::parse("fixture.builder-topology").unwrap(),
+            name: "unselected".into(),
+            schema: WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::new(),
+            },
+        });
+        assert!(matches!(
+            builder.build(),
+            Err(PhenixRuntimeBuildError::Resolution(
+                GenerationResolutionError::MissingFrameWorkflow { .. }
+            ))
+        ));
     }
 }

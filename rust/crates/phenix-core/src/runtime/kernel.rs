@@ -5,6 +5,10 @@ use super::{
     },
     *,
 };
+use crate::{
+    WorkflowBoundCallError, WorkflowNodeDispatchError, WorkflowRunError, WorkflowRunReport,
+};
+use std::num::NonZeroU64;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 impl Kernel {
@@ -41,6 +45,7 @@ impl Kernel {
             resident_generations: BTreeMap::new(),
             authority_ceiling: None,
             embedded_factories: BTreeMap::new(),
+            native_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
             tasks: Arc::new(TaskRuntime::default()),
@@ -195,6 +200,20 @@ impl Kernel {
             .ok_or_else(|| KernelError::EmbeddedFactoryMissing(plugin.clone()))
     }
 
+    pub(super) fn take_native_instance(
+        &self,
+        plugin: &PluginId,
+        artifact: &crate::PluginArtifact,
+    ) -> Result<Box<dyn PluginInstance>, KernelError> {
+        self.native_factories
+            .get(&(plugin.clone(), artifact.revision.clone()))
+            .map(|factory| factory())
+            .ok_or_else(|| KernelError::NativeArtifactUnavailable {
+                plugin: plugin.clone(),
+                revision: artifact.revision.clone(),
+            })
+    }
+
     pub fn activate_all(&mut self) -> Result<(), KernelError> {
         if self.generation_state.active
             && self
@@ -238,6 +257,9 @@ impl Kernel {
                 match &manifest.execution {
                     PluginExecution::ResourceOnly => Ok(None),
                     PluginExecution::Embedded => self.take_embedded_instance(plugin).map(Some),
+                    PluginExecution::Native { artifact } => {
+                        self.take_native_instance(plugin, artifact).map(Some)
+                    }
                     PluginExecution::Runtime { runtime, artifact } => {
                         let binding =
                             config
@@ -551,6 +573,7 @@ impl Kernel {
         state.root_leases.fetch_add(1, Ordering::AcqRel);
         RootExecutionHandle {
             runtime: Arc::new(state.runtime.clone()),
+            root_id: next_runtime_root_id(),
             constraints,
             states: state.states.clone(),
             instances: state.instances.clone(),
@@ -576,7 +599,609 @@ impl Kernel {
     }
 }
 
+/// Check the selected portable projection before calling an adapter that can
+/// change execution state. Normal result projection never recovers transport
+/// or authority errors and cannot alter the pinned provider binding.
+fn selected_workflow_outcome<E>(
+    workflow: &crate::CompiledWorkflow,
+    node: &str,
+    import: &ResolvedImportHandle,
+    output: &[u8],
+) -> Result<Option<String>, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<E>>>
+{
+    let Some(projection) = workflow.outcome_projection(node) else {
+        return Ok(None);
+    };
+    let result: crate::PhenixValue = serde_json::from_slice(output).map_err(|_| {
+        crate::workflow::WorkflowInvocationError::Failed(WorkflowNodeDispatchError::Projection(
+            crate::WorkflowProjectionError::InvalidResult,
+        ))
+    })?;
+    let outcome = projection
+        .project_checked(import.response_schema(), &result)
+        .map_err(|error| {
+            crate::workflow::WorkflowInvocationError::Failed(WorkflowNodeDispatchError::Projection(
+                error,
+            ))
+        })?;
+    Ok(Some(outcome))
+}
+
+/// Validate the selected outcome and project a provider reply on the
+/// caller's scheduler thread. Frame edits commit only when projection succeeds
+/// and agrees with the selected outcome; provider side effects are not rolled back.
+fn project_workflow_output<State, Error>(
+    workflow: &crate::CompiledWorkflow,
+    node: &str,
+    interface: &InterfaceId,
+    import: &ResolvedImportHandle,
+    output: &[u8],
+    execution: (&mut State, Option<&mut crate::WorkflowFrame>),
+    project: impl FnOnce(
+        &str,
+        &InterfaceId,
+        &[u8],
+        Option<&mut crate::WorkflowFrame>,
+        &mut State,
+    ) -> Result<String, Error>,
+) -> Result<String, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<Error>>> {
+    let (state, mut frame) = execution;
+    let selected = selected_workflow_outcome::<Error>(workflow, node, import, output)?;
+    let snapshot = frame.as_deref().cloned();
+    match project(node, interface, output, frame.as_deref_mut(), state) {
+        Ok(reported)
+            if selected
+                .as_ref()
+                .is_none_or(|expected| expected == &reported) =>
+        {
+            Ok(reported)
+        }
+        Ok(reported) => {
+            if let (Some(original), Some(destination)) = (snapshot, frame) {
+                *destination = original;
+            }
+            Err(crate::workflow::WorkflowInvocationError::Failed(
+                WorkflowNodeDispatchError::ProjectionMismatch {
+                    selected: selected.expect("mismatched projected outcome"),
+                    reported,
+                },
+            ))
+        }
+        Err(error) => {
+            if let (Some(original), Some(destination)) = (snapshot, frame) {
+                *destination = original;
+            }
+            Err(crate::workflow::WorkflowInvocationError::Failed(
+                WorkflowNodeDispatchError::Project(error),
+            ))
+        }
+    }
+}
+
 impl RootExecutionHandle {
+    /// Invoke the exact component import selected for this pinned generation.
+    ///
+    /// The import's provider, authority and Layers come from the canonical
+    /// resolved component graph. No provider lookup or fallback occurs after
+    /// this call starts. A stale or foreign binding is rejected.
+    pub fn invoke_import(
+        &self,
+        import: &ResolvedImportHandle,
+        input: &[u8],
+    ) -> Result<Vec<u8>, KernelError> {
+        self.invoke_import_with_cancellation(import, input, None)
+    }
+
+    /// A native worker's cooperative cancellation is chained to the selected
+    /// provider call and every delegated Layer. Plain synchronous roots still
+    /// enter without an ancestor token.
+    pub(crate) fn invoke_import_with_cancellation(
+        &self,
+        import: &ResolvedImportHandle,
+        input: &[u8],
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Vec<u8>, KernelError> {
+        let key = (import.importer().clone(), import.interface().clone());
+        let selected = self
+            .runtime
+            .component_graph()
+            .import_handle(import.importer(), import.interface())?
+            .ok_or_else(|| KernelError::PinnedBindingUnavailable {
+                component: key.0.clone(),
+                interface: key.1.clone(),
+            })?;
+        let dispatch = self
+            .runtime
+            .dispatch_topology()
+            .component_import(import.importer(), import.interface())
+            .ok_or_else(|| KernelError::PinnedBindingUnavailable {
+                component: key.0.clone(),
+                interface: key.1.clone(),
+            })?;
+        if selected != import
+            || dispatch.providers.primary() != import
+            || self
+                .constraints
+                .pinned_bindings
+                .get(&key)
+                .is_some_and(|pin| pin != import)
+        {
+            return Err(KernelError::PinnedBindingChanged {
+                generation: self
+                    .runtime
+                    .generation()
+                    .expect("resolved workflow has a generation")
+                    .clone(),
+                component: key.0,
+                interface: key.1,
+            });
+        }
+        let authority = self
+            .constraints
+            .authority
+            .attenuate(import.effective_authority());
+        let provenance = ComponentProviderProvenance::from_plan(
+            import.interface().clone(),
+            &dispatch.providers,
+            import,
+            None,
+            authority.clone(),
+        );
+        let prepared_mutations = PreparedMutationScope::new(self.generation());
+        let runtime = RuntimeServices {
+            states: &self.states,
+            instances: &self.instances,
+            invocations: &self.invocations,
+            events: self.events.as_ref(),
+            tasks: self.tasks.as_ref(),
+            persistence: self.persistence.as_ref(),
+            prepared_mutations: &prepared_mutations,
+            trace_sink: self.trace_sink.as_ref(),
+            provenance: self.provenance.as_ref(),
+        };
+        let constraints = self.constraints.with_authority(authority);
+        let mut scope =
+            CallScope::external_with_constraints(Arc::clone(&self.runtime), &constraints);
+        scope.root_id = self.root_id;
+        scope.cancellation = cancellation.map(CallCancellationToken::from_task);
+        invoke_component_service_with(
+            runtime,
+            ComponentInvocationPlan {
+                service: &dispatch.service,
+                layers: &dispatch.layers,
+                policy_identity: dispatch.policy_identity,
+            },
+            ComponentDispatchTarget {
+                component: import.exporter(),
+                binding: import.owning_plugin(),
+                provider_provenance: Some(provenance),
+            },
+            input,
+            scope,
+        )
+    }
+
+    /// Admit a selected workflow against the caller's data frame.
+    ///
+    /// The same pinned generation and frame requirements apply to synchronous
+    /// and pending entrypoints. Execution stays in the existing scheduler.
+    fn selected_workflow<Error>(
+        &self,
+        (owner, name): (&ComponentId, &str),
+        frame: Option<&crate::WorkflowFrame>,
+    ) -> Result<
+        &crate::CompiledWorkflow,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        if let Some(frame) = frame {
+            let expected =
+                compiled
+                    .frame_schema()
+                    .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+                        owner: owner.clone(),
+                        name: name.to_owned(),
+                    })?;
+            if expected != frame.schema() {
+                return Err(WorkflowRunError::FrameSchemaMismatch {
+                    owner: owner.clone(),
+                    name: name.to_owned(),
+                });
+            }
+        } else if compiled.requires_frame() {
+            return Err(WorkflowRunError::StructuredFrameRequired {
+                node: compiled.topology().entry.clone(),
+            });
+        }
+        Ok(compiled)
+    }
+
+    /// Execute a workflow declared by a component in this root's pinned generation.
+    ///
+    /// Domain adapters prepare service inputs and project typed results into
+    /// declared outcomes. The kernel owns dispatch, authority and service Layers.
+    pub fn execute_workflow<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        state: &mut State,
+        mut prepare: impl FnMut(&str, &InterfaceId, &mut State) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(&str, &InterfaceId, &[u8], &mut State) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let compiled = self.selected_workflow::<Error>(workflow, None)?;
+        compiled.execute_bound(
+            state,
+            |node, service, import, state, cancelled| {
+                let request = prepare(node, service, state)
+                    .map_err(WorkflowNodeDispatchError::Prepare)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                if cancelled() {
+                    return Err(crate::workflow::WorkflowInvocationError::Cancelled);
+                }
+                let output = self
+                    .invoke_import(import, &request)
+                    .map_err(WorkflowNodeDispatchError::Invoke)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                project_workflow_output(
+                    compiled,
+                    node,
+                    service,
+                    import,
+                    &output,
+                    (state, None),
+                    |node, interface, output, _, state| project(node, interface, output, state),
+                )
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
+    /// Execute the same pinned workflow with a typed data-only frame.
+    ///
+    /// The frame is caller-owned execution data, not a capability grant or a
+    /// second provider resolver. Every mutation uses WorkflowFrame::set.
+    /// Failed response projection rolls back that node's frame edits; it does
+    /// not undo service side effects. Cancellation retains the last committed
+    /// frame and never retries an invocation.
+    pub fn execute_workflow_with_frame<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        execution: (&mut State, &mut crate::WorkflowFrame),
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            &crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            &mut crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let (state, frame) = execution;
+        let compiled = self.selected_workflow::<Error>(workflow, Some(frame))?;
+        compiled.execute_bound_framed(
+            state,
+            frame,
+            |node, interface, binding, state, frame, cancelled| {
+                let request = prepare(node, interface, frame, state)
+                    .map_err(WorkflowNodeDispatchError::Prepare)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                if cancelled() {
+                    return Err(crate::workflow::WorkflowInvocationError::Cancelled);
+                }
+                let output = self
+                    .invoke_import(binding, &request)
+                    .map_err(WorkflowNodeDispatchError::Invoke)
+                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
+                project_workflow_output(
+                    compiled,
+                    node,
+                    interface,
+                    binding,
+                    &output,
+                    (state, Some(frame)),
+                    |node, interface, output, frame, state| {
+                        project(
+                            node,
+                            interface,
+                            output,
+                            frame.expect("framed entry supplies a data frame"),
+                            state,
+                        )
+                    },
+                )
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
+    /// Execute the selected structured plan with real pending provider calls.
+    ///
+    /// The existing Core Invoke/Fork/Join/Exit scheduler admits independent
+    /// children while native calls run. Provider replies are projected back
+    /// on the caller thread, never inside worker-owned mutable frames. Early
+    /// Join decisions cancel losers but cannot release their generation leases.
+    /// Native pending execution uses the one structured Core scheduler.
+    /// No independent root, resolver or provider fallback is created.
+    pub fn execute_workflow_pending<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        state: &mut State,
+        mut prepare: impl FnMut(&str, &InterfaceId, &mut State) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(&str, &InterfaceId, &[u8], &mut State) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let compiled = self.selected_workflow::<Error>(workflow, None)?;
+        self.execute_pending_selected(
+            compiled,
+            (state, None),
+            |node, interface, _, state| prepare(node, interface, state),
+            |node, interface, output, _, state| project(node, interface, output, state),
+            cancelled,
+            step_limit,
+        )
+    }
+
+    /// Execute the same pending provider boundary with a typed data frame.
+    /// Every mutation is staged on the scheduler thread; sibling frames
+    /// remain isolated while native provider callbacks are in flight.
+    pub fn execute_workflow_with_frame_pending<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        execution: (&mut State, &mut crate::WorkflowFrame),
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            &crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            &mut crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let (state, frame) = execution;
+        let compiled = self.selected_workflow::<Error>(workflow, Some(frame))?;
+        self.execute_pending_selected(
+            compiled,
+            (state, Some(frame)),
+            |node, interface, frame, state| {
+                prepare(
+                    node,
+                    interface,
+                    frame.expect("framed entry supplies every child frame"),
+                    state,
+                )
+            },
+            |node, interface, output, frame, state| {
+                project(
+                    node,
+                    interface,
+                    output,
+                    frame.expect("framed entry supplies every child frame"),
+                    state,
+                )
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
+    fn execute_pending_selected<State, Error>(
+        &self,
+        compiled: &crate::CompiledWorkflow,
+        execution: (&mut State, Option<&mut crate::WorkflowFrame>),
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            Option<&crate::WorkflowFrame>,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            Option<&mut crate::WorkflowFrame>,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
+        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport, WorkflowTaskId};
+        use std::{cell::RefCell, time::Duration};
+        let (state, frame) = execution;
+
+        fn failed<E>(
+            error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
+        ) -> WorkflowInvokePoll<WorkflowBoundCallError<WorkflowNodeDispatchError<E>>> {
+            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Failed(error)))
+        }
+
+        let group = self
+            .clone()
+            .native_workflow_tasks()
+            .expect("selected workflow has a pinned generation");
+        let mut in_flight = BTreeMap::<String, WorkflowPendingImport>::new();
+        // Consume only the specific callback selected by the settlement
+        // channel. Merely observing a finished thread in branch-map order
+        // would violate FirstCompleted/FirstSuccess semantics.
+        let ready = RefCell::new(None::<WorkflowTaskId>);
+        let retired_scopes = RefCell::new(Vec::<String>::new());
+        let result = compiled.execute_suspending(
+            state,
+            frame,
+            |node, interface, scope, state, mut frame, cancellation| {
+                if let Some(inflight) = in_flight.get(scope) {
+                    if ready.borrow().as_ref() != Some(inflight.id()) {
+                        return WorkflowInvokePoll::Waiting;
+                    }
+                    ready.replace(None);
+                    let task = in_flight
+                        .remove(scope)
+                        .expect("finished scoped task was registered");
+                    let output = match task.join() {
+                        Ok(Ok(output)) => output,
+                        Ok(Err(WorkflowNativeDispatchError::Cancelled)) => {
+                            return WorkflowInvokePoll::Ready(Err(
+                                WorkflowInvocationError::Cancelled,
+                            ));
+                        }
+                        Ok(Err(WorkflowNativeDispatchError::Invoke(error))) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::Invoke(error),
+                            ));
+                        }
+                        Err(_) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::NativeWorkerPanicked,
+                            ));
+                        }
+                    };
+                    let binding = match compiled.bound_import(interface) {
+                        Some(binding) => binding,
+                        None => {
+                            return failed(WorkflowBoundCallError::UnboundImport(
+                                interface.clone(),
+                            ));
+                        }
+                    };
+                    match project_workflow_output(
+                        compiled,
+                        node,
+                        interface,
+                        binding,
+                        &output,
+                        (state, frame.as_deref_mut()),
+                        |node, interface, output, frame, state| {
+                            project(node, interface, output, frame, state)
+                        },
+                    ) {
+                        Ok(reported) => WorkflowInvokePoll::Ready(Ok(reported)),
+                        Err(WorkflowInvocationError::Failed(error)) => {
+                            failed(WorkflowBoundCallError::Invocation(error))
+                        }
+                        Err(WorkflowInvocationError::Cancelled) => {
+                            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled))
+                        }
+                    }
+                } else {
+                    let request = match prepare(node, interface, frame.as_deref(), state) {
+                        Ok(request) => request,
+                        Err(error) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::Prepare(error),
+                            ));
+                        }
+                    };
+                    if cancellation() {
+                        return WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled));
+                    }
+                    let binding = match compiled.bound_import(interface) {
+                        Some(binding) => binding,
+                        None => {
+                            return failed(WorkflowBoundCallError::UnboundImport(
+                                interface.clone(),
+                            ));
+                        }
+                    };
+                    let task = match group.dispatch_import_pending(scope, binding.clone(), request)
+                    {
+                        Ok(task) => task,
+                        Err(error) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::NativeTask(error),
+                            ));
+                        }
+                    };
+                    in_flight.insert(scope.to_owned(), task);
+                    WorkflowInvokePoll::Started
+                }
+            },
+            cancelled,
+            (
+                |scope| {
+                    retired_scopes.borrow_mut().push(scope.to_owned());
+                    group.cancel_scope(scope);
+                    // A previously observed callback for an abandoned sibling
+                    // must not block later live callbacks from waking the root.
+                    if ready.borrow().as_ref().is_some_and(|ticket| {
+                        ticket.scope == scope
+                            || ticket
+                                .scope
+                                .strip_prefix(scope)
+                                .is_some_and(|rest| rest.starts_with('/'))
+                    }) {
+                        ready.replace(None);
+                    }
+                },
+                || {
+                    if let Some(ticket) = group.wait_settlement_for(Duration::from_millis(50)) {
+                        let retired = retired_scopes.borrow().iter().any(|scope| {
+                            ticket.scope == *scope
+                                || ticket
+                                    .scope
+                                    .strip_prefix(scope)
+                                    .is_some_and(|rest| rest.starts_with('/'))
+                        });
+                        if !retired {
+                            let previous = ready.replace(Some(ticket));
+                            debug_assert!(previous.is_none(), "wakeup must be consumed once");
+                        }
+                    }
+                },
+            ),
+            step_limit,
+        );
+        // A completed Join may have cancelled unselected siblings. Their
+        // provider callbacks can still be running; root settlement must not
+        // discard their physical generation leases. Drain each remaining
+        // ticket before returning the caller-visible root result.
+        for (_, task) in in_flight {
+            let _ = task.cancel();
+            let _ = task.join();
+        }
+        group
+            .close()
+            .expect("all admitted native callbacks have settled");
+        result
+    }
+
     pub fn invoke(
         &self,
         service: &ServiceId,
@@ -595,8 +1220,9 @@ impl RootExecutionHandle {
             trace_sink: self.trace_sink.as_ref(),
             provenance: self.provenance.as_ref(),
         };
-        let scope =
+        let mut scope =
             CallScope::external_with_constraints(Arc::clone(&self.runtime), &self.constraints);
+        scope.root_id = self.root_id;
         invoke_service_with(runtime, service, input, binding, scope)
     }
 }

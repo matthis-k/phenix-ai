@@ -178,6 +178,59 @@ mod tests {
     }
 
     #[test]
+    fn declared_pending_and_cooperative_roots_preserve_basic_full_cancellation() {
+        use phenix_core::Bytes;
+        use phenix_sdk::{AgentLoopCommand, AgentLoopResponse};
+
+        // Use the actual selected Basic/Full product graphs, not mocked
+        // private topology or direct provider substitution. No external model
+        // invocation is allowed after a pre-dispatch cancellation.
+        for product in ["phenix.product.basic", "phenix.product.full"] {
+            let selection = BTreeSet::from([product.to_owned()]);
+            let mut harness = PhenixRuntimeBuilder::with_selected_suite(&selection)
+                .unwrap()
+                .build()
+                .unwrap();
+            harness.activate().unwrap();
+
+            for native_pending in [false, true] {
+                let command = AgentLoopCommand::Run {
+                    execution_id: format!("{product}-native={native_pending}"),
+                    session_id: None,
+                    parent_attempt_id: None,
+                    callable_id: None,
+                    input: Bytes::from(b"do not execute".to_vec()),
+                    tools: Vec::new(),
+                };
+                let result = if native_pending {
+                    harness.run_declared_agent_workflow_pending(
+                        command,
+                        &default_suite_authority(),
+                        || true,
+                        None,
+                    )
+                } else {
+                    harness.run_declared_agent_workflow(
+                        command,
+                        &default_suite_authority(),
+                        || true,
+                        None,
+                    )
+                }
+                .unwrap();
+                assert!(
+                    matches!(
+                        result,
+                        AgentLoopResponse::Cancelled { usage }
+                            if usage.model_calls == 0 && usage.tool_calls == 0
+                    ),
+                    "{product}: both root entry routes must honor cancellation before provider dispatch"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn minimal_agent_journey_uses_public_services_and_restores_plugin_owned_state() {
         let path = temp_db();
         {

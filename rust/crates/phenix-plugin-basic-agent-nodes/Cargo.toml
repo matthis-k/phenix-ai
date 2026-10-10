@@ -1,0 +1,13 @@
+[package]
+name = "phenix-plugin-basic-agent-nodes"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[package.metadata.phenix]
+role = "runtime-plugin"
+
+[dependencies]
+phenix-core = { path = "../phenix-core" }
+phenix-sdk = { path = "../phenix-sdk" }
+serde_json.workspace = true

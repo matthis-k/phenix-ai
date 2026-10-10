@@ -83,6 +83,15 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         self.host.entry_triggers()
     }
 
+    /// Inspect the workflow selected in this invocation's pinned generation.
+    pub fn workflow(
+        &self,
+        owner: &crate::ComponentId,
+        name: &str,
+    ) -> Option<&crate::CompiledWorkflow> {
+        self.host.workflow(owner, name)
+    }
+
     #[doc(hidden)]
     pub fn record_runtime_trace(&self, event: crate::RuntimeTraceEvent) {
         self.host.record_runtime_trace(event);

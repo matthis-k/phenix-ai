@@ -33,11 +33,30 @@ impl CancellationToken {
 #[derive(Clone, Debug)]
 pub struct CallCancellationToken {
     cancelled: Arc<AtomicBool>,
+    parent: Option<Arc<CallCancellationToken>>,
 }
 
 impl CallCancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.is_cancelled())
+    }
+
+    /// Preserve all ancestor cancellation predicates when a service Layer
+    /// delegates, or a native worker enters the canonical provider boundary.
+    pub(crate) fn with_parent(mut self, parent: Option<&CallCancellationToken>) -> Self {
+        self.parent = parent.cloned().map(Arc::new);
+        self
+    }
+
+    pub(crate) fn from_task(task: &CancellationToken) -> Self {
+        Self {
+            cancelled: Arc::clone(&task.cancelled),
+            parent: None,
+        }
     }
 }
 
@@ -65,6 +84,27 @@ impl Drop for LiveCallScope<'_> {
     }
 }
 
+/// Cancel a worker without owning its result receiver or join handle.
+/// A structured workflow keeps these signals while each scope is admitted.
+#[derive(Clone)]
+pub struct TaskCancellationHandle {
+    id: u64,
+    cancelled: Arc<AtomicBool>,
+    events: Arc<EventBus>,
+}
+
+impl TaskCancellationHandle {
+    pub fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::AcqRel) {
+            self.events.publish(KernelEvent::TaskCancelled(self.id));
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
 pub struct TaskHandle<T> {
     id: u64,
     graph_generation: GenerationId,
@@ -83,10 +123,21 @@ impl<T> TaskHandle<T> {
         &self.graph_generation
     }
 
-    pub fn cancel(&self) {
-        if !self.cancelled.swap(true, Ordering::AcqRel) {
-            self.events.publish(KernelEvent::TaskCancelled(self.id));
+    pub fn cancellation_handle(&self) -> TaskCancellationHandle {
+        TaskCancellationHandle {
+            id: self.id,
+            cancelled: Arc::clone(&self.cancelled),
+            events: Arc::clone(&self.events),
         }
+    }
+
+    pub fn cancel(&self) {
+        self.cancellation_handle().cancel();
+    }
+
+    /// Nonblocking readiness probe. Only join consumes the result.
+    pub fn is_finished(&self) -> bool {
+        self.join.is_finished()
     }
 
     pub fn join(self) -> thread::Result<T> {
@@ -223,7 +274,10 @@ impl TaskRuntime {
             runtime: self,
             plugin: plugin.clone(),
             id,
-            cancellation: CallCancellationToken { cancelled },
+            cancellation: CallCancellationToken {
+                cancelled,
+                parent: None,
+            },
         }
     }
 

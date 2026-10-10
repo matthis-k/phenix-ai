@@ -31,6 +31,11 @@ pub fn expand_profile_defaults(
 }
 
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
+pub use phenix_plugin_agent_topology::{
+    AGENT_TOPOLOGY_PLUGIN, agent_topology_component_manifest, agent_topology_declaration,
+    agent_topology_manifest, agent_topology_projections, run_agent_workflow,
+    run_agent_workflow_pending,
+};
 pub use phenix_plugin_api::{
     SDK_COMPONENT, SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE,
     SDK_TOOLS_SERVICE, SdkConfigCommand, SdkConfigInterface, SdkConfigResponse, SdkSessionCommand,
@@ -56,6 +61,10 @@ pub use phenix_plugin_basic_agent::{
     agent_loop_component_manifest, agent_loop_control_service, agent_loop_factory,
     agent_loop_factory_with_policy, agent_loop_manifest, agent_loop_progress_authority,
     agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+};
+pub use phenix_plugin_basic_agent_nodes::{
+    BASIC_AGENT_NODES_PLUGIN, basic_agent_nodes_component_id, basic_agent_nodes_component_manifest,
+    basic_agent_nodes_factory, basic_agent_nodes_factory_with_policy, basic_agent_nodes_manifest,
 };
 pub use phenix_plugin_basic_context::{
     BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN, BasicContextInterface,
