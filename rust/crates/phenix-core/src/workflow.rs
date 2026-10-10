@@ -8,7 +8,8 @@
 //! service through the existing generation-pinned kernel invocation boundary.
 
 use crate::{
-    ComponentGraphError, ComponentId, InterfaceId, ResolvedComponentGraph, ResolvedImportHandle,
+    ComponentGraphError, ComponentId, InterfaceId, PhenixValue, ResolvedComponentGraph,
+    ResolvedImportHandle,
 };
 use serde::{Deserialize, Serialize, de::Error as _};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1802,6 +1803,7 @@ impl CompiledWorkflow {
         schema: &crate::WorkflowFrameSchema,
     ) -> Result<(), WorkflowCompileError> {
         for (name, node) in &self.topology.nodes {
+            let node_schema = self.frame_schema_for_node(name, schema);
             for (outcome, edge) in &node.branches {
                 // Both an Invoke outcome and a Join continuation may
                 // transfer data. Type-check every mapping before activation.
@@ -1823,6 +1825,23 @@ impl CompiledWorkflow {
                     if let WorkflowEdge::Transfer { slots, .. }
                     | WorkflowEdge::FinishTransfer { slots } = transition
                     {
+                        let crosses_frame = match transition {
+                            WorkflowEdge::Transfer { node: target, .. } => {
+                                self.scope_for_node(name).map(|scope| &scope.prefix)
+                                    != self.scope_for_node(target).map(|scope| &scope.prefix)
+                            }
+                            WorkflowEdge::FinishTransfer { .. } => {
+                                self.scope_for_node(name).is_some()
+                            }
+                            _ => false,
+                        };
+                        // Scoped entry/return handoffs were checked against
+                        // the two distinct schemas before candidate binding.
+                        // Applying them against one flat schema would both
+                        // reject legitimate private fields and leak parent slots.
+                        if crosses_frame {
+                            continue;
+                        }
                         let mut destinations = BTreeSet::new();
                         for (source, target) in slots {
                             if !destinations.insert(target) {
@@ -1832,14 +1851,14 @@ impl CompiledWorkflow {
                                     reason: format!("target field {target} is written twice"),
                                 });
                             }
-                            let from = schema.slots.get(source).ok_or_else(|| {
+                            let from = node_schema.slots.get(source).ok_or_else(|| {
                                 WorkflowCompileError::InvalidFrameTransfer {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
                                     reason: format!("source field {source} is undeclared"),
                                 }
                             })?;
-                            let to = schema.slots.get(target).ok_or_else(|| {
+                            let to = node_schema.slots.get(target).ok_or_else(|| {
                                 WorkflowCompileError::InvalidFrameTransfer {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
@@ -1870,7 +1889,7 @@ impl CompiledWorkflow {
                 {
                     let required = [collection, item_slot, child_output_slot, output_slot];
                     for slot in required {
-                        if !schema.slots.contains_key(slot) {
+                        if !node_schema.slots.contains_key(slot) {
                             return Err(WorkflowCompileError::InvalidFork {
                                 node: name.clone(),
                                 outcome: outcome.clone(),
@@ -1878,8 +1897,8 @@ impl CompiledWorkflow {
                             });
                         }
                     }
-                    if !matches!(schema.slots.get(collection), Some(crate::Type::List(_)))
-                        || !matches!(schema.slots.get(output_slot), Some(crate::Type::List(_)))
+                    if !matches!(node_schema.slots.get(collection), Some(crate::Type::List(_)))
+                        || !matches!(node_schema.slots.get(output_slot), Some(crate::Type::List(_)))
                     {
                         return Err(WorkflowCompileError::InvalidFork {
                             node: name.clone(),
@@ -1887,8 +1906,8 @@ impl CompiledWorkflow {
                             reason: "map collection and output must have list schemas".into(),
                         });
                     }
-                    if let Some(crate::Type::List(item)) = schema.slots.get(collection) {
-                        let slot_type = &schema.slots[item_slot];
+                    if let Some(crate::Type::List(item)) = node_schema.slots.get(collection) {
+                        let slot_type = &node_schema.slots[item_slot];
                         if !matches!(
                             slot_type.accepts(item),
                             crate::SchemaCompatibility::Exact
@@ -1902,8 +1921,8 @@ impl CompiledWorkflow {
                             });
                         }
                     }
-                    if let Some(crate::Type::List(item)) = schema.slots.get(output_slot) {
-                        let produced = &schema.slots[child_output_slot];
+                    if let Some(crate::Type::List(item)) = node_schema.slots.get(output_slot) {
+                        let produced = &node_schema.slots[child_output_slot];
                         if !matches!(
                             item.accepts(produced),
                             crate::SchemaCompatibility::Exact
@@ -1920,7 +1939,7 @@ impl CompiledWorkflow {
                 if let WorkflowEdge::Fork { outputs, .. } = edge {
                     for slots in outputs.values() {
                         for slot in slots {
-                            if !schema.slots.contains_key(slot) {
+                            if !node_schema.slots.contains_key(slot) {
                                 return Err(WorkflowCompileError::InvalidFork {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
