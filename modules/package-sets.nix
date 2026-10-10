@@ -92,7 +92,6 @@ let
     execution = "phenix.execution";
     environment-local = "phenix.environment.local";
     frontend = "phenix.frontend-services";
-    hooks = "phenix.hooks";
     jobs = "phenix.jobs";
     language = "phenix.language";
     memory = "phenix.memory";
