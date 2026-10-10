@@ -12304,13 +12304,26 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn post_tool_progress_does_not_block_the_follow_up_model_turn() {
-        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        // The real Full product selects the declarative pending route. This
+        // checks persisted tool progress, model continuation and client replay
+        // through the live application worker instead of the legacy loop.
+        let selected = BTreeSet::from(["phenix.product.full".to_owned()]);
+        let mut builder = crate::PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
         builder
             .add_embedded(continuation_model_manifest(), || {
                 Box::new(ToolContinuationModel)
             })
             .unwrap();
         let mut harness = builder.build().unwrap();
+        assert!(
+            bound_application_agent_plugin(
+                harness.resolved_generation(),
+                &default_suite_authority(),
+            )
+            .unwrap()
+            .is_none(),
+            "the Full product must select the declarative topology for the live progress test"
+        );
         harness.activate().unwrap();
         let mut worker = ApplicationWorker::new(harness).unwrap();
         configure_fixture_routing(
