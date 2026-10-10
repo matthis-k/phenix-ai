@@ -1,0 +1,74 @@
+# PR #726 file-by-file consolidation matrix
+
+Snapshot: [#726](https://github.com/matthis-k/phenix-ai/pull/726) at `5fce639b40c4a0bb6a990363dba667b68a154c66` against main `d488c4056ee334938c2ca88aec9017379a3ef7c4`. Counts: 58 files, +19,611 / -266, including 20 newly added files. The statuses below are conservative **TODO**, even when the implementation is present. Verify each path against the current PR head before changing state.
+
+Each row has one owner. `KEEP` means verify an existing necessary role, `SIMPLIFY` means identify and remove duplicate responsibilities, `MOVE` means transfer ownership and delete transitional copies after tests pass, `RETIRE` means prove downstream replacement and delete, and `CHECK` means retain or move based on documented consumers. This is a proposed disposition, not evidence that a file is dead.
+
+Completion means link to the implementing PR/commit, comparison of consumers and a current-head regression/CI run. Renames do not count as deletion without replacing old imports. A moved path stays in this table and is marked MOVED, with its destination recorded. Record incremental row decisions here and update the central S0-05/S1/S5 gates.
+
+| ID | State | Exact file | Diff | Proposed action | Owner | Explicit acceptance check | Proof / replacement |
+| --- | --- | --- | ---: | --- | --- | --- | --- |
+| W001 | TODO | `.github/workflows/ci.yml` | +1/-1 | CHECK | #726 or CI | Confirm generated CI is derived from Nix/flake-ci rather than hand-maintained; retain ABI shard only after ABI extraction. | pending |
+| W002 | TODO | `modules/development.nix` | +4/-0 | CHECK | native extraction / #731 | Verify new crates and dev shells are declarative; remove obsolete factory/legacy package selections after migration. | pending |
+| W003 | TODO | `modules/package-sets.nix` | +3/-0 | CHECK | native extraction / #731 | Preserve only shipped packages and packages used by tests; remove native/legacy exports when moved. | pending |
+| W004 | TODO | `modules/plugin-packaging.nix` | +6/-1 | CHECK | native extraction / #731 | Check ABI and Basic composition manifests match runtime selection; no Nix-owned permission semantics. | pending |
+| W005 | TODO | `README.md` | +2/-0 | SIMPLIFY | #731 / docs | Replace transitional product wording after portable Basic/Full selection; avoid promising unimplemented parity. | pending |
+| W006 | TODO | `rust/Cargo.lock` | +35/-0 | CHECK | final integration | Regenerate on owning changes; prove no orphan native or legacy dependencies after extraction. | pending |
+| W007 | TODO | `rust/Cargo.toml` | +4/-0 | CHECK | final integration | Audit new workspace members and features; remove crate list entries only after owner extraction and retirement. | pending |
+| W008 | TODO | `rust/crates/phenix-agent-configurations/src/lib.rs` | +34/-3 | SIMPLIFY | #731 / cleanup | Make Basic/Full select same portable topology, remove hooks/legacy defaults when parity passes. | pending |
+| W009 | TODO | `rust/crates/phenix-core/Cargo.toml` | +2/-0 | CHECK | #726 / native extraction | Core needs only contract-level dependency; move loader-specific build linkage to native owner. | pending |
+| W010 | TODO | `rust/crates/phenix-core/src/composition/component.rs` | +11/-1 | KEEP | #726 | Ensure imported contract IDs and selected provider handles remain canonical; reject duplicate selection model. | pending |
+| W011 | TODO | `rust/crates/phenix-core/src/composition/inspection.rs` | +203/-2 | SIMPLIFY | #726 / #760 | Use existing graph provenance for workflow inspection, avoid a second report/digest. | pending |
+| W012 | TODO | `rust/crates/phenix-core/src/composition/manifest.rs` | +8/-0 | CHECK | native extraction | Native execution enum/manifest must be selected by same resolver; no second registries. | pending |
+| W013 | TODO | `rust/crates/phenix-core/src/composition/registry.rs` | +10/-0 | CHECK | native extraction / #728 | Check startup identity/selection registration is unified with portable typed contributions. | pending |
+| W014 | TODO | `rust/crates/phenix-core/src/composition/resolver.rs` | +488/-3 | SIMPLIFY | #726 / #728 / #760 | Replace separate with_workflows/frames/projections stages with one frozen owned plan contribution; prove hash/owner determinism. | pending |
+| W015 | TODO | `rust/crates/phenix-core/src/lib.rs` | +42/-5 | SIMPLIFY | #726 / native extraction | Remove transitional public exports not required by canonical Core API; retain domain-neutral ABI names. | pending |
+| W016 | TODO | `rust/crates/phenix-core/src/plugin_pending.rs` | +107/-0 NEW | MOVE | native implementation PR | Move/merge one-shot pending response boundary with Core task provider contract; remove if generic native CallStart suffices. | pending |
+| W017 | TODO | `rust/crates/phenix-core/src/plugin/context.rs` | +9/-0 | KEEP | #726 / native extraction | Propagate parent cancellation and scoped authority through existing host without inventing parallel context. | pending |
+| W018 | TODO | `rust/crates/phenix-core/src/plugin/management.rs` | +7/-1 | CHECK | native extraction | Native staging uses resident generations, not separate plugin manager; test failed candidate does not mutate active. | pending |
+| W019 | TODO | `rust/crates/phenix-core/src/runtime.rs` | +90/-11 | SIMPLIFY | #726 / native extraction | Check root IDs, native factories and resident generation ownership; remove redundant factory map after discovery. | pending |
+| W020 | TODO | `rust/crates/phenix-core/src/runtime/dispatch.rs` | +4/-1 | KEEP | #726 | Reuse same import and Layer invocation chain; no workflow-only provider selection. | pending |
+| W021 | TODO | `rust/crates/phenix-core/src/runtime/host.rs` | +104/-0 | KEEP | native extraction / #726 | Preserve attenuation and parent-cancellation across plugin host; verify native callback cannot impersonate owner. | pending |
+| W022 | TODO | `rust/crates/phenix-core/src/runtime/kernel.rs` | +636/-1 | SIMPLIFY | #726 | Reduce four workflow entry variants to one internal driver and thin wrappers; verify frame/projection/lease behavior. | pending |
+| W023 | TODO | `rust/crates/phenix-core/src/runtime/native_plugin.rs` | +263/-0 NEW | MOVE | native implementation PR | Extract shared-library registration, ownership and callbacks; keep only generic loader host glue where needed. | pending |
+| W024 | TODO | `rust/crates/phenix-core/src/runtime/reconciliation.rs` | +3/-0 | CHECK | #760 / native extraction | Prove retired generations keep leases until real call settlement; avoid duplicate reconcile code. | pending |
+| W025 | TODO | `rust/crates/phenix-core/src/runtime/residency.rs` | +3/-0 | KEEP | native extraction | Preserve one resident generation manager; unload only after real callback and guest release. | pending |
+| W026 | TODO | `rust/crates/phenix-core/src/tasks.rs` | +58/-4 | SIMPLIFY | #726 | Compare root-owned task/lease/cancel state with workflow_tasks; extract common ticket logic once. | pending |
+| W027 | TODO | `rust/crates/phenix-core/src/workflow_execution_regression.rs` | +2961/-0 NEW | SIMPLIFY | #726 | Keep non-agent observable conformance and failure cases; consolidate duplicate fixture builders instead of accumulating examples. | pending |
+| W028 | TODO | `rust/crates/phenix-core/src/workflow_frame.rs` | +538/-0 NEW | KEEP | #726 | Validate data-only COW slots, qualified private includes, atomic publish and schema revision; reuse existing typed values. | pending |
+| W029 | TODO | `rust/crates/phenix-core/src/workflow_join.rs` | +370/-0 NEW | KEEP | #726 | Preserve closed five Join policies and deterministic tie order; deduplicate settlement checks with scheduler. | pending |
+| W030 | TODO | `rust/crates/phenix-core/src/workflow_projection.rs` | +267/-0 NEW | SIMPLIFY | #726 / #728 | Reconcile portable outcome projection with contract schema; avoid a second agent-specific branch authority. | pending |
+| W031 | TODO | `rust/crates/phenix-core/src/workflow_scheduler.rs` | +737/-0 NEW | SIMPLIFY | #726 | Unify cooperative/pending driving, fixed/map branches, nested scopes, cancel, fairness and side effects into one scheduler. | pending |
+| W032 | TODO | `rust/crates/phenix-core/src/workflow_tasks.rs` | +1043/-0 NEW | SIMPLIFY | #726 | Prove only workflow ticket correlation remains here; move generic spawn/lease/cancel machinery into TaskRuntime. | pending |
+| W033 | TODO | `rust/crates/phenix-core/src/workflow.rs` | +4734/-0 NEW | SIMPLIFY | #726 | Keep 4-step IR; consolidate compile/lowering stages, remove obsolete Invoke/Exit test-only interpreter after parity. | pending |
+| W034 | TODO | `rust/crates/phenix-harness/src/application.rs` | +391/-22 | SIMPLIFY | #731 / #725 | Remove runtime legacy-vs-declarative fallback switch after parity; use selected EntryBinding and durable prompt receipt. | pending |
+| W035 | TODO | `rust/crates/phenix-harness/src/basic_suite.rs` | +53/-0 | MOVE | #731 / cleanup | Stop manual Basic model/provider factory closure; use portable profiles and descriptor discovery. | pending |
+| W036 | TODO | `rust/crates/phenix-harness/src/main.rs` | +39/-11 | CHECK | #731 | Ensure flags/config produce same plugin selection as generated Nix and no legacy implicit fallback. | pending |
+| W037 | TODO | `rust/crates/phenix-harness/src/runtime_builder.rs` | +207/-17 | SIMPLIFY | #728 / #760 / #731 | Migrate manually added workflow/frame/projection defaults to selected owned descriptors and entries. | pending |
+| W038 | TODO | `rust/crates/phenix-harness/src/runtime.rs` | +68/-0 | SIMPLIFY | #726 / #731 | Drop duplicate sync/pending/profile entry helpers after canonical selected entry API lands. | pending |
+| W039 | TODO | `rust/crates/phenix-harness/src/tests.rs` | +442/-23 | SIMPLIFY | #726 / #731 | Keep Basic/Full parity, streaming, cancellation and real product tests; rehome legacy fixtures before deletion. | pending |
+| W040 | TODO | `rust/crates/phenix-native-loader/Cargo.toml` | +12/-0 NEW | MOVE | native implementation PR | Transfer loader crate ownership to native PR; verify non-Nix independent build. | pending |
+| W041 | TODO | `rust/crates/phenix-native-loader/src/lib.rs` | +1209/-0 NEW | MOVE | native implementation PR | Keep only intrinsic dlopen/native ABI transport and host callback lifecycle; test buffer release and wake/cancel. | pending |
+| W042 | TODO | `rust/crates/phenix-native-loader/tests/fixtures/pending_plugin.rs` | +154/-0 NEW | MOVE | native implementation PR | Preserve independent compiled plugin fixture as ABI conformance, not workflow-specific feature. | pending |
+| W043 | TODO | `rust/crates/phenix-plugin-abi/Cargo.toml` | +10/-0 NEW | MOVE | native implementation PR | Version stable zero-dependency ABI crate separately from workflow execution. | pending |
+| W044 | TODO | `rust/crates/phenix-plugin-abi/src/lib.rs` | +398/-0 NEW | MOVE | native implementation PR | Retain C-compatible table/ownership and reject mismatched revisions; no Rust trait objects across ABI. | pending |
+| W045 | TODO | `rust/crates/phenix-plugin-agent-topology/Cargo.toml` | +13/-0 NEW | KEEP | #726 / #731 | Package topology independently from Legacy Agent and Core domain contracts. | pending |
+| W046 | TODO | `rust/crates/phenix-plugin-agent-topology/src/lib.rs` | +640/-0 NEW | SIMPLIFY | #726 / #728 | Emit selected portable plan + outcome definitions, not builder-injected Rust declarations once descriptors land. | pending |
+| W047 | TODO | `rust/crates/phenix-plugin-agent-topology/src/runtime_adapter.rs` | +1493/-0 NEW | SIMPLIFY | #726 / #731 | Consolidate repeated agent state invariants with SDK/provider; remove sync/pending boolean dispatch adapter after parity. | pending |
+| W048 | TODO | `rust/crates/phenix-plugin-basic-agent-nodes/Cargo.toml` | +13/-0 NEW | KEEP | #726 / #731 | Ensure Basic node providers depend on portable contracts, not old agent implementation. | pending |
+| W049 | TODO | `rust/crates/phenix-plugin-basic-agent-nodes/src/lib.rs` | +588/-0 NEW | SIMPLIFY | #726 / cleanup | Reuse existing model/tool service implementations; centralize only unique agent turn/batch policy. | pending |
+| W050 | TODO | `rust/crates/phenix-plugin-basic-agent/src/agent_loop.rs` | +34/-152 | RETIRE | #731 / cleanup | Delete executable legacy progression after exact parity for turns, tool IDs, events, budgets and cancellation; rehome tests. | pending |
+| W051 | TODO | `rust/crates/phenix-plugin-catalog/Cargo.toml` | +2/-0 | SIMPLIFY | #731 / cleanup | Remove static first-party factory roster dependencies after dynamic selection canary. | pending |
+| W052 | TODO | `rust/crates/phenix-plugin-catalog/src/lib.rs` | +9/-0 | RETIRE | #731 / cleanup | Replace hardcoded topology/nodes registration and manifest catalog with portable selected discovery; preserve consumer API where required. | pending |
+| W053 | TODO | `rust/crates/phenix-plugin-execution/Cargo.toml` | +2/-0 | CHECK | #731 | Audit legacy agent-loop dev dependencies and test support, not a second executable loop. | pending |
+| W054 | TODO | `rust/crates/phenix-plugin-execution/src/agent_loop_regression.rs` | +156/-0 | MOVE | #731 / cleanup | Move shared semantic legacy/declarative parity fixtures into canonical product conformance before deleting old route. | pending |
+| W055 | TODO | `rust/crates/phenix-sdk/src/contracts/agent_loop.rs` | +306/-1 | MOVE | #731 / domain contract migration | Move agent loop state/contracts to plugin-owned domain package once external version IDs are preserved. | pending |
+| W056 | TODO | `scripts/check-rust-safety-policy.sh` | +18/-5 | CHECK | CI / cleanup | Keep safety scans as Nix-owned build/dev checks; remove hardcoded crate lists after native relocation. | pending |
+| W057 | TODO | `spec/declarative-workflow-topology.md` | +508/-0 NEW | SIMPLIFY | #726 docs | Record actual vs target behavior and link normative RFC; remove obsolete migration claims and repeated status log. | pending |
+| W058 | TODO | `spec/native-plugin-abi-and-guest-runtimes.md` | +59/-1 | KEEP | native implementation PR | Update implemented ABI stage claims only after verified loader/guest milestones; no premature Lua completion. | pending |
+
+## Code growth gate
+
+Every iteration records the exact added/deleted production LOC, test LOC, live execution paths, retired duplicate APIs and paths moved to separately owned PRs. The goal is not an arbitrary LOC quota: the final kernel must reuse old dispatch/lease/resolver machinery and retire the old agent progression after parity. Native ABI extraction may relocate LOC across PRs, which must be counted as moved rather than deleted.
+
+Do not declare the whole matrix complete until #726 passes its non-agent conformance and the dependent consumer/cleanup PRs have removed all transitional legacy execution paths. `MOVE` rows can complete when the new owner is verified and the transitional code is removed from #726.
