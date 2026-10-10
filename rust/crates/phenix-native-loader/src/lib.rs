@@ -22,6 +22,7 @@ use std::{
     sync::{
         Arc, Condvar, LazyLock, Mutex, Weak,
         atomic::{AtomicUsize, Ordering},
+        mpsc::{self, Sender},
     },
     time::Duration,
 };
@@ -44,6 +45,105 @@ struct WakeHub {
 struct CallPermit {
     wake: bool,
     cancelled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    import_sender: Option<Sender<NativeHostImportRequest>>,
+}
+
+/// One independently authorized native import request. The owning Core
+/// call thread must dispatch this through its *current* scoped PluginHost;
+/// a guest callback does not carry an authority handle in the ABI.
+pub struct NativeHostImportRequest {
+    pub interface: String,
+    pub input: Vec<u8>,
+    pub reply: Sender<Result<Vec<u8>, String>>,
+}
+
+unsafe extern "C" fn native_release_bytes(_: *mut c_void, ptr: *mut u8, len: usize) {
+    if len != 0 {
+        // SAFETY: exactly these bytes were allocated as Box<[u8]> by
+        // host_owned_result, with no reallocation or allocator crossing.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
+    }
+}
+
+fn host_owned_result(ticket: NativeCallTicket, result: Result<Vec<u8>, String>) -> NativeCallResult {
+    let (status, bytes) = match result {
+        Ok(value) => (RESULT_READY, value),
+        Err(error) => (RESULT_ERROR, error.into_bytes()),
+    };
+    let bytes = bytes.into_boxed_slice();
+    let len = bytes.len();
+    let ptr = if len == 0 {
+        std::ptr::null_mut()
+    } else {
+        Box::into_raw(bytes).cast::<u8>()
+    };
+    NativeCallResult {
+        status,
+        ticket,
+        payload: NativeOwnedBuffer {
+            ptr,
+            len,
+            owner: std::ptr::null_mut(),
+            release: Some(native_release_bytes),
+        },
+    }
+}
+
+unsafe extern "C" fn native_invoke_import(
+    context: *mut c_void,
+    ticket: NativeCallTicket,
+    requested_interface: NativeSlice,
+    input: NativeSlice,
+) -> NativeCallResult {
+    let Some(hub) = hub_for(context) else {
+        return host_owned_result(ticket, Err("native host scope has retired".into()));
+    };
+    let sender = {
+        let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        calls
+            .get(&(ticket.root_id, ticket.call_id))
+            .and_then(|permit| permit.import_sender.clone())
+    };
+    let Some(sender) = sender else {
+        return host_owned_result(ticket, Err("native import call is not admitted".into()));
+    };
+    if (requested_interface.len != 0 && requested_interface.ptr.is_null())
+        || (input.len != 0 && input.ptr.is_null())
+        || requested_interface.len > isize::MAX as usize
+        || input.len > isize::MAX as usize
+    {
+        return host_owned_result(ticket, Err("invalid native import buffer".into()));
+    }
+    let bytes = |value: NativeSlice| {
+        if value.len == 0 {
+            &[][..]
+        } else {
+            // SAFETY: an admitted trusted native plugin guarantees the
+            // borrowed slice remains valid through this callback.
+            unsafe { std::slice::from_raw_parts(value.ptr, value.len) }
+        }
+    };
+    let interface = match std::str::from_utf8(bytes(requested_interface)) {
+        Ok(interface) => interface.to_owned(),
+        Err(_) => return host_owned_result(ticket, Err("non-UTF8 interface ID".into())),
+    };
+    let (reply, receiver) = mpsc::channel();
+    if sender
+        .send(NativeHostImportRequest {
+            interface,
+            input: bytes(input).to_vec(),
+            reply,
+        })
+        .is_err()
+    {
+        return host_owned_result(ticket, Err("native host dispatcher has closed".into()));
+    }
+    host_owned_result(
+        ticket,
+        receiver
+            .recv()
+            .unwrap_or_else(|_| Err("native import dispatcher disconnected".into())),
+    )
 }
 
 /// Clonable wake receiver for a root-owned native worker. An untrusted plugin
@@ -340,7 +440,7 @@ impl NativePluginLibrary {
                 context: id as *mut c_void,
                 is_cancelled: Some(native_is_cancelled),
                 wake: Some(native_wake),
-                invoke_import: None,
+                invoke_import: Some(native_invoke_import),
             }),
             generation,
             state: NativeInstanceState::Created,
@@ -429,7 +529,7 @@ impl NativePluginInstance {
         interface: &str,
         input: &[u8],
     ) -> Result<NativeInvocation, NativeLoadError> {
-        self.begin_with_cancellation(ticket, scope, component, interface, input, None)
+        self.begin_with_cancellation(ticket, scope, component, interface, input, None, None)
     }
 
     /// Register this callback's attenuation/cancellation predicate before
@@ -442,6 +542,7 @@ impl NativePluginInstance {
         interface: &str,
         input: &[u8],
         cancellation: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+        import_sender: Option<Sender<NativeHostImportRequest>>,
     ) -> Result<NativeInvocation, NativeLoadError> {
         if self.state != NativeInstanceState::Active {
             return Err(NativeLoadError::Lifecycle("begin requires active instance"));
@@ -463,6 +564,7 @@ impl NativePluginInstance {
                     CallPermit {
                         wake: false,
                         cancelled: cancellation,
+                        import_sender,
                     },
                 )
                 .is_some()
