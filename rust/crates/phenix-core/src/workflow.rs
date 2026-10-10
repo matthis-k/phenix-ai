@@ -1802,7 +1802,7 @@ impl CompiledWorkflow {
     }
 
     pub(crate) fn requires_frame(&self) -> bool {
-        self.plan.steps.values().any(|step| match step {
+        !self.scoped_subplans.is_empty() || self.plan.steps.values().any(|step| match step {
             PlanStep::Fork { .. } => true,
             PlanStep::Invoke { transfers, .. } => !transfers.is_empty(),
             _ => false,
