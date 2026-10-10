@@ -13,16 +13,16 @@ Implemented means code exists. Tested means the named semantic check has passed 
 | Canonical wire and schemas | contract/src/value.rs, descriptor/mod.rs | Bounded decoding, canonical maps, typed request/result/error | Tested | Contract unit vectors; real native schema rejection |
 | Single-source contributions | macros/src/lib.rs, descriptor/encode.rs | Declare/Require/Provide and glue derive from annotations | Tested | Duplicate export compile-fail; structural schema comparison |
 | Typed public SDK | sdk/src/lib.rs, macros/src/lib.rs | Typed operation markers and scoped import stubs | Tested | Separate fixture compilation; six compile-fail cases |
-| Public distribution boundary | flake.nix, examples/Cargo.toml, examples/Cargo.lock | Plugins consume packaged SDK with no private kernel sources | Implemented | Native derivations physically build from the SDK distribution |
+| Public distribution boundary | flake.nix, examples/Cargo.toml, examples/Cargo.lock | Plugins consume packaged SDK with no private kernel sources | Tested | Native derivations physically build from the SDK distribution |
 | Offline package verification | artifact/src/lib.rs | Final artifact/descriptor hashes and embedded equality before loading | Tested | Tampering, wrong ownership, unsupported ABI and mismatch cases |
 | Canonical resolver | kernel/src/resolve.rs | Explicit selection; missing, ambiguous, incompatible and absent choices reject | Tested | Native conformance; artifact-order permutation |
-| Native loader | kernel/src/native.rs, tests/abi-negative.c | Header before table; null/short/incompatible tables reject | Implemented | Actual faulty native files; final native check owns evidence |
+| Native loader | kernel/src/native.rs, tests/abi-negative.c | Header before table; null/short/incompatible tables reject | Tested | Actual faulty native files; final native check owns evidence |
 | Root and scoped dispatch | kernel/src/runtime.rs | Same path for root and nested effects; host authenticates caller | Tested | Real consumer -> provider invocation |
 | Operation authority | kernel/src/runtime.rs | Deny before effect; immutable selected grants and ceilings | Tested | Denied import leaves provider counter zero |
 | Thread and scope ownership | kernel/src/runtime.rs | Forged, expired and wrong-thread scopes reject before pointer access | Tested | Scope boundary tests; Host is not Send |
-| Instance reentrancy | examples/cycle/src/lib.rs, kernel/src/runtime.rs | Self-call rejects before another instance entry | Implemented | Native cycle fixture; final native check owns evidence |
+| Instance reentrancy | examples/cycle/src/lib.rs, kernel/src/runtime.rs | Self-call rejects before another instance entry | Tested | Native cycle fixture; final native check owns evidence |
 | Buffer ownership | contract/src/abi.rs, SDK glue | Producing-side release once for success, domain and malformed replies | Tested | Counted-release tests, C/Rust layout assertions, native round trips |
-| Recoverable panics | SDK glue, examples/provider/src/lib.rs | Catch FFI unwind; reject future calls to poisoned state | Implemented | Native panic/poison fixture; process-fatal events remain fatal |
+| Recoverable panics | SDK glue, examples/provider/src/lib.rs | Catch FFI unwind; reject future calls to poisoned state | Tested | Native panic/poison fixture; process-fatal events remain fatal |
 | Trusted CLI / inspection | kernel/src/bin/phenix-kernel.rs, tests/product.py | Parsed JSON, typed result, root summary, hashes and verification phases | Tested | Nix-built CLI product check |
 | Pre-load nonexecution | examples/provider/src/lib.rs, conformance/src/main.rs, tests/product.py | Constructor witness stays absent during offline checks | Tested | Witness appears only after actual native loading |
 | Nix deployment closure | flake.nix | Separate kernel, SDK, tooling and plugin products; no Nix resolver | Tested | m0-contract, m0-descriptor, m0-native, m0-product |
@@ -30,9 +30,10 @@ Implemented means code exists. Tested means the named semantic check has passed 
 
 ## Remaining acceptance work
 
-1. Run all four checks on the final committed head, including the new loaded-ABI, cycle and panic-poison cases.
-2. Attach the GitHub run and realized evidence to the PR. Keep failed or unproven requirements visible.
-3. Review the public C/Rust ABI and trusted-source assumption against the frozen contracts.
+The full local gate passed at `b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba`, including loaded-ABI, cycle and panic-poison cases. [Persistent local evidence](evidence/m0-local.json) records exact artifacts and Nix outputs. The follow-up evidence commit changes documentation only.
+
+1. Record GitHub CI for the final PR head. Its generated commit stamp and run identify that head without a self-referential document hash.
+2. Review the public C/Rust ABI and trusted-source assumption against the frozen contracts. No failing M0.0 semantic case remains in the local gate.
 
 ## Mechanism ownership
 

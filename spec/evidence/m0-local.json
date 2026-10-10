@@ -1,0 +1,235 @@
+{
+  "checks": {
+    "contract": {
+      "nix_output": "/nix/store/kmzwbc1ghlgi8ym680lzjjp6pfb6nkg6-phenix-contract-check-0.1.0",
+      "result": "passed"
+    },
+    "descriptor": {
+      "evidence": {
+        "binutils": "GNU ld (GNU Binutils) 2.46",
+        "configurations": [
+          "thin-gnu",
+          "fat-gnu",
+          "off-gnu",
+          "thin-lld-gc",
+          "thin-gnu-repeat"
+        ],
+        "format": "phenix.p0-evidence.v1",
+        "packages": [
+          {
+            "artifact": "lib/plugin.so",
+            "artifact_sha256": "e94980e175e382163d7e8afe5e7a251854e119b8263625f2d634ac0b2880ae3f",
+            "descriptor": "descriptor.bin",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "format": "phenix.package.v1",
+            "package_path": "/nix/store/b78fw5ac2sfz6pjgyg4f2cj99xqh5gn0-example-provider-0.1.0",
+            "target": "x86_64-unknown-linux-gnu"
+          },
+          {
+            "artifact": "lib/plugin.so",
+            "artifact_sha256": "d97ebf227814e4b63f09124fe54b413f011c6b787993fc07610bcebe0d1034c0",
+            "descriptor": "descriptor.bin",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "format": "phenix.package.v1",
+            "package_path": "/nix/store/cyhch6532rjb30dc9kqpqhbz4qm0qriz-example-provider-fat-0.1.0",
+            "target": "x86_64-unknown-linux-gnu"
+          },
+          {
+            "artifact": "lib/plugin.so",
+            "artifact_sha256": "fd6d5cc77db69b60fff8f5dc698f943237381a5e1e3a2a0f699602bcf207ae3d",
+            "descriptor": "descriptor.bin",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "format": "phenix.package.v1",
+            "package_path": "/nix/store/yyqan33zl1zwqlygfblhr4kk0w5zwb41-example-provider-no-lto-0.1.0",
+            "target": "x86_64-unknown-linux-gnu"
+          },
+          {
+            "artifact": "lib/plugin.so",
+            "artifact_sha256": "9463aa01dafb5cfd693bbb6b37f8204ac237277d922af9b070621a0dd7eb0995",
+            "descriptor": "descriptor.bin",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "format": "phenix.package.v1",
+            "package_path": "/nix/store/b5wbv88apqprj269rni397k6in41vgx6-example-provider-lld-0.1.0",
+            "target": "x86_64-unknown-linux-gnu"
+          },
+          {
+            "artifact": "lib/plugin.so",
+            "artifact_sha256": "70836d9dff47cd01a2f162dcd3103bd91354120960126ce8d98fcd0e3fa15160",
+            "descriptor": "descriptor.bin",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "format": "phenix.package.v1",
+            "package_path": "/nix/store/25rr8iyaxq1g18kvdd03abxy0lbz43q7-example-provider-repeat-0.1.0",
+            "target": "x86_64-unknown-linux-gnu"
+          }
+        ],
+        "strip_modes": [
+          "debug",
+          "unneeded",
+          "all"
+        ]
+      },
+      "nix_output": "/nix/store/5xx9w1chry5x10l676gxmcq2y8vbyw1h-phenix-m0-descriptor"
+    },
+    "native": {
+      "evidence": {
+        "cases": [
+          "offline-no-execution",
+          "real-nested-call",
+          "domain-error",
+          "panic-translation",
+          "poisoned-provider",
+          "missing-binding",
+          "single-provider-needs-selection",
+          "ambiguous-binding",
+          "absent-selection",
+          "schema-mismatch",
+          "bad-abi",
+          "metadata-mismatch",
+          "wrong-owner",
+          "artifact-tamper",
+          "unknown-policy",
+          "binding-order",
+          "schema-rejection",
+          "denied-counter-unchanged",
+          "buffer-roundtrip",
+          "native-cycle",
+          "loaded-abi-major",
+          "loaded-short-table",
+          "loaded-null-entries"
+        ],
+        "contract_version": "0.1.0",
+        "denied": {
+          "bindings": {
+            "example.transform@1/apply": "example.provider"
+          },
+          "calls": 2,
+          "denied_operations": 1,
+          "entry": {
+            "interface": "example.consumer@1",
+            "operation": "run",
+            "provider": "example.consumer"
+          },
+          "format": "phenix.inspect.v1",
+          "last_failure": {
+            "code": "Denied",
+            "message": "example.consumer has no effective grant for example.transform@1/apply"
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "5e71224b3b9b50fa25b6acbd9b8c4b47f2a2b482775d512e7759b74bbf9687c1",
+              "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+              "id": "example.consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "e94980e175e382163d7e8afe5e7a251854e119b8263625f2d634ac0b2880ae3f",
+              "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+              "id": "example.provider",
+              "offline_verified": true
+            }
+          ],
+          "roots": {
+            "active": null,
+            "completed": 2,
+            "last_root_id": 2
+          }
+        },
+        "format": "phenix.conformance.v1",
+        "sdk_version": "0.1.0",
+        "successful": {
+          "bindings": {
+            "example.transform@1/apply": "example.provider"
+          },
+          "calls": 8,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.consumer@1",
+            "operation": "run",
+            "provider": "example.consumer"
+          },
+          "format": "phenix.inspect.v1",
+          "last_failure": {
+            "code": "PluginFailed",
+            "message": "instance rejected after an earlier panic"
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "5e71224b3b9b50fa25b6acbd9b8c4b47f2a2b482775d512e7759b74bbf9687c1",
+              "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+              "id": "example.consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "e94980e175e382163d7e8afe5e7a251854e119b8263625f2d634ac0b2880ae3f",
+              "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+              "id": "example.provider",
+              "offline_verified": true
+            }
+          ],
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          }
+        }
+      },
+      "nix_output": "/nix/store/l2828gcs8lb49kgwbbqr95rqvdjz15v7-phenix-m0-native"
+    },
+    "product": {
+      "evidence": {
+        "bindings": {
+          "example.transform@1/apply": "example.provider"
+        },
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.consumer@1",
+          "operation": "run",
+          "provider": "example.consumer"
+        },
+        "format": "phenix.inspect.v1",
+        "last_failure": null,
+        "outcome": {
+          "kind": "success",
+          "value": {
+            "text": "PHENIX"
+          }
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "5e71224b3b9b50fa25b6acbd9b8c4b47f2a2b482775d512e7759b74bbf9687c1",
+            "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+            "id": "example.consumer",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "e94980e175e382163d7e8afe5e7a251854e119b8263625f2d634ac0b2880ae3f",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "id": "example.provider",
+            "offline_verified": true
+          }
+        ],
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        }
+      },
+      "nix_output": "/nix/store/sdi7rhpf549zl17pgnykp57x9zla69gs-phenix-m0-product"
+    }
+  },
+  "command": "nix flake check -L",
+  "contract_version": "0.1.0",
+  "format": "phenix.m0-evidence.v1",
+  "result": "passed",
+  "root_commit": "11cdf0eca7e80965d0dfca3762d1fd65bb19e10f",
+  "sdk_version": "0.1.0",
+  "target": "x86_64-unknown-linux-gnu",
+  "tested_commit": "b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba"
+}
