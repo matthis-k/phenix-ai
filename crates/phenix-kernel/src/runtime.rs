@@ -33,6 +33,12 @@ struct Frame {
     scope: u64,
     provider: String,
 }
+#[derive(serde::Serialize)]
+struct FailureContext {
+    caller: String,
+    provider: String,
+    operation: String,
+}
 #[derive(Default)]
 struct State {
     active_root: Option<u64>,
@@ -41,6 +47,7 @@ struct State {
     calls: u64,
     denied: u64,
     last_failure: Option<Failure>,
+    last_failure_context: Option<FailureContext>,
     stack: Vec<Frame>,
 }
 #[derive(Clone, Copy)]
@@ -139,11 +146,35 @@ impl Kernel {
             state.denied += 1;
         }
         state.last_failure = Some(failure.clone());
+        state.last_failure_context = None;
         Err(failure)
     }
     // Root entry and nested imports converge here. This is the only point of
     // effect. It does not perform provider discovery or permit policy mutation.
     fn dispatch(
+        &self,
+        root: u64,
+        caller: Caller<'_>,
+        selection: &Selection,
+        input: &[u8],
+    ) -> Result<Outcome, Failure> {
+        let result = self.dispatch_inner(root, caller, selection, input);
+        if let Err(failure) = &result {
+            let mut state = self.state.borrow_mut();
+            state.last_failure = Some(failure.clone());
+            // Preserve the innermost failed effect when a nested failure
+            // propagates through the same synchronous dispatch path.
+            if state.last_failure_context.is_none() {
+                state.last_failure_context = Some(FailureContext {
+                    caller: caller.name().into(),
+                    provider: selection.provider.clone(),
+                    operation: selection.key(),
+                });
+            }
+        }
+        result
+    }
+    fn dispatch_inner(
         &self,
         root: u64,
         caller: Caller<'_>,
@@ -238,20 +269,47 @@ impl Kernel {
         report["roots"] = serde_json::json!({"active":state.active_root,"completed":state.completed_roots,"last_root_id":if state.next_root==0{None}else{Some(state.next_root)}});
         report["calls"] = state.calls.into();
         report["denied_operations"] = state.denied.into();
-        report["last_failure"] = serde_json::json!(state.last_failure);
+        report["last_failure"] = match &state.last_failure {
+            Some(failure) => {
+                let mut value = serde_json::json!(failure);
+                value["phase"] = if state.last_failure_context.is_some() {
+                    "invocation"
+                } else {
+                    "admission"
+                }
+                .into();
+                value["context"] = serde_json::json!(state.last_failure_context);
+                value
+            }
+            None => serde_json::Value::Null,
+        };
         report
     }
 }
 impl Root<'_> {
     pub fn invoke(&self, request: &Value) -> Result<Outcome, Failure> {
-        self.invoke_bytes(&request.encode()?)
+        match request.encode() {
+            Ok(bytes) => self.invoke_bytes(&bytes),
+            Err(failure) => {
+                let mut state = self.kernel.state.borrow_mut();
+                state.last_failure = Some(failure.clone());
+                state.last_failure_context = Some(FailureContext {
+                    caller: "root".into(),
+                    provider: self.entry.provider.clone(),
+                    operation: self.entry.key(),
+                });
+                Err(failure)
+            }
+        }
     }
     pub fn invoke_bytes(&self, request: &[u8]) -> Result<Outcome, Failure> {
+        let previous_context = self.kernel.state.borrow_mut().last_failure_context.take();
         let result = self
             .kernel
             .dispatch(self.id, Caller::Root, &self.entry, request);
-        if let Err(e) = &result {
-            self.kernel.state.borrow_mut().last_failure = Some(e.clone());
+        let mut state = self.kernel.state.borrow_mut();
+        if state.last_failure_context.is_none() {
+            state.last_failure_context = previous_context;
         }
         result
     }

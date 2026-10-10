@@ -1,0 +1,27 @@
+{
+  "success": {
+    "format": "phenix.inspect.v1",
+    "bindings": {"example.transform@1/apply": "example.provider"},
+    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "calls": 2,
+    "denied_operations": 0,
+    "last_failure": null,
+    "outcome": {"kind": "success", "value": {"text": "PHENIX"}}
+  },
+  "denied": {
+    "format": "phenix.inspect.v1",
+    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "calls": 1,
+    "denied_operations": 1,
+    "last_failure": {
+      "code": "Denied",
+      "phase": "invocation",
+      "context": {
+        "caller": "example.consumer",
+        "provider": "example.provider",
+        "operation": "example.transform@1/apply"
+      }
+    },
+    "outcome": {"kind": "kernel_failure"}
+  }
+}

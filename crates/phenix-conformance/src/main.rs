@@ -89,12 +89,12 @@ fn mutate_package(
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() != 9 {
-        eprintln!("usage: phenix-conformance PROVIDER CONSUMER ALTERNATE CYCLE BAD-MAJOR BAD-SHORT BAD-NULL OUTPUT");
+    if args.len() != 11 {
+        eprintln!("usage: phenix-conformance PROVIDER CONSUMER ALTERNATE CYCLE BAD-MAJOR BAD-SHORT BAD-NULL BAD-RELEASE BAD-CREATE OUTPUT");
         std::process::exit(1);
     }
     let (provider, consumer, alternate) = (&args[1], &args[2], &args[3]);
-    let output = Path::new(&args[8]);
+    let output = Path::new(&args[10]);
     fs::create_dir_all(output).unwrap();
     let work = std::env::temp_dir().join(format!("phenix-conformance-{}", std::process::id()));
     fs::create_dir_all(&work).unwrap();
@@ -242,6 +242,15 @@ fn main() {
         root.invoke_bytes(&[0, 0]).unwrap_err().code,
         Code::SchemaRejected
     );
+    let before_encode_failure = kernel.inspect()["calls"].clone();
+    assert_eq!(
+        root.invoke(&Value::Bytes(vec![0; phenix_contract::MAX_BYTES + 1]))
+            .unwrap_err()
+            .code,
+        Code::SchemaRejected
+    );
+    assert_eq!(kernel.inspect()["calls"], before_encode_failure);
+    assert_eq!(kernel.inspect()["last_failure"]["phase"], "invocation");
     assert_eq!(
         root.invoke(&request("again")).unwrap_err().code,
         Code::PluginFailed
@@ -275,6 +284,14 @@ fn main() {
     let denied = kernel.inspect();
     assert_eq!(denied["denied_operations"], 1);
     assert_eq!(denied["last_failure"]["code"], "Denied");
+    assert_eq!(denied["last_failure"]["phase"], "invocation");
+    assert_eq!(
+        denied["last_failure"]["context"],
+        serde_json::json!({
+            "caller":"example.consumer", "provider":"example.provider",
+            "operation":"example.transform@1/apply",
+        })
+    );
     drop(kernel);
     let cycle_key = selection("example.cycle@1", "run", "example.cycle");
     let cycle_deployment = Deployment {
@@ -304,7 +321,7 @@ fn main() {
     drop(cycle_root);
     assert_eq!(cycle_kernel.inspect()["calls"], 1);
     drop(cycle_kernel);
-    for bad in &args[5..8] {
+    for bad in &args[5..9] {
         let deployment = Deployment {
             format: "phenix.deployment.v1".into(),
             artifacts: vec![bad.clone()],
@@ -322,7 +339,32 @@ fn main() {
             Ok(_) => panic!("invalid loaded ABI accepted"),
         }
     }
-    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","ambiguous-binding","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries"]})).unwrap()).unwrap();
+    // Consumer starts first in canonical identity order. Foreign provider
+    // allocates an instance and a reply, then returns an invalid status. Both
+    // producer resources and the already started consumer must be stopped once.
+    let lifecycle = work.join("lifecycle");
+    std::env::set_var("PHENIX_LIFECYCLE_WITNESS", &lifecycle);
+    let rollback = Prepared::prepare(deployment(&args[9], consumer)).unwrap();
+    assert!(!lifecycle.exists(), "preparation executed lifecycle code");
+    match rollback.load() {
+        Err(e) => assert_eq!(e.code, Code::AbiIncompatible),
+        Ok(_) => panic!("failed create admitted a kernel"),
+    }
+    std::env::remove_var("PHENIX_LIFECYCLE_WITNESS");
+    let rollback_events = fs::read_to_string(lifecycle).unwrap();
+    assert_eq!(
+        rollback_events.lines().collect::<Vec<_>>(),
+        [
+            "consumer:create",
+            "foreign:create",
+            "foreign:release",
+            "foreign:stop",
+            "foreign:release",
+            "consumer:stop",
+        ]
+    );
+    assert!(!rollback_events.contains("foreign:invoke"));
+    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","ambiguous-binding","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries","loaded-null-release","failed-create-rollback"],"rollback_events":rollback_events.lines().collect::<Vec<_>>()})).unwrap()).unwrap();
     fs::remove_dir_all(work).unwrap();
     println!("M0.0 native conformance passed");
 }

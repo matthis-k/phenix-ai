@@ -10,13 +10,14 @@ enum Phase {
     OfflinePreparation,
     ExecutableAbi,
     Admission,
+    Invocation,
 }
 fn main() {
     let mut phase = Phase::OfflinePreparation;
     if let Err(error) = run(&mut phase) {
         println!(
             "{}",
-            serde_json::json!({"format":"phenix.inspect.v1","phase":phase,"last_failure":error})
+            serde_json::json!({"format":"phenix.inspect.v1","phase":phase,"last_failure":{"code":error.code,"message":error.message,"phase":phase,"context":null}})
         );
         std::process::exit(1);
     }
@@ -61,13 +62,14 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     let kernel = prepared.load()?;
     *phase = Phase::Admission;
     let root = kernel.admit_default_root()?;
+    *phase = Phase::Invocation;
     let outcome = root.invoke_bytes(&input);
     drop(root);
     let mut inspection = kernel.inspect();
     inspection["outcome"] = match &outcome {
         Ok(Outcome::Success(v)) => serde_json::json!({"kind":"success","value":v.to_json()}),
         Ok(Outcome::Domain(v)) => serde_json::json!({"kind":"domain_error","value":v.to_json()}),
-        Err(e) => serde_json::json!({"kind":"kernel_failure","failure":e}),
+        Err(_) => serde_json::json!({"kind":"kernel_failure","failure":inspection["last_failure"]}),
     };
     println!("{inspection}");
     drop(kernel);

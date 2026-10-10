@@ -22,18 +22,21 @@ Implemented means code exists. Tested means the named semantic check has passed 
 | Thread and scope ownership | kernel/src/runtime.rs | Forged, expired and wrong-thread scopes reject before pointer access | Tested | Scope boundary tests; Host is not Send |
 | Instance reentrancy | examples/cycle/src/lib.rs, kernel/src/runtime.rs | Self-call rejects before another instance entry | Tested | Native cycle fixture; final native check owns evidence |
 | Buffer ownership | contract/src/abi.rs, SDK glue | Producing-side release once for success, domain and malformed replies | Tested | Counted-release tests, C/Rust layout assertions, native round trips |
+| Startup rollback | native.rs, tests/abi-negative.c, examples/consumer/src/lib.rs | Release acquired replies and instances once; do not admit a root or invoke provider after failed create | Tested | Actual native lifecycle witness; null release and unknown status reject |
+| Repeated stop | native.rs | Reject duplicate host stop before callback; drop does not repeat it | Tested | Counted producer stop test in canonical contract gate |
+| ABI/trust review | spec/m0-abi-review.md | Review layouts, pointer/lifetime rules, and read-only-source assumptions | Reviewed | Documented boundary audit and matching native fixtures |
 | Recoverable panics | SDK glue, examples/provider/src/lib.rs | Catch FFI unwind; reject future calls to poisoned state | Tested | Native panic/poison fixture; process-fatal events remain fatal |
-| Trusted CLI / inspection | kernel/src/bin/phenix-kernel.rs, tests/product.py | Parsed JSON, typed result, root summary, hashes and verification phases | Tested | Nix-built CLI product check |
+| Trusted CLI / inspection | kernel/src/bin/phenix-kernel.rs, tests/product.py, tests/inspection-golden.json | Parsed JSON, typed result, root summary, hashes, failure phase/context and versioned golden fields | Tested | Nix-built CLI product check; nested denial context survives subsequent success |
 | Pre-load nonexecution | examples/provider/src/lib.rs, conformance/src/main.rs, tests/product.py | Constructor witness stays absent during offline checks | Tested | Witness appears only after actual native loading |
 | Nix deployment closure | flake.nix | Separate kernel, SDK, tooling and plugin products; no Nix resolver | Tested | m0-contract, m0-descriptor, m0-native, m0-product |
 | Exact-head CI | .github/workflows/minimal-kernel.yml | All canonical checks, commit stamp, paths, digests and CI run | Configured | Live status and exact run are recorded in the PR body |
 
 ## Remaining acceptance work
 
-The full local gate passed at `b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba`, including loaded-ABI, cycle and panic-poison cases. [Persistent local evidence](evidence/m0-local.json) records exact artifacts and Nix outputs. The follow-up evidence commit changes documentation only.
+The full local gate passed at `b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba`, including loaded-ABI, cycle and panic-poison cases. [Persistent local evidence](evidence/m0-local.json) records exact artifacts and Nix outputs. The initial follow-up evidence commit changes documentation only. The later ABI review closes null-release rejection, failed-create rollback, repeated host stop and failure phase/context inspection. [Follow-up local evidence](evidence/m0-abi-local.json) records realized outputs, final artifact hashes, rollback events and CLI failure fixtures. All four Nix gates passed again on that follow-up working tree; exact commit and run are recorded by CI and linked in the PR body.
 
 1. Record GitHub CI for the final PR head. Its generated commit stamp and run identify that head without a self-referential document hash.
-2. Review the public C/Rust ABI and trusted-source assumption against the frozen contracts. No failing M0.0 semantic case remains in the local gate.
+2. The [ABI/trust review](m0-abi-review.md) now records completed boundary review and executable rollback/ownership evidence. Remaining acceptance is the exact-head gate for the follow-up, not an unimplemented later milestone. Raw pointer validity and process-fatal cleanup remain outside the trusted-native profile.
 
 ## Mechanism ownership
 
@@ -45,5 +48,6 @@ The full local gate passed at `b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba`, includ
 | Scoped dispatcher | Denied imports must leave provider state unchanged | Synchronous call | Direct Rust calls bypass native ABI and policy |
 | Scope records | Forged/expired/wrong-thread callbacks must reject safely | Provider entry until return | A raw kernel pointer cannot authenticate before dereference |
 | Native image owner | Instance and reply callbacks need resident code | Create through stop and release | Unowned dlopen handles permit early unloading |
+| Failure context | A denied nested effect must be identified in JSON after propagation | Last observed failure | A code alone loses its phase and selected operation |
 
 Later work starts with M0.1 contract addenda after M0.0 evidence is accepted. Optional imports, substitutions, richer attenuation, asynchronous lifecycle, generations and product conformance expansion remain deferred. This PR does not implement those milestones.

@@ -217,10 +217,10 @@
         PY
       '';
       nativeCheck = pkgs.runCommand "phenix-m0-native" { } ''
-        ${conformanceBinary}/bin/phenix-conformance ${provider} ${consumer} ${alternate} ${cycle} ${badAbi 1} ${badAbi 2} ${badAbi 3} $out
+        ${conformanceBinary}/bin/phenix-conformance ${provider} ${consumer} ${alternate} ${cycle} ${badAbi 1} ${badAbi 2} ${badAbi 3} ${badAbi 4} ${badAbi 5} $out
       '';
       productCheck = pkgs.runCommand "phenix-m0-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-        python ${./tests/product.py} ${kernel}/bin/phenix-kernel ${deployment} ${request} $out
+        python ${./tests/product.py} ${kernel}/bin/phenix-kernel ${deployment} ${request} ${./tests/inspection-golden.json} $out
       '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out

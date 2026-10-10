@@ -1,0 +1,404 @@
+{
+  "baseline_commit": "09813afdab6d0bb13c93e3f96099f2d08449d4ee",
+  "checks": {
+    "contract": {
+      "nix_output": "/nix/store/jskslxpjhsfq22xsqxar16admawc3jjc-phenix-contract-check-0.1.0",
+      "result": "passed"
+    },
+    "descriptor": {
+      "evidence": {
+        "evidence.json": [
+          {
+            "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "5e8cd5ed3e897418987f9ed639187e0d551bb14a7a5b9857d3e878869acaf6ae",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "5e8cd5ed3e897418987f9ed639187e0d551bb14a7a5b9857d3e878869acaf6ae",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "e7ba201b907a6c4ff2922694258339151462df908ad55123b99578f8c6166244",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "929d2ebeaa710020e90610625f001f89c6e49ad42ad6310195ce0593ecffabdb",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "929d2ebeaa710020e90610625f001f89c6e49ad42ad6310195ce0593ecffabdb",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "ed20845d0da21b3b09486bb993ea70dabc78510e6313833a0d6d7a847dbe5b3c",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "18093de86d4e856efbb43c90acb8cfe8c555d69ec04d48d3bd9fc555fb9d8240",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "18093de86d4e856efbb43c90acb8cfe8c555d69ec04d48d3bd9fc555fb9d8240",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "2753c45696de12dee96995e547fc52527f2e54980bbb93fd9ee320f488df9eac",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "ee5433c0c8099c82f36711aff65a886e1887667a466e318ee41a3e239527203d",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "ee5433c0c8099c82f36711aff65a886e1887667a466e318ee41a3e239527203d",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "ce108c91dc1850787877616269a719620caa66eb03e83fd2928df3c5479bed36",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "121dd911fcdf7479195a5f103f9e748a838460441eb871b137b291f3d4f7445e",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "artifact_sha256": "121dd911fcdf7479195a5f103f9e748a838460441eb871b137b291f3d4f7445e",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
+          },
+          {
+            "binutils": "GNU ld (GNU Binutils) 2.46",
+            "configurations": [
+              "thin-gnu",
+              "fat-gnu",
+              "off-gnu",
+              "thin-lld-gc",
+              "thin-gnu-repeat"
+            ],
+            "format": "phenix.p0-evidence.v1",
+            "packages": [
+              {
+                "artifact": "lib/plugin.so",
+                "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+                "descriptor": "descriptor.bin",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "format": "phenix.package.v1",
+                "package_path": "/nix/store/zw88abyd53wrjjlmnv3rsq89smm5qvc4-example-provider-0.1.0",
+                "target": "x86_64-unknown-linux-gnu"
+              },
+              {
+                "artifact": "lib/plugin.so",
+                "artifact_sha256": "e7ba201b907a6c4ff2922694258339151462df908ad55123b99578f8c6166244",
+                "descriptor": "descriptor.bin",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "format": "phenix.package.v1",
+                "package_path": "/nix/store/rqm6yqskq0ifgw2ii2spv9bz23rd9lbj-example-provider-fat-0.1.0",
+                "target": "x86_64-unknown-linux-gnu"
+              },
+              {
+                "artifact": "lib/plugin.so",
+                "artifact_sha256": "ed20845d0da21b3b09486bb993ea70dabc78510e6313833a0d6d7a847dbe5b3c",
+                "descriptor": "descriptor.bin",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "format": "phenix.package.v1",
+                "package_path": "/nix/store/yca4hd13swzkysfihgyw97rpm70igpf4-example-provider-no-lto-0.1.0",
+                "target": "x86_64-unknown-linux-gnu"
+              },
+              {
+                "artifact": "lib/plugin.so",
+                "artifact_sha256": "2753c45696de12dee96995e547fc52527f2e54980bbb93fd9ee320f488df9eac",
+                "descriptor": "descriptor.bin",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "format": "phenix.package.v1",
+                "package_path": "/nix/store/677lnk31vvv6c1kf3kj12ck6kkqy62b1-example-provider-lld-0.1.0",
+                "target": "x86_64-unknown-linux-gnu"
+              },
+              {
+                "artifact": "lib/plugin.so",
+                "artifact_sha256": "ce108c91dc1850787877616269a719620caa66eb03e83fd2928df3c5479bed36",
+                "descriptor": "descriptor.bin",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "format": "phenix.package.v1",
+                "package_path": "/nix/store/m5z5ln6y388j6xxwh04i16lvv0rnr234-example-provider-repeat-0.1.0",
+                "target": "x86_64-unknown-linux-gnu"
+              }
+            ],
+            "strip_modes": [
+              "debug",
+              "unneeded",
+              "all"
+            ]
+          }
+        ]
+      },
+      "nix_output": "/nix/store/jjqbbkmy5i81p8pwkafjvbi9qmwxqm69-phenix-m0-descriptor",
+      "result": "passed"
+    },
+    "native": {
+      "evidence": {
+        "native.json": {
+          "cases": [
+            "offline-no-execution",
+            "real-nested-call",
+            "domain-error",
+            "panic-translation",
+            "poisoned-provider",
+            "missing-binding",
+            "single-provider-needs-selection",
+            "ambiguous-binding",
+            "absent-selection",
+            "schema-mismatch",
+            "bad-abi",
+            "metadata-mismatch",
+            "wrong-owner",
+            "artifact-tamper",
+            "unknown-policy",
+            "binding-order",
+            "schema-rejection",
+            "denied-counter-unchanged",
+            "buffer-roundtrip",
+            "native-cycle",
+            "loaded-abi-major",
+            "loaded-short-table",
+            "loaded-null-entries",
+            "loaded-null-release",
+            "failed-create-rollback"
+          ],
+          "contract_version": "0.1.0",
+          "denied": {
+            "bindings": {
+              "example.transform@1/apply": "example.provider"
+            },
+            "calls": 2,
+            "denied_operations": 1,
+            "entry": {
+              "interface": "example.consumer@1",
+              "operation": "run",
+              "provider": "example.consumer"
+            },
+            "format": "phenix.inspect.v1",
+            "last_failure": {
+              "code": "Denied",
+              "context": {
+                "caller": "example.consumer",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              },
+              "message": "example.consumer has no effective grant for example.transform@1/apply",
+              "phase": "invocation"
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "7f2d975b449a82473118a5674f7f65fedf8d7a5033acf7fdd832ab9264f04c31",
+                "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+                "id": "example.consumer",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "roots": {
+              "active": null,
+              "completed": 2,
+              "last_root_id": 2
+            }
+          },
+          "format": "phenix.conformance.v1",
+          "rollback_events": [
+            "consumer:create",
+            "foreign:create",
+            "foreign:release",
+            "foreign:stop",
+            "foreign:release",
+            "consumer:stop"
+          ],
+          "sdk_version": "0.1.0",
+          "successful": {
+            "bindings": {
+              "example.transform@1/apply": "example.provider"
+            },
+            "calls": 8,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.consumer@1",
+              "operation": "run",
+              "provider": "example.consumer"
+            },
+            "format": "phenix.inspect.v1",
+            "last_failure": {
+              "code": "PluginFailed",
+              "context": {
+                "caller": "example.consumer",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              },
+              "message": "instance rejected after an earlier panic",
+              "phase": "invocation"
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "7f2d975b449a82473118a5674f7f65fedf8d7a5033acf7fdd832ab9264f04c31",
+                "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+                "id": "example.consumer",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "roots": {
+              "active": null,
+              "completed": 1,
+              "last_root_id": 1
+            }
+          }
+        }
+      },
+      "nix_output": "/nix/store/7xx3db1flcvh9j8rngsmcbagxrkcgryf-phenix-m0-native",
+      "result": "passed"
+    },
+    "product": {
+      "evidence": {
+        "failures.json": {
+          "denied": {
+            "bindings": {
+              "example.transform@1/apply": "example.provider"
+            },
+            "calls": 1,
+            "denied_operations": 1,
+            "entry": {
+              "interface": "example.consumer@1",
+              "operation": "run",
+              "provider": "example.consumer"
+            },
+            "format": "phenix.inspect.v1",
+            "last_failure": {
+              "code": "Denied",
+              "context": {
+                "caller": "example.consumer",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              },
+              "message": "example.consumer has no effective grant for example.transform@1/apply",
+              "phase": "invocation"
+            },
+            "outcome": {
+              "failure": {
+                "code": "Denied",
+                "context": {
+                  "caller": "example.consumer",
+                  "operation": "example.transform@1/apply",
+                  "provider": "example.provider"
+                },
+                "message": "example.consumer has no effective grant for example.transform@1/apply",
+                "phase": "invocation"
+              },
+              "kind": "kernel_failure"
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "7f2d975b449a82473118a5674f7f65fedf8d7a5033acf7fdd832ab9264f04c31",
+                "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+                "id": "example.consumer",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "roots": {
+              "active": null,
+              "completed": 1,
+              "last_root_id": 1
+            }
+          },
+          "malformed": {
+            "format": "phenix.inspect.v1",
+            "last_failure": {
+              "code": "SchemaRejected",
+              "context": null,
+              "message": "unknown tag",
+              "phase": "offline_preparation"
+            },
+            "phase": "offline_preparation"
+          },
+          "offline": {
+            "format": "phenix.inspect.v1",
+            "last_failure": {
+              "code": "Denied",
+              "context": null,
+              "message": "default root entry lacks admission grant",
+              "phase": "offline_preparation"
+            },
+            "phase": "offline_preparation"
+          }
+        },
+        "product.json": {
+          "bindings": {
+            "example.transform@1/apply": "example.provider"
+          },
+          "calls": 2,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.consumer@1",
+            "operation": "run",
+            "provider": "example.consumer"
+          },
+          "format": "phenix.inspect.v1",
+          "last_failure": null,
+          "outcome": {
+            "kind": "success",
+            "value": {
+              "text": "PHENIX"
+            }
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "7f2d975b449a82473118a5674f7f65fedf8d7a5033acf7fdd832ab9264f04c31",
+              "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+              "id": "example.consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "828ebf3fc24e397fd4ade1f3623e6ab5a1e6d587ece069331b2d3e61c5817e91",
+              "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+              "id": "example.provider",
+              "offline_verified": true
+            }
+          ],
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          }
+        }
+      },
+      "nix_output": "/nix/store/wji2wcd6jc3cdha1m76lpp9gjx99whng-phenix-m0-product",
+      "result": "passed"
+    }
+  },
+  "command": "nix flake check -L",
+  "format": "phenix.m0-review-evidence.v1",
+  "result": "passed",
+  "scope": "ABI follow-up working tree; exact commit and CI run are stamped by the workflow"
+}

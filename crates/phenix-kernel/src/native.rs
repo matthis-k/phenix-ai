@@ -85,6 +85,9 @@ impl Native {
         key: &str,
         input: &[u8],
     ) -> Result<(u32, Value), Failure> {
+        if self.instance.is_null() {
+            return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
+        }
         unsafe {
             (self.table.invoke)(
                 self.instance,
@@ -95,9 +98,63 @@ impl Native {
             .consume()
         }
     }
+    fn stop(&mut self) -> Result<(), Failure> {
+        let instance = std::mem::replace(&mut self.instance, std::ptr::null_mut());
+        if instance.is_null() {
+            return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
+        }
+        match unsafe { (self.table.stop)(instance).consume() }? {
+            (0, Value::Null) => Ok(()),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(Failure::new(Code::AbiIncompatible, "invalid stop result")),
+        }
+    }
 }
 impl Drop for Native {
     fn drop(&mut self) {
-        let _ = unsafe { (self.table.stop)(self.instance).consume() };
+        if !self.instance.is_null() {
+            let _ = self.stop();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static STOPS: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn stop(instance: *mut c_void) -> Reply {
+        STOPS.fetch_add(1, Ordering::SeqCst);
+        drop(unsafe { Box::from_raw(instance.cast::<u8>()) });
+        Reply::value(0, Value::Null)
+    }
+    unsafe extern "C" fn create(_: *mut *mut c_void) -> Reply {
+        unreachable!()
+    }
+    unsafe extern "C" fn invoke(_: *mut c_void, _: *const HostApi, _: Bytes, _: Bytes) -> Reply {
+        unreachable!()
+    }
+    #[test]
+    fn repeated_stop_rejects_without_reentering_producer() {
+        STOPS.store(0, Ordering::SeqCst);
+        let mut native = Native {
+            table: PluginTable {
+                header: Header {
+                    major: 1,
+                    minor: 0,
+                    table_bytes: 40,
+                    features: 0,
+                },
+                create,
+                invoke,
+                stop,
+            },
+            instance: Box::into_raw(Box::new(0u8)).cast(),
+            _image: libloading::os::unix::Library::this().into(),
+        };
+        native.stop().unwrap();
+        assert_eq!(native.stop().unwrap_err().code, Code::PluginFailed);
+        drop(native);
+        assert_eq!(STOPS.load(Ordering::SeqCst), 1);
     }
 }

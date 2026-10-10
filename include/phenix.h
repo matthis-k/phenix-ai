@@ -5,7 +5,11 @@
 /* ABI 1.0, Linux x86_64. Status: 0 success, 1 domain, 2 kernel failure.
  * Every reply carries exactly one phenix.value.v1 value. The receiver copies
  * then invokes producer release once. NULL is valid only at zero length.
- * Function pointers are required. Borrowed input and HostApi expire on return.
+ * Function pointers are required, including release on every reply. A null
+ * release rejects before reading the buffer; no release can then be performed.
+ * Non-null pointers must reference valid producer-owned memory/code. Pointer
+ * validity cannot be established against hostile in-process native code.
+ * Borrowed input and HostApi expire on return.
  * create writes one producer-owned instance; stop destroys it once.
  * Scopes are host-issued and reject use from another thread or after return.
  */

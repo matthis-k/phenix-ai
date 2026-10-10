@@ -35,7 +35,9 @@ pub struct Reply {
     pub status: u32,
     pub ptr: *mut u8,
     pub len: usize,
-    pub release: unsafe extern "C" fn(*mut u8, usize),
+    // Nullable representation permits checking a malformed foreign reply
+    // before constructing or calling an invalid Rust function pointer.
+    pub release: Option<unsafe extern "C" fn(*mut u8, usize)>,
 }
 unsafe extern "C" fn release(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
@@ -55,7 +57,7 @@ impl Reply {
             status,
             ptr: bytes.as_mut_ptr(),
             len: bytes.len(),
-            release,
+            release: Some(release),
         };
         std::mem::forget(bytes);
         result
@@ -64,8 +66,12 @@ impl Reply {
         Self::bytes(2, f.to_value().encode().unwrap_or_else(|_| vec![0]))
     }
     /// # Safety
-    /// Reply must come from the trusted ABI producer with a valid release callback.
+    /// Non-null buffers and callbacks must belong to the trusted ABI producer.
+    /// A null callback rejects before reading the buffer; it cannot be released.
     pub unsafe fn consume(self) -> Result<(u32, Value), Failure> {
+        let release = self
+            .release
+            .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null reply release callback"))?;
         let decoded = unsafe {
             Bytes {
                 ptr: self.ptr,
@@ -74,7 +80,7 @@ impl Reply {
             .read()
         }
         .and_then(Value::decode);
-        unsafe { (self.release)(self.ptr, self.len) };
+        unsafe { release(self.ptr, self.len) };
         if self.status > 2 {
             return Err(Failure::new(Code::AbiIncompatible, "unknown reply status"));
         }
@@ -122,16 +128,35 @@ mod tests {
         RELEASES.store(0, Ordering::SeqCst);
         for status in 0..3 {
             let mut r = Reply::value(status, Value::String("owned".into()));
-            r.release = counted_release;
+            r.release = Some(counted_release);
             assert_eq!(
                 unsafe { r.consume() }.unwrap(),
                 (status, Value::String("owned".into()))
             );
         }
         let mut r = Reply::bytes(0, vec![255]);
-        r.release = counted_release;
+        r.release = Some(counted_release);
         assert!(unsafe { r.consume() }.is_err());
-        assert_eq!(RELEASES.load(Ordering::SeqCst), 4);
+        let mut r = Reply::value(99, Value::Null);
+        r.release = Some(counted_release);
+        assert_eq!(
+            unsafe { r.consume() }.unwrap_err().code,
+            Code::AbiIncompatible
+        );
+        assert_eq!(RELEASES.load(Ordering::SeqCst), 5);
+    }
+    #[test]
+    fn null_release_rejects_before_reading_foreign_buffer() {
+        let r = Reply {
+            status: 0,
+            ptr: std::ptr::null_mut(),
+            len: 1,
+            release: None,
+        };
+        assert_eq!(
+            unsafe { r.consume() }.unwrap_err().code,
+            Code::AbiIncompatible
+        );
     }
     #[test]
     fn repr_c_layout() {
