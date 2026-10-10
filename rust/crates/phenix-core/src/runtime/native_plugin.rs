@@ -51,7 +51,6 @@ struct NativePluginAdapter {
 
 struct NativeSharedEndpoint {
     instance: Arc<Mutex<NativePluginInstance>>,
-    endpoint_id: u64,
 }
 
 fn native_library_factory(
@@ -78,7 +77,6 @@ impl PluginInstance for NativePluginAdapter {
     fn shared_invocation(&self) -> Option<Arc<dyn SharedPluginInvocation>> {
         Some(Arc::new(NativeSharedEndpoint {
             instance: Arc::clone(&self.instance),
-            endpoint_id: self.endpoint_id,
         }))
     }
 
@@ -99,11 +97,10 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        // A distinct ABI-instance identity also distinguishes resident
-        // generations of the same plugin. The call number is never reused
-        // across independently admitted kernel roots.
+        // Core supplies the actual root identity and the globally unique
+        // callback number. A plugin never invents either correlation value.
         let ticket = NativeCallTicket {
-            root_id: self.endpoint_id,
+            root_id: host.root_id(),
             call_id: NEXT_NATIVE_TICKET.fetch_add(1, Ordering::Relaxed),
         };
         let cancellation = host.cancellation_token().cloned().map(|token| {
