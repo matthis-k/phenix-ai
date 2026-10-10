@@ -686,8 +686,9 @@ fn check_expected_revision(
     expected: &ArtifactRevision,
 ) -> Result<(), PluginManagementError> {
     let revision = active.and_then(|manifest| match &manifest.execution {
-        PluginExecution::Runtime { artifact, .. }
-        | PluginExecution::Native { artifact } => Some(artifact.revision.clone()),
+        PluginExecution::Runtime { artifact, .. } | PluginExecution::Native { artifact } => {
+            Some(artifact.revision.clone())
+        }
         PluginExecution::Embedded | PluginExecution::ResourceOnly => None,
     });
     if revision.as_ref() == Some(expected) {
