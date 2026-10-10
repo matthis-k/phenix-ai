@@ -30,10 +30,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0007 | PROVEN | `.gitignore` | Keep | Repository generated-content hygiene. | — | KEEP. Direct source review on main `d488c405`, blob `b5e60517`: excludes Nix `result*`, `/rust/target/`, `.direnv`, cache and log files. Git-only hygiene; no runtime replacement or test needed. |
-| F0008 | TODO | `AGENTS.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending |
-| F0009 | TODO | `DEVELOPMENT.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending |
+| F0008 | IN PROGRESS | `AGENTS.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | KEEP candidate. `AGENTS.md` blob `87a32bd5` names README, DEVELOPMENT and runtime.nix authorities; lines 22-27 require pre-commit checks and state that GitHub API commits bypass local hooks. Keep agent change discipline, reconcile static product authority after #731, and verify referenced Nix checks. |
+| F0009 | IN PROGRESS | `DEVELOPMENT.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | KEEP candidate. `DEVELOPMENT.md` blob `3b6b1a2c` maps maintenance checks to source/rust/unit/doc/integration/system/product, and documents descriptor fixture regeneration. Compare commands with the generated `modules/development.nix` tasks and run exact-head source/descriptor checks. |
 | F0010 | PROVEN | `LICENSE` | Keep | Repository licensing. | — | KEEP. Direct source review on main `d488c405`, blob `831ecf00`: MIT grant, 2026 copyright, attribution and redistribution notice remain part of repository distribution. No runtime substitute or CI test applies. |
-| F0011 | TODO | `README.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending |
+| F0011 | IN PROGRESS | `README.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | REFACTOR candidate. `README.md` blob `4992ae83` defines Core, Runtime, Harness and catalog roles; the embedded-factory catalog and legacy agent-loop option describe transitional products. Rewrite those claims only after #731 selected artifacts and #766/#767 retirements reach shipped products; verify referenced CLI/package exports. |
 
 ### `config/`
 
@@ -47,7 +47,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0014 | TODO | `flake.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
-| F0015 | TODO | `flake.nix` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
+| F0015 | IN PROGRESS | `flake.nix` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | KEEP candidate. `flake.nix` blob `9a6e15b8` delegates outputs to flake-parts and imports `rust-artifacts`, `harness-product`, `plugin-packaging`, `package-sets`, Lua integration, development and Stitch modules. This is the actual build composition entry. Check `nix flake check`/show and exports on exact integration head. |
 | F0016 | TODO | `glossary.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending |
 
 ### `modules/`
@@ -59,10 +59,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0019 | IN PROGRESS | `modules/development.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Owns maintenance registration, generated-hook parity check and safety-policy check used by the dev/CI entry. Review production shell/check dependency closure and execute exact-head Nix checks before KEEP proof. |
 | F0020 | IN PROGRESS | `modules/flake-module.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Source `9451a73c` exports `phenixWrapped` for phenix, kernel, runtime, harness and Stitch packages; imported as default flake module. Candidate KEEP; verify these exports by flake evaluation and consumer checks. |
 | F0021 | IN PROGRESS | `modules/harness-product.nix` | Refactor | Thin portable product config wrapper; remove duplicated product selection. | #731 | `harness-product.nix:5` uses dependency-selected Cargo source; `:38` builds runtime config; `:53-140` defines real product and Lua smoke checks. KEEP packaging/smoke, move product policy and duplicated selection after #731. Nix product check proof pending. |
-| F0022 | TODO | `modules/lua-binding-integration.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending |
+| F0022 | IN PROGRESS | `modules/lua-binding-integration.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | KEEP candidate. `modules/lua-binding-integration.nix` blob `1b33e240` builds the `phenix-acp-stdio` callback fixture and exercises `require("phenix")`, observable callbacks, typed application callable operations and client tools under LuaJIT. This is client ABI parity, not the future guest-Lua adapter. Run `phenix-binding-lua-observable-callback` before PROVEN. |
 | F0023 | IN PROGRESS | `modules/package-sets.nix` | Refactor | Remove hardcoded plugin-name identity map and migration aliases after portable profile selection. | #730, #731 | `package-sets.nix:142-161` validates hardcoded plugin crate roles/aliases, and `:201-219` exports workspace crates/checks. Replace plugin identity mapping with manifest-driven selection while retaining packaging derivations; verify checked source closures. #765 marks hardcoded plugin crate aliases for artifact-derived packaging after #730/#731. Annotated at #765 head `cf700548`; CI pending. |
 | F0024 | IN PROGRESS | `modules/plugin-packaging.nix` | Refactor | Nix packages deployment artifacts, not tool/skill resolution or provider selection authority. | #730, #731 | `plugin-packaging.nix:54-142` forms embedded/packaged plugin wrappers; `:199/204` names Basic/Full; `:371-429` validates wrappers. KEEP deployment mechanics, move product selection to typed artifacts, preserve wrapper and product smoke tests. |
-| F0025 | TODO | `modules/rust-artifacts.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending |
+| F0025 | IN PROGRESS | `modules/rust-artifacts.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | KEEP candidate. `modules/rust-artifacts.nix` blob `b2dd7297` uses Cargo dependency skeleton plus selected Harness source and reuses release artifacts; it removes Cargo lock sentinel files before reuse to prevent inode-lock deadlocks. Test incremental source closure and product derivation on exact head before retaining as proven. |
 | F0026 | IN PROGRESS | `modules/stitch.nix` | Review | Establish its live package consumer and unique responsibility before retaining/removing. | consumer + CI references | Live consumer confirmed: `flake.nix` imports `modules/stitch.nix`; it exports `stitch`/`stitch-mcp` packages/apps. `modules/development.nix` invokes its `stitch-runtime-smoke` check. Source `ea7d94c4`. Candidate KEEP, not dead code; pending exact-head Nix smoke and MCP package check. |
 
 ### `rust/`
@@ -70,7 +70,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0027 | TODO | `rust/Cargo.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
-| F0028 | TODO | `rust/Cargo.toml` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
+| F0028 | IN PROGRESS | `rust/Cargo.toml` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | REFACTOR candidate. `rust/Cargo.toml` blob `a47449bb` owns the resolver-3 workspace and still lists `phenix-plugin-basic-agent` and `phenix-plugin-hooks`. #766/#767 remove those members on their stacked branches. Regenerate Cargo metadata and lockfile, then check all Nix impact/package declarations before PROVEN. |
 
 ### `rust/crates/phenix-acp-stdio`
 
@@ -355,9 +355,9 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0233 | TODO | `rust/crates/phenix-plugin-api/Cargo.toml` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | pending |
-| F0234 | TODO | `rust/crates/phenix-plugin-api/src/lib.rs` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | pending |
-| F0235 | TODO | `rust/crates/phenix-plugin-api/src/tests.rs` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | pending |
+| F0233 | IN PROGRESS | `rust/crates/phenix-plugin-api/Cargo.toml` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | KEEP/REFACTOR candidate. `phenix-plugin-api/Cargo.toml` blob `0f4ed80d` marks a runtime plugin, links application-interface/Core/SDK and uses Basic Skills, Context, Execution, Options and Sessions only as dev dependencies. Check portable third-party authoring and no hidden product fallback after #731. |
+| F0234 | IN PROGRESS | `rust/crates/phenix-plugin-api/src/lib.rs` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | REFACTOR candidate. `phenix-plugin-api/src/lib.rs` blob `45331e3b` implements a `phenix.api` SDK facade over selected Session/Options/Execution/Skills services and publishes versioned SDK exports. It is first-party bridge behavior, not generic Core mechanism. Keep service identity stable while moving authoring to typed artifact contributions; test provider swaps. |
+| F0235 | IN PROGRESS | `rust/crates/phenix-plugin-api/src/tests.rs` | Refactor | Retain application-facing API, but use tool/skill kind-provider contracts instead of duplicated catalogs. | #730, #731 | KEEP candidate. `phenix-plugin-api/src/tests.rs` blob `3b685abc` builds an actual Core selected graph from Session/Options/Execution/Basic Skills factories. The skills test checks provenance `phenix.skills@1:`. Preserve this semantics canary while replacing hardcoded embedded registration; run SDK tests at exact selected-artifact head. |
 
 ### `rust/crates/phenix-plugin-artifacts`
 
@@ -395,7 +395,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0248 | TODO | `rust/crates/phenix-plugin-basic-skills/Cargo.toml` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
+| F0248 | IN PROGRESS | `rust/crates/phenix-plugin-basic-skills/Cargo.toml` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | KEEP/REFACTOR candidate. `phenix-plugin-basic-skills/Cargo.toml` blob `e1500806` defines a separately packaged runtime plugin depending on Core, SDK and serde_json. Keep its behavior, replace compile-time selection only after portable artifact registration, and verify Basic/Full skill discovery. |
 | F0249 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/architect/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
 | F0250 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/grilling/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
 | F0251 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/implement/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
@@ -412,7 +412,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0262 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/to-questionnaire/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
 | F0263 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/verify/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
 | F0264 | TODO | `rust/crates/phenix-plugin-basic-skills/skills/write/SKILL.md` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
-| F0265 | TODO | `rust/crates/phenix-plugin-basic-skills/src/lib.rs` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | pending |
+| F0265 | IN PROGRESS | `rust/crates/phenix-plugin-basic-skills/src/lib.rs` | Refactor | Become a standard plugin-defined skill kind/template consumer/provider. | #730, #731 | REFACTOR candidate. `phenix-plugin-basic-skills/src/lib.rs` blob `e73b38a2` embeds 13 named skill files with `include_bytes!`, requires the `write` skill and exports `phenix.skills@1` with durable skill IDs. Preserve resource behavior and provider independence; test listing, enablement, persistence and third-party skill replacement after #731. |
 
 ### `rust/crates/phenix-plugin-basic-tools`
 
@@ -717,7 +717,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0424 | TODO | `rust/crates/phenix-sdk/Cargo.toml` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending |
-| F0425 | TODO | `rust/crates/phenix-sdk/README.md` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending |
+| F0425 | IN PROGRESS | `rust/crates/phenix-sdk/README.md` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | KEEP/REFACTOR candidate. `phenix-sdk/README.md` blob `57ab593f` documents typed provider endpoint/protocol/auth declarations and provider-private credential operations. Check that examples compile against selected portable contributions; update only stale authoring paths after #728/#731. |
 | F0426 | TODO | `rust/crates/phenix-sdk/src/api.rs` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending |
 | F0427 | TODO | `rust/crates/phenix-sdk/src/authoring.rs` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending |
 | F0428 | TODO | `rust/crates/phenix-sdk/src/authoring/context.rs` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending |
