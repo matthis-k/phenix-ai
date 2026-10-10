@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn disabling_a_required_contract_provider_fails_core_resolution() {
+    fn disabling_optional_application_tool_adapter_preserves_selected_workflow() {
         let tools = application_agent_tool_manifest(default_suite_authority())
             .id
             .as_str()
@@ -1290,13 +1290,18 @@ mod tests {
         assert!(!selected.contains(&tools));
         let builder =
             PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &cli.disable_plugins)
-                .expect("no hard manifest dependency requires the application tool adapter");
-        let Err(error) = builder.build() else {
-            panic!("the Basic loop's required tool contract must remain satisfiable");
-        };
+                .expect("the application tool adapter is optional");
+        let runtime = builder
+            .build()
+            .expect("the selected workflow must not require an optional tool adapter");
+        let owner = ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap();
         assert!(
-            error.to_string().contains("unresolved required import"),
-            "Core should report missing contract capability: {error}"
+            runtime
+                .resolved_generation()
+                .generation_topology()
+                .workflow(&owner, "agent.turn")
+                .is_some(),
+            "disabling optional application tools must preserve the declarative workflow"
         );
     }
 
