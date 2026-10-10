@@ -16,10 +16,9 @@ missing="$(
       | .targets[]
       | select((.kind | index("lib")) or (.kind | index("bin")))
       | [$package.name, ($package.metadata.phenix.unsafe_boundary // "none"), .src_path]
-      | @tsv
+      | join("|")
     ' |
-    while IFS=
-\t' read -r package boundary source; do
+    while IFS='|' read -r package boundary source; do
       if [[ "$package" == "phenix-native-loader" &&
             "$boundary" == "native-plugin-abi-v1" &&
             "$source" == "$native_loader" ]]; then
