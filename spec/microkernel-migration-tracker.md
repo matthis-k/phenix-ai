@@ -104,6 +104,18 @@ The source state is more specific than the original "design only" labels:
 
 **Review convention:** IN PROGRESS here is a source-checked partial implementation. It does not mean a task is functionally complete or that current-head CI passed. The owner PR's numbered task matrix remains the source for individual acceptance evidence.
 
+## Source audit handoff, 2026-10-10
+
+- **Repository file matrix:** 600 unique paths, 2 PROVEN, 60 IN PROGRESS and 538 TODO. All 28 provisional `Review` rows have individual source inspections. Only `LICENSE` and `.gitignore` have final static KEEP proofs; another file's source inspection is not a green test.
+- **#726 file matrix:** 58/58 source-triaged at head `5fce639b`; 49 IN PROGRESS and 9 BLOCKED on native extraction or legacy retirement. Zero files are certified complete. The new exact ownership notes cover `composition/component.rs`, `runtime/kernel.rs`, `workflow_scheduler.rs`, `tasks.rs`, `workflow_tasks.rs`, `plugin/host`, the portable agent nodes and product assembly.
+- **Central stages:** 4 PROVEN architectural/document baselines, 14 IN PROGRESS implementation or audit gates, 24 TODO. Partial proof is recorded in the individual stage row, with acceptance gaps still open.
+- **Owner comments:** Numbered source-evidence updates were applied in place to the task matrices on [#726](https://github.com/matthis-k/phenix-ai/pull/726#issuecomment-6094025633), [#728](https://github.com/matthis-k/phenix-ai/pull/728#issuecomment-6094025933), [#729](https://github.com/matthis-k/phenix-ai/pull/729#issuecomment-6094026212), [#730](https://github.com/matthis-k/phenix-ai/pull/730#issuecomment-6094026435), [#731](https://github.com/matthis-k/phenix-ai/pull/731#issuecomment-6094026655), [#760](https://github.com/matthis-k/phenix-ai/pull/760#issuecomment-6094026951), [#725](https://github.com/matthis-k/phenix-ai/pull/725#issuecomment-6094025363) and [#763](https://github.com/matthis-k/phenix-ai/pull/763#issuecomment-6094027226). No unchecked owner task was silently promoted.
+- **Cleanup decisions:** The independent `phenix-plugin-session-tree` plugin has actual standalone behavior and regression coverage. The Nix Stitch export and cargo-deny config have live consumers. Historical `spec/followups/` documents are classified as active, planned or archive candidates per exact file; archival requires comparing current tests and canonical RFC rules.
+
+**Next execution batch:** Open a separate native ABI/loader owner PR and move W016/W023/W040-W044 out of #726 without introducing a second resolver. In #726, unify repeated entry/projection adapters and compare `TaskRuntime` vs native ticket ownership. Independently execute Nix hook, Cargo source-closure, Stitch, security, ABI, Core and product tests at exact heads; attach the run links to the individual rows before marking PROVEN. Resume file-by-file main audit with `Refactor` and `Move` classes after the 28 Review source checks.
+
+The tracker branch contains documentation only. Source review does not prove runtime parity, successful full CI, or that deleting any live code is safe.
+
 ## Current PR owners
 
 | PR | Actual state at 2026-10-10 | Scope rule |
