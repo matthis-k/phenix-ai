@@ -475,6 +475,25 @@ pub trait SharedPluginInvocation: Send + Sync {
         self.invoke(service, input, host)
     }
 
+    /// Start a component call on an async-capable native provider. Legacy
+    /// implementations stay immediate; a provider may instead give Core one
+    /// correlated completion handle that can be settled from a callback.
+    ///
+    /// This runs inside the existing root-owned native worker for pending
+    /// workflows, so a deferred plugin callback never creates another plan
+    /// scheduler or reselects its provider. The host cancellation token remains
+    /// valid throughout this call. Do not spawn untracked worker threads from
+    /// this method: the producer must own and complete the returned handle.
+    fn begin_component(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> crate::PluginCallStart {
+        crate::PluginCallStart::Immediate(self.invoke_component(component, service, input, host))
+    }
+
     fn invoke_layer(
         &self,
         service: &ServiceId,
@@ -602,7 +621,10 @@ impl PluginInvocation for SharedInvocationEndpoint {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        self.0.invoke_component(component, service, input, host)
+        match self.0.begin_component(component, service, input, host) {
+            crate::PluginCallStart::Immediate(result) => result,
+            crate::PluginCallStart::Pending(response) => response.wait(),
+        }
     }
 
     fn invoke_layer(
