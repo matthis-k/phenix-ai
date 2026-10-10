@@ -479,9 +479,7 @@ fn declarative_product_can_replace_one_node_without_legacy_loop() {
         "phenix.product.full",
     ] {
         let selected = BTreeSet::from([profile.to_owned()]);
-        let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
-        let mut builder =
-            PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded).unwrap();
+        let mut builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
         let component = phenix_core::ComponentId::parse("fixture.alternate-turn").unwrap();
         let owner = plugin("fixture.alternate-turn");
         builder
@@ -577,9 +575,8 @@ fn declarative_basic_profile_activates_without_legacy_agent_loop() {
     use phenix_core::Bytes;
     use phenix_sdk::{AgentLoopCommand, AgentLoopResponse, AgentLoopUsage};
 
-    let mut runtime = PhenixRuntimeBuilder::with_selected_suite_excluding(
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite(
         &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
-        &BTreeSet::from(["phenix.agent-loop".to_owned()]),
     )
     .unwrap()
     .build()
