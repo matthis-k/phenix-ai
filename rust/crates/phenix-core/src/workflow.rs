@@ -2071,6 +2071,62 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn suspended_fork_reserves_optional_step_budget_before_sibling_dispatch() {
+        let compiled = WorkflowTopology {
+            entry: "start".into(),
+            nodes: BTreeMap::from([
+                ("start".into(), service("fixture.start@1", &[(
+                    "spawn",
+                    WorkflowEdge::Fork {
+                        branches: BTreeMap::from([
+                            ("a".into(), "slow".into()),
+                            ("b".into(), "fast".into()),
+                        ]),
+                        policy: crate::WorkflowJoinPolicy::All(
+                            crate::WorkflowJoinAllPolicy::CollectAll,
+                        ),
+                        outputs: BTreeMap::new(),
+                        on_success: Box::new(WorkflowEdge::Finish),
+                        on_failure: Box::new(WorkflowEdge::Finish),
+                    },
+                )])),
+                ("slow".into(), service("fixture.slow@1", &[("done", WorkflowEdge::Finish)])),
+                ("fast".into(), service("fixture.fast@1", &[("done", WorkflowEdge::Finish)])),
+            ]),
+        }
+        .compile(|_| true)
+        .unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let mut admissions = Vec::new();
+        let error = compiled.execute_suspending::<_, String>(
+            &mut (),
+            Some(&mut frame),
+            |node, _, _, _, _, _| {
+                admissions.push(node.to_owned());
+                match node {
+                    "start" => WorkflowInvokePoll::Ready(Ok("spawn".into())),
+                    "slow" => WorkflowInvokePoll::Started,
+                    other => panic!("budget must reject new {other} before provider admission"),
+                }
+            },
+            || false,
+            |_| {},
+            || panic!("budget exhaustion cannot wait on a pending callback"),
+            Some(NonZeroU64::new(2).unwrap()),
+        );
+        assert!(matches!(
+            error,
+            Err(WorkflowRunError::StepLimitReached { next_node, executed_nodes: 1 })
+                if next_node == "fast"
+        ));
+        assert_eq!(admissions, ["start", "slow"]);
+    }
+
+    #[test]
     fn suspended_fork_admits_both_children_and_cancels_the_unselected_scope() {
         use std::cell::{Cell, RefCell};
 
