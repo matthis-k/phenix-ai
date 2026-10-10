@@ -410,8 +410,12 @@ impl CompiledWorkflow {
                 // pinned until their callbacks settle.
                 let cancel_remaining = match &decision {
                     WorkflowJoinDecision::Pending => false,
-                    WorkflowJoinDecision::Succeeded { cancel_remaining, .. }
-                    | WorkflowJoinDecision::Failed { cancel_remaining, .. } => *cancel_remaining,
+                    WorkflowJoinDecision::Succeeded {
+                        cancel_remaining, ..
+                    }
+                    | WorkflowJoinDecision::Failed {
+                        cancel_remaining, ..
+                    } => *cancel_remaining,
                 };
                 if cancel_remaining {
                     for (branch, child) in &active.children {
@@ -534,14 +538,7 @@ impl CompiledWorkflow {
         callbacks: (impl FnMut(&str), impl FnMut()),
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
-        self.execute_driven(
-            state,
-            frame,
-            invoke,
-            cancelled,
-            callbacks,
-            step_limit,
-        )
+        self.execute_driven(state, frame, invoke, cancelled, callbacks, step_limit)
     }
 
     fn execute_driven<State, Error>(
