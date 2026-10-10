@@ -256,8 +256,9 @@ impl Drop for NativeTaskSettlement {
         // completed normal result. Cancellation alone is not settlement.
         let result = shared.pending.settle(&self.id, self.terminal);
         debug_assert!(result.is_ok(), "a worker must settle its ticket once");
-        drop(shared);
-        // The scheduler receives a wakeup only after actual settlement.
+        // Serialize the wakeup with its settlement. Otherwise a later
+        // callback could send first and change FirstCompleted winner order.
+        // This channel is unbounded and send never waits on the receiver.
         let _ = self.completion_tx.send(self.id.clone());
     }
 }
