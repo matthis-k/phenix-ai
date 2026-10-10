@@ -83,6 +83,7 @@ impl ProviderEndpointProvenance {
             PluginExecution::Runtime { runtime, artifact } => {
                 (Some(runtime.clone()), Some(artifact.revision.clone()))
             }
+            PluginExecution::Native { artifact } => (None, Some(artifact.revision.clone())),
             PluginExecution::Embedded | PluginExecution::ResourceOnly => (None, None),
         };
         Self {
