@@ -196,6 +196,19 @@ impl Kernel {
                 ));
             }
         };
+        self.preload_native_shared_library(plugin, artifact.clone(), path)
+    }
+
+    /// Preload an immutable ABI image for a *future candidate* generation.
+    /// Admission is scoped to the selected manifest at activation: merely
+    /// preloading does not select this plugin, grant permissions, or change
+    /// the current default generation. Multiple SHA revisions may coexist.
+    pub fn preload_native_shared_library(
+        &mut self,
+        plugin: PluginId,
+        artifact: crate::PluginArtifact,
+        path: &Path,
+    ) -> Result<(), NativeRegistrationError> {
         let selected = path.to_string_lossy().into_owned();
         if artifact.locator != selected {
             return Err(NativeRegistrationError::LocatorMismatch {
