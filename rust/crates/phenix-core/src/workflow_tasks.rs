@@ -112,8 +112,7 @@ impl WorkflowPendingTasks {
         self.cancelled_scopes.insert(scope.into());
         let mut signalled = Vec::new();
         for (id, state) in &mut self.active {
-            if Self::scope_contains(scope, &id.scope) && *state == WorkflowTaskState::Pending
-            {
+            if Self::scope_contains(scope, &id.scope) && *state == WorkflowTaskState::Pending {
                 *state = WorkflowTaskState::Cancelling;
                 signalled.push(id.clone());
             }
