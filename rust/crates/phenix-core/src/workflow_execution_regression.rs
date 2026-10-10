@@ -285,9 +285,7 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
 
 #[test]
 fn native_pending_plugin_callbacks_execute_under_canonical_fork_dispatch() {
-    use crate::{
-        PluginCallStart, PluginPendingCall, SharedPluginInvocation, WorkflowRunReport,
-    };
+    use crate::{PluginCallStart, PluginPendingCall, SharedPluginInvocation, WorkflowRunReport};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -336,7 +334,10 @@ fn native_pending_plugin_callbacks_execute_under_canonical_fork_dispatch() {
     for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
         kernel
             .register_embedded_factory(plugin_id(name), move || {
-                Box::new(MockNode { kind, model_calls: 0 })
+                Box::new(MockNode {
+                    kind,
+                    model_calls: 0,
+                })
             })
             .unwrap();
     }
@@ -406,8 +407,14 @@ fn native_pending_plugin_callbacks_execute_under_canonical_fork_dispatch() {
     let (report, frame, visited) = thread.join().unwrap();
     assert_eq!(report.final_outcome, "final");
     assert_eq!(report.executed_nodes, 4);
-    assert_eq!(frame.get(&Key::parse("alpha").unwrap()), Some(&PhenixValue::U64(10)));
-    assert_eq!(frame.get(&Key::parse("beta").unwrap()), Some(&PhenixValue::U64(20)));
+    assert_eq!(
+        frame.get(&Key::parse("alpha").unwrap()),
+        Some(&PhenixValue::U64(10))
+    );
+    assert_eq!(
+        frame.get(&Key::parse("beta").unwrap()),
+        Some(&PhenixValue::U64(20))
+    );
     assert!(visited.contains(&"alpha-tool".into()));
     assert!(visited.contains(&"beta-tool".into()));
 }
