@@ -498,7 +498,21 @@ pub struct CompiledWorkflow {
     plan: LoweredPlan,
     bindings: BTreeMap<InterfaceId, ResolvedImportHandle>,
     frame_schema: Option<crate::WorkflowFrameSchema>,
+    /// Immutable, prevalidated execution-frame boundaries of mapped inclusions.
+    scoped_subplans: BTreeMap<String, ScopedSubplanFrame>,
     outcome_projections: BTreeMap<String, crate::WorkflowOutcomeProjection>,
+}
+
+/// One selected, isolated subplan frame. The inclusion is lowered into
+/// ordinary Invoke/Fork/Join/Exit steps; no sub-executor is created.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScopedSubplanFrame {
+    pub(crate) prefix: String,
+    pub(crate) entry: String,
+    pub(crate) schema: crate::WorkflowFrameSchema,
+    pub(crate) inputs: BTreeMap<crate::Key, crate::Key>,
+    pub(crate) outputs: BTreeMap<crate::Key, crate::Key>,
+    pub(crate) initial: BTreeMap<crate::Key, PhenixValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -648,6 +662,125 @@ fn compose_subplan_return_slots(
 }
 
 impl WorkflowTopology {
+    /// Resolve private frame scopes from the same immutable selected workflow
+    /// and schema declarations used for compilation. No runtime discovery.
+    /// Unframed, legacy mapped inclusions retain their existing flat behavior.
+    pub(crate) fn selected_scoped_subplans(
+        owner: &ComponentId,
+        name: &str,
+        selected: &BTreeMap<(ComponentId, String), WorkflowTopology>,
+        schemas: &BTreeMap<(ComponentId, String), crate::WorkflowFrameSchema>,
+    ) -> Result<BTreeMap<String, ScopedSubplanFrame>, WorkflowCompileError> {
+        fn visit(
+            owner: &ComponentId,
+            name: &str,
+            qualified: &str,
+            selected: &BTreeMap<(ComponentId, String), WorkflowTopology>,
+            schemas: &BTreeMap<(ComponentId, String), crate::WorkflowFrameSchema>,
+            scopes: &mut BTreeMap<String, ScopedSubplanFrame>,
+        ) -> Result<(), WorkflowCompileError> {
+            let source = &selected[&(owner.clone(), name.to_owned())];
+            for (node, definition) in &source.nodes {
+                for (outcome, edge) in &definition.branches {
+                    let WorkflowEdge::IncludeMapped {
+                        workflow,
+                        site,
+                        inputs,
+                        outputs,
+                        initial,
+                        ..
+                    } = edge else {
+                        continue;
+                    };
+                    let prefix = format!("{qualified}__include__/{site}/");
+                    if let Some(schema) = schemas.get(&(owner.clone(), workflow.clone())) {
+                        let parent = schemas.get(&(owner.clone(), name.to_owned())).ok_or_else(|| {
+                            WorkflowCompileError::InvalidFrameTransfer {
+                                node: node.clone(),
+                                outcome: outcome.clone(),
+                                reason: "scoped include requires a declared parent frame".into(),
+                            }
+                        })?;
+                        let fail = |reason: String| WorkflowCompileError::InvalidFrameTransfer {
+                            node: node.clone(),
+                            outcome: outcome.clone(),
+                            reason,
+                        };
+                        let mut initialized = initial.keys().cloned().collect::<BTreeSet<_>>();
+                        for (from, to) in inputs {
+                            let source_type = parent.slots.get(from).ok_or_else(|| {
+                                fail(format!("undeclared parent input {from}"))
+                            })?;
+                            let child_type = schema.slots.get(to).ok_or_else(|| {
+                                fail(format!("undeclared child input {to}"))
+                            })?;
+                            if !initialized.insert(to.clone()) {
+                                return Err(fail(format!("child input {to} is initialized twice")));
+                            }
+                            if !matches!(
+                                child_type.accepts(source_type),
+                                crate::SchemaCompatibility::Exact
+                                    | crate::SchemaCompatibility::Compatible
+                            ) {
+                                return Err(fail(format!("incompatible input {from} to {to}")));
+                            }
+                        }
+                        if initialized != schema.slots.keys().cloned().collect() {
+                            return Err(fail(
+                                "every child-private slot needs an explicit initial value".into(),
+                            ));
+                        }
+                        for (slot, value) in initial {
+                            let kind = schema.slots.get(slot).ok_or_else(|| {
+                                fail(format!("unknown child-private slot {slot}"))
+                            })?;
+                            kind.parse(value).map_err(|error| {
+                                fail(format!("invalid initial value for {slot}: {error}"))
+                            })?;
+                        }
+                        for (from, to) in outputs {
+                            let child_type = schema.slots.get(from).ok_or_else(|| {
+                                fail(format!("undeclared child output {from}"))
+                            })?;
+                            let parent_type = parent.slots.get(to).ok_or_else(|| {
+                                fail(format!("undeclared parent output {to}"))
+                            })?;
+                            if !matches!(
+                                parent_type.accepts(child_type),
+                                crate::SchemaCompatibility::Exact
+                                    | crate::SchemaCompatibility::Compatible
+                            ) {
+                                return Err(fail(format!("incompatible output {from} to {to}")));
+                            }
+                        }
+                        scopes.insert(
+                            prefix.clone(),
+                            ScopedSubplanFrame {
+                                entry: format!("{prefix}{}", selected[&(owner.clone(), workflow.clone())].entry),
+                                prefix: prefix.clone(),
+                                schema: schema.clone(),
+                                inputs: inputs.clone(),
+                                outputs: outputs.clone(),
+                                initial: initial.clone(),
+                            },
+                        );
+                    } else if !initial.is_empty() {
+                        return Err(WorkflowCompileError::InvalidFrameTransfer {
+                            node: node.clone(),
+                            outcome: outcome.clone(),
+                            reason: "private initial values require a selected child frame schema".into(),
+                        });
+                    }
+                    visit(owner, workflow, &prefix, selected, schemas, scopes)?;
+                }
+            }
+            Ok(())
+        }
+        let mut scopes = BTreeMap::new();
+        visit(owner, name, "", selected, schemas, &mut scopes)?;
+        Ok(scopes)
+    }
+
     /// Expand same-owner subplans before binding imports or compiling execution steps.
     ///
     /// The site-qualified IDs live only in the immutable compiled plan. No
@@ -1577,6 +1710,7 @@ impl WorkflowTopology {
             plan,
             bindings: BTreeMap::new(),
             frame_schema: None,
+            scoped_subplans: BTreeMap::new(),
             outcome_projections: BTreeMap::new(),
         })
     }
@@ -1624,6 +1758,31 @@ impl CompiledWorkflow {
             binding.response_schema(),
             &node_def.branches.keys().cloned().collect(),
         )
+    }
+
+    pub(crate) fn bind_scoped_subplans(
+        &mut self,
+        scopes: BTreeMap<String, ScopedSubplanFrame>,
+    ) {
+        self.scoped_subplans = scopes;
+    }
+
+    /// Find the innermost selected local frame for an inlined Invoke/Join.
+    /// Qualified compiler identities are unambiguous, including nested sites.
+    fn scope_for_node(&self, node: &str) -> Option<&ScopedSubplanFrame> {
+        self.scoped_subplans
+            .values()
+            .filter(|scope| node.starts_with(&scope.prefix))
+            .max_by_key(|scope| scope.prefix.len())
+    }
+
+    fn frame_schema_for_node<'a>(
+        &'a self,
+        node: &str,
+        root: &'a crate::WorkflowFrameSchema,
+    ) -> &'a crate::WorkflowFrameSchema {
+        self.scope_for_node(node)
+            .map_or(root, |scope| &scope.schema)
     }
 
     pub(crate) fn bind_frame_schema(&mut self, schema: crate::WorkflowFrameSchema) {
