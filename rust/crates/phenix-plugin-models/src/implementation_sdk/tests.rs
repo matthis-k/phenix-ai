@@ -1,7 +1,7 @@
 use super::*;
 use phenix_core::{
     InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId,
-    PersistenceBackend, PhenixValue, Project,
+    PhenixValue, Project,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelFeatures, ModelDispatchCommand,
