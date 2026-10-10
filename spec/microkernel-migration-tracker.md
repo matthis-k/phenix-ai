@@ -39,9 +39,9 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S0-02 | PROVEN | #727 | none | Ordered microkernel composition roadmap merged. |
 | S0-03 | PROVEN | #733 | none | 592-path provisional audit merged; **not** proof of file liveness. |
 | S0-04 | PROVEN | #734 | none | Native/plugin guest runtime design merged; runtime implementation remains open. |
-| S0-05 | TODO | tracker | #726 audit | Freeze exact diff baseline, assign every #726 path once and record keep/move/simplify/retire with evidence in [file matrix](microkernel-tracker/pr726-file-matrix.md). |
-| S0-06 | TODO | tracker | #733 | Verify each current main file independently in [main-tree checklist](microkernel-tracker/repository-file-matrix.md); classify replacements and consumers before marking done. |
-| S0-07 | TODO | tracker | S0-05 | Track net production lines, removed paths, obsolete APIs, and CI/parity before/after. Count tests separately. |
+| S0-05 | IN PROGRESS | tracker | #726 audit | Frozen #726 at `5fce639b` against main `d488c405`: all 58 changed paths match W001-W058 exactly; no missing or extra rows. First file ownership triage is recorded in [#726 matrix](microkernel-tracker/pr726-file-matrix.md). Full file-specific keep/move/simplify/retire proof and current-head conformance remain open. |
+| S0-06 | IN PROGRESS | tracker | #733 | Verified the nontruncated main Git tree has 596 blobs and the matrix includes all 596 once; four tracker-only paths are separately recorded as F0597-F0600. First source/consumer reviews and static keep decisions are in [main-tree checklist](microkernel-tracker/repository-file-matrix.md); remaining rows require independent proof. |
+| S0-07 | IN PROGRESS | tracker | S0-05 | #726 baseline: 58 files, +19,611/-266 lines, net +19,345; 20 added files. Native extraction candidate W016, W023, W040-W044 adds 2,153 lines within that total. Classify inline tests vs production code and measure duplicate paths/LOC removed before certification. |
 | S1-01 | TODO | #726 | S0-05 | Canonical four-step Invoke/Fork/Join/Exit IR with cycles, finite map fan-out, all closed joins, stable IDs and bounded inline expansion; non-agent conformance. |
 | S1-02 | TODO | #726 | S1-01 | One executor entry internally; consolidate sync/pending and framed/unframed request, projection, rollback and error handling. |
 | S1-03 | TODO | #726 | S1-01 | One root/call scope, resolver, authority, dispatch/Layers and pinned generation; proof with substituted providers and stale bindings. |
@@ -77,6 +77,16 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S6-01 | TODO | #763 or new final integration PR | S2-S5 | Final focused and full checks on exact merge candidates, including non-agent service-only and product parity. |
 | S6-02 | TODO | tracker | S6-01 | Closure report: paths/classes removed, net production LOC, total tests, mechanisms before/after, open exceptions and owning follow-ups. |
 | S6-03 | TODO | tracker | S6-02 | Close tracker after all required matrices are complete and remaining scope is explicitly assigned to new PRs. |
+
+## Baseline audit checkpoint, 2026-10-10
+
+- **Repository tree.** [Main tree at `d488c405`](https://github.com/matthis-k/phenix-ai/tree/d488c4056ee334938c2ca88aec9017379a3ef7c4) returned `truncated=false` with 596 tracked blobs. Exact set comparison against F0001-F0596 found zero omissions, additions or duplicate paths. F0597-F0600 are tracker-only.
+- **#726 diff.** [PR head `5fce639b`](https://github.com/matthis-k/phenix-ai/pull/726/commits/5fce639b40c4a0bb6a990363dba667b68a154c66) and base `d488c405`: 58 changed paths match W001-W058 exactly. This is an inventory proof, not an implementation or liveness proof.
+- **Growth classification.** +19,611/-266 total changed lines, including documentation, manifests, fixture tests, inline tests and production code. Dedicated test-only paths W027, W042 and W054 account for at least 3,271 added lines. No exact production/test split is available yet because Rust implementation modules also contain tests. Seven candidate native extraction paths W016, W023, W040-W044 add 2,153 lines; extraction relocates code instead of counting as deletion.
+- **Initial file checks.** Direct source inspection proved the `LICENSE` and `.gitignore` retain decisions without runtime tests. Traced live Nix consumers for the Git hook, Cargo source closure, commit candidate, flake exports and Stitch. These need targeted Nix CI proof. `scripts/check-rust-safety-policy.sh` is still invoked by `modules/development.nix`; keep it until its Nix replacement is tested.
+- **Ownership boundary.** W016, W023 and W040-W044 cannot complete as moves until the separate native implementation PR exists and #726 no longer owns those implementations. W050 and W052 remain blocked on real product migration, not file deletion alone.
+
+Next unblocked tracker action: audit W014, W022, W026, W031-W033 as one call-path ownership group, then document exactly which resolver, task, scheduler and dispatch functions are redundant. Next independent main-tree checks: F0001/F0018 hook-candidate Nix checks, F0017 dependency-closure builds, F0026 Stitch smoke and F0491 safety-rule replacement. Record the exact CI or source proof on each row, rather than promoting a group as complete.
 
 ## Current PR owners
 
