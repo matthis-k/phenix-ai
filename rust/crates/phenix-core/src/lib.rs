@@ -170,6 +170,7 @@ pub use persistence::provider::{
     PersistenceCandidateError, PersistenceProvider, PersistenceProviderError, PreparedPersistence,
     prepare_persistence_candidate,
 };
+pub use phenix_plugin_abi as native_plugin_abi;
 pub use phenix_contract::{
     Bytes, CallableId, CallableRef, ClientConnectionId, ComponentId, ComponentInterface,
     ConfigurationFrontendId, ContextResourceId, ContextRevisionId, Contract, ContractId,
