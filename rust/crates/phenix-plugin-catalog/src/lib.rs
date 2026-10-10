@@ -4,6 +4,9 @@ use phenix_core::{DurableSchemaRegistration, PluginId, PluginManifest};
 use phenix_sdk::StaticPluginResources;
 use std::collections::BTreeSet;
 
+// Legacy static first-party factory roster. #728/#730/#731 replace these
+// exports with selected, owner-verified contribution descriptors. Delete
+// this crate after external-provider and Basic/Full packaging parity.
 pub use phenix_adapter_acp::{ACP_ADAPTER_PLUGIN, adapter_acp_factory, adapter_acp_manifest};
 pub use phenix_agent_configurations::{
     ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION, BASIC_PRODUCT_CONFIGURATION,

@@ -73,28 +73,11 @@ pub fn model_diagnostic_event_type() -> EventTypeId {
     EventTypeId::parse(MODEL_DIAGNOSTIC_EVENT).expect("static model diagnostic event id is valid")
 }
 
-fn deserialize_model_options<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<String, PhenixValue>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let values = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
-    Ok(values
-        .into_iter()
-        .map(|(key, value)| {
-            let value = serde_json::from_value::<PhenixValue>(value.clone())
-                .unwrap_or_else(|_| value.into());
-            (key, value)
-        })
-        .collect())
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct ModelTarget {
     pub provider_plugin: PluginId,
     pub model: ModelId,
-    #[serde(default, deserialize_with = "deserialize_model_options")]
+    #[serde(default)]
     pub options: BTreeMap<String, PhenixValue>,
 }
 
@@ -471,38 +454,21 @@ mod tests {
     }
 
     #[test]
-    fn model_target_reads_legacy_raw_json_options_and_writes_canonical_values() {
-        let target: ModelTarget = serde_json::from_value(serde_json::json!({
+    fn model_target_rejects_untagged_legacy_options() {
+        let raw = serde_json::json!({
             "provider_plugin": "provider.fixture",
             "model": "model.fixture",
-            "options": {
-                "backend": "phenix",
-                "inference": null,
-                "nested": {"effort": "low"}
-            }
-        }))
-        .unwrap();
+            "options": {"backend": "phenix"}
+        });
+        assert!(serde_json::from_value::<ModelTarget>(raw).is_err());
 
-        assert_eq!(
-            target.options["backend"],
-            PhenixValue::String("phenix".into())
-        );
-        assert_eq!(target.options["inference"], PhenixValue::Unit);
-        assert!(matches!(
-            &target.options["nested"],
-            PhenixValue::Map(values)
-                if values.get("effort") == Some(&PhenixValue::String("low".into()))
-        ));
-
-        let encoded = serde_json::to_value(&target).unwrap();
-        assert_eq!(
-            encoded["options"]["backend"],
-            serde_json::json!({"type": "string", "value": "phenix"})
-        );
-        assert_eq!(
-            encoded["options"]["inference"],
-            serde_json::json!({"type": "unit"})
-        );
+        let canonical = serde_json::json!({
+            "provider_plugin": "provider.fixture",
+            "model": "model.fixture",
+            "options": {"effort": {"type": "string", "value": "low"}}
+        });
+        let target: ModelTarget = serde_json::from_value(canonical.clone()).unwrap();
+        assert_eq!(serde_json::to_value(target).unwrap(), canonical);
     }
 
     fn requirements() -> RoutingRequirements {

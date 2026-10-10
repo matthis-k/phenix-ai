@@ -128,6 +128,9 @@ impl PhenixRuntimeBuilder {
         Self::default()
     }
 
+    /// Legacy embedded factory assembly. #731 replaces the hand-written
+    /// roster with selected descriptors from #728/#730. Retire this path
+    /// only after Basic/Full, third-party and zero-agent profile parity.
     pub fn with_default_suite() -> Result<Self, KernelError> {
         let mut builder = Self::new();
         let authority = default_suite_authority();

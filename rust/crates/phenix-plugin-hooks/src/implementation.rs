@@ -8,6 +8,9 @@ use phenix_sdk::{ContextInterface, ContextResourceRevision, ExecutionInterface};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+// Legacy hook dispatcher. #731 moves observation to Events and behavioral
+// interposition to Service Layers. Retire after action ordering, failure
+// policy, authority and listener regression tests use the replacements.
 pub const HOOK_SERVICE: &str = "phenix.hooks@1";
 const HOOK_PLUGIN: &str = "phenix.hooks";
 const HOOK_NAMESPACE: &str = "phenix.hooks.state";

@@ -117,14 +117,12 @@ impl ToolBridge {
                 json!({})
             }
             "tools/list" => {
-                let version =
-                    self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
-                self.list_tools(&version)?
+                self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                self.list_tools()?
             }
             "tools/call" => {
-                let version =
-                    self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
-                self.call_tool(request.params.as_ref(), &version)?
+                self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                self.call_tool(request.params.as_ref())?
             }
             method => {
                 return Err(agent_client_protocol::Error::method_not_found()
@@ -154,20 +152,21 @@ impl ToolBridge {
         let requested = params
             .and_then(|params| params.get("protocolVersion"))
             .cloned()
-            .map(serde_json::from_value::<ProtocolVersion>)
-            .transpose()
-            .map_err(|error| {
+            .ok_or_else(|| {
                 agent_client_protocol::Error::invalid_params()
-                    .data(format!("invalid MCP protocolVersion: {error}"))
-            })?
-            .unwrap_or(ProtocolVersion::V_2025_06_18);
-        let selected = if requested.as_str() < ProtocolVersion::V_2026_07_28.as_str()
-            && supports_protocol(&requested)
-        {
-            requested
-        } else {
-            ProtocolVersion::V_2025_11_25
-        };
+                    .data("MCP initialize requires protocolVersion")
+            })
+            .and_then(|value| {
+                serde_json::from_value::<ProtocolVersion>(value).map_err(|error| {
+                    agent_client_protocol::Error::invalid_params()
+                        .data(format!("invalid MCP protocolVersion: {error}"))
+                })
+            })?;
+        if !supports_protocol(&requested) {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data(format!("unsupported MCP protocol version {requested}")));
+        }
+        let selected = requested;
         self.set_connection_protocol(connection_id, selected.clone())?;
 
         Ok(json!({
@@ -233,16 +232,19 @@ impl ToolBridge {
         connection_id: &McpConnectionId,
         params: Option<&Map<String, Value>>,
     ) -> Result<ProtocolVersion, agent_client_protocol::Error> {
-        let legacy = self.connection_protocol(connection_id)?;
+        let selected = self.connection_protocol(connection_id)?.ok_or_else(|| {
+            agent_client_protocol::Error::invalid_params()
+                .data("MCP connection must be initialized before tool requests")
+        })?;
         let Some(meta) = params.and_then(|params| params.get("_meta")) else {
-            return Ok(legacy.unwrap_or(ProtocolVersion::V_2025_06_18));
+            return Ok(selected);
         };
         let meta = serde_json::from_value::<RequestMetaObject>(meta.clone()).map_err(|error| {
             agent_client_protocol::Error::invalid_params()
                 .data(format!("invalid MCP request _meta: {error}"))
         })?;
         let Some(version) = meta.protocol_version() else {
-            return Ok(legacy.unwrap_or(ProtocolVersion::V_2025_06_18));
+            return Ok(selected);
         };
         if !supports_protocol(&version) {
             return Err(agent_client_protocol::Error::invalid_params()
@@ -255,10 +257,15 @@ impl ToolBridge {
                 missing.join(", ")
             )));
         }
-        Ok(version)
+        if version != selected {
+            return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                "MCP request version {version} differs from initialized connection version {selected}"
+            )));
+        }
+        Ok(selected)
     }
 
-    fn list_tools(&self, version: &ProtocolVersion) -> Result<Value, agent_client_protocol::Error> {
+    fn list_tools(&self) -> Result<Value, agent_client_protocol::Error> {
         let state = self.state.lock().map_err(|_| {
             agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
         })?;
@@ -276,19 +283,15 @@ impl ToolBridge {
                 ))
             })
             .collect::<Result<Vec<_>, agent_client_protocol::Error>>()?;
-        let mut result = ListToolsResult::with_all_items(tools);
-        if is_current_protocol(version) {
-            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
-        } else {
-            result.result_type = None;
-        }
+        let result = ListToolsResult::with_all_items(tools)
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
         serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
     }
 
     fn call_tool(
         &self,
         params: Option<&Map<String, Value>>,
-        version: &ProtocolVersion,
     ) -> Result<Value, agent_client_protocol::Error> {
         let request = serde_json::from_value::<CallToolRequestParams>(Value::Object(
             params.cloned().unwrap_or_default(),
@@ -342,7 +345,7 @@ impl ToolBridge {
             agent_client_protocol::Error::internal_error()
                 .data(format!("runtime tool result channel closed: {error}"))
         })?;
-        serialize_tool_result(result, version)
+        serialize_tool_result(result)
     }
 }
 
@@ -363,22 +366,13 @@ fn server_implementation() -> Implementation {
 }
 
 fn discover_result() -> Result<Value, agent_client_protocol::Error> {
-    let result = DiscoverResult::new(
-        ProtocolVersion::KNOWN_VERSIONS.to_vec(),
-        server_capabilities(),
-    )
-    .with_server_info(server_implementation());
+    let result = DiscoverResult::new(vec![ProtocolVersion::V_2026_07_28], server_capabilities())
+        .with_server_info(server_implementation());
     serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
 }
 
 fn supports_protocol(version: &ProtocolVersion) -> bool {
-    ProtocolVersion::KNOWN_VERSIONS
-        .iter()
-        .any(|candidate| candidate == version)
-}
-
-fn is_current_protocol(version: &ProtocolVersion) -> bool {
-    version.as_str() >= ProtocolVersion::V_2026_07_28.as_str()
+    version == &ProtocolVersion::V_2026_07_28
 }
 
 fn json_schema_object(schema: &PhenixSchema) -> Result<Map<String, Value>, ModelAdapterError> {
@@ -495,18 +489,14 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
 
 fn serialize_tool_result(
     result: Result<ToolResult, ModelAdapterError>,
-    version: &ProtocolVersion,
 ) -> Result<Value, agent_client_protocol::Error> {
-    let mut result = match result {
+    let result = match result {
         Ok(result) if result.success => {
             CallToolResult::success(vec![ContentBlock::text(result.output)])
         }
         Ok(result) => CallToolResult::error(vec![ContentBlock::text(result.output)]),
         Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
     };
-    if !is_current_protocol(version) {
-        result.result_type = None;
-    }
     serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
 }
 
@@ -574,16 +564,10 @@ mod tests {
     }
 
     #[test]
-    fn discovery_advertises_current_and_legacy_mcp_versions() {
+    fn discovery_advertises_one_mcp_version() {
         let discovered = discover_result().unwrap();
         assert_eq!(discovered["resultType"], "complete");
-        assert!(
-            discovered["supportedVersions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|version| version == "2026-07-28")
-        );
+        assert_eq!(discovered["supportedVersions"], json!(["2026-07-28"]));
         assert_eq!(discovered["capabilities"]["tools"], json!({}));
         assert_eq!(discovered["cacheScope"], "private");
         assert_eq!(discovered["ttlMs"], 0);
@@ -593,7 +577,7 @@ mod tests {
     fn list_tools_adapts_structural_schema_at_the_mcp_boundary() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
-        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
+        let listed = bridge.list_tools().unwrap();
         assert_eq!(listed["resultType"], "complete");
         assert_eq!(listed["ttlMs"], 0);
         assert_eq!(listed["cacheScope"], "private");
@@ -611,7 +595,7 @@ mod tests {
         bridge
             .provision(&surface_with_schema(PhenixSchema::Unit))
             .unwrap();
-        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
+        let listed = bridge.list_tools().unwrap();
         let schema = &listed["tools"][0]["inputSchema"];
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["properties"], json!({}));
@@ -629,7 +613,7 @@ mod tests {
         bridge
             .provision(&surface_with_schema(PhenixSchema::U64))
             .unwrap();
-        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
+        let listed = bridge.list_tools().unwrap();
         let schema = &listed["tools"][0]["inputSchema"];
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["properties"]["value"]["type"], "integer");
@@ -709,42 +693,58 @@ mod tests {
             "arguments": {}
         });
         let params = params.as_object().unwrap();
-        bridge
-            .call_tool(Some(params), &ProtocolVersion::V_2026_07_28)
-            .unwrap();
+        bridge.call_tool(Some(params)).unwrap();
         worker.join().unwrap();
     }
 
     #[test]
-    fn legacy_tool_list_keeps_legacy_wire_shape() {
+    fn connection_requires_current_version_before_tool_requests() {
         let bridge = ToolBridge::default();
-        bridge.provision(&surface()).unwrap();
-        let listed = bridge.list_tools(&ProtocolVersion::V_2025_06_18).unwrap();
-        assert!(listed.get("resultType").is_none());
-        assert!(listed.get("ttlMs").is_none());
-        assert!(listed.get("cacheScope").is_none());
+        let connection = McpConnectionId::new("fixture-mcp-connection");
+        bridge
+            .state
+            .lock()
+            .unwrap()
+            .connections
+            .insert(connection.0.to_string(), None);
+
+        assert!(
+            bridge.request_protocol_version(&connection, None).is_err(),
+            "tool requests must not implicitly initialize a connection"
+        );
+        let missing = Map::new();
+        assert!(bridge.initialize(&connection, Some(&missing)).is_err());
+        assert!(bridge.connection_protocol(&connection).unwrap().is_none());
+
+        let old = json!({"protocolVersion": "2025-06-18"});
+        assert!(bridge.initialize(&connection, old.as_object()).is_err());
+        assert!(
+            bridge.connection_protocol(&connection).unwrap().is_none(),
+            "rejected protocol versions must not change connection state"
+        );
+
+        let current = json!({"protocolVersion": "2026-07-28"});
+        let result = bridge.initialize(&connection, current.as_object()).unwrap();
+        assert_eq!(result["protocolVersion"], "2026-07-28");
+        assert_eq!(
+            bridge.request_protocol_version(&connection, None).unwrap(),
+            ProtocolVersion::V_2026_07_28
+        );
     }
 
     #[test]
-    fn tool_results_add_result_type_only_for_current_protocol() {
-        let legacy = serialize_tool_result(
-            Ok(ToolResult {
-                output: "ok".into(),
-                success: true,
-            }),
-            &ProtocolVersion::V_2025_06_18,
-        )
-        .unwrap();
-        assert!(legacy.get("resultType").is_none());
+    fn old_mcp_protocol_is_rejected() {
+        assert!(!supports_protocol(&ProtocolVersion::V_2025_06_18));
+        assert!(supports_protocol(&ProtocolVersion::V_2026_07_28));
+    }
 
-        let current = serialize_tool_result(
-            Ok(ToolResult {
-                output: "ok".into(),
-                success: true,
-            }),
-            &ProtocolVersion::V_2026_07_28,
-        )
+    #[test]
+    fn tool_results_have_one_wire_shape() {
+        let result = serialize_tool_result(Ok(ToolResult {
+            output: "ok".into(),
+            success: true,
+        }))
         .unwrap();
-        assert_eq!(current["resultType"], "complete");
+        assert_eq!(result["resultType"], "complete");
     }
 }

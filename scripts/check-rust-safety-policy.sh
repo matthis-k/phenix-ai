@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Legacy script runner. Move this policy into phenix-flake-ci maintenance
+# under #731's cleanup, preserving target coverage and negative CI fixtures.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"

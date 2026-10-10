@@ -1,7 +1,7 @@
 use super::*;
 use phenix_core::{
     InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId,
-    PersistenceBackend, PhenixValue, Project,
+    PhenixValue, Project,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelFeatures, ModelDispatchCommand,
@@ -242,91 +242,6 @@ mod profile_store {
     use super::*;
 
     #[test]
-    fn packaged_configuration_reads_and_normalizes_legacy_raw_routing_values() {
-        let path = temp_db("legacy-routing-values");
-        let desired = profile();
-        let mut legacy = serde_json::to_value(&desired).unwrap();
-
-        let set_legacy_options = |target: &mut serde_json::Value| {
-            target["options"] = serde_json::json!({
-                "backend": "phenix",
-                "inference": null
-            });
-        };
-        set_legacy_options(&mut legacy["default_target"]);
-        for target in legacy["fallback_targets"].as_array_mut().unwrap() {
-            set_legacy_options(target);
-        }
-        for target in legacy["callable_targets"]
-            .as_object_mut()
-            .unwrap()
-            .values_mut()
-        {
-            set_legacy_options(target);
-        }
-
-        let namespace = model_namespace();
-        let owner = PluginId::parse(MODEL_ROUTING_PLUGIN).unwrap();
-        let mut persistence = LocalPersistence::open(&path).unwrap();
-        persistence
-            .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))
-            .unwrap();
-        persistence
-            .transact(
-                &owner,
-                &namespace,
-                &[
-                    TransactionOp::Put {
-                        key: PROFILE_INDEX.into(),
-                        value: serde_json::to_vec(&vec![desired.id.clone()]).unwrap(),
-                    },
-                    TransactionOp::Put {
-                        key: profile_key(&desired.id),
-                        value: serde_json::to_vec(&legacy).unwrap(),
-                    },
-                    TransactionOp::Put {
-                        key: "configuration/packaged-v1".into(),
-                        value: {
-                            let mut manifest = serde_json::json!({
-                                "owned": {},
-                                "active": [desired.id.as_str()]
-                            });
-                            manifest["owned"][desired.id.as_str()] = legacy;
-                            serde_json::to_vec(&manifest).unwrap()
-                        },
-                    },
-                ],
-            )
-            .unwrap();
-        drop(persistence);
-
-        let mut kernel = kernel_with(&path);
-        let current = invoke_routing(
-            &mut kernel,
-            ModelCommand::GetProfile {
-                id: desired.id.clone(),
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            current,
-            ModelResponse::Profile {
-                profile: Some(desired.clone())
-            }
-        );
-
-        let prepared = invoke_routing(
-            &mut kernel,
-            ModelCommand::PreparePackagedProfiles {
-                profiles: vec![desired],
-            },
-        )
-        .unwrap();
-        assert!(matches!(prepared, ModelResponse::PreparedProfiles { .. }));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn immutable_profile_survives_restart_and_describes_all_providers() {
         let path = temp_db("routing-profile-store");
         let profile = profile();
@@ -362,8 +277,8 @@ mod profile_store {
     }
 
     #[test]
-    fn first_packaged_configuration_adopts_matching_legacy_profile() {
-        let path = temp_db("routing-packaged-legacy-adoption");
+    fn first_packaged_configuration_rejects_foreign_identity_even_when_matching() {
+        let path = temp_db("routing-packaged-foreign-matching");
         let profile = profile();
         let mut kernel = kernel_with(&path);
         invoke_routing(
@@ -374,14 +289,14 @@ mod profile_store {
         )
         .unwrap();
 
-        let response = invoke_routing(
+        let error = invoke_routing(
             &mut kernel,
             ModelCommand::PreparePackagedProfiles {
                 profiles: vec![profile],
             },
         )
-        .unwrap();
-        assert!(matches!(response, ModelResponse::PreparedProfiles { .. }));
+        .unwrap_err();
+        assert!(error.contains("already owned outside packaged configuration"));
         let _ = fs::remove_file(path);
     }
 

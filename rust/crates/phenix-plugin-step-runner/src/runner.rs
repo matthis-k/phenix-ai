@@ -26,6 +26,9 @@ use phenix_sdk::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+// #731 cleanup gate: keep delegated worker, retry, budget and tool semantics
+// in this plugin. Move any duplicate run/graph progression into the selected
+// Core plan only after delegated cancellation and no-replay parity tests.
 pub const STEP_RUNNER_PLUGIN: &str = "phenix.step-runner";
 pub const STEP_RUNNER_COMPONENT: &str = "phenix.step-runner";
 
