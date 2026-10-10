@@ -18,14 +18,15 @@ This file is an **index**, not a second implementation checklist. Each PR's link
 | [#766](https://github.com/matthis-k/phenix-ai/pull/766) | 6 | Imperative agent crate retirement and product parity | stacked on #726 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/766#issuecomment-6094709556) |
 | [#767](https://github.com/matthis-k/phenix-ai/pull/767) | 5 | Hook dispatcher crate retirement and Event/Layer parity | stacked on #766 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/767#issuecomment-6094709854) |
 | [#768](https://github.com/matthis-k/phenix-ai/pull/768) | 5 | Retire application agent-service fallback; use selected pinned workflow only | stacked on #767 | [Application route matrix](https://github.com/matthis-k/phenix-ai/pull/768#issuecomment-6094811078) |
+| [#769](https://github.com/matthis-k/phenix-ai/pull/769) | 6 | Standalone native ABI, intrinsic loader and ownership split | main; #726 must restack on #769 before closeout | [Native ABI owner matrix](https://github.com/matthis-k/phenix-ai/pull/769#issuecomment-6095306928) |
 
-Total: **83 individually numbered owner tasks**. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
+Total: **89 individually numbered owner tasks**. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
 
 ## Planned owner PRs that must be opened before implementation
 
 | Proposed owner | Parent gate | Exact initial files | First required evidence |
 | --- | --- | --- | --- |
-| Native ABI/loader extraction | #734 design merged; #726 W016/W023/W040-W044 | `rust/crates/phenix-plugin-abi/{Cargo.toml,src/lib.rs}`; `rust/crates/phenix-native-loader/{Cargo.toml,src/lib.rs,tests/fixtures/pending_plugin.rs}`; `rust/crates/phenix-core/src/runtime/native_plugin.rs`; `rust/crates/phenix-core/src/plugin_pending.rs` | Independently compiled shared plugin with correlated begin/poll/wake/cancel and a selected Core import; no duplicate generation manager |
+| Native Core adapter completion | #769 standalone ABI/loader, #726 canonical executor | `rust/crates/phenix-core/src/runtime/native_plugin.rs`; `rust/crates/phenix-core/src/plugin_pending.rs` | W016/W023 Core bridge moved to one selected invocation contract or removed after tested generic CallStart; #726 diff no longer owns native ABI/loader crate implementations |
 | Native guest Lua adapter | Native loader stable | New guest adapter crate and fixtures only; separate existing `rust/crates/phenix-binding-lua/src` client bindings | Rust calls Lua guest, Lua guest calls Rust import, scoped identity and authority; editor client remains independent |
 | Static catalog and profiles | #728, #730 and #731 selected consumer descriptors | `rust/crates/phenix-plugin-catalog/src/lib.rs`; `rust/crates/phenix-harness/src/{runtime_builder.rs,basic_suite.rs}`; `rust/crates/phenix-agent-configurations/src/lib.rs`; `modules/{development.nix,package-sets.nix,plugin-packaging.nix}` | Third-party provider installation works without editing product or central catalog |
 | Core domain contract relocation | Service-only SDK and consumer compatibility | `rust/crates/phenix-core/src/agent.rs`; `rust/crates/phenix-sdk/src/contracts/`; `rust/crates/phenix-domain/src/` | Core non-agent build and external wire/schema ID compatibility |
