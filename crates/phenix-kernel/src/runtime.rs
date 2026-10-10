@@ -33,11 +33,26 @@ struct Frame {
     scope: u64,
     provider: String,
 }
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    OfflinePreparation,
+    ExecutableAbi,
+    Admission,
+    Invocation,
+}
 #[derive(serde::Serialize)]
 struct FailureContext {
     caller: String,
-    provider: String,
-    operation: String,
+    provider: Option<String>,
+    operation: Option<String>,
+}
+#[derive(serde::Serialize)]
+struct ObservedFailure {
+    #[serde(flatten)]
+    failure: Failure,
+    phase: Phase,
+    context: FailureContext,
 }
 #[derive(Default)]
 struct State {
@@ -46,8 +61,7 @@ struct State {
     completed_roots: u64,
     calls: u64,
     denied: u64,
-    last_failure: Option<Failure>,
-    last_failure_context: Option<FailureContext>,
+    last_failure: Option<ObservedFailure>,
     stack: Vec<Frame>,
 }
 #[derive(Clone, Copy)]
@@ -107,7 +121,18 @@ impl Kernel {
     /// Trusted control-plane admission. This API is absent from the plugin SDK.
     pub fn admit_root(&self, entry: Selection) -> Result<Root<'_>, Failure> {
         self.check_thread()?;
-        self.prepared.check_entry(&entry)?;
+        let result = self.admit_root_inner(&entry);
+        if let Err(failure) = &result {
+            self.observe_failure(
+                failure,
+                Phase::Admission,
+                Self::context(Caller::Root, &entry),
+            );
+        }
+        result
+    }
+    fn admit_root_inner(&self, entry: &Selection) -> Result<Root<'_>, Failure> {
+        self.prepared.check_entry(entry)?;
         if !self.prepared.grants.contains(&("root".into(), entry.key())) {
             return self.fail(Code::Denied, "root admission lacks explicit grant");
         }
@@ -127,7 +152,7 @@ impl Kernel {
         Ok(Root {
             kernel: self,
             id,
-            entry,
+            entry: entry.clone(),
         })
     }
     fn check_thread(&self) -> Result<(), Failure> {
@@ -141,13 +166,38 @@ impl Kernel {
     }
     fn fail<T>(&self, code: Code, message: impl Into<String>) -> Result<T, Failure> {
         let failure = Failure::new(code, message);
-        let mut state = self.state.borrow_mut();
         if failure.code == Code::Denied {
-            state.denied += 1;
+            self.state.borrow_mut().denied += 1;
         }
-        state.last_failure = Some(failure.clone());
-        state.last_failure_context = None;
         Err(failure)
+    }
+    fn context(caller: Caller<'_>, selection: &Selection) -> FailureContext {
+        FailureContext {
+            caller: caller.name().into(),
+            provider: phenix_contract::identifier(&selection.provider)
+                .then(|| selection.provider.clone()),
+            operation: phenix_contract::operation_key(&selection.key()).then(|| selection.key()),
+        }
+    }
+    fn observe_failure(&self, failure: &Failure, phase: Phase, context: FailureContext) {
+        self.state.borrow_mut().last_failure = Some(ObservedFailure {
+            failure: failure.clone(),
+            phase,
+            context,
+        });
+    }
+    fn observe_propagation(&self, failure: &Failure, context: FailureContext) {
+        // Preserve a nested observation only while the same failure propagates.
+        // A plugin that replaces a handled failure gets its own result context.
+        let unchanged = self
+            .state
+            .borrow()
+            .last_failure
+            .as_ref()
+            .is_some_and(|observed| observed.failure == *failure);
+        if !unchanged {
+            self.observe_failure(failure, Phase::Invocation, context);
+        }
     }
     // Root entry and nested imports converge here. This is the only point of
     // effect. It does not perform provider discovery or permit policy mutation.
@@ -160,17 +210,7 @@ impl Kernel {
     ) -> Result<Outcome, Failure> {
         let result = self.dispatch_inner(root, caller, selection, input);
         if let Err(failure) = &result {
-            let mut state = self.state.borrow_mut();
-            state.last_failure = Some(failure.clone());
-            // Preserve the innermost failed effect when a nested failure
-            // propagates through the same synchronous dispatch path.
-            if state.last_failure_context.is_none() {
-                state.last_failure_context = Some(FailureContext {
-                    caller: caller.name().into(),
-                    provider: selection.provider.clone(),
-                    operation: selection.key(),
-                });
-            }
+            self.observe_propagation(failure, Self::context(caller, selection));
         }
         result
     }
@@ -269,20 +309,7 @@ impl Kernel {
         report["roots"] = serde_json::json!({"active":state.active_root,"completed":state.completed_roots,"last_root_id":if state.next_root==0{None}else{Some(state.next_root)}});
         report["calls"] = state.calls.into();
         report["denied_operations"] = state.denied.into();
-        report["last_failure"] = match &state.last_failure {
-            Some(failure) => {
-                let mut value = serde_json::json!(failure);
-                value["phase"] = if state.last_failure_context.is_some() {
-                    "invocation"
-                } else {
-                    "admission"
-                }
-                .into();
-                value["context"] = serde_json::json!(state.last_failure_context);
-                value
-            }
-            None => serde_json::Value::Null,
-        };
+        report["last_failure"] = serde_json::json!(state.last_failure);
         report
     }
 }
@@ -291,25 +318,23 @@ impl Root<'_> {
         match request.encode() {
             Ok(bytes) => self.invoke_bytes(&bytes),
             Err(failure) => {
-                let mut state = self.kernel.state.borrow_mut();
-                state.last_failure = Some(failure.clone());
-                state.last_failure_context = Some(FailureContext {
-                    caller: "root".into(),
-                    provider: self.entry.provider.clone(),
-                    operation: self.entry.key(),
-                });
+                self.kernel.observe_failure(
+                    &failure,
+                    Phase::Invocation,
+                    Kernel::context(Caller::Root, &self.entry),
+                );
                 Err(failure)
             }
         }
     }
     pub fn invoke_bytes(&self, request: &[u8]) -> Result<Outcome, Failure> {
-        let previous_context = self.kernel.state.borrow_mut().last_failure_context.take();
+        let previous_failure = self.kernel.state.borrow_mut().last_failure.take();
         let result = self
             .kernel
             .dispatch(self.id, Caller::Root, &self.entry, request);
         let mut state = self.kernel.state.borrow_mut();
-        if state.last_failure_context.is_none() {
-            state.last_failure_context = previous_context;
+        if state.last_failure.is_none() {
+            state.last_failure = previous_failure;
         }
         result
     }
@@ -395,30 +420,44 @@ unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Repl
                     "scope is not the current call",
                 ));
             }
-            let key = std::str::from_utf8(unsafe { key.read() }?)
-                .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
-            let Some(provider) = kernel.prepared.bindings.get(key) else {
-                return kernel.fail(Code::Denied, "operation is not a selected declared import");
+            let mut context = FailureContext {
+                caller: record.caller.clone(),
+                provider: None,
+                operation: None,
             };
-            let (interface, operation) = key
-                .split_once('/')
-                .ok_or_else(|| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
-            let selection = Selection {
-                interface: interface.into(),
-                operation: operation.into(),
-                provider: provider.clone(),
-            };
-            Ok(
-                match kernel.dispatch(
-                    record.root,
-                    Caller::Plugin(&record.caller),
-                    &selection,
-                    unsafe { input.read() }?,
-                )? {
-                    Outcome::Success(v) => Reply::value(0, v),
-                    Outcome::Domain(v) => Reply::value(1, v),
-                },
-            )
+            let result = (|| -> Result<Reply, Failure> {
+                let key = std::str::from_utf8(unsafe { key.read() }?)
+                    .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
+                context.operation = phenix_contract::operation_key(key).then(|| key.into());
+                let Some(provider) = kernel.prepared.bindings.get(key) else {
+                    return kernel
+                        .fail(Code::Denied, "operation is not a selected declared import");
+                };
+                context.provider = Some(provider.clone());
+                let (interface, operation) = key
+                    .split_once('/')
+                    .ok_or_else(|| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
+                let selection = Selection {
+                    interface: interface.into(),
+                    operation: operation.into(),
+                    provider: provider.clone(),
+                };
+                Ok(
+                    match kernel.dispatch(
+                        record.root,
+                        Caller::Plugin(&record.caller),
+                        &selection,
+                        unsafe { input.read() }?,
+                    )? {
+                        Outcome::Success(v) => Reply::value(0, v),
+                        Outcome::Domain(v) => Reply::value(1, v),
+                    },
+                )
+            })();
+            if let Err(failure) = &result {
+                kernel.observe_propagation(failure, context);
+            }
+            result
         })();
         match result {
             Ok(reply) => reply,

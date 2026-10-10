@@ -25,8 +25,8 @@ assert all(p["abi_negotiated"] for p in loaded["plugins"])
 for plugin in loaded["plugins"]:
     assert len(plugin["artifact_sha256"]) == 64 and len(plugin["descriptor_sha256"]) == 64
 
-def failed_cli(policy, value):
-    """Parse a real failed invocation, preserving its process exit and JSON."""
+def invoke_cli(policy, value, expected_exit=1):
+    """Parse a real invocation, preserving its process exit and JSON."""
     with tempfile.TemporaryDirectory() as tmp:
         policy_path = Path(tmp) / "deployment.json"
         request_path = Path(tmp) / "request.bin"
@@ -34,12 +34,12 @@ def failed_cli(policy, value):
         request_path.write_bytes(value)
         result = subprocess.run([kernel, "invoke", str(policy_path), str(request_path)],
                                 env=environment, text=True, capture_output=True)
-        assert result.returncode == 1, result.stderr
+        assert result.returncode == expected_exit, result.stderr
         return json.loads(result.stdout)
 
 policy = json.loads(Path(deployment).read_text())
 denied_policy = dict(policy, grants=[g for g in policy["grants"] if g["caller"] == "root"])
-denied = failed_cli(denied_policy, Path(request).read_bytes())
+denied = invoke_cli(denied_policy, Path(request).read_bytes())
 failure = denied["outcome"]["failure"]
 assert denied["outcome"]["kind"] == "kernel_failure"
 assert failure["code"] == "Denied" and failure["phase"] == "invocation"
@@ -51,14 +51,31 @@ assert denied["roots"]["completed"] == 1
 
 # Rejected preparation must not run any native constructor.
 witness.unlink()
-offline_failure = failed_cli(dict(policy, grants=[]), Path(request).read_bytes())
+offline_failure = invoke_cli(dict(policy, grants=[]), Path(request).read_bytes())
 assert offline_failure["last_failure"]["code"] == "Denied"
 assert offline_failure["last_failure"]["phase"] == "offline_preparation"
 assert not witness.exists()
-malformed = failed_cli(policy, bytes([255]))
+malformed = invoke_cli(policy, bytes([255]))
 assert malformed["last_failure"]["code"] == "SchemaRejected"
 assert malformed["last_failure"]["phase"] == "offline_preparation"
 assert not witness.exists()
+
+def text_request(text):
+    payload = text.encode()
+    return (bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big") + b"text"
+            + bytes([5]) + len(payload).to_bytes(4, "big") + payload)
+
+handled = invoke_cli(policy, text_request("handled-denial"), expected_exit=0)
+assert handled["outcome"] == dict(kind="success", value=dict(text="handled"))
+assert handled["last_failure"]["code"] == "Denied"
+assert handled["last_failure"]["phase"] == "invocation"
+assert handled["last_failure"]["context"] == dict(caller="example.consumer", provider=None,
+                                                    operation="example.transform@1/count")
+assert handled["calls"] == 1 and handled["denied_operations"] == 1
+replaced = invoke_cli(policy, text_request("replace-failure"))
+assert replaced["outcome"]["failure"]["message"] == "consumer replacement failure"
+assert replaced["outcome"]["failure"]["context"] == dict(caller="root", provider="example.consumer",
+                                                         operation="example.consumer@1/run")
 
 def compare_golden(actual, expected):
     # Additive fields are allowed within v1. Frozen fields must preserve types
@@ -73,7 +90,9 @@ def compare_golden(actual, expected):
 golden = json.loads(Path(golden_path).read_text())
 compare_golden(loaded, golden["success"])
 compare_golden(denied, golden["denied"])
+compare_golden(handled, golden["handled"])
 (output / "product.json").write_text(json.dumps(loaded, sort_keys=True, indent=2))
 (output / "failures.json").write_text(json.dumps(dict(denied=denied, offline=offline_failure,
-                                                     malformed=malformed), sort_keys=True, indent=2))
+                                                     malformed=malformed, handled=handled,
+                                                     replaced=replaced), sort_keys=True, indent=2))
 print("M0.0 product CLI passed")

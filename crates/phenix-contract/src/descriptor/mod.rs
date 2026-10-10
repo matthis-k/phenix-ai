@@ -141,6 +141,16 @@ impl Descriptor {
         if v.encode().map_err(|e| fail(e.to_string()))? != bytes {
             return Err(fail("noncanonical descriptor".into()));
         }
+        // JSON numbers erase the signed/unsigned wire distinction. Enforce the
+        // frozen field types before using serde for the remaining shape checks.
+        let Value::Map(fields) = &v else {
+            return Err(fail("descriptor must be a map".into()));
+        };
+        for key in ["abi_major", "abi_minor", "features", "schema_version"] {
+            if !matches!(fields.get(key), Some(Value::U64(_))) {
+                return Err(fail(format!("{key} must use the U64 wire type")));
+            }
+        }
         let d: Self = serde_json::from_value(v.to_json()).map_err(|e| fail(e.to_string()))?;
         if d.format != "phenix.descriptor.v1"
             || d.schema_version != 1
@@ -255,5 +265,36 @@ mod tests {
             Descriptor::decode(&v.encode().unwrap()).unwrap_err().code,
             Code::AbiIncompatible
         );
+    }
+    #[test]
+    fn descriptor_version_fields_preserve_unsigned_wire_types() {
+        let section = descriptor(
+            "test.plugin",
+            "1.0.0",
+            [],
+            [Declaration {
+                operation: OP,
+                provenance: "test::apply",
+            }],
+        );
+        let n = u32::from_be_bytes(section[..4].try_into().unwrap()) as usize;
+        let original = Value::decode(&section[4..n + 4]).unwrap();
+        for key in ["abi_major", "abi_minor", "features", "schema_version"] {
+            let mut value = original.clone();
+            let Value::Map(fields) = &mut value else {
+                unreachable!()
+            };
+            let Value::U64(number) = fields[key] else {
+                unreachable!()
+            };
+            fields.insert(key.into(), Value::I64(number as i64));
+            assert_eq!(
+                Descriptor::decode(&value.encode().unwrap())
+                    .unwrap_err()
+                    .code,
+                Code::DescriptorInvalid,
+                "{key}"
+            );
+        }
     }
 }

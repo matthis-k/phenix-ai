@@ -107,6 +107,21 @@ fn main() {
         "offline preparation executed plugin constructor"
     );
     let offline = prepared.inspect();
+    let signed = mutate_package(
+        Path::new(provider),
+        &work.join("signed-version"),
+        |v| {
+            let Value::Map(fields) = v else { panic!() };
+            fields.insert("abi_major".into(), Value::I64(1));
+        },
+        true,
+    );
+    assert_eq!(
+        VerifiedPackage::verify_trusted_read_only(&signed)
+            .unwrap_err()
+            .code,
+        Code::DescriptorInvalid
+    );
     assert!(offline["plugins"]
         .as_array()
         .unwrap()
@@ -259,6 +274,82 @@ fn main() {
     let successful = kernel.inspect();
     assert_eq!(successful["calls"], 8);
     drop(kernel);
+    // The plugin handles its undeclared import and returns successfully. The
+    // denial remains an invocation observation, with no selected count provider.
+    let kernel = Prepared::prepare(d.clone()).unwrap().load().unwrap();
+    let root = kernel.admit_default_root().unwrap();
+    assert_eq!(
+        root.invoke(&request("handled-denial")).unwrap(),
+        Outcome::Success(request("handled"))
+    );
+    let handled_failure = kernel.inspect()["last_failure"].clone();
+    assert_eq!(handled_failure["code"], "Denied");
+    assert_eq!(handled_failure["phase"], "invocation");
+    assert_eq!(
+        handled_failure["context"],
+        serde_json::json!({
+            "caller":"example.consumer", "provider":null,
+            "operation":"example.transform@1/count",
+        })
+    );
+    assert_eq!(kernel.inspect()["calls"], 1);
+    assert_eq!(kernel.inspect()["denied_operations"], 1);
+    assert_eq!(
+        root.invoke(&request("ok")).unwrap(),
+        Outcome::Success(request("OK"))
+    );
+    assert_eq!(kernel.inspect()["last_failure"], handled_failure);
+    assert_eq!(
+        root.invoke(&request("replace-failure")).unwrap_err().code,
+        Code::PluginFailed
+    );
+    let replaced_failure = kernel.inspect()["last_failure"].clone();
+    assert_eq!(replaced_failure["message"], "consumer replacement failure");
+    assert_eq!(
+        replaced_failure["context"],
+        serde_json::json!({
+            "caller":"root", "provider":"example.consumer",
+            "operation":"example.consumer@1/run",
+        })
+    );
+    drop(root);
+    // Every recoverable admission error must be observable and leave the kernel
+    // available for a later valid root. Existing instances remain owned here.
+    assert_eq!(
+        kernel
+            .admit_root(selection(
+                "example.transform@1",
+                "apply",
+                "example.provider"
+            ))
+            .err()
+            .unwrap()
+            .code,
+        Code::Denied
+    );
+    let admission_failure = kernel.inspect()["last_failure"].clone();
+    assert_eq!(admission_failure["phase"], "admission");
+    let root = kernel.admit_default_root().unwrap();
+    assert_eq!(
+        kernel.admit_default_root().err().unwrap().code,
+        Code::ReentrancyRejected
+    );
+    assert_eq!(
+        kernel.inspect()["last_failure"]["code"],
+        "ReentrancyRejected"
+    );
+    assert_eq!(kernel.inspect()["last_failure"]["phase"], "admission");
+    drop(root);
+    let root = kernel.admit_default_root().unwrap();
+    assert_eq!(
+        root.invoke(&request("handled-denial")).unwrap(),
+        Outcome::Success(request("handled"))
+    );
+    drop(root);
+    assert_eq!(kernel.inspect()["roots"]["active"], serde_json::Value::Null);
+    let observations = serde_json::json!({"handled":handled_failure,"replaced":replaced_failure,
+        "admission":admission_failure,"terminal":kernel.inspect()});
+    drop(kernel);
     let mut denied = d.clone();
     denied.grants.retain(|g| g.caller != "example.consumer");
     let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
@@ -364,7 +455,7 @@ fn main() {
         ]
     );
     assert!(!rollback_events.contains("foreign:invoke"));
-    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","ambiguous-binding","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries","loaded-null-release","failed-create-rollback"],"rollback_events":rollback_events.lines().collect::<Vec<_>>()})).unwrap()).unwrap();
+    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","ambiguous-binding","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries","loaded-null-release","failed-create-rollback","signed-descriptor-version","handled-host-denial","replaced-provider-failure","admission-failure-recovery"],"observations":observations,"rollback_events":rollback_events.lines().collect::<Vec<_>>()})).unwrap()).unwrap();
     fs::remove_dir_all(work).unwrap();
     println!("M0.0 native conformance passed");
 }

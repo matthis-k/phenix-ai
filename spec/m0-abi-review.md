@@ -11,7 +11,7 @@ This review covers the frozen synchronous Linux x86_64 profile in RFC §§14–1
 | Normal stop | The native owner takes its instance before calling stop; repeated host stop rejects without producer reentry; final drop does not stop it twice | Native-owner stop test, plus actual rollback witness |
 | Invocation | One scoped dispatcher checks thread, caller, selected import, schema and effective grants before provider entry | Native pair, protected counter, scope and cycle cases |
 | Panic | Generated boundaries catch unwind; failed invocation poisons state; process-fatal events remain fatal | Actual provider panic and subsequent poisoned invocation |
-| Observation | Failure phase and redacted operation identities belong to the host; subsequent success preserves the last failure context | CLI negative fixtures, native denial/count sequence and parseable inspection golden |
+| Observation | The host stores failure, phase and context together; handled errors remain observable and replacement errors receive their current context | Native handled-denial/replacement/admission recovery fixtures, CLI golden and subsequent-success checks |
 
 The C layout is unchanged: `Reply` is 32 bytes with its pointer at offset 8; the optional Rust release function occupies the same nullable C pointer slot. There is one buffer format and one release callback per transferred buffer. `Reply::consume` consumes a non-cloneable owner. Raw C callbacks require unique ownership and valid producer addresses; replaying an already consumed raw pointer violates that unsafe ABI contract. The host owner rejects repeated stop rather than calling a freed instance.
 
@@ -24,3 +24,5 @@ Final artifact hashes are checked for all packages before the first load, then c
 Recoverable startup failure creates no root and releases acquired host-owned instances and replies. The rollback test checks event counts and absence of invocation, rather than accepting a successful compile as evidence. Invalid foreign callbacks cannot be repaired by this ABI: a null release returns `AbiIncompatible`, but the host cannot free an unknown producer allocation. Abort, signals and invalid non-null pointers can compromise the process. No isolation or process-fatal cleanup guarantee is claimed.
 
 Golden inspection fields in `tests/inspection-golden.json` freeze JSON types and semantic values. Additive fields are allowed within `phenix.inspect.v1`; incompatible field meanings or types require a new format version. Artifact hashes remain recorded in realized conformance output rather than copied into a handwritten fixture.
+
+Descriptor decoding checks U64 version and feature tags before JSON conversion can erase integer signedness. The offline fixture substitutes an I64 ABI major while updating both embedded metadata and package hashes; it rejects without running the constructor. Unit vectors cover all four numeric descriptor fields.

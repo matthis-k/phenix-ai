@@ -8,6 +8,22 @@
     "last_failure": null,
     "outcome": {"kind": "success", "value": {"text": "PHENIX"}}
   },
+  "handled": {
+    "format": "phenix.inspect.v1",
+    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "calls": 1,
+    "denied_operations": 1,
+    "last_failure": {
+      "code": "Denied",
+      "phase": "invocation",
+      "context": {
+        "caller": "example.consumer",
+        "provider": null,
+        "operation": "example.transform@1/count"
+      }
+    },
+    "outcome": {"kind": "success", "value": {"text": "handled"}}
+  },
   "denied": {
     "format": "phenix.inspect.v1",
     "roots": {"active": null, "completed": 1, "last_root_id": 1},

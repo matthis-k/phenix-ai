@@ -1,17 +1,9 @@
 use phenix_contract::{Code, Failure, Value};
 use phenix_kernel::{
     resolve::{Deployment, Prepared},
-    Outcome,
+    Outcome, Phase,
 };
 use std::path::Path;
-#[derive(serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Phase {
-    OfflinePreparation,
-    ExecutableAbi,
-    Admission,
-    Invocation,
-}
 fn main() {
     let mut phase = Phase::OfflinePreparation;
     if let Err(error) = run(&mut phase) {

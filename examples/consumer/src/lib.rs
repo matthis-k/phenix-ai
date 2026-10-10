@@ -1,7 +1,7 @@
 #[phenix_sdk::plugin(id = "example.consumer", version = "1.0.0")]
 mod consumer {
-    use example_contracts::{Run, Text, Transform, TransformError};
-    use phenix_sdk::{CallResult, Host};
+    use example_contracts::{Count, ReadCount, Run, Text, Transform, TransformError};
+    use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
     pub struct State;
     impl Default for State {
         fn default() -> Self {
@@ -18,6 +18,28 @@ mod consumer {
     type Provider = Transform;
     #[export(Run)]
     fn run(_: &mut State, host: &Host<'_>, request: Text) -> CallResult<Text, TransformError> {
+        if request.text == "handled-denial" {
+            // ReadCount is deliberately not a declared import. Typed SDK calls
+            // still need host authorization, even when a plugin handles failure.
+            match host.invoke::<ReadCount>(&Count { count: 0 }) {
+                Err(CallError::Kernel(failure)) if failure.code == Code::Denied => {}
+                _ => return Err(Failure::new(Code::PluginFailed, "expected denied import").into()),
+            }
+            return Ok(Text {
+                text: "handled".into(),
+            });
+        }
+        if request.text == "replace-failure" {
+            let error = host
+                .invoke::<Provider>(&Text {
+                    text: "panic".into(),
+                })
+                .unwrap_err();
+            if !matches!(error, CallError::Kernel(_)) {
+                return Err(Failure::new(Code::PluginFailed, "expected host failure").into());
+            }
+            return Err(Failure::new(Code::PluginFailed, "consumer replacement failure").into());
+        }
         host.invoke::<Provider>(&request)
     }
 }
