@@ -1770,6 +1770,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-native-loader"
+version = "0.1.0"
+dependencies = [
+ "phenix-plugin-abi",
+]
+
+[[package]]
 name = "phenix-plugin-abi"
 version = "0.1.0"
 
