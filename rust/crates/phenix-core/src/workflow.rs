@@ -185,6 +185,9 @@ pub enum WorkflowEdge {
         inputs: BTreeMap<crate::Key, crate::Key>,
         #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
         outputs: BTreeMap<crate::Key, crate::Key>,
+        /// Explicit initial values of child-private slots, never read from parent.
+        #[serde(default)]
+        initial: BTreeMap<crate::Key, PhenixValue>,
     },
 }
 
@@ -699,6 +702,7 @@ impl WorkflowTopology {
                             on_exit,
                             inputs,
                             outputs,
+                            ..
                         } => (workflow, site, on_exit, Some(inputs), Some(outputs)),
                         _ => continue,
                     };
@@ -2429,6 +2433,7 @@ mod inclusion_tests {
             WorkflowEdge::IncludeMapped {
                 workflow: "child".into(),
                 site: "terminal".into(),
+                initial: BTreeMap::new(),
                 inputs: BTreeMap::new(),
                 outputs: BTreeMap::from([(
                     crate::Key::parse("child_output").unwrap(),
@@ -2498,6 +2503,7 @@ mod inclusion_tests {
             WorkflowEdge::IncludeMapped {
                 workflow: "child".into(),
                 site: "composed".into(),
+                initial: BTreeMap::new(),
                 inputs: BTreeMap::new(),
                 outputs: BTreeMap::from([(
                     crate::Key::parse("child_output").unwrap(),
@@ -2661,6 +2667,7 @@ mod inclusion_tests {
             WorkflowEdge::IncludeMapped {
                 workflow: "fork-child".into(),
                 site: "subfork".into(),
+                initial: BTreeMap::new(),
                 inputs: BTreeMap::new(),
                 outputs: BTreeMap::from([(child_output.clone(), parent_output.clone())]),
                 on_exit: BTreeMap::from([
@@ -2897,6 +2904,7 @@ mod inclusion_tests {
             WorkflowEdge::IncludeMapped {
                 workflow: "mapped-child".into(),
                 site: "batch-return".into(),
+                initial: BTreeMap::new(),
                 inputs: BTreeMap::new(),
                 outputs: BTreeMap::from([(key("results"), key("published"))]),
                 on_exit: BTreeMap::from([
