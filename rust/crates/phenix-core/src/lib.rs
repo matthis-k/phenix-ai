@@ -198,6 +198,7 @@ pub use plugin::management::{
     PluginTrialResult, PluginUnloadRequest, PreparedPluginManagement,
 };
 pub use plugin::prepared_mutation::PreparedMutationHandle;
+pub use plugin_pending::{PluginCallCompletion, PluginCallStart, PluginPendingCall, PluginPendingPoll};
 pub use reconciliation::graph::{
     BindingChange, ComponentChange, ComponentChangeKind, GraphDiff, GraphReconciler,
     ReconciliationAction, ReconciliationPreview, ReconciliationResult, ResourceChange,
