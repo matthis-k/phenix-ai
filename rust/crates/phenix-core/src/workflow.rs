@@ -2294,7 +2294,10 @@ mod inclusion_tests {
         .compile(|_| true)
         .unwrap();
         let mut frame = crate::WorkflowFrame::new(
-            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            crate::WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::new(),
+            },
             BTreeMap::new(),
         )
         .unwrap();
@@ -2364,7 +2367,10 @@ mod inclusion_tests {
         .compile(|_| true)
         .unwrap();
         let mut frame = crate::WorkflowFrame::new(
-            crate::WorkflowFrameSchema { revision: 1, slots: BTreeMap::new() },
+            crate::WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::new(),
+            },
             BTreeMap::new(),
         )
         .unwrap();
