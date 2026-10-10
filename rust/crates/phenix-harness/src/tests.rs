@@ -472,85 +472,106 @@ fn declarative_product_can_replace_one_node_without_legacy_loop() {
         agent_turn_step_service,
     };
 
-    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
-    let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
-    let mut builder =
-        PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded).unwrap();
-    let component = phenix_core::ComponentId::parse("fixture.alternate-turn").unwrap();
-    let owner = plugin("fixture.alternate-turn");
-    builder
-        .add_embedded(
-            service_manifest(
-                owner.as_str(),
-                agent_turn_step_service(),
-                200,
-                Authority::default(),
-            ),
-            || Box::new(AlternateTurnProvider),
-        )
-        .unwrap();
-    builder.add_component(ComponentManifest {
-        id: component.clone(),
-        owner,
-        imports: Vec::new(),
-        exports: vec![ComponentExport {
-            interface: AgentTurnStepInterface::interface_id(),
-            schema: AgentTurnStepInterface::schema(),
-            priority: 200,
-            required_authority: Authority::default(),
-        }],
-        listeners: Vec::new(),
-        maximum_authority: Authority::default(),
-    });
-    builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
-    let mut runtime = builder.build().unwrap();
-    let selected_turn = runtime
-        .resolved_generation()
-        .component_graph()
-        .import_handle(
-            &phenix_core::ComponentId::parse("phenix.agent-topology").unwrap(),
-            &AgentTurnStepInterface::interface_id(),
-        )
-        .unwrap()
-        .expect("the declarative turn node has a resolved provider binding");
-    assert_eq!(
-        selected_turn.exporter().as_str(),
-        "fixture.alternate-turn",
-        "provider selection must use the canonical component graph"
-    );
-    assert!(
-        runtime
+    // Test the actual Basic, Advanced, and product composition graphs in
+    // both dispatch modes. The selected provider is stateless by design.
+    for profile in [
+        BASIC_AGENT_CONFIGURATION,
+        ADVANCED_AGENT_CONFIGURATION,
+        "phenix.product.basic",
+        "phenix.product.full",
+    ] {
+        let selected = BTreeSet::from([profile.to_owned()]);
+        let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
+        let mut builder =
+            PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded).unwrap();
+        let component = phenix_core::ComponentId::parse("fixture.alternate-turn").unwrap();
+        let owner = plugin("fixture.alternate-turn");
+        builder
+            .add_embedded(
+                service_manifest(
+                    owner.as_str(),
+                    agent_turn_step_service(),
+                    200,
+                    Authority::default(),
+                ),
+                || Box::new(AlternateTurnProvider),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: component.clone(),
+            owner,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: AgentTurnStepInterface::interface_id(),
+                schema: AgentTurnStepInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
+        let mut runtime = builder.build().unwrap();
+        let selected_turn = runtime
             .resolved_generation()
-            .plugins()
-            .iter()
-            .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
-    );
-    runtime.activate().unwrap();
-    let response = runtime
-        .run_declared_agent_workflow(
-            AgentLoopCommand::Run {
-                execution_id: "selected-alternative-turn".into(),
+            .component_graph()
+            .import_handle(
+                &phenix_core::ComponentId::parse("phenix.agent-topology").unwrap(),
+                &AgentTurnStepInterface::interface_id(),
+            )
+            .unwrap()
+            .expect("the declarative turn node has a resolved provider binding");
+        assert_eq!(
+            selected_turn.exporter().as_str(),
+            "fixture.alternate-turn",
+            "provider selection must use the canonical component graph"
+        );
+        assert!(
+            runtime
+                .resolved_generation()
+                .plugins()
+                .iter()
+                .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
+        );
+        runtime.activate().unwrap();
+        for pending in [false, true] {
+            let command = AgentLoopCommand::Run {
+                execution_id: format!("selected-alternative-turn-{profile}-pending={pending}"),
                 session_id: None,
                 parent_attempt_id: None,
                 callable_id: None,
                 input: Bytes::from(b"no legacy model".to_vec()),
                 tools: Vec::new(),
-            },
-            &default_suite_authority(),
-            || false,
-            None,
-        )
-        .unwrap();
-    assert_eq!(
-        response,
-        AgentLoopResponse::Completed {
-            output: Bytes::from(b"substituted-turn".to_vec()),
-            usage: AgentLoopUsage {
-                model_calls: 1,
-                tool_calls: 0,
-            },
+            };
+            let response = if pending {
+                runtime.run_declared_agent_workflow_pending(
+                    command,
+                    &default_suite_authority(),
+                    || false,
+                    None,
+                )
+            } else {
+                runtime.run_declared_agent_workflow(
+                    command,
+                    &default_suite_authority(),
+                    || false,
+                    None,
+                )
+            }
+            .unwrap();
+            assert_eq!(
+                response,
+                AgentLoopResponse::Completed {
+                    output: Bytes::from(b"substituted-turn".to_vec()),
+                    usage: AgentLoopUsage {
+                        model_calls: 1,
+                        tool_calls: 0,
+                    },
+                },
+                "{profile}: native pending={pending} must preserve the selected provider and usage"
+            );
         }
-    );
+    }
 }
 
 #[test]
