@@ -7,7 +7,7 @@
 //! The kernel root owns all pinned invocation and generation leases.
 use super::{
     CompiledWorkflow, InterfaceId, NonZeroU64, PlanStep, PlanStepId, WorkflowInvocationError,
-    WorkflowRunError, WorkflowRunReport,
+    WorkflowInvokeAdvance, WorkflowInvokePoll, WorkflowRunError, WorkflowRunReport,
 };
 use crate::{
     PhenixValue, WorkflowChildSettlement, WorkflowFrame, WorkflowJoinDecision,
@@ -17,17 +17,26 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_ACTIVE_SCOPE_DEPTH: usize = 64;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TickStatus {
+    Progress,
+    Blocked,
+    Settled(WorkflowChildSettlement),
+}
+
 struct Cursor {
     step: PlanStepId,
+    scope: String,
     frame: Option<WorkflowFrame>,
     active: Option<Box<ActiveFork>>,
     join_decision: Option<WorkflowJoinDecision>,
 }
 
 impl Cursor {
-    fn at(step: PlanStepId, frame: Option<WorkflowFrame>) -> Self {
+    fn at(step: PlanStepId, frame: Option<WorkflowFrame>, scope: String) -> Self {
         Self {
             step,
+            scope,
             frame,
             active: None,
             join_decision: None,
@@ -85,7 +94,16 @@ impl CompiledWorkflow {
                 })?;
         let mut children = branches
             .iter()
-            .map(|(key, step)| (key.clone(), Cursor::at(step.clone(), Some(frame.clone()))))
+            .map(|(key, step)| {
+                (
+                    key.clone(),
+                    Cursor::at(
+                        step.clone(),
+                        Some(frame.clone()),
+                        format!("{}/{}:{}/{}", cursor.scope, node, "fork", key),
+                    ),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         if let Some(map) = map {
             let items = match frame.get(&map.collection) {
@@ -138,7 +156,11 @@ impl CompiledWorkflow {
                     })?;
                 children.insert(
                     format!("{index:020}"),
-                    Cursor::at(map.branch_entry.clone(), Some(snapshot)),
+                    Cursor::at(
+                        map.branch_entry.clone(),
+                        Some(snapshot),
+                        format!("{}/{}:{}/{}", cursor.scope, node, "map", index),
+                    ),
                 );
             }
         }
@@ -227,14 +249,16 @@ impl CompiledWorkflow {
         invoke: &mut impl FnMut(
             &str,
             &InterfaceId,
+            &str,
             &mut State,
             Option<&mut WorkflowFrame>,
             &mut dyn FnMut() -> bool,
-        ) -> Result<String, WorkflowInvocationError<Error>>,
+        ) -> WorkflowInvokePoll<Error>,
         cancelled: &mut impl FnMut() -> bool,
+        cancel_scope: &mut impl FnMut(&str),
         budget: (&mut u64, Option<NonZeroU64>),
         depth: usize,
-    ) -> Result<Option<WorkflowChildSettlement>, WorkflowRunError<Error>> {
+    ) -> Result<TickStatus, WorkflowRunError<Error>> {
         let (count, step_limit) = budget;
         // Invoke performs its own single pre-dispatch cancellation check.
         // A redundant check here would change cancellation ordering and
@@ -252,14 +276,19 @@ impl CompiledWorkflow {
         }
         match &self.plan.steps[&cursor.step] {
             PlanStep::Invoke { .. } => {
-                cursor.step = self.invoke_step(
+                match self.invoke_step(
                     &cursor.step,
+                    &cursor.scope,
                     state,
                     cursor.frame.as_mut(),
                     invoke,
                     cancelled,
                     (count, step_limit),
-                )?;
+                )? {
+                    WorkflowInvokeAdvance::Next(step) => cursor.step = step,
+                    WorkflowInvokeAdvance::Started => return Ok(TickStatus::Progress),
+                    WorkflowInvokeAdvance::Waiting => return Ok(TickStatus::Blocked),
+                }
             }
             PlanStep::Fork { .. } => {
                 let PlanStepId::Fork { node, .. } = &cursor.step else {
@@ -285,33 +314,49 @@ impl CompiledWorkflow {
                         cancel_remaining: false,
                     });
                     cursor.step = active.join;
-                    return Ok(None);
+                    return Ok(TickStatus::Progress);
                 }
-                let branch = active
-                    .next_ready()
-                    .expect("an undecided join always has a runnable child");
-                let settlement = self.tick(
-                    active
-                        .children
-                        .get_mut(&branch)
-                        .expect("selected child exists"),
-                    state,
-                    invoke,
-                    cancelled,
-                    (count, step_limit),
-                    depth + 1,
-                )?;
-                if let Some(settlement) = settlement {
-                    active.settled.insert(branch.clone());
-                    active.observations.push(WorkflowJoinObservation {
-                        branch,
-                        order: active.settlement_order,
-                        settlement,
-                    });
-                    active.settlement_order = active
-                        .settlement_order
-                        .checked_add(1)
-                        .ok_or(WorkflowRunError::StepCounterOverflow)?;
+                // Poll at most one turn of each live child. This lets an
+                // already-running sibling complete while another native
+                // callback remains suspended; no busy-spin is permitted.
+                let mut progress = false;
+                for _ in 0..active.ready_order.len() {
+                    let branch = active
+                        .next_ready()
+                        .expect("an undecided join always has a runnable child");
+                    let status = self.tick(
+                        active
+                            .children
+                            .get_mut(&branch)
+                            .expect("selected child exists"),
+                        state,
+                        invoke,
+                        cancelled,
+                        cancel_scope,
+                        (count, step_limit),
+                        depth + 1,
+                    )?;
+                    match status {
+                        TickStatus::Blocked => continue,
+                        TickStatus::Progress => {
+                            progress = true;
+                            break;
+                        }
+                        TickStatus::Settled(settlement) => {
+                            active.settled.insert(branch.clone());
+                            active.observations.push(WorkflowJoinObservation {
+                                branch,
+                                order: active.settlement_order,
+                                settlement,
+                            });
+                            active.settlement_order = active
+                                .settlement_order
+                                .checked_add(1)
+                                .ok_or(WorkflowRunError::StepCounterOverflow)?;
+                            progress = true;
+                            break;
+                        }
+                    }
                 }
                 let PlanStep::Join { policy, .. } = &self.plan.steps[&active.join] else {
                     unreachable!("Fork refers to a Join");
@@ -325,17 +370,34 @@ impl CompiledWorkflow {
                     })?;
                 if decision == WorkflowJoinDecision::Pending {
                     cursor.active = Some(active);
-                } else {
-                    // Cooperative dispatch guarantees no child call is in
-                    // flight here; dropping the remaining continuations
-                    // settles sibling scopes before the parent resumes.
-                    if let WorkflowJoinDecision::Succeeded { selected, .. } = &decision {
-                        self.join_frame(&node, cursor, &active, selected)?;
-                    }
-                    cursor.step = active.join;
-                    cursor.join_decision = Some(decision);
+                    return Ok(if progress {
+                        TickStatus::Progress
+                    } else {
+                        TickStatus::Blocked
+                    });
                 }
-                return Ok(None);
+                // An early winner does not permit abandoning in-flight
+                // native tasks. Signal unselected siblings under their
+                // structured child scopes; actual worker leases remain
+                // pinned until their callbacks settle.
+                let cancel_remaining = match &decision {
+                    WorkflowJoinDecision::Pending => false,
+                    WorkflowJoinDecision::Succeeded { cancel_remaining, .. }
+                    | WorkflowJoinDecision::Failed { cancel_remaining, .. } => *cancel_remaining,
+                };
+                if cancel_remaining {
+                    for (branch, child) in &active.children {
+                        if !active.settled.contains(branch) {
+                            cancel_scope(&child.scope);
+                        }
+                    }
+                }
+                if let WorkflowJoinDecision::Succeeded { selected, .. } = &decision {
+                    self.join_frame(&node, cursor, &active, selected)?;
+                }
+                cursor.step = active.join;
+                cursor.join_decision = Some(decision);
+                return Ok(TickStatus::Progress);
             }
             PlanStep::Join {
                 on_success,
@@ -387,13 +449,13 @@ impl CompiledWorkflow {
                     executed_nodes: *count,
                 });
             }
-            return Ok(Some(if *failed {
+            return Ok(TickStatus::Settled(if *failed {
                 WorkflowChildSettlement::Failed
             } else {
                 WorkflowChildSettlement::Completed
             }));
         }
-        Ok(None)
+        Ok(TickStatus::Progress)
     }
 
     pub(super) fn execute_cooperative<State, Error>(
