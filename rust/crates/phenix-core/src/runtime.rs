@@ -25,6 +25,7 @@ mod dispatch;
 mod host;
 mod kernel;
 mod listener;
+mod native_plugin;
 mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
@@ -34,6 +35,7 @@ mod tests;
 mod trace;
 
 pub use listener::PluginListener;
+pub use native_plugin::NativeRegistrationError;
 pub use trace::{
     DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY, ProvenanceBuffer,
     RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink,
