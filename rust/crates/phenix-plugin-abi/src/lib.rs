@@ -36,9 +36,18 @@ pub struct NativeAbiHeader {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeAbiError {
-    UnsupportedMajor { offered: u16, supported: u16 },
-    UnsupportedMinor { offered: u16, supported: u16 },
-    TruncatedTable { offered: usize, required: usize },
+    UnsupportedMajor {
+        offered: u16,
+        supported: u16,
+    },
+    UnsupportedMinor {
+        offered: u16,
+        supported: u16,
+    },
+    TruncatedTable {
+        offered: usize,
+        required: usize,
+    },
     UnavailableFeatures(u64),
     MissingEntrypoint(&'static str),
     InvalidTicket,
@@ -210,9 +219,7 @@ pub struct NativePluginV1 {
     pub context: *mut c_void,
     pub prepare: Option<unsafe extern "C" fn(*mut c_void, *const NativeHostV1, u64) -> u32>,
     pub start: Option<unsafe extern "C" fn(*mut c_void, u64) -> u32>,
-    pub begin: Option<
-        unsafe extern "C" fn(*mut c_void, NativeCallRequest) -> NativeCallResult,
-    >,
+    pub begin: Option<unsafe extern "C" fn(*mut c_void, NativeCallRequest) -> NativeCallResult>,
     pub poll: Option<unsafe extern "C" fn(*mut c_void, NativeCallTicket) -> NativeCallResult>,
     pub cancel: Option<unsafe extern "C" fn(*mut c_void, NativeCallTicket)>,
     pub stop: Option<unsafe extern "C" fn(*mut c_void, u64) -> u32>,
@@ -225,7 +232,8 @@ impl NativePluginV1 {
     /// Validate table compatibility and required callback slots. The loader
     /// must first validate a separately copied header before forming `&Self`.
     pub fn validate(&self, supported_features: u64) -> Result<(), NativeAbiError> {
-        self.header.validate(core::mem::size_of::<Self>(), supported_features)?;
+        self.header
+            .validate(core::mem::size_of::<Self>(), supported_features)?;
         for (name, present) in [
             ("prepare", self.prepare.is_some()),
             ("start", self.start.is_some()),
@@ -268,9 +276,11 @@ mod tests {
             Err(NativeAbiError::UnsupportedMinor { .. })
         ));
         assert!(matches!(
-            NativeAbiHeader { table_bytes: 1, ..header }.validate(
-                core::mem::size_of::<NativePluginV1>(), u64::MAX
-            ),
+            NativeAbiHeader {
+                table_bytes: 1,
+                ..header
+            }
+            .validate(core::mem::size_of::<NativePluginV1>(), u64::MAX),
             Err(NativeAbiError::TruncatedTable { .. })
         ));
         assert_eq!(
@@ -283,15 +293,33 @@ mod tests {
 
     #[test]
     fn opaque_call_ticket_preserves_root_and_callback_identity() {
-        let ticket = NativeCallTicket { root_id: 10, call_id: 5 };
-        assert_ne!(ticket, NativeCallTicket { root_id: 11, call_id: 5 });
-        assert_ne!(ticket, NativeCallTicket { root_id: 10, call_id: 6 });
+        let ticket = NativeCallTicket {
+            root_id: 10,
+            call_id: 5,
+        };
+        assert_ne!(
+            ticket,
+            NativeCallTicket {
+                root_id: 11,
+                call_id: 5
+            }
+        );
+        assert_ne!(
+            ticket,
+            NativeCallTicket {
+                root_id: 10,
+                call_id: 6
+            }
+        );
     }
 
     #[test]
     fn native_callback_rejects_foreign_tickets_unknown_tags_and_bad_buffers() {
         extern "C" fn release(_: *mut c_void, _: *mut u8, _: usize) {}
-        let expected = NativeCallTicket { root_id: 42, call_id: 9 };
+        let expected = NativeCallTicket {
+            root_id: 42,
+            call_id: 9,
+        };
         let empty = || NativeOwnedBuffer {
             ptr: core::ptr::null_mut(),
             len: 0,
@@ -305,22 +333,37 @@ mod tests {
         };
         assert_eq!(valid.validate_for(expected), Ok(()));
         assert_eq!(
-            valid.validate_for(NativeCallTicket { root_id: 43, call_id: 9 }),
+            valid.validate_for(NativeCallTicket {
+                root_id: 43,
+                call_id: 9
+            }),
             Err(NativeAbiError::WrongCorrelation {
-                expected: NativeCallTicket { root_id: 43, call_id: 9 },
+                expected: NativeCallTicket {
+                    root_id: 43,
+                    call_id: 9
+                },
                 observed: expected,
             })
         );
         assert_eq!(
-            valid.validate_for(NativeCallTicket { root_id: 0, call_id: 9 }),
+            valid.validate_for(NativeCallTicket {
+                root_id: 0,
+                call_id: 9
+            }),
             Err(NativeAbiError::InvalidTicket)
         );
-        let unknown = NativeCallResult { status: 999, ..valid };
+        let unknown = NativeCallResult {
+            status: 999,
+            ..valid
+        };
         assert_eq!(
             unknown.validate_for(expected),
             Err(NativeAbiError::UnknownCallStatus(999))
         );
-        let bad_pending = NativeCallResult { status: RESULT_PENDING, ..unknown };
+        let bad_pending = NativeCallResult {
+            status: RESULT_PENDING,
+            ..unknown
+        };
         assert_eq!(
             bad_pending.validate_for(expected),
             Err(NativeAbiError::InvalidPendingBuffer)
