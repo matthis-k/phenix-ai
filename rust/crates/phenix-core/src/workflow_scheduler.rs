@@ -45,6 +45,7 @@ enum TickStatus {
 struct Cursor {
     step: PlanStepId,
     scope: String,
+    submitted: bool,
     frame: Option<WorkflowFrame>,
     active: Option<Box<ActiveFork>>,
     join_decision: Option<WorkflowJoinDecision>,
@@ -55,6 +56,7 @@ impl Cursor {
         Self {
             step,
             scope,
+            submitted: false,
             frame,
             active: None,
             join_decision: None,
@@ -274,10 +276,10 @@ impl CompiledWorkflow {
         ) -> WorkflowInvokePoll<Error>,
         cancelled: &mut impl FnMut() -> bool,
         cancel_scope: &mut impl FnMut(&str),
-        budget: (&mut u64, Option<NonZeroU64>),
+        budget: (&mut u64, &mut u64, Option<NonZeroU64>),
         depth: usize,
     ) -> Result<TickStatus, WorkflowRunError<Error>> {
-        let (count, step_limit) = budget;
+        let (count, admissions, step_limit) = budget;
         // Invoke performs its own single pre-dispatch cancellation check.
         // A redundant check here would change cancellation ordering and
         // turn terminal-after-invoke cancellation into a pre-call failure.
@@ -297,14 +299,21 @@ impl CompiledWorkflow {
                 match self.invoke_step(
                     &cursor.step,
                     &cursor.scope,
+                    cursor.submitted,
                     state,
                     cursor.frame.as_mut(),
                     invoke,
                     cancelled,
-                    (count, step_limit),
+                    (count, admissions, step_limit),
                 )? {
-                    WorkflowInvokeAdvance::Next(step) => cursor.step = step,
-                    WorkflowInvokeAdvance::Started => return Ok(TickStatus::Progress),
+                    WorkflowInvokeAdvance::Next(step) => {
+                        cursor.step = step;
+                        cursor.submitted = false;
+                    }
+                    WorkflowInvokeAdvance::Started => {
+                        cursor.submitted = true;
+                        return Ok(TickStatus::Progress);
+                    }
                     WorkflowInvokeAdvance::Waiting => return Ok(TickStatus::Blocked),
                 }
             }
@@ -351,7 +360,7 @@ impl CompiledWorkflow {
                         invoke,
                         cancelled,
                         cancel_scope,
-                        (count, step_limit),
+                        (count, admissions, step_limit),
                         depth + 1,
                     )?;
                     match status {
@@ -557,6 +566,7 @@ impl CompiledWorkflow {
             "root".into(),
         );
         let mut count = 0u64;
+        let mut admissions = 0u64;
         let result = (|| {
             loop {
                 match self.tick(
@@ -565,7 +575,7 @@ impl CompiledWorkflow {
                     &mut invoke,
                     &mut cancelled,
                     &mut cancel_scope,
-                    (&mut count, step_limit),
+                    (&mut count, &mut admissions, step_limit),
                     0,
                 )? {
                     TickStatus::Progress => {}
