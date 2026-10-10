@@ -15,7 +15,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -101,12 +100,27 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
             root_id: self.endpoint_id,
             call_id: NEXT_NATIVE_TICKET.fetch_add(1, Ordering::Relaxed),
         };
-        let begin = self
-            .instance
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .begin_component(ticket, 1, component.as_str(), service.as_str(), input)
-            .map_err(|error| format!("native begin failed: {error}"))?;
+        let cancellation = host.cancellation_token().cloned().map(|token| {
+            Arc::new(move || token.is_cancelled()) as Arc<dyn Fn() -> bool + Send + Sync>
+        });
+        let (begin, wake) = {
+            let mut instance = self
+                .instance
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let wake = instance.wake_handle();
+            let begin = instance
+                .begin_with_cancellation(
+                    ticket,
+                    1,
+                    component.as_str(),
+                    service.as_str(),
+                    input,
+                    cancellation,
+                )
+                .map_err(|error| format!("native begin failed: {error}"))?;
+            (begin, wake)
+        };
         let mut next = begin;
         let mut cancellation_sent = false;
         loop {
@@ -128,10 +142,11 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
                             .map_err(|error| format!("native cancel failed: {error}"))?;
                         cancellation_sent = true;
                     }
-                    // Bounded non-spinning polling is a compatibility path for
-                    // ABI providers that do not yet deliver host wake callbacks.
-                    // This is NOT an execution timeout or a settlement signal.
-                    thread::sleep(Duration::from_millis(25));
+                    // Wake requests always undergo a correlated poll; they
+                    // cannot forge a result. Poll periodically even for a
+                    // provider that omits wakes. The wait interval is neither
+                    // a provider timeout nor an execution settlement.
+                    wake.wait_for(ticket, Duration::from_millis(250));
                     next = self
                         .instance
                         .lock()
