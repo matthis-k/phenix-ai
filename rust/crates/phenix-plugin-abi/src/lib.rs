@@ -134,6 +134,10 @@ pub struct NativeCallTicket {
 pub struct NativeCallRequest {
     pub ticket: NativeCallTicket,
     pub scope: u64,
+    /// Selected component, expressed as UTF-8 bytes with call lifetime.
+    pub component: NativeSlice,
+    /// The imported interface/version selected by the resolved generation.
+    pub interface: NativeSlice,
     pub input: NativeSlice,
 }
 
