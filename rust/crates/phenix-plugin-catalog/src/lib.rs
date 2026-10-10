@@ -34,6 +34,7 @@ pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_agent_topology::{
     AGENT_TOPOLOGY_PLUGIN, agent_topology_component_manifest, agent_topology_declaration,
     agent_topology_manifest, agent_topology_projections, run_agent_workflow,
+    run_agent_workflow_pending,
 };
 pub use phenix_plugin_api::{
     SDK_COMPONENT, SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE,
