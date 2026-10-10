@@ -856,6 +856,194 @@ impl RootExecutionHandle {
         )
     }
 
+    /// Execute the selected structured plan with real pending provider calls.
+    ///
+    /// The existing Core Invoke/Fork/Join/Exit scheduler admits independent
+    /// children while native calls run. Provider replies are projected back
+    /// on the caller thread, never inside worker-owned mutable frames. Early
+    /// Join decisions cancel losers but cannot release their generation leases.
+    /// The synchronous workflow entry remains available for legacy adapters.
+    pub fn execute_workflow_with_frame_pending<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        execution: (&mut State, &mut crate::WorkflowFrame),
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            &crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            &mut crate::WorkflowFrame,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
+        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport};
+        use std::time::Duration;
+
+        fn failed<E>(
+            error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
+        ) -> WorkflowInvokePoll<WorkflowBoundCallError<WorkflowNodeDispatchError<E>>> {
+            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Failed(error)))
+        }
+
+        let (state, frame) = execution;
+        let (owner, name) = workflow;
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        let expected = compiled
+            .frame_schema()
+            .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            })?;
+        if expected != frame.schema() {
+            return Err(WorkflowRunError::FrameSchemaMismatch {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            });
+        }
+        let group = self
+            .clone()
+            .native_workflow_tasks()
+            .expect("selected workflow has a pinned generation");
+        let mut in_flight = BTreeMap::<String, WorkflowPendingImport>::new();
+        compiled.execute_suspending(
+            state,
+            Some(frame),
+            |node, interface, scope, state, frame, cancellation| {
+                if let Some(inflight) = in_flight.get(scope) {
+                    if !inflight.is_finished() {
+                        return WorkflowInvokePoll::Waiting;
+                    }
+                    let task = in_flight
+                        .remove(scope)
+                        .expect("finished scoped task was registered");
+                    let output = match task.join() {
+                        Ok(Ok(output)) => output,
+                        Ok(Err(WorkflowNativeDispatchError::Cancelled)) => {
+                            return WorkflowInvokePoll::Ready(Err(
+                                WorkflowInvocationError::Cancelled,
+                            ));
+                        }
+                        Ok(Err(WorkflowNativeDispatchError::Invoke(error))) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::Invoke(error),
+                            ));
+                        }
+                        Err(_) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::NativeWorkerPanicked,
+                            ));
+                        }
+                    };
+                    let binding = match compiled.bound_import(interface) {
+                        Some(binding) => binding,
+                        None => {
+                            return failed(WorkflowBoundCallError::UnboundImport(
+                                interface.clone(),
+                            ));
+                        }
+                    };
+                    let selected =
+                        match selected_workflow_outcome::<Error>(compiled, node, binding, &output) {
+                            Ok(selected) => selected,
+                            Err(WorkflowInvocationError::Failed(error)) => {
+                                return failed(WorkflowBoundCallError::Invocation(error));
+                            }
+                            Err(WorkflowInvocationError::Cancelled) => {
+                                return WorkflowInvokePoll::Ready(Err(
+                                    WorkflowInvocationError::Cancelled,
+                                ));
+                            }
+                        };
+                    let frame = frame.expect("typed root and children retain frames");
+                    let snapshot = frame.clone();
+                    match project(node, interface, &output, frame, state) {
+                        Ok(reported)
+                            if selected.as_ref().is_none_or(|expected| expected == &reported) =>
+                        {
+                            WorkflowInvokePoll::Ready(Ok(reported))
+                        }
+                        Ok(reported) => {
+                            *frame = snapshot;
+                            failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::ProjectionMismatch {
+                                    selected: selected.expect("mismatched outcome was selected"),
+                                    reported,
+                                },
+                            ))
+                        }
+                        Err(error) => {
+                            *frame = snapshot;
+                            failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::Project(error),
+                            ))
+                        }
+                    }
+                } else {
+                    let frame = frame.expect("typed root and children retain frames");
+                    let request = match prepare(node, interface, frame, state) {
+                        Ok(request) => request,
+                        Err(error) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::Prepare(error),
+                            ));
+                        }
+                    };
+                    if cancellation() {
+                        return WorkflowInvokePoll::Ready(Err(
+                            WorkflowInvocationError::Cancelled,
+                        ));
+                    }
+                    let binding = match compiled.bound_import(interface) {
+                        Some(binding) => binding,
+                        None => {
+                            return failed(WorkflowBoundCallError::UnboundImport(
+                                interface.clone(),
+                            ));
+                        }
+                    };
+                    let task = match group.dispatch_import_pending(
+                        scope,
+                        binding.clone(),
+                        request,
+                    ) {
+                        Ok(task) => task,
+                        Err(error) => {
+                            return failed(WorkflowBoundCallError::Invocation(
+                                WorkflowNodeDispatchError::NativeTask(error),
+                            ));
+                        }
+                    };
+                    in_flight.insert(scope.to_owned(), task);
+                    WorkflowInvokePoll::Started
+                }
+            },
+            cancelled,
+            |scope| {
+                group.cancel_scope(scope);
+            },
+            || {
+                group.wait_settlement_for(Duration::from_millis(50));
+            },
+            step_limit,
+        )
+    }
+
     pub fn invoke(
         &self,
         service: &ServiceId,
