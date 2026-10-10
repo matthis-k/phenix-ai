@@ -848,7 +848,7 @@ mod tests {
         );
         let interface = b"fixture.allowed@1";
         let input = b"request";
-        let invoke = || {
+        let invoke = move || {
             // SAFETY: slices are borrowed from live static buffers, the host
             // registry owns the matching ticket, and the result is decoded
             // with its paired release callback before returning.
