@@ -51,15 +51,13 @@ pub use phenix_plugin_artifacts::{
     RevalidationRecord, RevalidationVerdict, artifact_component_id, artifact_component_manifest,
     artifact_factory, artifact_manifest, artifact_service,
 };
-pub use phenix_plugin_basic_agent::{
-    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+pub use phenix_sdk::{
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
     AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
     AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_component_id,
-    agent_loop_component_manifest, agent_loop_control_service, agent_loop_factory,
-    agent_loop_factory_with_policy, agent_loop_manifest, agent_loop_progress_authority,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_control_service,
     agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
 };
 pub use phenix_plugin_basic_agent_nodes::{

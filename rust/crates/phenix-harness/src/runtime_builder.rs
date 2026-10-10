@@ -11,8 +11,8 @@ use phenix_core::{
 };
 use phenix_plugin_catalog::{
     AGENT_TOPOLOGY_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
-    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, agent_topology_component_manifest, agent_topology_declaration,
+    advanced_agent_configuration_manifest, agent_topology_component_manifest,
+    agent_topology_declaration,
     agent_topology_manifest, agent_topology_projections, artifact_component_manifest,
     artifact_factory, artifact_manifest, basic_agent_configuration_manifest,
     basic_agent_nodes_component_manifest, basic_agent_nodes_factory, basic_agent_nodes_manifest,
@@ -149,7 +149,15 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_manifest(),
             efficiency_evaluation_factory,
         )?;
-        builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
+        builder.add_manifest(agent_topology_manifest(authority.clone()));
+        builder.add_workflow(agent_topology_declaration());
+        for projection in agent_topology_projections() {
+            builder.add_workflow_projection(projection);
+        }
+        builder.add_embedded(
+            basic_agent_nodes_manifest(authority.clone()),
+            basic_agent_nodes_factory,
+        )?;
         let application_agent_tools = builder.application_agent_tools.clone();
         builder.add_embedded(
             application::application_agent_tool_manifest(authority.clone()),
@@ -190,7 +198,8 @@ impl PhenixRuntimeBuilder {
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
             efficiency_evaluation_component_manifest(),
-            agent_loop_component_manifest(authority.clone()),
+            basic_agent_nodes_component_manifest(authority.clone()),
+            agent_topology_component_manifest(authority.clone()),
             application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
@@ -248,7 +257,6 @@ impl PhenixRuntimeBuilder {
             execution_manifest(authority.clone()),
             efficiency_evaluation_manifest(),
             benchmark_outcome_manifest(),
-            agent_loop_manifest(authority.clone()),
             basic_agent_nodes_manifest(authority.clone()),
             agent_topology_manifest(authority.clone()),
             application::application_agent_tool_manifest(authority.clone()),
@@ -363,11 +371,6 @@ impl PhenixRuntimeBuilder {
             benchmark_outcome_manifest(),
             benchmark_outcome_factory,
         )?;
-        builder.add_selected(
-            &enabled,
-            agent_loop_manifest(authority.clone()),
-            agent_loop_factory,
-        )?;
         if enabled.contains(AGENT_TOPOLOGY_PLUGIN) {
             builder.add_manifest(agent_topology_manifest(authority.clone()));
             builder.add_workflow(agent_topology_declaration());
@@ -449,7 +452,6 @@ impl PhenixRuntimeBuilder {
             execution_component_manifest(authority.clone()),
             efficiency_evaluation_component_manifest(),
             benchmark_outcome_component_manifest(),
-            agent_loop_component_manifest(authority.clone()),
             basic_agent_nodes_component_manifest(authority.clone()),
             agent_topology_component_manifest(authority.clone()),
             language_component_manifest(),

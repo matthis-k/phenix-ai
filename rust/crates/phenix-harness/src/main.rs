@@ -13,7 +13,7 @@ use phenix_harness::{
 };
 use phenix_plugin_catalog::{
     OptionStartupPrecedence, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_manifest, agent_topology_manifest, artifact_manifest,
+    agent_topology_manifest, artifact_manifest,
     basic_agent_configuration_manifest, basic_agent_nodes_manifest, basic_context_manifest,
     basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
     basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
@@ -491,7 +491,6 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (execution_manifest(authority.clone()), true),
         (efficiency_evaluation_manifest(), true),
         (benchmark_outcome_manifest(), false),
-        (agent_loop_manifest(authority.clone()), true),
         (agent_topology_manifest(authority.clone()), false),
         (basic_agent_nodes_manifest(authority.clone()), false),
         (application_agent_tool_manifest(authority.clone()), true),
