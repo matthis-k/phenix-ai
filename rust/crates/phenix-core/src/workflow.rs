@@ -513,6 +513,8 @@ pub struct WorkflowRunReport {
 pub enum WorkflowNodeDispatchError<E> {
     Prepare(E),
     Invoke(crate::KernelError),
+    NativeTask(crate::WorkflowTaskError),
+    NativeWorkerPanicked,
     Project(E),
     Projection(crate::WorkflowProjectionError),
     ProjectionMismatch { selected: String, reported: String },
