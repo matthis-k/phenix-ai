@@ -81,7 +81,7 @@ phenix.agent-tool-execution@1
 
 A Layer is the hook handler. The kernel owns ordering and execution.
 
-Do not add a dispatcher service such as `phenix.hooks@1` to the default runtime.
+The default runtime uses the canonical Service Layer dispatcher; there is no hook-specific execution service.
 
 ## Observational hooks
 
@@ -167,24 +167,9 @@ HTTP client   -> provider Plugin
 FFI handle    -> ABI bridge Plugin
 ```
 
-## Legacy dispatcher
+## Runtime implementation
 
-`phenix-plugin-hooks` is compatibility code. It is not part of the default suite.
-
-Migration:
-
-```text
-synchronous HookAction
--> semantic Service Layer
-
-completed-fact observation
--> Event + Listener
-
-hook configuration
--> configuration of the handler Plugin
-```
-
-Delete the legacy dispatcher after all users lower to Layers or Events.
+The imperative hook dispatcher has been deleted. Interception and observation use the kernel Service Layer and Event/Listener contracts described above. A plugin that needs both declares both; it does not install a separate hook execution service.
 
 ## Invariants
 

@@ -29,20 +29,19 @@ use phenix_plugin_catalog::{
     execution_manifest, expand_profile_defaults, first_party_durable_schema_registrations,
     frontend_component_manifest, frontend_factory, frontend_manifest,
     full_product_configuration_manifest, helper_invocation_component_manifest,
-    hook_component_manifest, hook_factory, hook_manifest, interactive_ui_component_manifest,
-    interactive_ui_factory, interactive_ui_manifest, job_component_manifest, job_factory,
-    job_manifest, language_component_manifest, language_factory, language_manifest,
-    local_environment_component_manifest, local_environment_factory, local_environment_manifest,
-    memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
-    model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
-    openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
-    options_manifest, planning_component_manifest, planning_factory, planning_manifest,
-    providers_manifest, repository_worker_component_manifest, repository_worker_factory,
-    repository_worker_manifest, sdk_component_manifest, sdk_factory, sdk_manifest,
-    session_component_manifest, session_factory, session_manifest, session_tree_component_manifest,
-    session_tree_factory, session_tree_manifest, step_runner_component_manifest,
-    step_runner_factory, step_runner_manifest, workspace_component_manifest, workspace_factory,
-    workspace_manifest,
+    interactive_ui_component_manifest, interactive_ui_factory, interactive_ui_manifest,
+    job_component_manifest, job_factory, job_manifest, language_component_manifest,
+    language_factory, language_manifest, local_environment_component_manifest,
+    local_environment_factory, local_environment_manifest, memory_component_manifest,
+    memory_factory, memory_manifest, model_routing_component_manifest, model_routing_factory,
+    model_routing_manifest, openai_codex_component_manifest, openai_codex_factory,
+    openai_codex_manifest, options_component_manifest, options_factory, options_manifest,
+    planning_component_manifest, planning_factory, planning_manifest, providers_manifest,
+    repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
+    sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
+    session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
+    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
+    workspace_component_manifest, workspace_factory, workspace_manifest,
 };
 use phenix_plugin_invocation_defaults as invocation_defaults;
 use phenix_sdk::{LanguageInterface, MemoryInterface, WorkspaceInterface};
@@ -270,7 +269,6 @@ impl PhenixRuntimeBuilder {
             job_manifest(),
             frontend_manifest(authority.clone()),
             interactive_ui_manifest(),
-            hook_manifest(authority.clone()),
             debug_manifest(authority.clone()),
             options_manifest(),
             invocation_defaults::invocation_defaults_manifest(authority.clone()),
@@ -424,7 +422,6 @@ impl PhenixRuntimeBuilder {
             frontend_factory,
         )?;
         builder.add_selected(&enabled, interactive_ui_manifest(), interactive_ui_factory)?;
-        builder.add_selected(&enabled, hook_manifest(authority.clone()), hook_factory)?;
         builder.add_selected(&enabled, debug_manifest(authority.clone()), debug_factory)?;
         builder.add_selected(&enabled, options_manifest(), options_factory)?;
         builder.add_selected(
@@ -466,7 +463,6 @@ impl PhenixRuntimeBuilder {
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
             interactive_ui_component_manifest(),
-            hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
