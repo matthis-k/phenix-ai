@@ -228,7 +228,10 @@ impl Display for KernelError {
                 write!(f, "embedded plugin has no registered factory: {plugin}")
             }
             Self::NativeArtifactUnavailable { plugin, revision } => {
-                write!(f, "native plugin {plugin} has no registered artifact revision {revision}")
+                write!(
+                    f,
+                    "native plugin {plugin} has no registered artifact revision {revision}"
+                )
             }
             Self::WrongExecutionKind(plugin) => write!(
                 f,
