@@ -57,7 +57,9 @@ fn native_library_factory(
     library: Arc<NativePluginLibrary>,
 ) -> impl Fn() -> Box<dyn PluginInstance> + Send + Sync + 'static {
     move || {
-        let endpoint_id = NEXT_NATIVE_INSTANCE.fetch_add(1, Ordering::Relaxed);
+        let endpoint_id = NEXT_NATIVE_INSTANCE
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .expect("native plugin instance identity space exhausted");
         Box::new(NativePluginAdapter {
             instance: Arc::new(Mutex::new(library.instance(endpoint_id))),
             endpoint_id,
@@ -99,9 +101,12 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
     ) -> Result<Vec<u8>, String> {
         // Core supplies the actual root identity and the globally unique
         // callback number. A plugin never invents either correlation value.
+        let call_id = NEXT_NATIVE_TICKET
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .map_err(|_| "native ABI call identity space exhausted".to_owned())?;
         let ticket = NativeCallTicket {
             root_id: host.root_id(),
-            call_id: NEXT_NATIVE_TICKET.fetch_add(1, Ordering::Relaxed),
+            call_id,
         };
         let cancellation = host.cancellation_token().cloned().map(|token| {
             Arc::new(move || token.is_cancelled()) as Arc<dyn Fn() -> bool + Send + Sync>
