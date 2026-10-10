@@ -19,8 +19,9 @@ This file is an **index**, not a second implementation checklist. Each PR's link
 | [#767](https://github.com/matthis-k/phenix-ai/pull/767) | 5 | Hook dispatcher crate retirement and Event/Layer parity | stacked on #766 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/767#issuecomment-6094709854) |
 | [#768](https://github.com/matthis-k/phenix-ai/pull/768) | 5 | Retire application agent-service fallback; use selected pinned workflow only | stacked on #767 | [Application route matrix](https://github.com/matthis-k/phenix-ai/pull/768#issuecomment-6094811078) |
 | [#769](https://github.com/matthis-k/phenix-ai/pull/769) | 6 | Standalone native ABI, intrinsic loader and ownership split | main; #726 must restack on #769 before closeout | [Native ABI owner matrix](https://github.com/matthis-k/phenix-ai/pull/769#issuecomment-6095306928) |
+| [#770](https://github.com/matthis-k/phenix-ai/pull/770) | 4 | Delete uncompiled alternate context implementation F0277 | main; independent cleanup, #731 consumes cleaned tree | [Context cleanup owner matrix](https://github.com/matthis-k/phenix-ai/pull/770#issuecomment-6098565373) |
 
-Total: **89 individually numbered owner tasks**. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
+Total: **93 individually numbered owner tasks**, including the four separately owned #770 cleanup tasks. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
 
 ## Planned owner PRs that must be opened before implementation
 
