@@ -8,7 +8,6 @@ coverage:
   - rust/crates/phenix-core/src/runtime_topology_generation_regression.rs
   - rust/crates/phenix-core/src/service_layer_dispatch_regression.rs
   - rust/crates/phenix-sdk/tests/plugin_attribute_only_gate.rs
-  - rust/crates/phenix-plugin-hooks/src/ownership_regression.rs
 
 ## Purpose
 
@@ -103,7 +102,7 @@ Hooks are authoring concepts, not a second runtime.
 
 A Hook that only observes a completed fact lowers to an Event and Listener. A Hook that may transform, deny, wrap, or otherwise affect an operation lowers to a Layer. The kernel therefore owns hook execution through its existing Event and Layer machinery.
 
-Handler configuration and behavior remain Plugin-owned. The legacy `phenix-plugin-hooks` dispatcher is compatibility code and is not installed by the default suite. See `kernel-hooks.md`.
+Handler configuration and behavior remain Plugin-owned. The runtime executes observational hooks as listeners and intercepting hooks as Service Layers. See `kernel-hooks.md`.
 
 ## Durability
 
