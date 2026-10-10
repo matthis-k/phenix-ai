@@ -393,6 +393,10 @@ fn materialize_manifest(
     let (execution, build) = match manifest.execution {
         PluginExecution::Embedded => (PluginExecution::Embedded, None),
         PluginExecution::ResourceOnly => (PluginExecution::ResourceOnly, None),
+        PluginExecution::Native { artifact } => {
+            let (artifact, build) = materialize_artifact(artifact, context)?;
+            (PluginExecution::Native { artifact }, build)
+        }
         PluginExecution::Runtime { runtime, artifact } => {
             let (artifact, build) = materialize_artifact(artifact, context)?;
             (PluginExecution::Runtime { runtime, artifact }, build)
@@ -682,7 +686,8 @@ fn check_expected_revision(
     expected: &ArtifactRevision,
 ) -> Result<(), PluginManagementError> {
     let revision = active.and_then(|manifest| match &manifest.execution {
-        PluginExecution::Runtime { artifact, .. } => Some(artifact.revision.clone()),
+        PluginExecution::Runtime { artifact, .. }
+        | PluginExecution::Native { artifact } => Some(artifact.revision.clone()),
         PluginExecution::Embedded | PluginExecution::ResourceOnly => None,
     });
     if revision.as_ref() == Some(expected) {
