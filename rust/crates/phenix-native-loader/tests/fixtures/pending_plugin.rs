@@ -1,6 +1,6 @@
 //! Self-contained compiled native .so fixture. Intentionally does not link
 //! the Rust ABI crate: this catches accidental representation assumptions.
-use std::{ffi::c_void, sync::Mutex};
+use std::{ffi::c_void, sync::{Mutex, atomic::{AtomicUsize, Ordering}}};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -38,6 +38,7 @@ struct Plugin {
 }
 unsafe impl Sync for Plugin {}
 static CALLS: Mutex<Vec<(u64, bool)>> = Mutex::new(Vec::new());
+static HOST_ID: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn release(_: *mut c_void, ptr:*mut u8, len:usize) {
     if len != 0 {
@@ -57,8 +58,13 @@ fn pending(ticket:Ticket)->Result {
 }
 unsafe extern "C" fn prepare(_: *mut c_void, host:*const Host, _:u64)->u32 {
     // SAFETY: loader pins the host table through stop/destroy.
-    let host=unsafe{&*host};
-    if host.header.major==1 {0} else {1}
+    let host_ref=unsafe{&*host};
+    HOST_ID.store(host as usize, Ordering::Release);
+    if host_ref.header.major==1 && host_ref.wake.is_some() && host_ref.cancelled.is_some() {
+        0
+    } else {
+        1
+    }
 }
 unsafe extern "C" fn start(_: *mut c_void,_:u64)->u32 {0}
 unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
@@ -71,6 +77,12 @@ unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
                 && iface == b"fixture.workflow-tool@1")
     );
     CALLS.lock().unwrap().push((request.ticket.call_id, comp == b"fixture.native"));
+    // This notification is deliberately sent *before* begin returns to
+    // verify the host does not drop early/synchronous wakeups.
+    let host=HOST_ID.load(Ordering::Acquire) as *const Host;
+    let host=unsafe{&*host};
+    assert_eq!(unsafe{host.cancelled.unwrap()(host.context,request.ticket)},0);
+    unsafe{host.wake.unwrap()(host.context,request.ticket)};
     pending(request.ticket)
 }
 unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
