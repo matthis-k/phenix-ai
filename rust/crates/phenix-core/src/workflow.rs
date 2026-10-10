@@ -2372,6 +2372,7 @@ mod inclusion_tests {
             ]),
         )
         .unwrap();
+        let pristine = frame.clone();
         let mut seen = Vec::new();
         let report = compiled
             .execute_nodes(
@@ -2408,6 +2409,66 @@ mod inclusion_tests {
         assert_eq!(frame.get(&key("secret")), Some(&PhenixValue::U64(808)));
         assert!(frame.get(&key("private")).is_none());
         assert!(frame.get(&key("input")).is_none());
+
+        // The pending-capable entry must use the identical frame handoff
+        // machinery even when callbacks happen to settle immediately.
+        let mut pending_frame = pristine.clone();
+        let mut pending_seen = Vec::new();
+        let pending = compiled
+            .execute_suspending(
+                &mut pending_seen,
+                Some(&mut pending_frame),
+                |node, _, _, seen, frame, _| {
+                    let frame = frame.expect("pending scope retains its frame");
+                    seen.push(node.to_owned());
+                    let outcome = if node == "__include__/private/work" {
+                        assert!(frame.get(&key("secret")).is_none());
+                        assert_eq!(frame.get(&key("private")), Some(&PhenixValue::U64(77)));
+                        frame.set(&key("output"), PhenixValue::U64(42)).unwrap();
+                        "returned"
+                    } else if node == "start" {
+                        "delegate"
+                    } else {
+                        assert_eq!(frame.get(&key("published")), Some(&PhenixValue::U64(42)));
+                        "done"
+                    };
+                    WorkflowInvokePoll::Ready(Ok::<_, WorkflowInvocationError<String>>(
+                        outcome.to_owned(),
+                    ))
+                },
+                || false,
+                (|_| {}, || unreachable!("all fixture calls settle immediately")),
+                None,
+            )
+            .unwrap();
+        assert_eq!(pending, report);
+        assert_eq!(pending_seen, seen);
+        assert_eq!(pending_frame, frame);
+
+        // Provider or adapter failures never publish a private child frame.
+        let stable = frame.clone();
+        let failure = compiled.execute_nodes(
+            &mut (),
+            Some(&mut frame),
+            |node, _, _, data, _| {
+                if node == "__include__/private/work" {
+                    data.expect("private child frame")
+                        .set(&key("private"), PhenixValue::U64(123))
+                        .unwrap();
+                    Err(WorkflowInvocationError::Failed("injected failure".to_owned()))
+                } else {
+                    Ok("delegate".to_owned())
+                }
+            },
+            || false,
+            None,
+        );
+        assert!(matches!(
+            failure,
+            Err(WorkflowRunError::NodeFailed { node, .. })
+                if node == "__include__/private/work"
+        ));
+        assert_eq!(frame, stable);
     }
 
     #[test]
