@@ -366,7 +366,8 @@ mod tests {
                 (key("public_output"), PhenixValue::U64(0)),
                 (key("parent_secret"), PhenixValue::String("opaque".into())),
             ]),
-        ).unwrap();
+        )
+        .unwrap();
         let child_schema = WorkflowFrameSchema {
             revision: 3,
             slots: BTreeMap::from([
@@ -380,34 +381,59 @@ mod tests {
             (key("local_private"), PhenixValue::U64(0)),
             (key("result"), PhenixValue::U64(0)),
         ]);
-        let mut first = parent.isolate_subplan(
-            child_schema.clone(), &inputs, initial.clone(),
-        ).unwrap();
-        let second = parent.isolate_subplan(child_schema, &inputs, initial).unwrap();
+        let mut first = parent
+            .isolate_subplan(child_schema.clone(), &inputs, initial.clone())
+            .unwrap();
+        let second = parent
+            .isolate_subplan(child_schema, &inputs, initial)
+            .unwrap();
         assert_eq!(first.get(&key("input")), Some(&PhenixValue::U64(5)));
         assert_eq!(first.get(&key("parent_secret")), None);
-        assert_eq!(second.get(&key("local_private")), Some(&PhenixValue::U64(0)));
+        assert_eq!(
+            second.get(&key("local_private")),
+            Some(&PhenixValue::U64(0))
+        );
         assert!(first.set(&key("parent_secret"), PhenixValue::Unit).is_err());
-        first.set(&key("local_private"), PhenixValue::U64(44)).unwrap();
+        first
+            .set(&key("local_private"), PhenixValue::U64(44))
+            .unwrap();
         first.set(&key("result"), PhenixValue::U64(77)).unwrap();
 
         let mut published = parent.clone();
         let before = published.clone();
-        assert!(published.publish_subplan(
-            &first,
-            &BTreeMap::from([
-                (key("result"), key("public_output")),
-                (key("local_private"), key("parent_secret")),
-            ]),
-        ).is_err());
-        assert_eq!(published, before, "failed output publication must roll back");
-        published.publish_subplan(
-            &first,
-            &BTreeMap::from([(key("result"), key("public_output"))]),
-        ).unwrap();
-        assert_eq!(published.get(&key("public_output")), Some(&PhenixValue::U64(77)));
-        assert_eq!(published.get(&key("parent_secret")), parent.get(&key("parent_secret")));
-        assert_eq!(second.get(&key("local_private")), Some(&PhenixValue::U64(0)));
+        assert!(
+            published
+                .publish_subplan(
+                    &first,
+                    &BTreeMap::from([
+                        (key("result"), key("public_output")),
+                        (key("local_private"), key("parent_secret")),
+                    ]),
+                )
+                .is_err()
+        );
+        assert_eq!(
+            published, before,
+            "failed output publication must roll back"
+        );
+        published
+            .publish_subplan(
+                &first,
+                &BTreeMap::from([(key("result"), key("public_output"))]),
+            )
+            .unwrap();
+        assert_eq!(
+            published.get(&key("public_output")),
+            Some(&PhenixValue::U64(77))
+        );
+        assert_eq!(
+            published.get(&key("parent_secret")),
+            parent.get(&key("parent_secret"))
+        );
+        assert_eq!(
+            second.get(&key("local_private")),
+            Some(&PhenixValue::U64(0))
+        );
     }
 
     #[test]
