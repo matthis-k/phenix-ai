@@ -314,9 +314,31 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
         String::from_utf8_lossy(&result.stderr)
     );
 
-    let resolved = selected_fork_generation(
-        WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
-    );
+    let native = crate::PluginArtifact {
+        locator: library.to_string_lossy().into_owned(),
+        revision: crate::ArtifactRevision::from_content(&std::fs::read(&library).unwrap()),
+        configuration: BTreeMap::new(),
+    };
+    let resolved = resolve_with_workflows_and_native_tool(
+        BASIC,
+        false,
+        vec![fixed_fork_workflow(WorkflowJoinPolicy::All(
+            WorkflowJoinAllPolicy::CollectAll,
+        ))],
+        Some(native),
+    )
+    .with_workflow_frame_schemas([WorkflowFrameDeclaration {
+        owner: component_id(TOPOLOGY),
+        name: "turn".into(),
+        schema: WorkflowFrameSchema {
+            revision: 1,
+            slots: BTreeMap::from([
+                (Key::parse("alpha").unwrap(), Type::U64),
+                (Key::parse("beta").unwrap(), Type::U64),
+            ]),
+        },
+    }])
+    .unwrap();
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel.activate_resolved_generation(&resolved).unwrap();
     for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
@@ -1640,13 +1662,28 @@ fn resolve_with_workflows(
     logging: bool,
     workflows: Vec<WorkflowDeclaration>,
 ) -> ResolvedGeneration {
+    resolve_with_workflows_and_native_tool(selected, logging, workflows, None)
+}
+
+fn resolve_with_workflows_and_native_tool(
+    selected: &str,
+    logging: bool,
+    workflows: Vec<WorkflowDeclaration>,
+    native_tool: Option<crate::PluginArtifact>,
+) -> ResolvedGeneration {
     let policy = ProviderCompositionPolicy::new()
         .with_explicit_binding(InterfaceId::parse(MODEL).unwrap(), component_id(selected));
     let mut plugins = vec![
         manifest(TOPOLOGY, PluginExecution::ResourceOnly),
         manifest(BASIC, PluginExecution::Embedded),
         manifest(ADVANCED, PluginExecution::Embedded),
-        manifest(TOOL_PROVIDER, PluginExecution::Embedded),
+        manifest(
+            TOOL_PROVIDER,
+            native_tool.map_or(
+                PluginExecution::Embedded,
+                |artifact| PluginExecution::Native { artifact },
+            ),
+        ),
     ];
     let mut layers = BTreeMap::new();
     if logging {
