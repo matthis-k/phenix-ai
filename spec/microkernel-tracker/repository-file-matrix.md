@@ -109,80 +109,80 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0052 | TODO | `rust/crates/phenix-agent-configurations/Cargo.toml` | Refactor | Retain pure product-profile declarations; drop old plugin identity selections when replacements land. | #731 | pending |
+| F0052 | IN PROGRESS | `rust/crates/phenix-agent-configurations/Cargo.toml` | Refactor | Retain pure product-profile declarations; drop old plugin identity selections when replacements land. | #731 | Main `a4bedc4f`: assembly-role crate depends only on Core; matching lib currently selects legacy hooks. REFACTOR profile assembly with #731; verify no factory-owned fallback. |
 | F0053 | IN PROGRESS | `rust/crates/phenix-agent-configurations/src/lib.rs` | Refactor | Advanced defaults currently select legacy phenix.hooks despite spec/kernel-hooks.md retirement contract; replace profile selection. | #731 + hook parity | `agent-configurations/src/lib.rs:43` includes `phenix.hooks` in Advanced defaults; profile expansion and manifest functions at :68/:82/:100-119. Remove deprecated hook default only after Layer/Event behavior parity and selectable profile proof. #765 marks hardcoded default expansion for typed profile replacement, retaining default parity. Annotated at #765 head `cf700548`; CI pending. |
 
 ### `rust/crates/phenix-application-interface`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0054 | TODO | `rust/crates/phenix-application-interface/Cargo.toml` | Keep | Portable frontend and application contracts. | — | pending |
-| F0055 | TODO | `rust/crates/phenix-application-interface/fixtures/application.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0056 | TODO | `rust/crates/phenix-application-interface/src/bin/phenix-application-descriptor.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0057 | TODO | `rust/crates/phenix-application-interface/src/catalog.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0058 | TODO | `rust/crates/phenix-application-interface/src/client.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0059 | TODO | `rust/crates/phenix-application-interface/src/descriptor.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0060 | TODO | `rust/crates/phenix-application-interface/src/generate.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0061 | TODO | `rust/crates/phenix-application-interface/src/lib.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0062 | TODO | `rust/crates/phenix-application-interface/src/tests.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0063 | TODO | `rust/crates/phenix-application-interface/src/types/discovery.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0064 | TODO | `rust/crates/phenix-application-interface/src/types/interaction.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0065 | TODO | `rust/crates/phenix-application-interface/src/types/log.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0066 | TODO | `rust/crates/phenix-application-interface/src/types/mod.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0067 | TODO | `rust/crates/phenix-application-interface/src/types/observable.rs` | Keep | Portable frontend and application contracts. | — | pending |
-| F0068 | TODO | `rust/crates/phenix-application-interface/src/types/session.rs` | Keep | Portable frontend and application contracts. | — | pending |
+| F0054 | IN PROGRESS | `rust/crates/phenix-application-interface/Cargo.toml` | Keep | Portable frontend and application contracts. | — | Main `d162f507`: passive library owns fixed typed application descriptor/operations without runtime state. KEEP; verify descriptor snapshot generation in source CI. |
+| F0055 | IN PROGRESS | `rust/crates/phenix-application-interface/fixtures/application.rs` | Keep | Portable frontend and application contracts. | — | Main `1bc2ed73`: 1,867-line generated `phenix.application@1` fixture. KEEP generated API conformance fixture; require exact regeneration match, not hand maintenance. |
+| F0056 | IN PROGRESS | `rust/crates/phenix-application-interface/src/bin/phenix-application-descriptor.rs` | Keep | Portable frontend and application contracts. | — | Main `67667399`: descriptor CLI writes the generated application interface to stdout/file. KEEP developer tooling; check Nix source/descriptor output parity. |
+| F0057 | IN PROGRESS | `rust/crates/phenix-application-interface/src/catalog.rs` | Keep | Portable frontend and application contracts. | — | Main `617c05d0`: `application_descriptor` and `operations!` enumerate typed application operations and capabilities. REFACTOR only when truly selected extensibility needs it; preserve fixed external IDs and generation snapshot. |
+| F0058 | IN PROGRESS | `rust/crates/phenix-application-interface/src/client.rs` | Keep | Portable frontend and application contracts. | — | Main `eef3fa20`: `ApplicationTransport` and `ApplicationClient` negotiate typed operations and retain structured failure classes. KEEP; verify capability rejection and independent transport replacement. |
+| F0059 | IN PROGRESS | `rust/crates/phenix-application-interface/src/descriptor.rs` | Keep | Portable frontend and application contracts. | — | Main `2007e911`: serializable `ApplicationDescriptor` holds versioned operations, callbacks, events and ordering. KEEP schema contract; test unknown-field rejection and deterministic JSON snapshot. |
+| F0060 | IN PROGRESS | `rust/crates/phenix-application-interface/src/generate.rs` | Keep | Portable frontend and application contracts. | — | Main `e3f45a84`: deterministic Rust descriptor emitter validates names, types and capability references. KEEP; run fixture regeneration and invalid-descriptor tests. |
+| F0061 | IN PROGRESS | `rust/crates/phenix-application-interface/src/lib.rs` | Keep | Portable frontend and application contracts. | — | Main `71498ae4`: thin unsafe-free application library entry exports catalog/client/descriptor/types, fixed `phenix.application@1` ID. KEEP; confirm downstream ACP/Lua consumers. |
+| F0062 | IN PROGRESS | `rust/crates/phenix-application-interface/src/tests.rs` | Keep | Portable frontend and application contracts. | — | Main `b0205a36`: eight tests cover generated parity, typed invocation, optional capability rejection and errors. KEEP; run generated descriptor and client smoke on exact integration head. |
+| F0063 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/discovery.rs` | Keep | Portable frontend and application contracts. | — | Main `fa1b3d70`: discovery payloads declare typed capabilities and authentication descriptors. KEEP portable DTOs; verify ACP client generation and schema IDs. |
+| F0064 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/interaction.rs` | Keep | Portable frontend and application contracts. | — | Main `30c2ff68`: typed permission, elicitation and review DTOs; normalization explicitly rejects compound/invalid schemas, with tests. KEEP; require Lua/ACP round-trip. |
+| F0065 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/log.rs` | Keep | Portable frontend and application contracts. | — | Main `8af01e56`: typed log query cursor/limit/session/execution records. KEEP payload; verify transcript/diagnostic client mapping. |
+| F0066 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/mod.rs` | Keep | Portable frontend and application contracts. | — | Main `92956e52`: application-owned DTO macro and structural error classification; imports ModelId/SkillId from Core. REFACTOR if #731 relocates domain IDs; retain wire/schema identity. |
+| F0067 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/observable.rs` | Keep | Portable frontend and application contracts. | — | Main `2729ff9e`: observable paths, query and update payloads use typed references. KEEP; validate subscription/update callback ordering with Lua frontend. |
+| F0068 | IN PROGRESS | `rust/crates/phenix-application-interface/src/types/session.rs` | Keep | Portable frontend and application contracts. | — | Main `da969b6e`: session create/resume/status DTOs with projection round-trip regression. KEEP; verify #725 durable identity and ACP reconnect. |
 
 ### `rust/crates/phenix-binding-generator`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0069 | TODO | `rust/crates/phenix-binding-generator/Cargo.toml` | Keep | Generate typed foreign-language bindings from declared interfaces. | — | pending |
-| F0070 | TODO | `rust/crates/phenix-binding-generator/src/lib.rs` | Keep | Generate typed foreign-language bindings from declared interfaces. | — | pending |
+| F0069 | IN PROGRESS | `rust/crates/phenix-binding-generator/Cargo.toml` | Keep | Generate typed foreign-language bindings from declared interfaces. | — | Main `f9a858f9`: descriptor-only passive Lua binding generator crate. KEEP independent codegen package; validate fixture regeneration. |
+| F0070 | IN PROGRESS | `rust/crates/phenix-binding-generator/src/lib.rs` | Keep | Generate typed foreign-language bindings from declared interfaces. | — | Main `823cbddd`: Lua code generator reads fixed descriptor, not plugin/runtime imports; deterministic test exists. KEEP; run generated Lua binding diff and snapshot check. |
 
 ### `rust/crates/phenix-binding-lua`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0071 | TODO | `rust/crates/phenix-binding-lua/Cargo.toml` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | pending |
-| F0072 | TODO | `rust/crates/phenix-binding-lua/src/facade.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | pending |
-| F0073 | TODO | `rust/crates/phenix-binding-lua/src/lib.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | pending |
-| F0074 | TODO | `rust/crates/phenix-binding-lua/src/tools.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | pending |
-| F0075 | TODO | `rust/crates/phenix-binding-lua/src/tools_regression.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | pending |
+| F0071 | IN PROGRESS | `rust/crates/phenix-binding-lua/Cargo.toml` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | Main `e77e23b1`: passive Lua client-binding crate, distinct from proposed Lua native guest adapter. KEEP; verify linked client package and no runtime plugin ownership. |
+| F0072 | IN PROGRESS | `rust/crates/phenix-binding-lua/src/facade.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | Main `27823800`: Lua facade owns polling, repair/replay, sessions, callback and elicitation mapping. KEEP client behavior; inspect duplicated session repair vs backend and test long-lived restart. |
+| F0073 | IN PROGRESS | `rust/crates/phenix-binding-lua/src/lib.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | Main `c14b6217`: LuaJIT/Lua 5.1 ACP client runs network worker off Lua host and exposes polling. KEEP client boundary; verify worker close/drop lifecycle and reconnect regression. |
+| F0074 | IN PROGRESS | `rust/crates/phenix-binding-lua/src/tools.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | Main `eeb5f16e`: Lua tool registration and facade module connect to typed Add/RemoveClientTool operations. KEEP client-tool bridge; ensure handler lifetime and admission tests. |
+| F0075 | IN PROGRESS | `rust/crates/phenix-binding-lua/src/tools_regression.rs` | Keep | Lua/Neovim integration must remain behind the client boundary. | — | Main `ce145519`: four regressions cover Lua handler cleanup, duplicate release and client-tool facade. KEEP tests; run LuaJIT package fixture. |
 
 ### `rust/crates/phenix-client-acp`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0076 | TODO | `rust/crates/phenix-client-acp/Cargo.toml` | Keep | Typed ACP client implementation. | — | pending |
-| F0077 | TODO | `rust/crates/phenix-client-acp/build.rs` | Keep | Typed ACP client implementation. | — | pending |
-| F0078 | TODO | `rust/crates/phenix-client-acp/src/lib.rs` | Keep | Typed ACP client implementation. | — | pending |
+| F0076 | IN PROGRESS | `rust/crates/phenix-client-acp/Cargo.toml` | Keep | Typed ACP client implementation. | — | Main `40076ece`: typed ACP client package with generated interface build. KEEP client transport; prove ACP/Lua product negotiation and streaming. |
+| F0077 | IN PROGRESS | `rust/crates/phenix-client-acp/build.rs` | Keep | Typed ACP client implementation. | — | Main `a4cba51a`: build script emits descriptor-backed ACP extension client and checks hash. KEEP generator; validate reproducible generated Rust and source CI. |
+| F0078 | IN PROGRESS | `rust/crates/phenix-client-acp/src/lib.rs` | Keep | Typed ACP client implementation. | — | Main `f32e961b`: ACP connection negotiates extensions, standard messages and typed application API. KEEP transport client; test callback lifetime, reconnect and streaming with #768 product. |
 
 ### `rust/crates/phenix-client`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0079 | TODO | `rust/crates/phenix-client/Cargo.toml` | Keep | Transport-neutral application client DTOs. | — | pending |
-| F0080 | TODO | `rust/crates/phenix-client/src/lib.rs` | Keep | Transport-neutral application client DTOs. | — | pending |
+| F0079 | IN PROGRESS | `rust/crates/phenix-client/Cargo.toml` | Keep | Transport-neutral application client DTOs. | — | Main `b1f6cb87`: transport-neutral legacy client DTO library depends on domain types only. REVIEW against fixed application interface, no deletion until external consumer and wire-ID audit. |
+| F0080 | IN PROGRESS | `rust/crates/phenix-client/src/lib.rs` | Keep | Transport-neutral application client DTOs. | — | Main `47ee4b46`: 706-line `ServiceRequest`/frontend-envelope protocol alongside newer typed application operations. REVIEW overlap/consumers explicitly; plan migration or keep separate transport with parity. |
 
 ### `rust/crates/phenix-contract`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0081 | TODO | `rust/crates/phenix-contract/Cargo.toml` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0082 | TODO | `rust/crates/phenix-contract/src/contract.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0083 | TODO | `rust/crates/phenix-contract/src/contract_wire.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0084 | TODO | `rust/crates/phenix-contract/src/identity.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0085 | TODO | `rust/crates/phenix-contract/src/infallible_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0086 | TODO | `rust/crates/phenix-contract/src/interface.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0087 | TODO | `rust/crates/phenix-contract/src/lib.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0088 | TODO | `rust/crates/phenix-contract/src/std_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
-| F0089 | TODO | `rust/crates/phenix-contract/src/structural_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | pending |
+| F0081 | IN PROGRESS | `rust/crates/phenix-contract/Cargo.toml` | Keep | Versioned portable types and canonical typed contributions. | — | Main `e1d400f4`: passive zero-domain contract library; portable shared dependency. KEEP; verify absence of runtime/plugin dependencies in Cargo graph. |
+| F0082 | IN PROGRESS | `rust/crates/phenix-contract/src/contract.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `0c883713`: shared ContractId/Type/PhenixValue/reference authority structures with schema compatibility. KEEP foundational type model; test exact/project codecs and wire IDs. |
+| F0083 | IN PROGRESS | `rust/crates/phenix-contract/src/contract_wire.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `262f3cf9`: explicit serde serialization of ContractValue reparses schema, with unit regression. KEEP typed wire encoding; verify cross-language data fidelity. |
+| F0084 | IN PROGRESS | `rust/crates/phenix-contract/src/identity.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `5172b71d`: macro-backed versioned identifiers, `InterfaceId` and `GenerationId` with ambiguous text/version rejection tests. KEEP canonical IDs; run identifier suite. |
+| F0085 | IN PROGRESS | `rust/crates/phenix-contract/src/infallible_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `9769e857`: Infallible codec maps to `Type::Never`, with regression. KEEP structural type edge case; run contract tests. |
+| F0086 | IN PROGRESS | `rust/crates/phenix-contract/src/interface.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `0b7b3355`: `InterfaceSchema` has typed request/response/error with directional provider matching. KEEP compatibility checks; verify service-only provider canary #728. |
+| F0087 | IN PROGRESS | `rust/crates/phenix-contract/src/lib.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `485e7b7a`: unsafe-free wire-stable contract barrel, exports shared schema/value/identity modules. KEEP core-independent contract package; verify dependency direction after migration. |
+| F0088 | IN PROGRESS | `rust/crates/phenix-contract/src/std_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `f53873c9`: standard Rust value codecs include fixed-width checks, JSON lowering, deterministic maps/sets. KEEP; run boundary tests and Lua conversion. |
+| F0089 | IN PROGRESS | `rust/crates/phenix-contract/src/structural_value.rs` | Keep | Versioned portable types and canonical typed contributions. | — | Main `bb7d23c1`: `PhenixValue`/schema self-codecs preserve identity and structural type. KEEP; run round-trip tests. |
 
 ### `rust/crates/phenix-core`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0090 | TODO | `rust/crates/phenix-core/Cargo.toml` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending |
+| F0090 | IN PROGRESS | `rust/crates/phenix-core/Cargo.toml` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | Main `2c6e9f96`: generic Core crate root remains canonical runtime package, tests explicitly controlled in Cargo metadata. KEEP package; audit AI-only imports and test feature closure after #731. |
 | F0091 | IN PROGRESS | `rust/crates/phenix-core/src/agent.rs` | Move | AI-only inference/tool/skill/context contracts belong in application contract package, not Core. | #731 + references | `core/src/agent.rs` defines model inference, tools, skills, context requests/responses and four versioned services (`phenix.models.inference@1`, etc.). MOVE domain types without changing serialized schemas, ID strings or SDK consumers; require contract compatibility tests. |
 | F0092 | TODO | `rust/crates/phenix-core/src/artifact.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending |
 | F0093 | TODO | `rust/crates/phenix-core/src/authority.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending |
