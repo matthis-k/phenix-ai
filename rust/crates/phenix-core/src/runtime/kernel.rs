@@ -888,8 +888,7 @@ impl RootExecutionHandle {
         }
         self.execute_pending_selected(
             compiled,
-            state,
-            None,
+            (state, None),
             |node, interface, _, state| prepare(node, interface, state),
             |node, interface, output, _, state| project(node, interface, output, state),
             cancelled,
@@ -942,8 +941,7 @@ impl RootExecutionHandle {
         }
         self.execute_pending_selected(
             compiled,
-            state,
-            Some(frame),
+            (state, Some(frame)),
             |node, interface, frame, state| {
                 prepare(
                     node,
@@ -969,8 +967,7 @@ impl RootExecutionHandle {
     fn execute_pending_selected<State, Error>(
         &self,
         compiled: &crate::CompiledWorkflow,
-        state: &mut State,
-        frame: Option<&mut crate::WorkflowFrame>,
+        execution: (&mut State, Option<&mut crate::WorkflowFrame>),
         mut prepare: impl FnMut(
             &str,
             &InterfaceId,
@@ -993,6 +990,7 @@ impl RootExecutionHandle {
         use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
         use crate::{WorkflowNativeDispatchError, WorkflowPendingImport, WorkflowTaskId};
         use std::{cell::RefCell, time::Duration};
+        let (state, frame) = execution;
 
         fn failed<E>(
             error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
