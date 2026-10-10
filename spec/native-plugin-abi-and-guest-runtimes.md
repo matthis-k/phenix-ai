@@ -83,14 +83,30 @@ This Rust host bridge is exercised by a real provider completing *two*
 concurrent Fork branches. Existing blocking native providers use the same
 canonical dispatch with the default immediate implementation.
 
-**Implementation boundary:** the versioned ABI layout and Rust-native
-pending bridge are implemented, but the **intrinsic shared-library loader,
-library residency lifetime, foreign buffer copy/release trampoline, ABI host
-callback registration, and native Lua adapter are not implemented**. The ABI
-crate intentionally forbids unsafe code; memory-sensitive loader operations
-belong in their own auditably isolated package. Do not represent these
-structures alone as a loadable native plugin system or as a completed guest
-runtime bridge.
+**Implemented native loader (in #726):** the separate
+`phenix-native-loader` crate now uses a contained unsafe POSIX dynamic-library
+boundary (`dlopen/dlsym/dlclose`) and validates the ABI header before
+accessing its C function table. Kernel selects explicit
+`PluginExecution::Native { artifact }` with SHA-256 content identity,
+stages and loads exactly the verified bytes, and dispatches calls through
+the existing scoped PluginHost and generation-resident plugin instances.
+Versioned begin/poll/cancel/stop/destroy callbacks, matched host wake and
+cancellation functions, paired buffer copy/release, and quarantining of
+unfinished native instances are implemented. Independently compiled
+shared-library fixtures exercise pending callbacks through a real typed
+Fork/Join workflow. Native factory lookup is keyed by
+`(PluginId, ArtifactRevision)`, so a changed candidate cannot borrow a
+same-named old binary. Manual preload also supports future candidate
+generations without activating them.
+
+**Still missing:** C host `invoke_import` callback forwarding through
+the selected component binding (the ABI table has this slot but the current
+loader leaves it unavailable), Lua and other guest-language adapters,
+platform loaders beyond POSIX, and comprehensive interrupt/reentrancy,
+live-product streaming and durability parity. Foreign libraries remain
+trusted native code rather than sandboxed isolation boundaries.
+The spec lifecycle is still `specification-only` because these stages
+are not production-complete.
 
 ## Native ABI bootstrap contract
 
