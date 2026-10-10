@@ -230,6 +230,13 @@ pub struct NativePluginInstance {
     pending: BTreeSet<(u64, u64)>,
 }
 
+// The opaque foreign context and boxed host table may be moved between
+// kernel-managed worker threads only under the owner's instance mutex. The
+// resident module separately serializes all calls into its C function table.
+// Neither the context pointer nor borrowed request pointers are dereferenced
+// by the host without checking their lifetime first.
+unsafe impl Send for NativePluginInstance {}
+
 impl NativePluginInstance {
     pub fn state(&self) -> NativeInstanceState {
         self.state
