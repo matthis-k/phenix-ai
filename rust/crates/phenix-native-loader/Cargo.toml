@@ -1,0 +1,11 @@
+[package]
+name = "phenix-native-loader"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[package.metadata.phenix]
+role = "passive-library"
+
+[dependencies]
+phenix-plugin-abi = { path = "../phenix-plugin-abi" }
