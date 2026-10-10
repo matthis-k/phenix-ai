@@ -6,7 +6,7 @@ Source: `main` nontruncated Git tree `d488c4056ee334938c2ca88aec9017379a3ef7c4` 
 
 Use the immutable F ID; never renumber. Change state `TODO -> IN PROGRESS -> PROVEN` or `REMOVED`. For PROVEN, fill the decision/evidence cell with **keep/refactor/move/retire**, replacement PR/commit, consumer check and current-head test URL as applicable. A retain decision needs a source/use explanation. A removed file stays listed as REMOVED. Add newly tracked paths with the next unused F ID, even if alphabetic order changes. Close each row only after checking its exact path. Refresh against `git ls-files`; don't silently drop new paths.
 
-Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 4 added later. Current [main `1dd0ffc`](https://github.com/matthis-k/phenix-ai/commit/1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063) has 595 nontruncated blobs after [#770](https://github.com/matthis-k/phenix-ai/pull/770) deleted F0277. Keep that file's stable REMOVED row and the four tracker-only F0597-F0600 rows, giving 600 historical IDs. Current proof states: 2 PROVEN, 400 IN PROGRESS, 197 TODO, 1 REMOVED. Source review is not liveness or regression proof.
+Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 4 added later. Current [main `1dd0ffc`](https://github.com/matthis-k/phenix-ai/commit/1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063) has 595 nontruncated blobs after [#770](https://github.com/matthis-k/phenix-ai/pull/770) deleted F0277. Keep that file's stable REMOVED row and the four tracker-only F0597-F0600 rows, giving 600 historical IDs. Current audit states: 2 PROVEN, 597 IN PROGRESS, 0 TODO, 1 REMOVED. All 600 paths have source/role review. IN PROGRESS does not mean runtime-proven. Source review is not liveness or regression proof.
 
 
 ### `.githooks/`
@@ -46,9 +46,9 @@ Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0014 | TODO | `flake.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
+| F0014 | IN PROGRESS | `flake.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | Main `e8b41076`: root flake.lock pins Nix dependencies including flake-parts and home-manager. KEEP reproducibility input; verify flake check and pin ownership after CI split. |
 | F0015 | IN PROGRESS | `flake.nix` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | KEEP candidate. `flake.nix` blob `9a6e15b8` delegates outputs to flake-parts and imports `rust-artifacts`, `harness-product`, `plugin-packaging`, `package-sets`, Lua integration, development and Stitch modules. This is the actual build composition entry. Check `nix flake check`/show and exports on exact integration head. |
-| F0016 | TODO | `glossary.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending |
+| F0016 | IN PROGRESS | `glossary.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | Main `a932fce1`: glossary defines Kernel, Plugin, Contract, Interface, Generation and Authority. KEEP canonical naming source; review stale `conductor` references before #731. |
 
 ### `modules/`
 
@@ -69,7 +69,7 @@ Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0027 | TODO | `rust/Cargo.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | pending |
+| F0027 | IN PROGRESS | `rust/Cargo.lock` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | Main `20662448`: generated Cargo.lock version 4 pins Rust workspace and ACP SDK versions. KEEP reproducible builds; validate cargo metadata and package-graph drift on final head. |
 | F0028 | IN PROGRESS | `rust/Cargo.toml` | Keep | Canonical dependency/package metadata; synchronize when moving or retiring crates. | — | REFACTOR candidate. `rust/Cargo.toml` blob `a47449bb` owns the resolver-3 workspace and still lists `phenix-plugin-basic-agent` and `phenix-plugin-hooks`. #766/#767 remove those members on their stacked branches. Regenerate Cargo metadata and lockfile, then check all Nix impact/package declarations before PROVEN. |
 
 ### `rust/crates/phenix-acp-stdio`
@@ -794,15 +794,15 @@ Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 
 | --- | --- | --- | --- | --- | --- | --- |
 | F0490 | IN PROGRESS | `scripts/check-plugin-architecture.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Nix `modules/development.nix` calls `scripts/check-plugin-architecture.sh`. Move policy to phenix-flake-ci maintenance leaf only after matching success and negative fixture results; keep script until exact check parity. |
 | F0491 | IN PROGRESS | `scripts/check-rust-safety-policy.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Script `86183104` reads Cargo metadata to enforce `#![forbid(unsafe_code)]` across production targets; `modules/development.nix` invokes it. MOVE only after an equivalent Nix-owned rule, negative fixture and CI proof; current live consumer blocks deletion. #765 marks shell runner for move into flake-ci maintenance after equivalent negative and target-discovery checks. Annotated at #765 head `cf700548`; CI pending. |
-| F0492 | TODO | `scripts/check-spec-lifecycle-fixtures.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending |
-| F0493 | TODO | `scripts/check-spec-lifecycle.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending |
-| F0494 | TODO | `scripts/check-structural-boundaries.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending |
+| F0492 | IN PROGRESS | `scripts/check-spec-lifecycle-fixtures.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Main `6f3d1c47`: fixture runner asserts lifecycle validation rejects missing/invalid statuses and stale coverage pointers. KEEP guard tests; move execution to Nix-owned maintenance entrypoint if script retirement requested. |
+| F0493 | IN PROGRESS | `scripts/check-spec-lifecycle.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Main `5d1f3d82`: spec lifecycle validator checks status, temporary metadata and relative coverage paths. KEEP normative coverage check; confirm required CI job runs after document changes. |
+| F0494 | IN PROGRESS | `scripts/check-structural-boundaries.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Main `90f60859`: structural-boundaries guard rejects Any, raw invocation, ambient processes and legacy plugin authoring. KEEP architecture enforcement; migrate script packaging to Nix before deletion. |
 
 ### `share/`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0495 | TODO | `share/phenix/interfaces/phenix.application@1.json` | Keep | Versioned language-neutral interface/schema asset. | — | pending |
+| F0495 | IN PROGRESS | `share/phenix/interfaces/phenix.application@1.json` | Keep | Versioned language-neutral interface/schema asset. | — | Main `085f14cf`: 267,699-byte generated phenix.application@1 JSON descriptor. KEEP wire snapshot fixture; compare exact generated output/hash and ACP/Lua clients on #731/#768 final head. |
 
 ### `spec/`
 
@@ -916,10 +916,10 @@ These four files are new on #764 and are not part of the 596-file main snapshot.
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0597 | TODO | `spec/microkernel-migration-tracker.md` | Keep | Retain single authoritative cross-PR dependency state until closeout; archive final outcomes on main. | S6-03 | pending |
-| F0598 | TODO | `spec/microkernel-tracker/repository-file-matrix.md` | Keep | Preserve exact path decisions and removing PR evidence; reconcile main and branch inventories. | S5-08 | pending |
-| F0599 | TODO | `spec/microkernel-tracker/pr726-file-matrix.md` | Keep | Carry 58 path dispositions and extraction/removal proof after #726 lands. | S5-08 | pending |
-| F0600 | TODO | `spec/microkernel-tracker/pr-task-matrices.md` | Keep | Link owner PR task comments and archive the final per-PR evidence index. | S6-03 | pending |
+| F0597 | IN PROGRESS | `spec/microkernel-migration-tracker.md` | Keep | Retain single authoritative cross-PR dependency state until closeout; archive final outcomes on main. | S6-03 | Tracker branch `spec/microkernel-migration-tracker.md`: authoritative cross-PR S stage matrix, current heads/CI evidence and owner gates. KEEP open as coordination document; refresh stage proofs after merges. |
+| F0598 | IN PROGRESS | `spec/microkernel-tracker/repository-file-matrix.md` | Keep | Preserve exact path decisions and removing PR evidence; reconcile main and branch inventories. | S5-08 | Tracker branch `spec/microkernel-tracker/repository-file-matrix.md`: authoritative stable F inventory, source/consumer decisions and exact merge proof. KEEP 600 historical IDs plus append future files; source-reviewed rows await real CI and replacement checks. |
+| F0599 | IN PROGRESS | `spec/microkernel-tracker/pr726-file-matrix.md` | Keep | Carry 58 path dispositions and extraction/removal proof after #726 lands. | S5-08 | Tracker branch `spec/microkernel-tracker/pr726-file-matrix.md`: immutable 58-path W baseline for initial #726 expansion and moved native owner entries. KEEP baseline; reconcile current branch after #769 restack, never erase moved path history. |
+| F0600 | IN PROGRESS | `spec/microkernel-tracker/pr-task-matrices.md` | Keep | Link owner PR task comments and archive the final per-PR evidence index. | S6-03 | Tracker branch `spec/microkernel-tracker/pr-task-matrices.md`: owner-PR checklist link index, planned cleanup owners and dependency order. KEEP navigation only; implementation status belongs to linked PR comments. |
 
 ## Reconciliation gate
 
