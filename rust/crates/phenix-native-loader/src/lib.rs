@@ -821,6 +821,44 @@ mod tests {
             instance.poll(ticket),
             Err(NativeLoadError::MissingOrDuplicateCall(_))
         ));
+        // Exercise the actual separately compiled guest callback. The guest
+        // cannot settle until its background worker receives the host reply.
+        let import_ticket = NativeCallTicket {
+            root_id: 3,
+            call_id: 10,
+        };
+        let wake = instance.wake_handle();
+        let (sender, receiver) = mpsc::channel();
+        assert_eq!(
+            instance
+                .begin_with_cancellation(
+                    import_ticket,
+                    5,
+                    "fixture.native",
+                    "fixture.test@1",
+                    b"import",
+                    NativeCallContext {
+                        cancellation: None,
+                        import_sender: Some(sender),
+                    },
+                )
+                .unwrap(),
+            NativeInvocation::Pending
+        );
+        let request = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(request.interface, "fixture.import@1");
+        assert_eq!(request.input, b"ping");
+        request.reply.send(Ok(b"from host".to_vec())).unwrap();
+        let returned = (0..50)
+            .find_map(|_| {
+                wake.wait_for(import_ticket, Duration::from_millis(100));
+                match instance.poll(import_ticket).unwrap() {
+                    NativeInvocation::Pending => None,
+                    completed => Some(completed),
+                }
+            })
+            .expect("native callback did not complete after its host import reply");
+        assert_eq!(returned, NativeInvocation::Ready(b"from host".to_vec()));
         instance.stop_and_destroy().unwrap();
         assert_eq!(instance.state(), NativeInstanceState::Destroyed);
         drop(instance);
