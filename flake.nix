@@ -158,6 +158,7 @@
           ''
             mkdir -p $out
             python ${./tests/descriptor.py} ${describe}/bin/phenix-describe ${provider} ${p0Fat} ${p0Off} ${p0Lld} ${p0Repeat} > $out/evidence.json
+            python -m json.tool $out/evidence.json > /dev/null
           '';
       contractCheck = (build "phenix-contract-check" contractSource).overrideAttrs (old: {
         cargoBuildFlags = [ ];

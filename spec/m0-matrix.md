@@ -29,7 +29,7 @@ Implemented means code exists. Tested means the named semantic check has passed 
 | Trusted CLI / inspection | kernel/src/bin/phenix-kernel.rs, tests/product.py, tests/inspection-golden.json | Parsed JSON, typed result, root summary, hashes, failure phase/context and versioned golden fields | Tested | Nix-built CLI product check; nested denial context survives subsequent success |
 | Pre-load nonexecution | examples/provider/src/lib.rs, conformance/src/main.rs, tests/product.py | Constructor witness stays absent during offline checks | Tested | Witness appears only after actual native loading |
 | Nix deployment closure | flake.nix | Separate kernel, SDK, tooling and plugin products; no Nix resolver | Tested | m0-contract, m0-descriptor, m0-native, m0-product |
-| Exact-head CI | .github/workflows/minimal-kernel.yml | All canonical checks, commit stamp, paths, digests and CI run | Configured | Live status and exact run are recorded in the PR body |
+| Exact-head CI | .github/workflows/minimal-kernel.yml | All canonical checks, commit stamp, paths, digests and CI run | Local passed; CI tracked in PR | Live status and exact run are recorded in the PR body |
 
 ## Remaining acceptance work
 
