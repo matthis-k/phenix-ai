@@ -345,20 +345,24 @@ validates the explicitly authored positive fan-out bound and typed collection;
 there is no implicit 256-child Core ceiling. Empty maps settle vacuously for
 `All` policies without invoking child providers.
 
-This remains **cooperative execution**: at a Join boundary there are no
-in-flight child invocations. A root's generation lease covers each child
-throughout dispatch. A recursive cursor scheduler now admits nested Fork/Join
-scopes without starting new roots or selecting new providers. Each ready scope
-receives at most one Invoke per scheduler turn, including when a nested child
-loops; outer siblings remain schedulable. Frames are independently snapshot
+The **one structured cursor scheduler** has both cooperative and native
+pending provider entry modes. In synchronous mode no child Invoke remains in
+flight at a Join. In native mode Forks admit independently pending provider
+calls; a parent parks only when all runnable scopes are blocked. The callback
+channel resumes one actually settled ticket at a time, preserving completion
+order for FirstCompleted, FirstSuccess, and Quorum decisions. Early Join
+selection signals cancellation of losing scopes, while root-owned native
+leases remain live until those callbacks really settle. Each scope receives
+at most one Invoke admission per scheduler turn, including nested loops;
+outer siblings remain schedulable. Frames are independently snapshotted
 per nested scope and only explicitly selected outputs reach the parent.
-Structured nested admission has an explicit maximum active depth of 64,
-reported as a typed error. **Native asynchronous child settlement and native
-provider wakeup remain outstanding**, as does the stronger lifecycle guarantee
-for native calls still running when a root is cancelled.
+Structured nested admission has a maximum active depth of 64, reported as
+a typed error. Optional step limits reserve budget on native admission,
+including for siblings whose provider callbacks have not completed.
 
-This is not yet native asynchronous execution. Selected artifact discovery,
-private subplan frame slots, and Basic/Advanced streaming parity remain open.
+The pending execution path is available but not yet the Basic/Advanced
+default. Native plugin ABI entry and wakeup, selected artifact discovery,
+private subplan frame slots, and live-product streaming parity remain open.
 During reconciliation, Core carries frame schemas only for workflows whose
 component and owning plugin manifest remain unchanged. It revalidates those
 schemas against the new compiled plan. Replacing the topology author retires
