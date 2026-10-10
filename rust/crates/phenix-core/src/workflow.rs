@@ -547,6 +547,12 @@ enum WorkflowInvokeAdvance {
     Waiting,
 }
 
+struct InvokePosition<'a> {
+    step: &'a PlanStepId,
+    scope: &'a str,
+    already_submitted: bool,
+}
+
 #[derive(Debug)]
 pub enum WorkflowRunError<E> {
     MissingWorkflow {
@@ -1840,9 +1846,7 @@ impl CompiledWorkflow {
     // resolver or agent-specific engine is instantiated for a fork.
     fn invoke_step<State, Error>(
         &self,
-        cursor: &PlanStepId,
-        scope: &str,
-        already_submitted: bool,
+        position: InvokePosition<'_>,
         state: &mut State,
         mut data: Option<&mut crate::WorkflowFrame>,
         invoke: &mut impl FnMut(
@@ -1857,14 +1861,14 @@ impl CompiledWorkflow {
         budget: (&mut u64, &mut u64, Option<NonZeroU64>),
     ) -> Result<WorkflowInvokeAdvance, WorkflowRunError<Error>> {
         let (count, admissions, limit) = budget;
-        let PlanStepId::Invoke(name) = cursor else {
+        let PlanStepId::Invoke(name) = position.step else {
             unreachable!("invoke dispatch requires an Invoke identity")
         };
         let PlanStep::Invoke {
             import,
             on_result,
             transfers,
-        } = &self.plan.steps[cursor]
+        } = &self.plan.steps[position.step]
         else {
             unreachable!("compiled Invoke has an Invoke step")
         };
@@ -1874,7 +1878,7 @@ impl CompiledWorkflow {
                 executed_nodes: *count,
             });
         }
-        if !already_submitted {
+        if !position.already_submitted {
             // Each in-flight Invoke consumes a budget reservation at admission
             // rather than at completion. Concurrent siblings must not exceed
             // an opt-in step cap while all their callbacks are pending.
@@ -1885,9 +1889,9 @@ impl CompiledWorkflow {
                 });
             }
         }
-        let outcome = match invoke(name, import, scope, state, data.as_deref_mut(), cancelled) {
+        let outcome = match invoke(name, import, position.scope, state, data.as_deref_mut(), cancelled) {
             WorkflowInvokePoll::Started => {
-                if !already_submitted {
+                if !position.already_submitted {
                     *admissions = admissions
                         .checked_add(1)
                         .ok_or(WorkflowRunError::StepCounterOverflow)?;
@@ -1895,7 +1899,7 @@ impl CompiledWorkflow {
                 return Ok(WorkflowInvokeAdvance::Started);
             }
             WorkflowInvokePoll::Waiting => {
-                assert!(already_submitted, "native Invoke must admit before waiting");
+                assert!(position.already_submitted, "native Invoke must admit before waiting");
                 return Ok(WorkflowInvokeAdvance::Waiting);
             },
             WorkflowInvokePoll::Ready(Ok(outcome)) => outcome,
@@ -1912,7 +1916,7 @@ impl CompiledWorkflow {
                 });
             }
         };
-        if !already_submitted {
+        if !position.already_submitted {
             *admissions = admissions
                 .checked_add(1)
                 .ok_or(WorkflowRunError::StepCounterOverflow)?;
