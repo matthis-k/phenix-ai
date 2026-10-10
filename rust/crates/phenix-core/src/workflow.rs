@@ -765,11 +765,13 @@ impl WorkflowTopology {
                                 initial: initial.clone(),
                             },
                         );
-                    } else if !initial.is_empty() {
+                    } else if schemas.contains_key(&(owner.clone(), name.to_owned()))
+                        || !initial.is_empty()
+                    {
                         return Err(WorkflowCompileError::InvalidFrameTransfer {
                             node: node.clone(),
                             outcome: outcome.clone(),
-                            reason: "private initial values require a selected child frame schema".into(),
+                            reason: "mapped include requires the selected child's explicit frame schema".into(),
                         });
                     }
                     visit(owner, workflow, &prefix, selected, schemas, scopes)?;
@@ -2315,6 +2317,37 @@ mod inclusion_tests {
         )
         .unwrap();
         assert_eq!(scopes.len(), 1);
+        // An incomplete private initialization or an absent child contract
+        // must fail during candidate preparation, not after its first Invoke.
+        let mut missing_initial = selected.clone();
+        let WorkflowEdge::IncludeMapped { initial, .. } = missing_initial
+            .get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .get_mut("delegate")
+            .unwrap() else {
+            unreachable!()
+        };
+        initial.remove(&key("private"));
+        assert!(matches!(
+            WorkflowTopology::selected_scoped_subplans(
+                &owner(), "main", &missing_initial, &schemas
+            ),
+            Err(WorkflowCompileError::InvalidFrameTransfer { .. })
+        ));
+        let without_child = BTreeMap::from([(
+            (owner(), "main".into()),
+            parent_schema.clone(),
+        )]);
+        assert!(matches!(
+            WorkflowTopology::selected_scoped_subplans(
+                &owner(), "main", &selected, &without_child
+            ),
+            Err(WorkflowCompileError::InvalidFrameTransfer { .. })
+        ));
         let topology = WorkflowTopology::inline_selected(&owner(), "main", &selected).unwrap();
         let mut compiled = topology.compile(|_| true).unwrap();
         compiled.bind_scoped_subplans(scopes);
