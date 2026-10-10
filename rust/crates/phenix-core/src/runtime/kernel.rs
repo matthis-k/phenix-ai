@@ -730,6 +730,46 @@ impl RootExecutionHandle {
         )
     }
 
+    /// Admit a selected workflow against the caller's data frame.
+    ///
+    /// The same pinned generation and frame requirements apply to synchronous
+    /// and pending entrypoints. Execution stays in the existing scheduler.
+    fn selected_workflow<Error>(
+        &self,
+        (owner, name): (&ComponentId, &str),
+        frame: Option<&crate::WorkflowFrame>,
+    ) -> Result<
+        &crate::CompiledWorkflow,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow {
+                owner: owner.clone(),
+                name: name.to_owned(),
+            }
+        })?;
+        if let Some(frame) = frame {
+            let expected =
+                compiled
+                    .frame_schema()
+                    .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
+                        owner: owner.clone(),
+                        name: name.to_owned(),
+                    })?;
+            if expected != frame.schema() {
+                return Err(WorkflowRunError::FrameSchemaMismatch {
+                    owner: owner.clone(),
+                    name: name.to_owned(),
+                });
+            }
+        } else if compiled.requires_frame() {
+            return Err(WorkflowRunError::StructuredFrameRequired {
+                node: compiled.topology().entry.clone(),
+            });
+        }
+        Ok(compiled)
+    }
+
     /// Execute a workflow declared by a component in this root's pinned generation.
     ///
     /// Domain adapters prepare service inputs and project typed results into
@@ -746,18 +786,7 @@ impl RootExecutionHandle {
         WorkflowRunReport,
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
-        let (owner, name) = workflow;
-        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
-        })?;
-        if compiled.requires_frame() {
-            return Err(WorkflowRunError::StructuredFrameRequired {
-                node: compiled.topology().entry.clone(),
-            });
-        }
+        let compiled = self.selected_workflow::<Error>(workflow, None)?;
         compiled.execute_bound(
             state,
             |node, service, import, state, cancelled| {
@@ -823,26 +852,7 @@ impl RootExecutionHandle {
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
         let (state, frame) = execution;
-        let (owner, name) = workflow;
-        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
-        })?;
-        let expected =
-            compiled
-                .frame_schema()
-                .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
-                    owner: owner.clone(),
-                    name: name.to_owned(),
-                })?;
-        if expected != frame.schema() {
-            return Err(WorkflowRunError::FrameSchemaMismatch {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            });
-        }
+        let compiled = self.selected_workflow::<Error>(workflow, Some(frame))?;
         compiled.execute_bound_framed(
             state,
             frame,
@@ -896,8 +906,7 @@ impl RootExecutionHandle {
     /// children while native calls run. Provider replies are projected back
     /// on the caller thread, never inside worker-owned mutable frames. Early
     /// Join decisions cancel losers but cannot release their generation leases.
-    /// The synchronous workflow entry remains available for legacy adapters.
-    /// Native pending execution through the one structured Core scheduler.
+    /// Native pending execution uses the one structured Core scheduler.
     /// No independent root, resolver or provider fallback is created.
     pub fn execute_workflow_pending<State, Error>(
         &self,
@@ -911,18 +920,7 @@ impl RootExecutionHandle {
         WorkflowRunReport,
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
-        let (owner, name) = workflow;
-        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
-        })?;
-        if compiled.requires_frame() {
-            return Err(WorkflowRunError::StructuredFrameRequired {
-                node: compiled.topology().entry.clone(),
-            });
-        }
+        let compiled = self.selected_workflow::<Error>(workflow, None)?;
         self.execute_pending_selected(
             compiled,
             (state, None),
@@ -960,26 +958,7 @@ impl RootExecutionHandle {
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
         let (state, frame) = execution;
-        let (owner, name) = workflow;
-        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
-        })?;
-        let expected =
-            compiled
-                .frame_schema()
-                .ok_or_else(|| WorkflowRunError::MissingFrameSchema {
-                    owner: owner.clone(),
-                    name: name.to_owned(),
-                })?;
-        if expected != frame.schema() {
-            return Err(WorkflowRunError::FrameSchemaMismatch {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            });
-        }
+        let compiled = self.selected_workflow::<Error>(workflow, Some(frame))?;
         self.execute_pending_selected(
             compiled,
             (state, Some(frame)),
