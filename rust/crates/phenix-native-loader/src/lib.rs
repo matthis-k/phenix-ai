@@ -101,17 +101,16 @@ unsafe extern "C" fn native_is_cancelled(context: *mut c_void, ticket: NativeCal
     let Some(hub) = hub_for(context) else {
         return 1; // A retired host cannot authorize a late callback.
     };
-    let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
-    if calls
-        .get(&(ticket.root_id, ticket.call_id))
-        .and_then(|permit| permit.cancelled.as_ref())
-        .is_some_and(|predicate| predicate())
-    {
-        1
-    } else if !calls.contains_key(&(ticket.root_id, ticket.call_id)) {
-        1
-    } else {
-        0
+    let permitted = {
+        let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        calls.get(&(ticket.root_id, ticket.call_id)).map(|permit| {
+            permit.cancelled.clone()
+        })
+    };
+    match permitted {
+        None => 1,
+        Some(Some(predicate)) if predicate() => 1,
+        Some(_) => 0,
     }
 }
 
@@ -507,13 +506,13 @@ impl NativePluginInstance {
 
 impl Drop for NativePluginInstance {
     fn drop(&mut self) {
+        if self.state == NativeInstanceState::Active && self.pending.is_empty() {
+            let _ = self.stop_and_destroy();
+        }
         HOST_REGISTRY
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.registry_id);
-        if self.state == NativeInstanceState::Active && self.pending.is_empty() {
-            let _ = self.stop_and_destroy();
-        }
         if self.state != NativeInstanceState::Destroyed {
             // Unfinished or rejected stop leaves native code potentially
             // running. Prefer a deliberately retained image/host to a UAF:
