@@ -431,12 +431,31 @@ a fallback provider. Core tests cover physical generation retirement under an
 abandoned native callback, cancellation and late completion, a panicking worker,
 and selected versus stale provider bindings.
 
-This remains **partial native-async integration**. The general
-`Invoke/Fork/Join/Exit` dispatcher still runs its existing synchronous
-invocation closure and has not yet admitted pending child callbacks into the
-same structured scheduler. Native plugin ABI entry/wakeup, concurrent Fork
-completion selection, replay-free product cancellation and full streaming
-parity remain open.
+Core now runs native callbacks **through the same lowered
+`Invoke/Fork/Join/Exit` scheduler** used by cooperative execution. An Invoke
+may start a generation-pinned native provider call, suspend without consuming a
+completed step, and resume exactly once after a correlated callback. Fork
+children independently admit pending work, wake in actual callback settlement
+order, and preserve deterministic Join decisions with explicit cancellation of
+unselected scopes. Early Join decisions do not detach pending provider work:
+root settlement waits for every admitted callback before returning, retaining
+physical generation leases throughout. The optional step cap reserves budget
+at admission, preventing concurrent children from oversubscribing it.
+
+Both frame-free and typed data-frame plans use the same pending dispatcher,
+provider bindings, normal-result projections, and rollback behavior. Core
+canaries exercise native Basic and Advanced node bindings, a non-agent Fork
+with typed child outputs, first-completed selection, scope cancellation,
+actual wakeup order, portable projection failures, and step-limit admission.
+The agent topology exposes an opt-in pending adapter with the same request,
+projection, usage and terminal outcome handling. This is **not yet a default
+Basic/Full application migration**.
+
+**Still outstanding:** native plugin ABI `begin/poll/wake` host registration,
+provider-side cancellation participation beyond current cooperative tokens,
+full Basic/Full streaming/progress/usage and durable side-effect conformance,
+and portable plan/EntryBinding artifact activation. Those gates cannot be
+inferred from synthetic fixtures or green compile checks.
 
 The Core also exposes `WorkflowOutcomeProjection` revision 1. It is a
 portable declarative normal-result selector for closed `Variant` tags,
