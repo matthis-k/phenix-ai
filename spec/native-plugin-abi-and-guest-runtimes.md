@@ -1,6 +1,6 @@
 # Native plugin ABI and extensible guest runtime bindings
 
-status: specification-only
+status: ABI contract implemented; dynamic loader and guest runtime adapters pending
 scope: native loader, runtime adapter plugins, guest bindings, resident generations
 depends_on:
   - spec/plugin-runtime-bridges.md
@@ -63,6 +63,34 @@ Kernel/Core
 The Lua and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. Every native or guest plugin registers its own canonical contributions, not services owned by a generic `adapter-lua` proxy.
 
 The kernel selects a runtime provider from the guest's declared runtime requirement. Every executable Guest Runtime provider is a native ABI plugin loaded directly by the intrinsic loader. Guest artifacts cannot themselves provide the executable runtime adapter that bootstraps another guest format. This restriction keeps bootstrap dependency depth finite and avoids a second host-translation lifecycle. Runtime-provider selection and all ordinary plugin dependencies must still be validated for cycles before activation.
+
+## Implemented ABI contract (PR #726)
+
+The separate, zero-dependency `rust/crates/phenix-plugin-abi` crate now
+defines the **C-compatible ABI v1 table layout**: major/minor and size
+negotiation, required feature bits, opaque call tickets, borrowed inputs,
+producer-owned terminal buffers with explicit release callbacks, host-scoped
+cancellation and wakeup callbacks, and mandatory prepare/start/begin/poll/
+cancel/stop/destroy entries. Validation rejects foreign callback ticket IDs,
+unknown statuses, malformed payload ownership, truncated tables, unknown
+features and incomplete function tables. No Rust trait or allocator-owned
+object crosses the C boundary.
+
+Core's `SharedPluginInvocation::begin_component` also accepts
+`PluginCallStart::Pending`; a `PluginPendingCall` has one terminal
+`PluginCallCompletion`, optional nonblocking poll, and disconnect-as-error.
+This Rust host bridge is exercised by a real provider completing *two*
+concurrent Fork branches. Existing blocking native providers use the same
+canonical dispatch with the default immediate implementation.
+
+**Implementation boundary:** the versioned ABI layout and Rust-native
+pending bridge are implemented, but the **intrinsic shared-library loader,
+library residency lifetime, foreign buffer copy/release trampoline, ABI host
+callback registration, and native Lua adapter are not implemented**. The ABI
+crate intentionally forbids unsafe code; memory-sensitive loader operations
+belong in their own auditably isolated package. Do not represent these
+structures alone as a loadable native plugin system or as a completed guest
+runtime bridge.
 
 ## Native ABI bootstrap contract
 
