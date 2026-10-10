@@ -51,15 +51,6 @@ pub use phenix_plugin_artifacts::{
     RevalidationRecord, RevalidationVerdict, artifact_component_id, artifact_component_manifest,
     artifact_factory, artifact_manifest, artifact_service,
 };
-pub use phenix_sdk::{
-    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
-    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
-    AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_control_service,
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
-};
 pub use phenix_plugin_basic_agent_nodes::{
     BASIC_AGENT_NODES_PLUGIN, basic_agent_nodes_component_id, basic_agent_nodes_component_manifest,
     basic_agent_nodes_factory, basic_agent_nodes_factory_with_policy, basic_agent_nodes_manifest,
@@ -223,6 +214,15 @@ pub use phenix_plugin_workspace::{
     WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
     workspace_manifest, workspace_service,
+};
+pub use phenix_sdk::{
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
+    AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
+    AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_control_service,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
 };
 pub use phenix_sdk::{
     CONTEXT_SERVICE, CallableRecord, ContextCommand, ContextDescriptor, ContextInterface,
