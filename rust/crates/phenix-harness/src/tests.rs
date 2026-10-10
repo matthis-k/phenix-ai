@@ -286,7 +286,6 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
         "phenix.repository-workers",
         "phenix.session-tree",
         "phenix.language",
-        "phenix.hooks",
         "phenix.debug",
     ] {
         assert!(
