@@ -1867,25 +1867,52 @@ impl CompiledWorkflow {
                     if let WorkflowEdge::Transfer { slots, .. }
                     | WorkflowEdge::FinishTransfer { slots } = transition
                     {
-                        let crosses_frame = match transition {
-                            WorkflowEdge::Transfer { node: target, .. } => {
-                                self.scope_for_node(name).map(|scope| &scope.prefix)
-                                    != self.scope_for_node(target).map(|scope| &scope.prefix)
+                        let mut remaining = slots.clone();
+                        let mut transfer_schema = node_schema;
+                        let source_scope = self.scope_for_node(name);
+                        if let WorkflowEdge::Transfer { node: target, .. } = transition {
+                            let destination_scope = self.scope_for_node(target);
+                            if source_scope.map(|scope| &scope.prefix)
+                                != destination_scope.map(|scope| &scope.prefix)
+                            {
+                                if let Some(source) = source_scope {
+                                    for (child, parent) in &source.outputs {
+                                        if remaining.get(child) == Some(parent) {
+                                            remaining.remove(child);
+                                        }
+                                    }
+                                }
+                                if let Some(destination) = destination_scope {
+                                    // The selected child contract already checks these
+                                    // parent-to-child input aliases separately.
+                                    for (parent, child) in &destination.inputs {
+                                        if remaining.get(parent) == Some(child) {
+                                            remaining.remove(parent);
+                                        }
+                                    }
+                                    if !remaining.is_empty() {
+                                        return Err(WorkflowCompileError::InvalidFrameTransfer {
+                                            node: name.clone(),
+                                            outcome: outcome.clone(),
+                                            reason: "cross-scope entry cannot mutate undeclared child fields".into(),
+                                        });
+                                    }
+                                } else {
+                                    transfer_schema = self.frame_schema_for_node(target, schema);
+                                }
                             }
-                            WorkflowEdge::FinishTransfer { .. } => {
-                                self.scope_for_node(name).is_some()
+                        } else if let Some(source) = source_scope {
+                            // A root-scoped included Finish can return straight
+                            // to the caller's Exit; the published aliases have
+                            // been checked against both selected contracts.
+                            for (child, parent) in &source.outputs {
+                                if remaining.get(child) == Some(parent) {
+                                    remaining.remove(child);
+                                }
                             }
-                            _ => false,
-                        };
-                        // Scoped entry/return handoffs were checked against
-                        // the two distinct schemas before candidate binding.
-                        // Applying them against one flat schema would both
-                        // reject legitimate private fields and leak parent slots.
-                        if crosses_frame {
-                            continue;
                         }
                         let mut destinations = BTreeSet::new();
-                        for (source, target) in slots {
+                        for (source, target) in &remaining {
                             if !destinations.insert(target) {
                                 return Err(WorkflowCompileError::InvalidFrameTransfer {
                                     node: name.clone(),
@@ -1893,14 +1920,14 @@ impl CompiledWorkflow {
                                     reason: format!("target field {target} is written twice"),
                                 });
                             }
-                            let from = node_schema.slots.get(source).ok_or_else(|| {
+                            let from = transfer_schema.slots.get(source).ok_or_else(|| {
                                 WorkflowCompileError::InvalidFrameTransfer {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
                                     reason: format!("source field {source} is undeclared"),
                                 }
                             })?;
-                            let to = node_schema.slots.get(target).ok_or_else(|| {
+                            let to = transfer_schema.slots.get(target).ok_or_else(|| {
                                 WorkflowCompileError::InvalidFrameTransfer {
                                     node: name.clone(),
                                     outcome: outcome.clone(),
