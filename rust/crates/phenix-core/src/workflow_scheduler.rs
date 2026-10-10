@@ -6,8 +6,9 @@
 //! No worker is detached and no provider resolver or generation is recreated.
 //! The kernel root owns all pinned invocation and generation leases.
 use super::{
-    CompiledWorkflow, InterfaceId, NonZeroU64, PlanStep, PlanStepId, WorkflowInvocationError,
-    WorkflowInvokeAdvance, WorkflowInvokePoll, WorkflowRunError, WorkflowRunReport,
+    CompiledWorkflow, InterfaceId, InvokePosition, NonZeroU64, PlanStep, PlanStepId,
+    WorkflowInvocationError, WorkflowInvokeAdvance, WorkflowInvokePoll, WorkflowRunError,
+    WorkflowRunReport,
 };
 use crate::{
     PhenixValue, WorkflowChildSettlement, WorkflowFrame, WorkflowJoinDecision,
@@ -297,9 +298,11 @@ impl CompiledWorkflow {
         match &self.plan.steps[&cursor.step] {
             PlanStep::Invoke { .. } => {
                 match self.invoke_step(
-                    &cursor.step,
-                    &cursor.scope,
-                    cursor.submitted,
+                    InvokePosition {
+                        step: &cursor.step,
+                        scope: &cursor.scope,
+                        already_submitted: cursor.submitted,
+                    },
                     state,
                     cursor.frame.as_mut(),
                     invoke,
