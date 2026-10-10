@@ -66,13 +66,13 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S4-03 | IN PROGRESS | #725 | #760 | PR #725 contains prompt-admission receipt and claim code in `harness/application.rs` and session/ACP/Lua contracts. Host-fenced orphan recovery, replay ambiguity, physical side-effect settlement and independent client reconnect are still merge gates. |
 | S4-04 | IN PROGRESS | #763 | S4-02; S4-03 | #763 carries combined CI changes in `.github/workflows/ci.yml` and `modules/development.nix` on #725. It validates the current partial stack, not final portable entry/native/product parity; rerun against exact merge candidates. |
 | S4-05 | TODO | owner to assign | S2-04; S4-02 | Selected plugin upgrades preserve old roots, generation provenance, Environment pins, journal events and durable compatibility. |
-| S5-01 | TODO | cleanup implementation PR to create | S4-02 | Remove legacy `phenix-plugin-basic-agent/src/agent_loop.rs` execution path and route-selection duplication; rehome behavior tests first. |
-| S5-02 | TODO | cleanup implementation PR to create | S4-01 | Retire `phenix-plugin-hooks` after Layers/Listener parity; remove Advanced default and Cargo/Nix references. |
+| S5-01 | IN PROGRESS | #766 | #726 | The imperative `phenix-plugin-basic-agent` crate, its factory registration and old execution tests are deleted on #766, stacked directly on #726. Current head `d1c42031` fixes remaining application consumers. Exact-head CI and declarative product behavior remain open. No compatibility runner. |
+| S5-02 | IN PROGRESS | #767 | #766 | The `phenix-plugin-hooks` crate, Advanced default, catalog exports, Nix/Cargo registration and legacy hook test are deleted in #767 `8077704f`. Verify Core Event/Layer paths and current-head CI; no compatibility dispatcher. |
 | S5-03 | TODO | cleanup implementation PR to create | S4-01 | Replace hardcoded `phenix-plugin-catalog` factories/manifest lists, harness builder and default Basic profiles with portable discovery. |
 | S5-04 | TODO | cleanup implementation PR to create | S4-01 | Move AI-specific contracts from Core/SDK to plugin-owned interfaces, keeping wire IDs and compatibility. |
 | S5-05 | TODO | cleanup implementation PR to create | S4-02 | Audit `phenix-plugin-step-runner` and `phenix-plugin-execution/src/tool_schedule.rs`; keep tool semantics, remove duplicated orchestration. |
 | S5-06 | TODO | cleanup implementation PR to create | S5-01; S5-03 | Move deterministic `phenix-plugin-basic-model` into test fixtures; stop selecting echo as production default. |
-| S5-07 | TODO | cleanup implementation PR to create | S5-01 through S5-06 | Update `rust/Cargo.toml`, `rust/Cargo.lock`, Nix packages, product configs, CI, clients and docs; delete verified stale crates/files. |
+| S5-07 | IN PROGRESS | #765, #766, #767 | S5-01 through S5-06 | Breaking cleanup underway. #765 removes routing/MCP/macro compatibility. #766 and #767 delete obsolete agent and hook crates and update Cargo lock, Nix, product selection and tests. Remaining catalog and echo cleanup belongs to other PRs. |
 | S5-08 | TODO | tracker | S5-07 | Reconcile all rows in both file matrices with changed tree. Every Retire/Move path has replacement PR + test evidence or documented `Keep` decision. |
 | S6-01 | TODO | #763 or new final integration PR | S2-S5 | Final focused and full checks on exact merge candidates, including non-agent service-only and product parity. |
 | S6-02 | TODO | tracker | S6-01 | Closure report: paths/classes removed, net production LOC, total tests, mechanisms before/after, open exceptions and owning follow-ups. |
@@ -103,6 +103,18 @@ The source state is more specific than the original "design only" labels:
 | #763 | `54c5760d` | Combined-stack CI changes only | Exact final merge-head and native/client parity |
 
 **Review convention:** IN PROGRESS here is a source-checked partial implementation. It does not mean a task is functionally complete or that current-head CI passed. The owner PR's numbered task matrix remains the source for individual acceptance evidence.
+
+## Breaking legacy deletion checkpoint
+
+PRs are split by ownership, not compatibility level:
+
+| PR | Base | Removed in current branch | Validation gate |
+| --- | --- | --- | --- |
+| [#765](https://github.com/matthis-k/phenix-ai/pull/765) | main | Old model routing data coercion, implicit profile adoption, MCP protocol downgrade/wire branches and macro shim | Clippy, strict model options and MCP integration |
+| [#766](https://github.com/matthis-k/phenix-ai/pull/766) | #726 | Entire old agent-loop crate, factory registration, old execution regressions and Cargo/Nix products | Declarative Basic/Full and external client execution |
+| [#767](https://github.com/matthis-k/phenix-ai/pull/767) | #766 | Entire hook dispatcher crate, old API/manifest, profile registration, old tests | Core Layer/Event conformance and product checks |
+
+Breaking changes are accepted. No deprecation interval, legacy parser, wire fallback or replacement shim is planned. `IN PROGRESS` means the code was deleted in the linked branch, not that the PR has passed CI or been merged. The next independent cleanup owner must delete the remaining static catalog and echo production provider rather than extend them.
 
 ## Source audit handoff, 2026-10-10
 
