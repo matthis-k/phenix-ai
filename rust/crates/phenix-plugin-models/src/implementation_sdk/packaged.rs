@@ -73,10 +73,10 @@ pub(super) fn prepare(
             ));
         }
     }
-    for (id, profile) in &desired {
-        let Some(existing) = current.get(id) else {
+    for id in desired.keys() {
+        if !current.contains_key(id) {
             continue;
-        };
+        }
         if ownership.owned.contains_key(id) {
             continue;
         }

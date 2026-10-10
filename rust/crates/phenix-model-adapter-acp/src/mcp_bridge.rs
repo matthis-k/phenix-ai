@@ -152,11 +152,16 @@ impl ToolBridge {
         let requested = params
             .and_then(|params| params.get("protocolVersion"))
             .cloned()
-            .ok_or_else(|| agent_client_protocol::Error::invalid_params()
-                .data("MCP initialize requires protocolVersion"))
-            .and_then(|value| serde_json::from_value::<ProtocolVersion>(value)
-                .map_err(|error| agent_client_protocol::Error::invalid_params()
-                    .data(format!("invalid MCP protocolVersion: {error}"))))?;
+            .ok_or_else(|| {
+                agent_client_protocol::Error::invalid_params()
+                    .data("MCP initialize requires protocolVersion")
+            })
+            .and_then(|value| {
+                serde_json::from_value::<ProtocolVersion>(value).map_err(|error| {
+                    agent_client_protocol::Error::invalid_params()
+                        .data(format!("invalid MCP protocolVersion: {error}"))
+                })
+            })?;
         if !supports_protocol(&requested) {
             return Err(agent_client_protocol::Error::invalid_params()
                 .data(format!("unsupported MCP protocol version {requested}")));
@@ -356,11 +361,8 @@ fn server_implementation() -> Implementation {
 }
 
 fn discover_result() -> Result<Value, agent_client_protocol::Error> {
-    let result = DiscoverResult::new(
-        vec![ProtocolVersion::V_2026_07_28],
-        server_capabilities(),
-    )
-    .with_server_info(server_implementation());
+    let result = DiscoverResult::new(vec![ProtocolVersion::V_2026_07_28], server_capabilities())
+        .with_server_info(server_implementation());
     serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
 }
 
@@ -686,9 +688,7 @@ mod tests {
             "arguments": {}
         });
         let params = params.as_object().unwrap();
-        bridge
-            .call_tool(Some(params))
-            .unwrap();
+        bridge.call_tool(Some(params)).unwrap();
         worker.join().unwrap();
     }
 
@@ -703,7 +703,8 @@ mod tests {
         let result = serialize_tool_result(Ok(ToolResult {
             output: "ok".into(),
             success: true,
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(result["resultType"], "complete");
     }
 }
