@@ -37,7 +37,8 @@ struct Plugin {
     destroy:Option<unsafe extern "C" fn(*mut c_void,u64)>,
 }
 unsafe impl Sync for Plugin {}
-static CALLS: Mutex<Vec<(u64, bool)>> = Mutex::new(Vec::new());
+static CALLS: Mutex<Vec<(u64, bool, bool)>> = Mutex::new(Vec::new());
+static IMPORT_RESULTS: Mutex<Vec<(u64, Vec<u8>)>> = Mutex::new(Vec::new());
 static HOST_ID: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn release(_: *mut c_void, ptr:*mut u8, len:usize) {
@@ -76,22 +77,58 @@ unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
             || (comp == b"fixture.workflow-tool-provider"
                 && iface == b"fixture.workflow-tool@1")
     );
-    CALLS.lock().unwrap().push((request.ticket.call_id, comp == b"fixture.native"));
+    let input=unsafe{std::slice::from_raw_parts(request.input.ptr,request.input.len)};
+    let importing=comp==b"fixture.native" && input==b"import";
+    CALLS.lock().unwrap().push((request.ticket.call_id, comp == b"fixture.native", importing));
     // This notification is deliberately sent *before* begin returns to
     // verify the host does not drop early/synchronous wakeups.
     let host=HOST_ID.load(Ordering::Acquire) as *const Host;
     let host=unsafe{&*host};
     assert_eq!(unsafe{host.cancelled.unwrap()(host.context,request.ticket)},0);
     unsafe{host.wake.unwrap()(host.context,request.ticket)};
+    if importing {
+        let ticket=request.ticket;
+        std::thread::spawn(move || {
+            let host=HOST_ID.load(Ordering::Acquire) as *const Host;
+            let host=unsafe{&*host};
+            let interface=b"fixture.import@1";
+            let input=b"ping";
+            let reply=unsafe {
+                host.invoke.unwrap()(
+                    host.context, ticket,
+                    Slice{ptr:interface.as_ptr(),len:interface.len()},
+                    Slice{ptr:input.as_ptr(),len:input.len()},
+                )
+            };
+            let bytes=if reply.payload.len==0 {
+                Vec::new()
+            } else {
+                unsafe{std::slice::from_raw_parts(reply.payload.ptr,reply.payload.len)}.to_vec()
+            };
+            // SAFETY: the host pairs the reply buffer with this release hook.
+            unsafe{reply.payload.release.unwrap()(reply.payload.owner,reply.payload.ptr,reply.payload.len)};
+            IMPORT_RESULTS.lock().unwrap().push((ticket.call_id,bytes));
+            unsafe{host.wake.unwrap()(host.context,ticket)};
+        });
+    }
     pending(request.ticket)
 }
 unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
     let mut calls=CALLS.lock().unwrap();
-    let Some(index)=calls.iter().position(|(call, _)| *call==ticket.call_id) else {
+    let Some(index)=calls.iter().position(|(call, _, _)| *call==ticket.call_id) else {
         return Result {status:2,ticket,payload:buffer(b"missing call")};
     };
-    let (_, simple)=calls.remove(index);
-    drop(calls);
+    let (_,simple,importing)=calls[index];
+    if importing {
+        let mut results=IMPORT_RESULTS.lock().unwrap();
+        let Some(index_result)=results.iter().position(|(id,_)| *id==ticket.call_id) else {
+            return pending(ticket);
+        };
+        let (_,bytes)=results.remove(index_result);
+        calls.remove(index);
+        return Result{status:1,ticket,payload:buffer(&bytes)};
+    }
+    calls.remove(index);
     Result{status:1,ticket,payload:buffer(
         if simple {
             b"fixture finished"
