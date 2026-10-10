@@ -863,6 +863,43 @@ impl RootExecutionHandle {
     /// on the caller thread, never inside worker-owned mutable frames. Early
     /// Join decisions cancel losers but cannot release their generation leases.
     /// The synchronous workflow entry remains available for legacy adapters.
+    /// Native pending execution through the one structured Core scheduler.
+    /// No independent root, resolver or provider fallback is created.
+    pub fn execute_workflow_pending<State, Error>(
+        &self,
+        workflow: (&ComponentId, &str),
+        state: &mut State,
+        mut prepare: impl FnMut(&str, &InterfaceId, &mut State) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(&str, &InterfaceId, &[u8], &mut State) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        let (owner, name) = workflow;
+        let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
+            WorkflowRunError::MissingWorkflow { owner: owner.clone(), name: name.to_owned() }
+        })?;
+        if compiled.requires_frame() {
+            return Err(WorkflowRunError::StructuredFrameRequired {
+                node: compiled.topology().entry.clone(),
+            });
+        }
+        self.execute_pending_selected(
+            compiled,
+            state,
+            None,
+            |node, interface, _, state| prepare(node, interface, state),
+            |node, interface, output, _, state| project(node, interface, output, state),
+            cancelled,
+            step_limit,
+        )
+    }
+
+    /// Execute the same pending provider boundary with a typed data frame.
+    /// Every mutation is staged on the scheduler thread; sibling frames
+    /// remain isolated while native provider callbacks are in flight.
     pub fn execute_workflow_with_frame_pending<State, Error>(
         &self,
         workflow: (&ComponentId, &str),
@@ -886,23 +923,10 @@ impl RootExecutionHandle {
         WorkflowRunReport,
         WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
     > {
-        use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
-        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport};
-        use std::time::Duration;
-
-        fn failed<E>(
-            error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
-        ) -> WorkflowInvokePoll<WorkflowBoundCallError<WorkflowNodeDispatchError<E>>> {
-            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Failed(error)))
-        }
-
         let (state, frame) = execution;
         let (owner, name) = workflow;
         let compiled = self.runtime.workflow(owner, name).ok_or_else(|| {
-            WorkflowRunError::MissingWorkflow {
-                owner: owner.clone(),
-                name: name.to_owned(),
-            }
+            WorkflowRunError::MissingWorkflow { owner: owner.clone(), name: name.to_owned() }
         })?;
         let expected = compiled
             .frame_schema()
@@ -916,6 +940,66 @@ impl RootExecutionHandle {
                 name: name.to_owned(),
             });
         }
+        self.execute_pending_selected(
+            compiled,
+            state,
+            Some(frame),
+            |node, interface, frame, state| {
+                prepare(
+                    node,
+                    interface,
+                    frame.expect("framed entry supplies every child frame"),
+                    state,
+                )
+            },
+            |node, interface, output, frame, state| {
+                project(
+                    node,
+                    interface,
+                    output,
+                    frame.expect("framed entry supplies every child frame"),
+                    state,
+                )
+            },
+            cancelled,
+            step_limit,
+        )
+    }
+
+    fn execute_pending_selected<State, Error>(
+        &self,
+        compiled: &crate::CompiledWorkflow,
+        state: &mut State,
+        frame: Option<&mut crate::WorkflowFrame>,
+        mut prepare: impl FnMut(
+            &str,
+            &InterfaceId,
+            Option<&crate::WorkflowFrame>,
+            &mut State,
+        ) -> Result<Vec<u8>, Error>,
+        mut project: impl FnMut(
+            &str,
+            &InterfaceId,
+            &[u8],
+            Option<&mut crate::WorkflowFrame>,
+            &mut State,
+        ) -> Result<String, Error>,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<
+        WorkflowRunReport,
+        WorkflowRunError<WorkflowBoundCallError<WorkflowNodeDispatchError<Error>>>,
+    > {
+        use crate::workflow::{WorkflowInvocationError, WorkflowInvokePoll};
+        use crate::{WorkflowNativeDispatchError, WorkflowPendingImport};
+        use std::time::Duration;
+
+        fn failed<E>(
+            error: WorkflowBoundCallError<WorkflowNodeDispatchError<E>>,
+        ) -> WorkflowInvokePoll<WorkflowBoundCallError<WorkflowNodeDispatchError<E>>> {
+            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Failed(error)))
+        }
+
         let group = self
             .clone()
             .native_workflow_tasks()
@@ -923,8 +1007,8 @@ impl RootExecutionHandle {
         let mut in_flight = BTreeMap::<String, WorkflowPendingImport>::new();
         let result = compiled.execute_suspending(
             state,
-            Some(frame),
-            |node, interface, scope, state, frame, cancellation| {
+            frame,
+            |node, interface, scope, state, mut frame, cancellation| {
                 if let Some(inflight) = in_flight.get(scope) {
                     if !inflight.is_finished() {
                         return WorkflowInvokePoll::Waiting;
@@ -970,16 +1054,19 @@ impl RootExecutionHandle {
                                 ));
                             }
                         };
-                    let frame = frame.expect("typed root and children retain frames");
-                    let snapshot = frame.clone();
-                    match project(node, interface, &output, frame, state) {
+                    let snapshot = frame.as_deref().cloned();
+                    match project(node, interface, &output, frame.as_deref_mut(), state) {
                         Ok(reported)
                             if selected.as_ref().is_none_or(|expected| expected == &reported) =>
                         {
                             WorkflowInvokePoll::Ready(Ok(reported))
                         }
                         Ok(reported) => {
-                            *frame = snapshot;
+                            if let (Some(original), Some(destination)) =
+                                (snapshot, frame)
+                            {
+                                *destination = original;
+                            }
                             failed(WorkflowBoundCallError::Invocation(
                                 WorkflowNodeDispatchError::ProjectionMismatch {
                                     selected: selected.expect("mismatched outcome was selected"),
@@ -988,15 +1075,18 @@ impl RootExecutionHandle {
                             ))
                         }
                         Err(error) => {
-                            *frame = snapshot;
+                            if let (Some(original), Some(destination)) =
+                                (snapshot, frame)
+                            {
+                                *destination = original;
+                            }
                             failed(WorkflowBoundCallError::Invocation(
                                 WorkflowNodeDispatchError::Project(error),
                             ))
                         }
                     }
                 } else {
-                    let frame = frame.expect("typed root and children retain frames");
-                    let request = match prepare(node, interface, frame, state) {
+                    let request = match prepare(node, interface, frame.as_deref(), state) {
                         Ok(request) => request,
                         Err(error) => {
                             return failed(WorkflowBoundCallError::Invocation(
