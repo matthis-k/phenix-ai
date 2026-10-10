@@ -531,6 +531,20 @@ pub(crate) enum WorkflowInvocationError<E> {
     Failed(E),
 }
 
+/// A suspended Invoke does not consume a step or report a normal plan result.
+/// Only a real callback settlement may produce a Ready outcome.
+pub(crate) enum WorkflowInvokePoll<E> {
+    Ready(Result<String, WorkflowInvocationError<E>>),
+    Started,
+    Waiting,
+}
+
+enum WorkflowInvokeAdvance {
+    Next(PlanStepId),
+    Started,
+    Waiting,
+}
+
 #[derive(Debug)]
 pub enum WorkflowRunError<E> {
     MissingWorkflow {
@@ -1825,18 +1839,20 @@ impl CompiledWorkflow {
     fn invoke_step<State, Error>(
         &self,
         cursor: &PlanStepId,
+        scope: &str,
         state: &mut State,
         mut data: Option<&mut crate::WorkflowFrame>,
         invoke: &mut impl FnMut(
             &str,
             &InterfaceId,
+            &str,
             &mut State,
             Option<&mut crate::WorkflowFrame>,
             &mut dyn FnMut() -> bool,
-        ) -> Result<String, WorkflowInvocationError<Error>>,
+        ) -> WorkflowInvokePoll<Error>,
         cancelled: &mut impl FnMut() -> bool,
         budget: (&mut u64, Option<NonZeroU64>),
-    ) -> Result<PlanStepId, WorkflowRunError<Error>> {
+    ) -> Result<WorkflowInvokeAdvance, WorkflowRunError<Error>> {
         let (count, limit) = budget;
         let PlanStepId::Invoke(name) = cursor else {
             unreachable!("invoke dispatch requires an Invoke identity")
@@ -1861,15 +1877,17 @@ impl CompiledWorkflow {
                 executed_nodes: *count,
             });
         }
-        let outcome = match invoke(name, import, state, data.as_deref_mut(), cancelled) {
-            Ok(outcome) => outcome,
-            Err(WorkflowInvocationError::Cancelled) => {
+        let outcome = match invoke(name, import, scope, state, data.as_deref_mut(), cancelled) {
+            WorkflowInvokePoll::Started => return Ok(WorkflowInvokeAdvance::Started),
+            WorkflowInvokePoll::Waiting => return Ok(WorkflowInvokeAdvance::Waiting),
+            WorkflowInvokePoll::Ready(Ok(outcome)) => outcome,
+            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled)) => {
                 return Err(WorkflowRunError::Cancelled {
                     next_node: name.clone(),
                     executed_nodes: *count,
                 });
             }
-            Err(WorkflowInvocationError::Failed(error)) => {
+            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Failed(error))) => {
                 return Err(WorkflowRunError::NodeFailed {
                     node: name.clone(),
                     error,
@@ -1895,7 +1913,7 @@ impl CompiledWorkflow {
                 }
             })?;
         }
-        Ok(target)
+        Ok(WorkflowInvokeAdvance::Next(target))
     }
 
     pub(crate) fn execute_bound_framed<State, Error>(
