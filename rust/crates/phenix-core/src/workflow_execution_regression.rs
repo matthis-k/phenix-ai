@@ -284,6 +284,67 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
 }
 
 #[test]
+fn pending_non_agent_fork_uses_pinned_imports_and_ordered_frame_join() {
+    let resolved =
+        selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
+    let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = resolved
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let alpha = Key::parse("alpha").unwrap();
+    let beta = Key::parse("beta").unwrap();
+    let mut frame = WorkflowFrame::new(
+        schema,
+        BTreeMap::from([
+            (alpha.clone(), PhenixValue::U64(0)),
+            (beta.clone(), PhenixValue::U64(0)),
+        ]),
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    let report = root
+        .execute_workflow_with_frame_pending(
+            (&component_id(TOPOLOGY), "turn"),
+            (&mut seen, &mut frame),
+            |node, _, frame, seen| {
+                if node == "alpha-tool" || node == "beta-tool" {
+                    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(0)));
+                    assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(0)));
+                }
+                seen.push(format!("enter:{node}"));
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            },
+            |node, _, output, frame, seen| {
+                seen.push(format!("exit:{node}"));
+                if node == "alpha-tool" {
+                    frame.set(&alpha, PhenixValue::U64(7)).unwrap();
+                } else if node == "beta-tool" {
+                    frame.set(&beta, PhenixValue::U64(11)).unwrap();
+                }
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("unexpected mock provider result".into()),
+                }
+            },
+            || false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(report.executed_nodes, 4);
+    assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(7)));
+    assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(11)));
+    assert_eq!(seen.iter().filter(|entry| entry.as_str() == "enter:model").count(), 2);
+    assert!(seen.contains(&"enter:alpha-tool".to_owned()));
+    assert!(seen.contains(&"enter:beta-tool".to_owned()));
+}
+
+#[test]
 fn non_agent_fork_join_executes_two_pinned_providers_with_isolated_frames() {
     let resolved =
         selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
