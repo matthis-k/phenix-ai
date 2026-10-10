@@ -283,6 +283,92 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
     assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(8)));
 }
 
+#[cfg(unix)]
+#[test]
+fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
+    use std::{
+        path::Path,
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let folder = std::env::temp_dir().join(format!(
+        "phenix-kernel-native-{}-{id}",
+        std::process::id(),
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let library = folder.join(format!("libfixture.{}", std::env::consts::DLL_EXTENSION));
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../phenix-native-loader/tests/fixtures/pending_plugin.rs");
+    let result = Command::new("rustc")
+        .args(["--crate-type=cdylib", "--edition=2024"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "native fixture compilation failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let resolved = selected_fork_generation(
+        WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll),
+    );
+    let mut kernel = Kernel::new(resolved.kernel_config().clone());
+    kernel.activate_resolved_generation(&resolved).unwrap();
+    for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
+        kernel.register_embedded_factory(plugin_id(name), move || {
+            Box::new(MockNode {
+                kind,
+                model_calls: 0,
+            })
+        }).unwrap();
+    }
+    kernel.register_native_shared_library(plugin_id(TOOL_PROVIDER), &library).unwrap();
+    kernel.activate_all().unwrap();
+    let mut frame = WorkflowFrame::new(
+        resolved.generation_topology()
+            .workflow(&component_id(TOPOLOGY), "turn")
+            .unwrap()
+            .frame_schema().unwrap().clone(),
+        BTreeMap::from([
+            (Key::parse("alpha").unwrap(), PhenixValue::U64(0)),
+            (Key::parse("beta").unwrap(), PhenixValue::U64(0)),
+        ]),
+    ).unwrap();
+    let root = kernel.root_execution_handle(&Authority::default());
+    let report = root.execute_workflow_with_frame_pending(
+        (&component_id(TOPOLOGY), "turn"),
+        (&mut (), &mut frame),
+        |_, _, _, _| Ok::<_, String>(
+            serde_json::to_vec(&PhenixValue::Unit).unwrap()
+        ),
+        |node, _, output, frame, _| {
+            if node == "alpha-tool" {
+                frame.set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5)).unwrap();
+            } else if node == "beta-tool" {
+                frame.set(&Key::parse("beta").unwrap(), PhenixValue::U64(7)).unwrap();
+            }
+            match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                _ => Err("invalid native contract result".to_owned()),
+            }
+        },
+        || false,
+        None,
+    ).unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(report.executed_nodes, 4);
+    assert_eq!(frame.get(&Key::parse("alpha").unwrap()), Some(&PhenixValue::U64(5)));
+    assert_eq!(frame.get(&Key::parse("beta").unwrap()), Some(&PhenixValue::U64(7)));
+    drop(root);
+    drop(kernel);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 #[test]
 fn native_pending_plugin_callbacks_execute_under_canonical_fork_dispatch() {
     use crate::{PluginCallStart, PluginPendingCall, SharedPluginInvocation, WorkflowRunReport};
