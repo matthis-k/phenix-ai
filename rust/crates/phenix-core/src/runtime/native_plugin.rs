@@ -4,15 +4,15 @@
 //! plugin instance owns an independently prepared native ABI instance, while
 //! the existing Component/Service/Layer dispatcher remains authoritative.
 use super::{Kernel, PluginHost, PluginInstance, SharedPluginInvocation};
-use crate::{ComponentId, KernelError, PluginId, ServiceId};
+use crate::{ComponentId, InterfaceId, KernelError, PluginId, ServiceId};
 use phenix_native_loader::{
-    NativeInvocation, NativeLoadError, NativePluginInstance, NativePluginLibrary,
+    NativeCallContext, NativeInvocation, NativeLoadError, NativePluginInstance, NativePluginLibrary,
 };
 use phenix_plugin_abi::NativeCallTicket;
 use std::{
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, mpsc,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -60,7 +60,9 @@ fn native_library_factory(
 ) -> impl Fn() -> Box<dyn PluginInstance> + Send + Sync + 'static {
     move || {
         let endpoint_id = NEXT_NATIVE_INSTANCE
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
             .expect("native plugin instance identity space exhausted");
         Box::new(NativePluginAdapter {
             instance: Arc::new(Mutex::new(library.instance(endpoint_id))),
@@ -103,7 +105,9 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
         // Core supplies the actual root identity and the globally unique
         // callback number. A plugin never invents either correlation value.
         let call_id = NEXT_NATIVE_TICKET
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
             .map_err(|_| "native ABI call identity space exhausted".to_owned())?;
         let ticket = NativeCallTicket {
             root_id: host.root_id(),
@@ -112,6 +116,7 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
         let cancellation = host.cancellation_token().cloned().map(|token| {
             Arc::new(move || token.is_cancelled()) as Arc<dyn Fn() -> bool + Send + Sync>
         });
+        let (import_sender, import_receiver) = mpsc::channel();
         let (begin, wake) = {
             let mut instance = self
                 .instance
@@ -125,7 +130,10 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
                     component.as_str(),
                     service.as_str(),
                     input,
-                    cancellation,
+                    NativeCallContext {
+                        cancellation,
+                        import_sender: Some(import_sender),
+                    },
                 )
                 .map_err(|error| format!("native begin failed: {error}"))?;
             (begin, wake)
@@ -133,6 +141,17 @@ impl SharedPluginInvocation for NativeSharedEndpoint {
         let mut next = begin;
         let mut cancellation_sent = false;
         loop {
+            // A guest worker requests declared imports while its native call
+            // is pending. Dispatch stays on the owning Core host scope.
+            while let Ok(request) = import_receiver.try_recv() {
+                let result = InterfaceId::parse(request.interface)
+                    .map_err(|error| error.to_owned())
+                    .and_then(|interface| {
+                        host.invoke_import_wire(component, &interface, &request.input)
+                            .map_err(|error| error.to_string())
+                    });
+                let _ = request.reply.send(result);
+            }
             match next {
                 NativeInvocation::Ready(bytes) => return Ok(bytes),
                 NativeInvocation::Failed(bytes) => {
@@ -227,10 +246,8 @@ impl Kernel {
         // One plugin ID can have multiple resident versions. The loader's
         // own factory table is keyed by immutable content revision, never
         // the plugin name alone, and cannot impersonate Embedded instances.
-        self.native_factories.insert(
-            (plugin, actual),
-            Arc::new(native_library_factory(library)),
-        );
+        self.native_factories
+            .insert((plugin, actual), Arc::new(native_library_factory(library)));
         Ok(())
     }
 }
