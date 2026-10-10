@@ -360,9 +360,12 @@ Structured nested admission has a maximum active depth of 64, reported as
 a typed error. Optional step limits reserve budget on native admission,
 including for siblings whose provider callbacks have not completed.
 
-The pending execution path is available but not yet the Basic/Advanced
-default. Native plugin ABI entry and wakeup, selected artifact discovery,
-private subplan frame slots, and live-product streaming parity remain open.
+The live application worker now selects the native pending scheduler when
+its pinned generation has the declarative agent topology and no explicitly
+bound legacy agent provider. Explicit legacy bindings keep their selected
+service route. The native plugin ABI entry and host wake/import callbacks
+are implemented; selected portable artifact discovery, private included-
+subplan frames and full live-product streaming parity remain open.
 During reconciliation, Core carries frame schemas only for workflows whose
 component and owning plugin manifest remain unchanged. It revalidates those
 schemas against the new compiled plan. Replacing the topology author retires
@@ -451,15 +454,19 @@ provider bindings, normal-result projections, and rollback behavior. Core
 canaries exercise native Basic and Advanced node bindings, a non-agent Fork
 with typed child outputs, first-completed selection, scope cancellation,
 actual wakeup order, portable projection failures, and step-limit admission.
-The agent topology exposes an opt-in pending adapter with the same request,
-projection, usage and terminal outcome handling. This is **not yet a default
-Basic/Full application migration**.
+The agent topology exposes both cooperative and pending adapters with the
+same request, projection, usage and terminal outcome handling. The live
+application's declarative route now chooses pending execution. Existing
+client progress persistence, completion and cancellation fixtures were
+extended across Basic/Advanced and both product selections; final-head CI
+validation and broader live streaming/durable recovery proof remain required.
 
-**Still outstanding:** native plugin ABI `begin/poll/wake` host registration,
-provider-side cancellation participation beyond current cooperative tokens,
-full Basic/Full streaming/progress/usage and durable side-effect conformance,
-and portable plan/EntryBinding artifact activation. Those gates cannot be
-inferred from synthetic fixtures or green compile checks.
+**Still outstanding:** native Lua guest-adapter implementation, private
+included-subplan frame scheduling and publication, broader live Basic/Full
+streaming/progress/usage and durable side-effect conformance, and portable
+plan/EntryBinding artifact activation. Native ABI `begin/poll/wake`, selected
+import callbacks and provider-side cancellation are implemented, but their
+unit tests do not replace live product and restart acceptance tests.
 
 The Core also exposes `WorkflowOutcomeProjection` revision 1. It is a
 portable declarative normal-result selector for closed `Variant` tags,
