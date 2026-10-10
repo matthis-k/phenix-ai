@@ -74,6 +74,7 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S5-06 | TODO | cleanup implementation PR to create | S5-01; S5-03 | Move deterministic `phenix-plugin-basic-model` into test fixtures; stop selecting echo as production default. |
 | S5-07 | IN PROGRESS | #765, #766, #767 | S5-01 through S5-06 | Breaking cleanup underway. #765 removes routing/MCP/macro compatibility. #766 and #767 delete obsolete agent and hook crates and update Cargo lock, Nix, product selection and tests. Remaining catalog and echo cleanup belongs to other PRs. |
 | S5-08 | TODO | tracker | S5-07 | Reconcile all rows in both file matrices with changed tree. Every Retire/Move path has replacement PR + test evidence or documented `Keep` decision. |
+| S5-09 | IN PROGRESS | #768 | #766; #767 | Application's alternate `AgentLoopInterface` and `agent_loop_service` dispatch path deleted in `1784d1c`; one selected generation-pinned `agent.turn` workflow is required before prompt admission. Foreign service-only test removed because selected-turn application tests already cover provider cancellation, output and journal replay. Follow-up CLI fixture `33811e5` verifies optional application tools do not invalidate the selected workflow. Require current-head CI and client parity before PROVEN. [Owner matrix](https://github.com/matthis-k/phenix-ai/pull/768#issuecomment-6094811078). |
 | S6-01 | TODO | #763 or new final integration PR | S2-S5 | Final focused and full checks on exact merge candidates, including non-agent service-only and product parity. |
 | S6-02 | TODO | tracker | S6-01 | Closure report: paths/classes removed, net production LOC, total tests, mechanisms before/after, open exceptions and owning follow-ups. |
 | S6-03 | TODO | tracker | S6-02 | Close tracker after all required matrices are complete and remaining scope is explicitly assigned to new PRs. |
@@ -113,6 +114,7 @@ PRs are split by ownership, not compatibility level:
 | [#765](https://github.com/matthis-k/phenix-ai/pull/765) | main | Old model routing data coercion, implicit profile adoption, MCP protocol downgrade/wire branches and macro shim | Clippy, strict model options and MCP integration |
 | [#766](https://github.com/matthis-k/phenix-ai/pull/766) | #726 | Entire old agent-loop crate, factory registration, old execution regressions and Cargo/Nix products | Declarative Basic/Full and external client execution |
 | [#767](https://github.com/matthis-k/phenix-ai/pull/767) | #766 | Entire hook dispatcher crate, old API/manifest, profile registration, old tests | Core Layer/Event conformance and product checks |
+| [#768](https://github.com/matthis-k/phenix-ai/pull/768) | #767 | Alternate application agent service invocation, import, dispatch state and foreign-only fixture | Existing Basic/Advanced/Full declarative application canary, tool/turn cancellation and replay |
 
 Breaking changes are accepted. No deprecation interval, legacy parser, wire fallback or replacement shim is planned. `IN PROGRESS` means the code was deleted in the linked branch, not that the PR has passed CI or been merged. The next independent cleanup owner must delete the remaining static catalog and echo production provider rather than extend them.
 
@@ -145,15 +147,23 @@ The [#733 audit](post-redesign-file-dispositions.md) already lists concrete down
 
 ## 2026-10-10 cleanup and CI handoff
 
-Latest owner heads after this session: #765 `ff26aaa3`, #766 `6ca962f`, #767 `435863b`. The [owner matrix index](microkernel-tracker/pr-task-matrices.md) now links editable cleanup checklists L765-01..05, L766-01..06 and L767-01..05. Old planned rows for the already-open agent/hooks cleanup PRs were removed.
+Owner heads, updated 2026-10-10: #765 `ff26aaa3`, #766 `4d9bd99`, #767 `fd4c26b`, #768 `33811e5`. The [owner matrix index](microkernel-tracker/pr-task-matrices.md) now links 83 individually numbered implementation checklists L765-01..05, L766-01..06, L767-01..05 and L768-01..05. Old planned rows for the already-open agent/hooks cleanup PRs were removed.
 
 - #765: exact-head [reduced CI 38029647180](https://github.com/matthis-k/phenix-ai/actions/runs/38029647180) passed; strict contract and consumer semantics still need targeted proof.
 - #766: earlier [CI 38029939148](https://github.com/matthis-k/phenix-ai/actions/runs/38029939148) failed on tests that explicitly selected or excluded the deleted `phenix.agent-loop` ID and a generated CI shard reference. Follow-up commits `3daa7b4`, `01f5a74`, `a0a2c0f`, `6ca962f` remove those references without reintroducing the plugin. Recheck current-head Harness agent/product tests, generated workflow parity, format/Clippy and application output.
 - #767: earlier [CI 38029944725](https://github.com/matthis-k/phenix-ai/actions/runs/38029944725) failed for inherited legacy tests, rustfmt and an unused test helper. Follow-ups through `435863b` correct those failures and generated metadata for both deleted crates. Recheck current-head CI, Event/Layer parity and inherited #766 parent reconciliation.
 - #764: previous [maintenance run 38029893213](https://github.com/matthis-k/phenix-ai/actions/runs/38029893213) failed trailing spaces on repository-file matrix rows. Commit `bc59221` trims 596 trailing spaces. The owner index now has 78 tasks across 11 PRs. Validate this tracker head without claiming implementation proof.
-- Current counts are **42 central gates**: 4 PROVEN, 17 IN PROGRESS, 21 TODO; **600 main-tracker paths**: 2 PROVEN, 74 IN PROGRESS, 524 TODO; **58 #726 paths**: 50 IN PROGRESS, 8 BLOCKED. Prior handoff counts in this file were stale; those rows, not narrative estimates, are the source of truth.
+- Current counts are **43 central gates**: 4 PROVEN, 18 IN PROGRESS, 21 TODO; **600 main-tracker paths**: 2 PROVEN, 74 IN PROGRESS, 524 TODO; **58 #726 paths**: 50 IN PROGRESS, 8 BLOCKED. Prior handoff counts in this file were stale; those rows, not narrative estimates, are the source of truth.
 
 Next unblocked work: L766-03/04 and L767-02/03 real parity, W014/W022/W026/W031-W033 duplicate responsibility audit on #726, and S2-02 native ABI/loader extraction into its own PR. Keep cleanup code off this tracking branch.
+
+## Application route cleanup, 2026-10-10
+
+#766 exact-head [CI 38031696729](https://github.com/matthis-k/phenix-ai/actions/runs/38031696729) passed source, Clippy, Core, Harness library and plugin tests, but failed one **stale binary CLI assertion**: disabling the optional application tool adapter no longer blocks workflow resolution after the imperative loop was deleted. The test was replaced with an assertion that the selected workflow remains present, in #766 `4d9bd99`, #767 `fd4c26b` and #768 `33811e5`. These replacement commits require current-head CI.
+
+#768 owns actual **application-level alternate-executor deletion** as a separate stacked PR. In `application.rs`, it removes the optional old service import, `bound_application_agent_plugin` and service dispatch, and keeps the selected pending workflow path. It removes one foreign-service-only canary; `application_prompt_executes_selected_declarative_only_graph` already checks all four Basic/Advanced/Full profiles for independently selected turn provider, provider-initiated cancel, normal completion and durable journal replay. Record any missing semantics in L768-03, not as an old-route compatibility shim.
+
+The #767 head and its base #766 are changing together; GitHub currently reports mergeability needs reconciliation. Do not merge the stacked branches until their exact parent relationship, CI and file inventories are clean.
 
 ## Non-negotiable acceptance
 
