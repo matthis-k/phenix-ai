@@ -11,6 +11,7 @@
 use phenix_plugin_abi::{
     FEATURE_HOST_CANCELLATION, FEATURE_PENDING_CALLS, FEATURE_WAKE_POLL, NativeAbiError,
     NativeAbiHeader, NativeCallRequest, NativeCallResult, NativeCallTicket, NativeHostV1,
+    NativeSlice,
     NativeOwnedBuffer, NativePluginEntryV1, NativePluginV1, RESULT_ERROR, RESULT_PENDING,
     RESULT_READY,
 };
@@ -260,11 +261,19 @@ impl NativePluginInstance {
         Ok(())
     }
 
-    pub fn begin(&mut self, request: NativeCallRequest) -> Result<NativeInvocation, NativeLoadError> {
+    /// Native request buffers are borrowed *only* for this call; no public
+    /// API accepts arbitrary raw input pointers.
+    pub fn begin_component(
+        &mut self,
+        ticket: NativeCallTicket,
+        scope: u64,
+        component: &str,
+        interface: &str,
+        input: &[u8],
+    ) -> Result<NativeInvocation, NativeLoadError> {
         if self.state != NativeInstanceState::Active {
             return Err(NativeLoadError::Lifecycle("begin requires active instance"));
         }
-        let ticket = request.ticket;
         if ticket.root_id == 0 || ticket.call_id == 0 {
             return Err(NativeLoadError::InvalidResult(NativeAbiError::InvalidTicket));
         }
@@ -275,6 +284,17 @@ impl NativePluginInstance {
         // SAFETY: request's borrowed bytes must remain valid for this call;
         // native plugin must not retain borrowed pointers after begin returns.
         let table = unsafe { &*self.module.table };
+        let borrowed = |bytes: &[u8]| NativeSlice {
+            ptr: bytes.as_ptr(),
+            len: bytes.len(),
+        };
+        let request = NativeCallRequest {
+            ticket,
+            scope,
+            component: borrowed(component.as_bytes()),
+            interface: borrowed(interface.as_bytes()),
+            input: borrowed(input),
+        };
         let result = unsafe { table.begin.expect("validated ABI table")(table.context, request) };
         let value = decode_result(result, ticket)?;
         if matches!(value, NativeInvocation::Pending) {
@@ -331,6 +351,29 @@ impl NativePluginInstance {
         unsafe { table.destroy.expect("validated ABI table")(table.context, self.generation) };
         self.state = NativeInstanceState::Destroyed;
         Ok(())
+    }
+}
+
+impl Drop for NativePluginInstance {
+    fn drop(&mut self) {
+        if self.state == NativeInstanceState::Active && self.pending.is_empty() {
+            let _ = self.stop_and_destroy();
+        }
+        if self.state != NativeInstanceState::Destroyed {
+            // Unfinished or rejected stop leaves native code potentially
+            // running. Prefer a deliberately retained image/host to a UAF:
+            // caller cannot treat dropping a result as proof of settlement.
+            std::mem::forget(Arc::clone(&self.module));
+            let inactive = Box::new(NativeHostV1 {
+                header: self.host.header,
+                context: std::ptr::null_mut(),
+                is_cancelled: None,
+                wake: None,
+                invoke_import: None,
+            });
+            let still_referenced = std::mem::replace(&mut self.host, inactive);
+            std::mem::forget(still_referenced);
+        }
     }
 }
 
