@@ -1886,7 +1886,6 @@ dependencies = [
  "phenix-plugin-execution",
  "phenix-plugin-frontend",
  "phenix-plugin-interactive-ui",
- "phenix-plugin-hooks",
  "phenix-plugin-jobs",
  "phenix-plugin-language",
  "phenix-plugin-memory",
@@ -2004,20 +2003,6 @@ dependencies = [
  "phenix-sdk-macros",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "phenix-plugin-hooks"
-version = "0.1.0"
-dependencies = [
- "phenix-core",
- "phenix-plugin-context",
- "phenix-plugin-execution",
- "phenix-sdk",
- "phenix-sdk-macros",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
