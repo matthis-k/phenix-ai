@@ -165,9 +165,7 @@ impl Kernel {
                 let instance = (|| -> Result<Option<Box<dyn PluginInstance>>, KernelError> {
                     match &manifest.execution {
                         PluginExecution::ResourceOnly => Ok(None),
-                        PluginExecution::Embedded => {
-                            self.take_embedded_instance(plugin).map(Some)
-                        }
+                        PluginExecution::Embedded => self.take_embedded_instance(plugin).map(Some),
                         PluginExecution::Native { artifact } => {
                             self.take_native_instance(plugin, artifact).map(Some)
                         }
