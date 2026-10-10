@@ -183,7 +183,7 @@ fn contribution(attributes: &[Attribute]) -> syn::Result<Option<Contribution>> {
         let Some(Meta::List(kind)) = outer.first() else {
             continue;
         };
-        if kind.path.is_ident("export") {
+        if kind.path.is_ident("export") || kind.path.is_ident("provide") {
             return Ok(Some(Contribution::Export(parse_interface(&kind.tokens)?)));
         }
         if kind.path.is_ident("layer") {

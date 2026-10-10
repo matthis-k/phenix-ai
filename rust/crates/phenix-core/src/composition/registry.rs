@@ -55,6 +55,10 @@ pub enum KernelError {
     },
     ResourceOnlyService(PluginId),
     UnknownPlugin(PluginId),
+    /// The requested Rust plugin type was not part of candidate preparation.
+    UnselectedPluginType(&'static str),
+    /// Prepared executable metadata differs from this kernel's selected candidate.
+    PreparedPluginMismatch(PluginId),
     NoEligibleProvider(ServiceId),
     BoundProviderUnavailable {
         service: ServiceId,
@@ -182,6 +186,15 @@ impl Display for KernelError {
                 )
             }
             Self::UnknownPlugin(plugin) => write!(f, "unknown plugin: {plugin}"),
+            Self::UnselectedPluginType(rust_type) => {
+                write!(f, "plugin type {rust_type} is not in the selected graph")
+            }
+            Self::PreparedPluginMismatch(plugin) => {
+                write!(
+                    f,
+                    "prepared plugin {plugin} does not match the selected kernel manifest"
+                )
+            }
             Self::NoEligibleProvider(service) => {
                 write!(f, "no eligible provider for service {service}")
             }

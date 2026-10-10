@@ -8,6 +8,7 @@ publish = false
 role = "passive-library"
 
 [dependencies]
+phenix-contract = { path = "../phenix-contract" }
 phenix-core = { path = "../phenix-core" }
 phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }

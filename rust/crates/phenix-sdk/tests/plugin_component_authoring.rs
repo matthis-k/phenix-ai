@@ -354,3 +354,32 @@ fn attribute_only_components_reject_structurally_incompatible_provider_and_consu
 
     assert!(error.to_string().contains("incompatible"));
 }
+
+#[allow(dead_code)]
+#[phenix_sdk::component]
+struct ProvidedApi {}
+
+#[phenix_sdk::component]
+impl ProvidedApi {
+    #[phenix(provide(ModelsInference), public)]
+    fn serve(&self, _request: ConsumerRequest) -> ConsumerResponse {
+        ConsumerResponse
+    }
+}
+
+#[test]
+fn typed_provide_on_a_component_implies_terminal_dispatch() {
+    let exports = <ProvidedApi as StaticComponentBehavior>::exports();
+    assert_eq!(exports.len(), 1);
+    assert_eq!(exports[0].interface.as_str(), "fixture.models.inference@1");
+    assert!(exports[0].public);
+    assert!(exports[0].terminal);
+    assert_eq!(
+        exports[0].schema.request(),
+        &ConsumerRequest::phenix_schema()
+    );
+    assert_eq!(
+        exports[0].schema.response(),
+        &ConsumerResponse::phenix_schema()
+    );
+}

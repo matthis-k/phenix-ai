@@ -328,6 +328,7 @@ mod public_projection;
 pub use api::*;
 pub use authoring::*;
 pub use contracts::*;
+pub use phenix_contract::{Contribution, ContributionRole, ContributionSet, ContributionSetError};
 pub use phenix_core::{
     ArtifactRevision, Authority, Bytes, CallableRef, ComponentId, Contract, ContractId,
     ContractValue, DurableSchema, Exact, HasPhenixSchema, Key, LayerResult, ObjectRef,
@@ -340,7 +341,7 @@ pub use phenix_provider_sdk::{
     ProviderAuthInterface, ProviderAuthResponse, ProviderError, RateLimits,
 };
 pub use phenix_sdk_macros::{
-    PhenixContract, PhenixValue, component, expose, interface, plugin, resource,
+    PhenixContract, PhenixValue, component, contract, expose, interface, plugin, resource,
 };
 pub use providers::{Provider, ProviderSdkError, ProviderSdkExt, Providers};
 pub use public_projection::*;

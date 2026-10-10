@@ -1,5 +1,6 @@
 use super::encode_result_runtime;
 
+use phenix_contract::ContributionSet;
 pub use phenix_core::ListenerProjection;
 use phenix_core::{
     Authority, ComponentId, ComponentInterface, ComponentInvocationError, ComponentManifest,
@@ -9,7 +10,8 @@ use phenix_core::{
     SubscriptionSpec, ValueError,
 };
 use std::{
-    collections::BTreeMap,
+    any::TypeId,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt::{self, Display, Formatter},
     marker::PhantomData,
@@ -30,6 +32,8 @@ pub mod __phenix_plugin {
 #[derive(Clone)]
 pub struct StaticPluginDependency {
     descriptor: fn() -> StaticPluginDescriptor,
+    // Rust-only visitation key. Never part of portable descriptor identity.
+    definition_type: TypeId,
 }
 
 impl StaticPluginDependency {
@@ -37,10 +41,11 @@ impl StaticPluginDependency {
     pub fn of<T: StaticPluginDefinition>() -> Self {
         Self {
             descriptor: T::descriptor,
+            definition_type: TypeId::of::<T>(),
         }
     }
 
-    fn descriptor(&self) -> StaticPluginDescriptor {
+    pub(super) fn descriptor(&self) -> StaticPluginDescriptor {
         (self.descriptor)()
     }
 }
@@ -56,14 +61,22 @@ pub struct StaticPluginDescriptor {
     pub maximum_authority: Authority,
     pub dependencies: Vec<StaticPluginDependency>,
     pub embedded_factory: Option<StaticEmbeddedFactory>,
+    /// Static, inert contributions from this plugin's authored declarations.
+    pub contributions: fn() -> Result<ContributionSet, String>,
 }
 
 pub trait StaticPluginFactory {
     fn factory() -> Box<dyn phenix_core::PluginInstance>;
 }
 
-pub trait StaticPluginDefinition {
+pub trait StaticPluginDefinition: 'static {
     fn descriptor() -> StaticPluginDescriptor;
+
+    /// Inert declarations authored by this plugin. Existing plugins emit none.
+    /// Consumers must validate these during candidate-generation preparation.
+    fn contributions() -> Result<ContributionSet, String> {
+        Ok(ContributionSet::default())
+    }
 
     fn manifest() -> PluginManifest
     where
@@ -115,6 +128,14 @@ pub enum StaticPluginGraphError {
     Cycle {
         path: Vec<PluginId>,
     },
+    InvalidExecutionFactory {
+        plugin: PluginId,
+    },
+    InvalidContributions {
+        plugin: PluginId,
+        reason: String,
+    },
+    ContributionConflict(phenix_contract::ContributionSetError),
 }
 
 impl Display for StaticPluginGraphError {
@@ -136,6 +157,19 @@ impl Display for StaticPluginGraphError {
                 }
                 Ok(())
             }
+            Self::InvalidExecutionFactory { plugin } => {
+                write!(
+                    f,
+                    "non-embedded plugin {plugin} cannot declare an embedded factory"
+                )
+            }
+            Self::InvalidContributions { plugin, reason } => {
+                write!(
+                    f,
+                    "plugin {plugin} has invalid static contributions: {reason}"
+                )
+            }
+            Self::ContributionConflict(error) => Display::fmt(error, f),
         }
     }
 }
@@ -145,53 +179,204 @@ impl Error for StaticPluginGraphError {}
 #[derive(Clone)]
 pub struct StaticPluginGraph {
     nodes: BTreeMap<PluginId, StaticPluginDescriptor>,
+    validated_origins: BTreeSet<(PluginId, TypeId)>,
+    // Freeze each selected Rust definition once per candidate, even when
+    // multiple parents refer to it. TypeId never leaves this SDK graph.
+    authored_descriptors: BTreeMap<TypeId, StaticPluginDescriptor>,
+    // Freeze dependency identities alongside each selected descriptor. A
+    // dependency's author function must not be rerun during equivalence checks.
+    dependency_snapshots: BTreeMap<PluginId, Vec<PluginId>>,
+    contribution_snapshots: BTreeMap<PluginId, ContributionSet>,
+    contributions: ContributionSet,
 }
 
 impl StaticPluginGraph {
     pub fn compose<T: StaticPluginDefinition>() -> Result<Self, StaticPluginGraphError> {
         let mut graph = Self {
             nodes: BTreeMap::new(),
+            validated_origins: BTreeSet::new(),
+            authored_descriptors: BTreeMap::new(),
+            dependency_snapshots: BTreeMap::new(),
+            contribution_snapshots: BTreeMap::new(),
+            contributions: ContributionSet::default(),
         };
         let mut visiting = Vec::new();
-        graph.collect(T::descriptor(), &mut visiting)?;
+        let root = T::descriptor();
+        graph
+            .authored_descriptors
+            .insert(TypeId::of::<T>(), root.clone());
+        graph.collect(root, TypeId::of::<T>(), &mut visiting)?;
+        // Do not hand an activation caller a graph with conflicting or
+        // forged contributions. Freeze the validated bytes at preparation.
+        graph.contributions = graph.collect_contributions()?;
         Ok(graph)
     }
 
     fn collect(
         &mut self,
         descriptor: StaticPluginDescriptor,
+        origin: TypeId,
         visiting: &mut Vec<PluginId>,
     ) -> Result<(), StaticPluginGraphError> {
+        if !matches!(&descriptor.execution, PluginExecution::Embedded)
+            && descriptor.embedded_factory.is_some()
+        {
+            return Err(StaticPluginGraphError::InvalidExecutionFactory {
+                plugin: descriptor.id,
+            });
+        }
         if let Some(start) = visiting.iter().position(|id| id == &descriptor.id) {
             let mut path = visiting[start..].to_vec();
             path.push(descriptor.id);
             return Err(StaticPluginGraphError::Cycle { path });
         }
+        // Revisit each Rust type only once after its entire transitive closure
+        // was validated. This avoids exponential work on nested diamonds.
+        // Different types with matching plugin IDs still require full checks.
+        if self
+            .validated_origins
+            .contains(&(descriptor.id.clone(), origin))
+        {
+            return Ok(());
+        }
+        // Each distinct selected Rust definition lowers its declarations once.
+        // Duplicate checks reuse the previously captured snapshot; no later
+        // graph read or final collection reruns user-authored lowering.
+        let declared = (descriptor.contributions)().map_err(|reason| {
+            StaticPluginGraphError::InvalidContributions {
+                plugin: descriptor.id.clone(),
+                reason,
+            }
+        })?;
+        for item in declared.iter() {
+            if item.owner != descriptor.id {
+                return Err(StaticPluginGraphError::InvalidContributions {
+                    plugin: descriptor.id.clone(),
+                    reason: format!(
+                        "contribution {} claims unexpected owner {}",
+                        item.id, item.owner
+                    ),
+                });
+            }
+        }
+        // Resolve a Rust definition at most once per candidate, including
+        // diamonds and equivalent aliases. Later paths reuse that same
+        // immutable descriptor instead of executing author code again.
+        let dependencies = descriptor
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                let authored = self
+                    .authored_descriptors
+                    .entry(dependency.definition_type)
+                    .or_insert_with(|| dependency.descriptor())
+                    .clone();
+                (dependency.definition_type, authored)
+            })
+            .collect::<Vec<_>>();
+        let mut dependency_ids = dependencies
+            .iter()
+            .map(|(_, dependency)| dependency.id.clone())
+            .collect::<Vec<_>>();
+        dependency_ids.sort();
         if let Some(existing) = self.nodes.get(&descriptor.id) {
-            return if existing.definition == descriptor.definition {
-                Ok(())
+            // The Rust definition name alone cannot prove equivalence.
+            // Compare portable metadata rather than unstable function addresses.
+            if existing.definition == descriptor.definition
+                && existing.version == descriptor.version
+                && existing.execution == descriptor.execution
+                && existing.maximum_authority == descriptor.maximum_authority
+                && self.dependency_snapshots.get(&descriptor.id) == Some(&dependency_ids)
+                && existing.embedded_factory.is_some() == descriptor.embedded_factory.is_some()
+                // Two distinct Rust types with Embedded execution cannot
+                // share an identity even without a factory: either type may
+                // supply executable state through explicit instance preload.
+                // Repeated visits to the same Rust TypeId exited above.
+                && !matches!(&existing.execution, PluginExecution::Embedded)
+                && self.contribution_snapshots.get(&descriptor.id) == Some(&declared)
+            {
+                // Matching immediate dependency IDs do not prove that their
+                // transitive declarations match. A second path through a
+                // diamond must still validate the candidate dependency
+                // closure instead of silently accepting the first branch.
+                visiting.push(descriptor.id.clone());
+                for (dependency_type, dependency) in dependencies {
+                    self.collect(dependency, dependency_type, visiting)?;
+                }
+                visiting.pop();
+                self.validated_origins.insert((descriptor.id, origin));
+                return Ok(());
+            }
+            let (first, second) = if existing.definition <= descriptor.definition {
+                (existing.definition, descriptor.definition)
             } else {
-                Err(StaticPluginGraphError::DuplicateId {
-                    id: descriptor.id,
-                    first: existing.definition,
-                    second: descriptor.definition,
-                })
+                (descriptor.definition, existing.definition)
             };
+            return Err(StaticPluginGraphError::DuplicateId {
+                id: descriptor.id,
+                first,
+                second,
+            });
         }
 
         let id = descriptor.id.clone();
         visiting.push(id.clone());
-        for dependency in &descriptor.dependencies {
-            self.collect(dependency.descriptor(), visiting)?;
+        for (dependency_type, dependency) in dependencies {
+            self.collect(dependency, dependency_type, visiting)?;
         }
         visiting.pop();
-        self.nodes.insert(id, descriptor);
+        self.nodes.insert(id.clone(), descriptor);
+        self.dependency_snapshots.insert(id.clone(), dependency_ids);
+        self.contribution_snapshots.insert(id.clone(), declared);
+        self.validated_origins.insert((id, origin));
         Ok(())
+    }
+
+    /// Gather and validate declarations from the selected dependency closure.
+    /// This runs once while composing a candidate, not on later reads.
+    fn collect_contributions(&self) -> Result<ContributionSet, StaticPluginGraphError> {
+        let mut all = Vec::new();
+        for declarations in self.contribution_snapshots.values() {
+            all.extend(declarations.iter().cloned());
+        }
+        ContributionSet::collect(all).map_err(StaticPluginGraphError::ContributionConflict)
+    }
+
+    /// Return the validated, immutable declaration snapshot from composition.
+    /// Re-reading cannot invoke author code or change generation input.
+    pub fn contributions(&self) -> Result<ContributionSet, StaticPluginGraphError> {
+        Ok(self.contributions.clone())
+    }
+
+    /// Only a Rust definition included in the validated dependency closure
+    /// may preload a stateful instance into this prepared graph. An identical
+    /// declaration string supplied by a different type is not proof of origin.
+    pub(super) fn contains_origin<T: StaticPluginDefinition>(&self, id: &PluginId) -> bool {
+        self.validated_origins
+            .contains(&(id.clone(), TypeId::of::<T>()))
+    }
+
+    /// Resolve a selected Rust type from preparation, without calling its
+    /// descriptor again after the candidate's metadata was frozen.
+    pub(super) fn prepared_descriptor<T: StaticPluginDefinition>(
+        &self,
+    ) -> Option<&StaticPluginDescriptor> {
+        let authored = self.authored_descriptors.get(&TypeId::of::<T>())?;
+        if !self.contains_origin::<T>(&authored.id) {
+            return None;
+        }
+        self.nodes.get(&authored.id)
     }
 
     #[must_use]
     pub fn descriptor(&self, id: &PluginId) -> Option<&StaticPluginDescriptor> {
         self.nodes.get(id)
+    }
+
+    /// Dependencies are frozen with the selected descriptor during preparation.
+    /// Looking them up here must not evaluate authored dependency callbacks.
+    pub(super) fn prepared_dependencies(&self, id: &PluginId) -> Option<&[PluginId]> {
+        self.dependency_snapshots.get(id).map(Vec::as_slice)
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &PluginId> {

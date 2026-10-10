@@ -367,10 +367,10 @@
 //! }
 //! ```
 //!
-//! Plugin-root imports are embedded component behavior as well. A resource-only
-//! plugin cannot smuggle dispatch behavior through root-field sugar.
+//! Resource-only plugins may declare root imports. The selected generation
+//! resolves these ports without adding an embedded component or handler.
 //!
-//! ```compile_fail
+//! ```
 //! #[phenix_sdk::interface("phenix.resource-only.models@1")]
 //! struct Models;
 //!
@@ -384,15 +384,18 @@
 //! }
 //! ```
 //!
-//! The stateless module form is an embedded-handler form. It is therefore
-//! invalid for a resource-only plugin as well.
+//! Resource-only plugin modules may contain static contribution declarations,
+//! but executable handlers still require an embedded runtime.
 //!
 //! ```compile_fail
 //! #[phenix_sdk::plugin(
 //!     id = "phenix.resource-only-stateless",
 //!     execution = phenix_sdk::PluginExecution::ResourceOnly
 //! )]
-//! mod plugin {}
+//! mod plugin {
+//!     #[phenix(export("fixture.resource-only.invalid@1"))]
+//!     fn run() -> u64 { 1 }
+//! }
 //! ```
 //!
 //! Runtime-hosted plugins are metadata for an external runtime. They cannot
@@ -448,6 +451,7 @@ mod event_context;
 mod plugin;
 mod static_component;
 mod static_config;
+mod static_contribution;
 mod static_dispatch;
 mod static_graph_runtime;
 mod static_import;
@@ -467,6 +471,7 @@ pub use static_component::{
     StaticPluginComponents,
 };
 pub use static_config::{StaticPluginConfigDescriptor, StaticPluginConfiguration};
+pub use static_contribution::{StaticContributionDefinition, StaticRawContribution};
 pub use static_dispatch::{
     LayerContext, StaticComponentDispatch, StaticComponentRuntimeDispatch,
     StaticPluginComponentDispatch, StaticPluginInstance, StaticPluginInvoke, StaticPluginStart,

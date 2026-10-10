@@ -2227,6 +2227,7 @@ dependencies = [
 name = "phenix-sdk"
 version = "0.1.0"
 dependencies = [
+ "phenix-contract",
  "phenix-core",
  "phenix-plugin-api",
  "phenix-plugin-options",
