@@ -284,6 +284,135 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
 }
 
 #[test]
+fn native_pending_plugin_callbacks_execute_under_canonical_fork_dispatch() {
+    use crate::{
+        PluginCallStart, PluginPendingCall, SharedPluginInvocation, WorkflowRunReport,
+    };
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct NativeAsyncProvider {
+        started: mpsc::Sender<()>,
+        release: Arc<Mutex<mpsc::Receiver<()>>>,
+    }
+
+    impl SharedPluginInvocation for NativeAsyncProvider {
+        fn begin_component(
+            &self,
+            _component: &ComponentId,
+            _service: &ServiceId,
+            _input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> PluginCallStart {
+            let (pending, completion) = PluginPendingCall::channel();
+            let started = self.started.clone();
+            let release = Arc::clone(&self.release);
+            std::thread::spawn(move || {
+                started.send(()).unwrap();
+                release.lock().unwrap().recv().unwrap();
+                let reply = serde_json::to_vec(&PhenixValue::String("done".into())).unwrap();
+                completion.complete(Ok(reply)).unwrap();
+            });
+            PluginCallStart::Pending(pending)
+        }
+    }
+
+    struct AsyncInstance(Arc<NativeAsyncProvider>);
+
+    impl PluginInstance for AsyncInstance {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn shared_invocation(&self) -> Option<Arc<dyn SharedPluginInvocation>> {
+            Some(Arc::clone(&self.0) as Arc<dyn SharedPluginInvocation>)
+        }
+    }
+
+    let selected =
+        selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
+    let mut kernel = Kernel::new(selected.kernel_config().clone());
+    kernel.activate_resolved_generation(&selected).unwrap();
+    for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
+        kernel
+            .register_embedded_factory(plugin_id(name), move || {
+                Box::new(MockNode { kind, model_calls: 0 })
+            })
+            .unwrap();
+    }
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let async_provider = Arc::new(NativeAsyncProvider {
+        started: started_tx,
+        release: Arc::new(Mutex::new(release_rx)),
+    });
+    kernel
+        .register_embedded_factory(plugin_id(TOOL_PROVIDER), move || {
+            Box::new(AsyncInstance(Arc::clone(&async_provider)))
+        })
+        .unwrap();
+    kernel.activate_all().unwrap();
+    let root = kernel.root_execution_handle(&Authority::default());
+    let schema = selected
+        .generation_topology()
+        .workflow(&component_id(TOPOLOGY), "turn")
+        .unwrap()
+        .frame_schema()
+        .unwrap()
+        .clone();
+    let thread = std::thread::spawn(move || {
+        let alpha = Key::parse("alpha").unwrap();
+        let beta = Key::parse("beta").unwrap();
+        let mut frame = WorkflowFrame::new(
+            schema,
+            BTreeMap::from([
+                (alpha.clone(), PhenixValue::U64(0)),
+                (beta.clone(), PhenixValue::U64(0)),
+            ]),
+        )
+        .unwrap();
+        let mut visited = Vec::<String>::new();
+        let report: WorkflowRunReport = root
+            .execute_workflow_with_frame_pending(
+                (&component_id(TOPOLOGY), "turn"),
+                (&mut visited, &mut frame),
+                |node, _, _, visited| {
+                    visited.push(node.to_owned());
+                    Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+                },
+                |node, _, result, frame, _| {
+                    if node == "alpha-tool" {
+                        frame.set(&alpha, PhenixValue::U64(10)).unwrap();
+                    } else if node == "beta-tool" {
+                        frame.set(&beta, PhenixValue::U64(20)).unwrap();
+                    }
+                    match serde_json::from_slice::<PhenixValue>(result).unwrap() {
+                        PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                        _ => Err("invalid reply".into()),
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        (report, frame, visited)
+    });
+    // Both provider callbacks start before either completes; no serial
+    // dispatch hidden under the fork's apparent concurrency.
+    started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    release_tx.send(()).unwrap();
+    release_tx.send(()).unwrap();
+    let (report, frame, visited) = thread.join().unwrap();
+    assert_eq!(report.final_outcome, "final");
+    assert_eq!(report.executed_nodes, 4);
+    assert_eq!(frame.get(&Key::parse("alpha").unwrap()), Some(&PhenixValue::U64(10)));
+    assert_eq!(frame.get(&Key::parse("beta").unwrap()), Some(&PhenixValue::U64(20)));
+    assert!(visited.contains(&"alpha-tool".into()));
+    assert!(visited.contains(&"beta-tool".into()));
+}
+
+#[test]
 fn pending_and_cooperative_paths_match_basic_and_advanced_node_semantics() {
     for selected in [BASIC, ADVANCED] {
         let mut histories = Vec::new();
