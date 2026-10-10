@@ -6,7 +6,7 @@ Source: `main` nontruncated Git tree `d488c4056ee334938c2ca88aec9017379a3ef7c4` 
 
 Use the immutable F ID; never renumber. Change state `TODO -> IN PROGRESS -> PROVEN` or `REMOVED`. For PROVEN, fill the decision/evidence cell with **keep/refactor/move/retire**, replacement PR/commit, consumer check and current-head test URL as applicable. A retain decision needs a source/use explanation. A removed file stays listed as REMOVED. Add newly tracked paths with the next unused F ID, even if alphabetic order changes. Close each row only after checking its exact path. Refresh against `git ls-files`; don't silently drop new paths.
 
-Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audit: 4. Every initial row starts TODO because the earlier design classification did not prove liveness.
+Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 4 added later. Current [main `1dd0ffc`](https://github.com/matthis-k/phenix-ai/commit/1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063) has 595 nontruncated blobs after [#770](https://github.com/matthis-k/phenix-ai/pull/770) deleted F0277. Keep that file's stable REMOVED row and the four tracker-only F0597-F0600 rows, giving 600 historical IDs. Current proof states: 2 PROVEN, 400 IN PROGRESS, 197 TODO, 1 REMOVED. Source review is not liveness or regression proof.
 
 
 ### `.githooks/`
