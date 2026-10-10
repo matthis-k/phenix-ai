@@ -19,11 +19,11 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0002 | TODO | `.github/workflows/ci.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | pending | 
-| F0003 | TODO | `.github/workflows/dependency-security.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | pending | 
-| F0004 | TODO | `.github/workflows/shared-binary-cache.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | pending | 
-| F0005 | TODO | `.github/workflows/sync-maintenance.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | pending | 
-| F0006 | TODO | `.github/workflows/worker-executor.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | pending | 
+| F0002 | IN PROGRESS | `.github/workflows/ci.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | KEEP generated workflow. `ci.yml:1` names phenix-flake-ci as author; `:35-380` runs dependency-derived PR check selection, and source jobs invoke Nix maintenance. Audit affected-check skip safety and generated parity, then run CI on exact head. Edit Nix declarations, not generated YAML. | 
+| F0003 | IN PROGRESS | `.github/workflows/dependency-security.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | KEEP security CI. This workflow runs `cargo deny check licenses sources` on PRs, main and its weekly schedule. Decide whether it belongs in flake-ci maintenance and retain scheduled security coverage. Check exact-head workflow run before certification. | 
+| F0004 | IN PROGRESS | `.github/workflows/shared-binary-cache.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | KEEP post-CI binary cache publishing. Workflow triggers after main CI success or manual dispatch; publishes Nix outputs to cache. Validate untrusted PR isolation, no duplicate store uploads and main success path before simplification. | 
+| F0005 | IN PROGRESS | `.github/workflows/sync-maintenance.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | KEEP migration compatibility check. Workflow notes legacy `Maintenance autofix` check name. PR path is read-only diff validation; manual path publishes patch artifact. After flake-ci status parity, decide whether to remove this workflow or preserve its required check context. | 
+| F0006 | IN PROGRESS | `.github/workflows/worker-executor.yml` | Refactor | Keep required CI workflow, audit duplicated shards, maintenance and tests after topology migration. | #731 + CI baseline | KEEP security guard. `issue_comment` workflow rejects forbidden worker-comment transport, with issue/PR write scope. Review whether that channel remains enabled and verify an unauthorized comment cannot trigger worker execution before retiring. | 
 
 ### `root files`
 
@@ -39,8 +39,8 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0012 | TODO | `config/phenix/NOTICE.md` | Refactor | Retain portable product config; remove Nix-only feature selection and generated semantics. | #731 | pending | 
-| F0013 | TODO | `config/phenix/runtime.nix` | Refactor | Retain portable product config; remove Nix-only feature selection and generated semantics. | #731 | pending | 
+| F0012 | IN PROGRESS | `config/phenix/NOTICE.md` | Refactor | Retain portable product config; remove Nix-only feature selection and generated semantics. | #731 | NOTICE says runtime.nix came from older phenix-harness and static skills moved to basic-skills. Candidate KEEP as provenance/licensing note. Check that packaged license and current consolidated paths still match; remove stale migration wording if false. | 
+| F0013 | IN PROGRESS | `config/phenix/runtime.nix` | Refactor | Retain portable product config; remove Nix-only feature selection and generated semantics. | #731 | `runtime.nix:1-13` declares transitional text-only callable contract, later defines agent routing and fallback target. Candidate REFACTOR into portable product config after #731; verify schema/callable identity and real provider selection before removing legacy settings. | 
 
 ### `root files`
 
@@ -58,10 +58,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0018 | IN PROGRESS | `modules/commit-candidate.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Imported by `modules/development.nix`. Source `c138bc02` defines staged-only `maintenance commit`, with success, unrelated-edit and untracked-file fixture cases. Candidate KEEP; verify current-head Nix test target and hook interaction before certification. | 
 | F0019 | IN PROGRESS | `modules/development.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Owns maintenance registration, generated-hook parity check and safety-policy check used by the dev/CI entry. Review production shell/check dependency closure and execute exact-head Nix checks before KEEP proof. | 
 | F0020 | IN PROGRESS | `modules/flake-module.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Source `9451a73c` exports `phenixWrapped` for phenix, kernel, runtime, harness and Stitch packages; imported as default flake module. Candidate KEEP; verify these exports by flake evaluation and consumer checks. | 
-| F0021 | TODO | `modules/harness-product.nix` | Refactor | Thin portable product config wrapper; remove duplicated product selection. | #731 | pending | 
+| F0021 | IN PROGRESS | `modules/harness-product.nix` | Refactor | Thin portable product config wrapper; remove duplicated product selection. | #731 | `harness-product.nix:5` uses dependency-selected Cargo source; `:38` builds runtime config; `:53-140` defines real product and Lua smoke checks. KEEP packaging/smoke, move product policy and duplicated selection after #731. Nix product check proof pending. | 
 | F0022 | TODO | `modules/lua-binding-integration.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
-| F0023 | TODO | `modules/package-sets.nix` | Refactor | Remove hardcoded plugin-name identity map and migration aliases after portable profile selection. | #730, #731 | pending | 
-| F0024 | TODO | `modules/plugin-packaging.nix` | Refactor | Nix packages deployment artifacts, not tool/skill resolution or provider selection authority. | #730, #731 | pending | 
+| F0023 | IN PROGRESS | `modules/package-sets.nix` | Refactor | Remove hardcoded plugin-name identity map and migration aliases after portable profile selection. | #730, #731 | `package-sets.nix:142-161` validates hardcoded plugin crate roles/aliases, and `:201-219` exports workspace crates/checks. Replace plugin identity mapping with manifest-driven selection while retaining packaging derivations; verify checked source closures. | 
+| F0024 | IN PROGRESS | `modules/plugin-packaging.nix` | Refactor | Nix packages deployment artifacts, not tool/skill resolution or provider selection authority. | #730, #731 | `plugin-packaging.nix:54-142` forms embedded/packaged plugin wrappers; `:199/204` names Basic/Full; `:371-429` validates wrappers. KEEP deployment mechanics, move product selection to typed artifacts, preserve wrapper and product smoke tests. | 
 | F0025 | TODO | `modules/rust-artifacts.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
 | F0026 | IN PROGRESS | `modules/stitch.nix` | Review | Establish its live package consumer and unique responsibility before retaining/removing. | consumer + CI references | Live consumer confirmed: `flake.nix` imports `modules/stitch.nix`; it exports `stitch`/`stitch-mcp` packages/apps. `modules/development.nix` invokes its `stitch-runtime-smoke` check. Source `ea7d94c4`. Candidate KEEP, not dead code; pending exact-head Nix smoke and MCP package check. | 
 
@@ -110,7 +110,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0052 | TODO | `rust/crates/phenix-agent-configurations/Cargo.toml` | Refactor | Retain pure product-profile declarations; drop old plugin identity selections when replacements land. | #731 | pending | 
-| F0053 | TODO | `rust/crates/phenix-agent-configurations/src/lib.rs` | Refactor | Advanced defaults currently select legacy phenix.hooks despite spec/kernel-hooks.md retirement contract; replace profile selection. | #731 + hook parity | pending | 
+| F0053 | IN PROGRESS | `rust/crates/phenix-agent-configurations/src/lib.rs` | Refactor | Advanced defaults currently select legacy phenix.hooks despite spec/kernel-hooks.md retirement contract; replace profile selection. | #731 + hook parity | `agent-configurations/src/lib.rs:43` includes `phenix.hooks` in Advanced defaults; profile expansion and manifest functions at :68/:82/:100-119. Remove deprecated hook default only after Layer/Event behavior parity and selectable profile proof. | 
 
 ### `rust/crates/phenix-application-interface`
 
@@ -183,7 +183,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0090 | TODO | `rust/crates/phenix-core/Cargo.toml` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
-| F0091 | TODO | `rust/crates/phenix-core/src/agent.rs` | Move | AI-only inference/tool/skill/context contracts belong in application contract package, not Core. | #731 + references | pending | 
+| F0091 | IN PROGRESS | `rust/crates/phenix-core/src/agent.rs` | Move | AI-only inference/tool/skill/context contracts belong in application contract package, not Core. | #731 + references | `core/src/agent.rs` defines model inference, tools, skills, context requests/responses and four versioned services (`phenix.models.inference@1`, etc.). MOVE domain types without changing serialized schemas, ID strings or SDK consumers; require contract compatibility tests. | 
 | F0092 | TODO | `rust/crates/phenix-core/src/artifact.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
 | F0093 | TODO | `rust/crates/phenix-core/src/authority.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
 | F0094 | TODO | `rust/crates/phenix-core/src/callable.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
@@ -260,7 +260,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0165 | TODO | `rust/crates/phenix-core/src/runtime/trace.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
 | F0166 | TODO | `rust/crates/phenix-core/src/runtime_component_parity_regression.rs` | Keep | Preserve generic authority, dispatch, generation, event, persistence and parity regressions. | — | pending | 
 | F0167 | TODO | `rust/crates/phenix-core/src/runtime_topology_generation_regression.rs` | Keep | Preserve generic authority, dispatch, generation, event, persistence and parity regressions. | — | pending | 
-| F0168 | TODO | `rust/crates/phenix-core/src/sdk.rs` | Review | Generic SDK observable machinery may remain in Core; separate public SDK integration from kernel authority. | #728 + API ownership review | pending | 
+| F0168 | IN PROGRESS | `rust/crates/phenix-core/src/sdk.rs` | Review | Generic SDK observable machinery may remain in Core; separate public SDK integration from kernel authority. | #728 + API ownership review | `core/src/sdk.rs` implements SDK namespace/value and observable resolution, ownership validation and callable registration. Investigate whether public SDK metadata can move without moving Core-owned capability/authority enforcement. Proof: no alternate capability registry. | 
 | F0169 | TODO | `rust/crates/phenix-core/src/service_layer_dispatch_regression.rs` | Keep | Preserve generic authority, dispatch, generation, event, persistence and parity regressions. | — | pending | 
 | F0170 | TODO | `rust/crates/phenix-core/src/tasks.rs` | Keep | Generic authority, lifecycle, composition, graph, invocation, reconciliation and inspection. | — | pending | 
 | F0171 | TODO | `rust/crates/phenix-core/src/third_party_component_regression.rs` | Keep | Preserve generic authority, dispatch, generation, event, persistence and parity regressions. | — | pending | 
@@ -298,9 +298,9 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0195 | TODO | `rust/crates/phenix-harness/Cargo.toml` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
-| F0196 | TODO | `rust/crates/phenix-harness/src/application.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
+| F0196 | IN PROGRESS | `rust/crates/phenix-harness/src/application.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | Harness application owns request/session/product transport. #726 adds declarative-vs-legacy selection here (W034); keep until real Basic/Full streaming, prompt receipt, side effects and cancellation tests prove canonical EntryBinding path. | 
 | F0197 | TODO | `rust/crates/phenix-harness/src/authority.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
-| F0198 | TODO | `rust/crates/phenix-harness/src/basic_suite.rs` | Move | Move hardcoded echo/basic product setup to data-driven reference profiles and fixtures. | #731 | pending | 
+| F0198 | IN PROGRESS | `rust/crates/phenix-harness/src/basic_suite.rs` | Move | Move hardcoded echo/basic product setup to data-driven reference profiles and fixtures. | #731 | `harness/basic_suite.rs:14-29` hand-adds session, echo model, tools, skills and context factories. Candidate MOVE to selected product descriptors; retain deterministic Basic fixture but remove echo from production default after independent real-model test. | 
 | F0199 | TODO | `rust/crates/phenix-harness/src/bin/phenix-acp-fixture.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0200 | TODO | `rust/crates/phenix-harness/src/context_recovery.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0201 | TODO | `rust/crates/phenix-harness/src/exact_selected_suite_tests.rs` | Refactor | Keep product parity assertions but eliminate fixtures coupled to old hardcoded plugin registration. | #731 | pending | 
@@ -309,7 +309,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0204 | TODO | `rust/crates/phenix-harness/src/model_surface_fixture.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0205 | TODO | `rust/crates/phenix-harness/src/persistence.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0206 | TODO | `rust/crates/phenix-harness/src/runtime.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
-| F0207 | TODO | `rust/crates/phenix-harness/src/runtime_builder.rs` | Refactor | Manual add_selected/plugin-factory roster should lower from selected manifests/contributions. | #728, #730, #731 | pending | 
+| F0207 | IN PROGRESS | `rust/crates/phenix-harness/src/runtime_builder.rs` | Refactor | Manual add_selected/plugin-factory roster should lower from selected manifests/contributions. | #728, #730, #731 | `harness/runtime_builder.rs:131-177` calls `add_embedded` for first-party plugin roster, including old agent loop, hook and model services; `:215+` selects by hardcoded IDs. Move to selected descriptor discovery with external provider canary. | 
 | F0208 | TODO | `rust/crates/phenix-harness/src/runtime_config.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0209 | TODO | `rust/crates/phenix-harness/src/tests.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
 | F0210 | TODO | `rust/crates/phenix-harness/src/workspace_discovery.rs` | Refactor | Retain product entry point; shed manual plugin registration and redundant runtime decisions. | #730, #731 | pending | 
@@ -373,7 +373,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0240 | TODO | `rust/crates/phenix-plugin-basic-agent/Cargo.toml` | Refactor | Retain only if new topology/node provider crate reuses package; remove obsolete loop package afterward. | #726, #731 | pending | 
-| F0241 | TODO | `rust/crates/phenix-plugin-basic-agent/src/agent_loop.rs` | Retire | Replace imperative run progression with topology plugin and independently provided nodes; preserve parity tests. | #726, #731 | pending | 
+| F0241 | IN PROGRESS | `rust/crates/phenix-plugin-basic-agent/src/agent_loop.rs` | Retire | Replace imperative run progression with topology plugin and independently provided nodes; preserve parity tests. | #726, #731 | `basic-agent/agent_loop.rs:297 run` is still an executable imperative progression in main; plugin factory and service entry also remain. RETIRE only after new topology, node and real turn/tool/session parity. Rehome component regression first. | 
 | F0242 | TODO | `rust/crates/phenix-plugin-basic-agent/src/component_regression.rs` | Move | Rehome valuable agent-loop behavior proofs in the topology/node integration suite. | #726, #731 | pending | 
 | F0243 | TODO | `rust/crates/phenix-plugin-basic-agent/src/lib.rs` | Refactor | Preserve agent-loop semantics in topology/node plugins; remove imperative progression after parity. | #726, #731 | pending | 
 
@@ -388,8 +388,8 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0246 | TODO | `rust/crates/phenix-plugin-basic-model/Cargo.toml` | Retire | Delete production crate manifest after echo implementation and references move to fixtures. | #731 + migrate echo fixture | pending | 
-| F0247 | TODO | `rust/crates/phenix-plugin-basic-model/src/lib.rs` | Move | Preserve deterministic echo implementation as test-support fixture, not a production plugin. | #731 | pending | 
+| F0246 | IN PROGRESS | `rust/crates/phenix-plugin-basic-model/Cargo.toml` | Retire | Delete production crate manifest after echo implementation and references move to fixtures. | #731 + migrate echo fixture | Echo model package remains in production dependency graph through basic-agent reexports and harness Basic suite. Retire crate only after W035, #731 and fixture relocation update Cargo/Nix and downstream imports. | 
+| F0247 | IN PROGRESS | `rust/crates/phenix-plugin-basic-model/src/lib.rs` | Move | Preserve deterministic echo implementation as test-support fixture, not a production plugin. | #731 | `basic-model/src/lib.rs:13-35` is deterministic echo provider, `:41-55` public factory/manifest. MOVE to test fixture owned by consumer, replace production default with real model selection; preserve deterministic tests. | 
 
 ### `rust/crates/phenix-plugin-basic-skills`
 
@@ -425,8 +425,8 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0268 | TODO | `rust/crates/phenix-plugin-catalog/Cargo.toml` | Retire | Delete static roster crate manifest once first-party discovery/fixtures move. | #728, #730, #731 | pending | 
-| F0269 | TODO | `rust/crates/phenix-plugin-catalog/src/lib.rs` | Retire | Remove manually maintained first-party plugin re-export/registration catalog once dynamic discovery works. | #730, #731 | pending | 
+| F0268 | IN PROGRESS | `rust/crates/phenix-plugin-catalog/Cargo.toml` | Retire | Delete static roster crate manifest once first-party discovery/fixtures move. | #728, #730, #731 | Static catalog Cargo package remains imported by Harness and Basic setup. Retire manifest only after dynamic selection replaces all exports, durable schema projection, workspace/Cargo/Nix registration and test consumers. | 
+| F0269 | IN PROGRESS | `rust/crates/phenix-plugin-catalog/src/lib.rs` | Retire | Remove manually maintained first-party plugin re-export/registration catalog once dynamic discovery works. | #730, #731 | `catalog/src/lib.rs:7-212` reexports and registers a large manual first-party provider roster; `:237` does special durable schema projection. RETIRE after #728/#730 descriptors supply both roles and #731 proves unknown third-party installation. | 
 | F0270 | TODO | `rust/crates/phenix-plugin-catalog/tests/coordination.rs` | Move | Move provider coordination verification into application integration tests before retiring roster. | #730, #731 | pending | 
 
 ### `rust/crates/phenix-plugin-command-toolbelt`
@@ -501,7 +501,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0311 | TODO | `rust/crates/phenix-plugin-execution/src/review.rs` | Refactor | Retain application execution state, review and domain policy; migrate competing graph/scheduling machinery. | #729, #731 | pending | 
 | F0312 | TODO | `rust/crates/phenix-plugin-execution/src/root_reservation_integration.rs` | Refactor | Retain application execution state, review and domain policy; migrate competing graph/scheduling machinery. | #729, #731 | pending | 
 | F0313 | TODO | `rust/crates/phenix-plugin-execution/src/step_transaction_service.rs` | Refactor | Retain application execution state, review and domain policy; migrate competing graph/scheduling machinery. | #729, #731 | pending | 
-| F0314 | TODO | `rust/crates/phenix-plugin-execution/src/tool_schedule.rs` | Move | Consolidate concurrency planning with generic graph scheduling or tool-policy plugin; avoid a second scheduler. | #729, #731 | pending | 
+| F0314 | IN PROGRESS | `rust/crates/phenix-plugin-execution/src/tool_schedule.rs` | Move | Consolidate concurrency planning with generic graph scheduling or tool-policy plugin; avoid a second scheduler. | #729, #731 | `execution/tool_schedule.rs:4-41` defines tool concurrency policy (ParallelSafe or Exclusive) and batch planner; tests at :89/:108 protect no arbitrary cap and exclusive-by-default. Move policy to plugin as needed; do not drop exclusivity in graph scheduler. | 
 | F0315 | TODO | `rust/crates/phenix-plugin-execution/tests/step_transaction.rs` | Refactor | Retain application execution state, review and domain policy; migrate competing graph/scheduling machinery. | #729, #731 | pending | 
 
 ### `rust/crates/phenix-plugin-frontend`
@@ -517,10 +517,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0320 | TODO | `rust/crates/phenix-plugin-hooks/Cargo.toml` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | pending | 
-| F0321 | TODO | `rust/crates/phenix-plugin-hooks/src/component.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | pending | 
-| F0322 | TODO | `rust/crates/phenix-plugin-hooks/src/implementation.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | pending | 
-| F0323 | TODO | `rust/crates/phenix-plugin-hooks/src/lib.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | pending | 
+| F0320 | IN PROGRESS | `rust/crates/phenix-plugin-hooks/Cargo.toml` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | Hooks Cargo crate still consumed by catalog and Advanced profile. RETIRE only after same ordered actions, failure policy and events through Service Layers/Listeners; update Nix/Cargo dependencies. | 
+| F0321 | IN PROGRESS | `rust/crates/phenix-plugin-hooks/src/component.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | `hooks/component.rs:11-29` exports HookInterface and component manifest. Retire interface after external service ID/consumer migration, preserving any needed compatibility alias. | 
+| F0322 | IN PROGRESS | `rust/crates/phenix-plugin-hooks/src/implementation.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | `hooks/implementation.rs:83-167` defines events/actions/config and `:284 dispatch`; failure policy and dependency order enforced around :368-440. Migrate semantic behavior to plugin-owned Layers/Listeners before deleting implementation. | 
+| F0323 | IN PROGRESS | `rust/crates/phenix-plugin-hooks/src/lib.rs` | Retire | Legacy hook dispatcher; use kernel Service Layers and Events with plugin-owned behavior. | #729, #731 + listener parity | `hooks/lib.rs` reexports component/implementation and ownership regression. Delete module root only after action/ordering/ownership tests have new homes and catalog no longer imports it. | 
 | F0324 | TODO | `rust/crates/phenix-plugin-hooks/src/ownership_regression.rs` | Move | Retain layer/listener ownership regression under canonical Core/SDK tests before retiring hook crate. | #729, #731 + listener parity | pending | 
 
 ### `rust/crates/phenix-plugin-interactive-ui`
@@ -663,7 +663,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | --- | --- | --- | --- | --- | --- | --- |
 | F0394 | TODO | `rust/crates/phenix-plugin-step-runner/Cargo.toml` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending | 
 | F0395 | TODO | `rust/crates/phenix-plugin-step-runner/src/lib.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending | 
-| F0396 | TODO | `rust/crates/phenix-plugin-step-runner/src/runner.rs` | Refactor | Limit to one step invocation; remove any graph/run progression authority. | #726, #729 | pending | 
+| F0396 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/src/runner.rs` | Refactor | Limit to one step invocation; remove any graph/run progression authority. | #726, #729 | `step-runner/runner.rs:245+` handles delegated workers/tasks, reservations, retry and step execution. Audit whether these are domain tool semantics or a second control-flow owner; transfer only graph progression after equivalent delegated-worker tests. | 
 | F0397 | TODO | `rust/crates/phenix-plugin-step-runner/tests/invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending | 
 | F0398 | TODO | `rust/crates/phenix-plugin-step-runner/tests/planned_step.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending | 
 | F0399 | TODO | `rust/crates/phenix-plugin-step-runner/tests/recovery_invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending | 
@@ -731,7 +731,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0436 | TODO | `rust/crates/phenix-sdk/src/authoring/static_lifecycle.rs` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending | 
 | F0437 | TODO | `rust/crates/phenix-sdk/src/authoring/static_resource.rs` | Refactor | General Rust plugin authoring API; migrate AI domain contracts to application-owned contract crates. | #728, #730, #731 | pending | 
 | F0438 | TODO | `rust/crates/phenix-sdk/src/contracts/agent_diagnostics.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | pending | 
-| F0439 | TODO | `rust/crates/phenix-sdk/src/contracts/agent_loop.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | pending | 
+| F0439 | IN PROGRESS | `rust/crates/phenix-sdk/src/contracts/agent_loop.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | SDK agent_loop contract carries agent turn/tool state and service schema. MOVE to plugin-owned domain contract with wire ID stability, test old JSON/tool requests and implement replacement imports before retiring. | 
 | F0440 | TODO | `rust/crates/phenix-sdk/src/contracts/budget.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | pending | 
 | F0441 | TODO | `rust/crates/phenix-sdk/src/contracts/context.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | pending | 
 | F0442 | TODO | `rust/crates/phenix-sdk/src/contracts/context_admission.rs` | Move | Domain-specific application contracts should live with owning agent/tool/skill/provider contract packages; SDK stays general. | #730, #731 | pending | 
@@ -792,7 +792,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0490 | TODO | `scripts/check-plugin-architecture.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
+| F0490 | IN PROGRESS | `scripts/check-plugin-architecture.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Nix `modules/development.nix` calls `scripts/check-plugin-architecture.sh`. Move policy to phenix-flake-ci maintenance leaf only after matching success and negative fixture results; keep script until exact check parity. | 
 | F0491 | IN PROGRESS | `scripts/check-rust-safety-policy.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Script `86183104` reads Cargo metadata to enforce `#![forbid(unsafe_code)]` across production targets; `modules/development.nix` invokes it. MOVE only after an equivalent Nix-owned rule, negative fixture and CI proof; current live consumer blocks deletion. | 
 | F0492 | TODO | `scripts/check-spec-lifecycle-fixtures.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
 | F0493 | TODO | `scripts/check-spec-lifecycle.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
