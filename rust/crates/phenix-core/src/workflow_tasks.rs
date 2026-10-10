@@ -677,6 +677,47 @@ mod tests {
     }
 
     #[test]
+    fn native_wakeup_order_follows_real_settlement_not_branch_identity() {
+        let selected = empty_generation_with(None);
+        let mut kernel = Kernel::new(selected.kernel_config().clone());
+        kernel.activate_resolved_generation(&selected).unwrap();
+        kernel.activate_all().unwrap();
+        let group = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let (a_tx, a_rx) = mpsc::channel::<()>();
+        let (b_tx, b_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let ready_b = ready_tx.clone();
+        let alpha = group
+            .spawn("root/fork/a", &Authority::default(), move |_| {
+                ready_tx.send(()).unwrap();
+                a_rx.recv().unwrap();
+                1_u8
+            })
+            .unwrap();
+        let beta = group
+            .spawn("root/fork/b", &Authority::default(), move |_| {
+                ready_b.send(()).unwrap();
+                b_rx.recv().unwrap();
+                2_u8
+            })
+            .unwrap();
+        ready_rx.recv().unwrap();
+        ready_rx.recv().unwrap();
+        // The lexicographically later branch settles first.
+        b_tx.send(()).unwrap();
+        assert_eq!(group.wait_settlement(), Some(beta.id().clone()));
+        assert_eq!(beta.join().unwrap(), 2);
+        assert!(group.poll_settlement().is_none());
+        a_tx.send(()).unwrap();
+        assert_eq!(group.wait_settlement(), Some(alpha.id().clone()));
+        assert_eq!(alpha.join().unwrap(), 1);
+        group.close().unwrap();
+    }
+
+    #[test]
     fn independent_roots_never_reuse_native_ticket_identity() {
         let selected = empty_generation_with(None);
         let mut kernel = Kernel::new(selected.kernel_config().clone());
