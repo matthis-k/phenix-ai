@@ -37,7 +37,7 @@ struct Plugin {
     destroy:Option<unsafe extern "C" fn(*mut c_void,u64)>,
 }
 unsafe impl Sync for Plugin {}
-static CALLS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+static CALLS: Mutex<Vec<(u64, bool)>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn release(_: *mut c_void, ptr:*mut u8, len:usize) {
     if len != 0 {
@@ -70,18 +70,18 @@ unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
             || (comp == b"fixture.workflow-tool-provider"
                 && iface == b"fixture.workflow-tool@1")
     );
-    CALLS.lock().unwrap().push(request.ticket.call_id);
+    CALLS.lock().unwrap().push((request.ticket.call_id, comp == b"fixture.native"));
     pending(request.ticket)
 }
 unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
     let mut calls=CALLS.lock().unwrap();
-    let Some(index)=calls.iter().position(|call| *call==ticket.call_id) else {
+    let Some(index)=calls.iter().position(|(call, _)| *call==ticket.call_id) else {
         return Result {status:2,ticket,payload:buffer(b"missing call")};
     };
-    calls.remove(index);
+    let (_, simple)=calls.remove(index);
     drop(calls);
     Result{status:1,ticket,payload:buffer(
-        if ticket.root_id == 3 {
+        if simple {
             b"fixture finished"
         } else {
             br#"{"type":"string","value":"done"}"#
