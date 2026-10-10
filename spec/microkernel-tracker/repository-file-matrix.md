@@ -508,10 +508,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0316 | TODO | `rust/crates/phenix-plugin-frontend/Cargo.toml` | Keep | Replaceable frontend discovery and capability provider. | — | pending |
-| F0317 | TODO | `rust/crates/phenix-plugin-frontend/src/component.rs` | Keep | Replaceable frontend discovery and capability provider. | — | pending |
-| F0318 | TODO | `rust/crates/phenix-plugin-frontend/src/implementation.rs` | Keep | Replaceable frontend discovery and capability provider. | — | pending |
-| F0319 | TODO | `rust/crates/phenix-plugin-frontend/src/lib.rs` | Keep | Replaceable frontend discovery and capability provider. | — | pending |
+| F0316 | IN PROGRESS | `rust/crates/phenix-plugin-frontend/Cargo.toml` | Keep | Replaceable frontend discovery and capability provider. | — | Main `61b3996e`: frontend runtime plugin package owns ephemeral frontend routing, separate from ACP stdio transport. KEEP plugin, require selected activation and stable client contract. |
+| F0317 | IN PROGRESS | `rust/crates/phenix-plugin-frontend/src/component.rs` | Keep | Replaceable frontend discovery and capability provider. | — | Main `bf7822e5`: Frontend component requires execution import, rejects missing dependency and binds deterministically. KEEP typed application provider boundary. |
+| F0318 | IN PROGRESS | `rust/crates/phenix-plugin-frontend/src/implementation.rs` | Keep | Replaceable frontend discovery and capability provider. | — | Main `24e37203`: stateful frontend callback router checks root-owner, generation and capability and revokes routes on disconnect; seven tests. KEEP ephemeral client owner; trace overlap with domain ClientToolAdmissions and application interface, do not persist stale callbacks. |
+| F0319 | IN PROGRESS | `rust/crates/phenix-plugin-frontend/src/lib.rs` | Keep | Replaceable frontend discovery and capability provider. | — | Main `98e8d3a4`: frontend lib exports SDK frontend protocol and component/implementation. KEEP product plugin module, no runtime kernel responsibilities. |
 
 ### `rust/crates/phenix-plugin-hooks`
 
@@ -527,33 +527,33 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0325 | TODO | `rust/crates/phenix-plugin-interactive-ui/Cargo.toml` | Keep | Portable UI document vocabulary and optional frontend contribution kind. | — | pending |
-| F0326 | TODO | `rust/crates/phenix-plugin-interactive-ui/src/lib.rs` | Keep | Portable UI document vocabulary and optional frontend contribution kind. | — | pending |
+| F0325 | IN PROGRESS | `rust/crates/phenix-plugin-interactive-ui/Cargo.toml` | Keep | Portable UI document vocabulary and optional frontend contribution kind. | — | Main `1b90b533`: interactive UI is optional runtime plugin providing typed display documents. KEEP separate content provider, not an automatically enabled rendering engine. |
+| F0326 | IN PROGRESS | `rust/crates/phenix-plugin-interactive-ui/src/lib.rs` | Keep | Portable UI document vocabulary and optional frontend contribution kind. | — | Main `354c2c58`: typed UiDocument/UiNode validation, revision/tombstone store and bounded document growth; no model tools or frontend actions exposed. KEEP passive display contract; #731 ensure frontend extensions are selected, not silently executable. |
 
 ### `rust/crates/phenix-plugin-invocation-defaults`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0327 | TODO | `rust/crates/phenix-plugin-invocation-defaults/Cargo.toml` | Refactor | Separate invocations, clock, context recovery and routing policies into replaceable providers. | #731 | pending |
-| F0328 | TODO | `rust/crates/phenix-plugin-invocation-defaults/src/lib.rs` | Refactor | Separate invocations, clock, context recovery and routing policies into replaceable providers. | #731 | pending |
+| F0327 | IN PROGRESS | `rust/crates/phenix-plugin-invocation-defaults/Cargo.toml` | Refactor | Separate invocations, clock, context recovery and routing policies into replaceable providers. | #731 | Main `6fb9a776`: invocation defaults plugin with independent replaceable root/context/routing policy interfaces. KEEP optional provider; no hidden timeout/limit selected by package alone. |
+| F0328 | IN PROGRESS | `rust/crates/phenix-plugin-invocation-defaults/src/lib.rs` | Refactor | Separate invocations, clock, context recovery and routing policies into replaceable providers. | #731 | Main `f4b3e4a1`: default invocation/context-recovery/options policy has tests proving no implicit limit, deadline or retry cap. KEEP replaceable behavior; #731 ensure application route is explicit and user-visible overrides persist. |
 
 ### `rust/crates/phenix-plugin-jobs`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0329 | TODO | `rust/crates/phenix-plugin-jobs/Cargo.toml` | Keep | Persistent job domain service, not a second kernel event loop. | — | pending |
-| F0330 | TODO | `rust/crates/phenix-plugin-jobs/src/component.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | pending |
-| F0331 | TODO | `rust/crates/phenix-plugin-jobs/src/implementation.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | pending |
-| F0332 | TODO | `rust/crates/phenix-plugin-jobs/src/lib.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | pending |
+| F0329 | IN PROGRESS | `rust/crates/phenix-plugin-jobs/Cargo.toml` | Keep | Persistent job domain service, not a second kernel event loop. | — | Main `65996579`: jobs runtime plugin owns durable resource state, not generic scheduler. KEEP domain service. |
+| F0330 | IN PROGRESS | `rust/crates/phenix-plugin-jobs/src/component.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | Main `2776d7b5`: jobs component publishes ordinary typed SDK binding; no special Core hook. KEEP selected resource provider. |
+| F0331 | IN PROGRESS | `rust/crates/phenix-plugin-jobs/src/implementation.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | Main `80bcf63a`: job resource lifecycle persists records, handles execution termination, authority narrowing and promoted survival with tests. KEEP plugin state; #725 host-fenced restart and #726 completion must reuse single lifecycle. |
+| F0332 | IN PROGRESS | `rust/crates/phenix-plugin-jobs/src/lib.rs` | Keep | Persistent job domain service, not a second kernel event loop. | — | Main `e38821b8`: jobs lib exports only component/implementation and provider methods. KEEP minimal module. |
 
 ### `rust/crates/phenix-plugin-language`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0333 | TODO | `rust/crates/phenix-plugin-language/Cargo.toml` | Keep | Language/code intelligence provider. | — | pending |
-| F0334 | TODO | `rust/crates/phenix-plugin-language/src/component.rs` | Keep | Language/code intelligence provider. | — | pending |
-| F0335 | TODO | `rust/crates/phenix-plugin-language/src/implementation.rs` | Keep | Language/code intelligence provider. | — | pending |
-| F0336 | TODO | `rust/crates/phenix-plugin-language/src/lib.rs` | Keep | Language/code intelligence provider. | — | pending |
+| F0333 | IN PROGRESS | `rust/crates/phenix-plugin-language/Cargo.toml` | Keep | Language/code intelligence provider. | — | Main `8dd9eda3`: language code-intelligence runtime plugin is distinct from passive domain DTO declarations. KEEP provider package. |
+| F0334 | IN PROGRESS | `rust/crates/phenix-plugin-language/src/component.rs` | Keep | Language/code intelligence provider. | — | Main `69c20b73`: LanguageInterface exports ordinary selected typed component and has consumer-binding test. KEEP portable interface; verify no Core registration switch. |
+| F0335 | IN PROGRESS | `rust/crates/phenix-plugin-language/src/implementation.rs` | Keep | Language/code intelligence provider. | — | Main `85af7881`: 6,880-line language provider implements provider epoch, LSP document symbol import, code entity index/relation/query and durable backing. KEEP behavior in plugin, but audit duplicated provider lifecycle against domain F0189; no LanguageServiceManager import in this file. |
+| F0336 | IN PROGRESS | `rust/crates/phenix-plugin-language/src/lib.rs` | Keep | Language/code intelligence provider. | — | Main `9dd964a5`: language lib exports component, implementation and stable SDK code-entity types. KEEP entry; avoid second graph execution owner. |
 
 ### `rust/crates/phenix-plugin-memory`
 
