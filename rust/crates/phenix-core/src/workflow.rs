@@ -1889,7 +1889,14 @@ impl CompiledWorkflow {
                 });
             }
         }
-        let outcome = match invoke(name, import, position.scope, state, data.as_deref_mut(), cancelled) {
+        let outcome = match invoke(
+            name,
+            import,
+            position.scope,
+            state,
+            data.as_deref_mut(),
+            cancelled,
+        ) {
             WorkflowInvokePoll::Started => {
                 if !position.already_submitted {
                     *admissions = admissions
@@ -1899,9 +1906,12 @@ impl CompiledWorkflow {
                 return Ok(WorkflowInvokeAdvance::Started);
             }
             WorkflowInvokePoll::Waiting => {
-                assert!(position.already_submitted, "native Invoke must admit before waiting");
+                assert!(
+                    position.already_submitted,
+                    "native Invoke must admit before waiting"
+                );
                 return Ok(WorkflowInvokeAdvance::Waiting);
-            },
+            }
             WorkflowInvokePoll::Ready(Ok(outcome)) => outcome,
             WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled)) => {
                 return Err(WorkflowRunError::Cancelled {
@@ -2076,11 +2086,7 @@ mod inclusion_tests {
 
     #[test]
     fn suspended_join_policies_preserve_settlement_and_sibling_cancellation() {
-        use std::{
-            cell::RefCell,
-            collections::VecDeque,
-            num::NonZeroUsize,
-        };
+        use std::{cell::RefCell, collections::VecDeque, num::NonZeroUsize};
 
         let cases = [
             (
@@ -2150,18 +2156,36 @@ mod inclusion_tests {
                             )],
                         ),
                     ),
-                    ("a".into(), service("fixture.a@1", &[
-                        ("done", WorkflowEdge::Finish),
-                        ("failed", WorkflowEdge::Fail),
-                    ])),
-                    ("b".into(), service("fixture.b@1", &[
-                        ("done", WorkflowEdge::Finish),
-                        ("failed", WorkflowEdge::Fail),
-                    ])),
-                    ("c".into(), service("fixture.c@1", &[
-                        ("done", WorkflowEdge::Finish),
-                        ("failed", WorkflowEdge::Fail),
-                    ])),
+                    (
+                        "a".into(),
+                        service(
+                            "fixture.a@1",
+                            &[
+                                ("done", WorkflowEdge::Finish),
+                                ("failed", WorkflowEdge::Fail),
+                            ],
+                        ),
+                    ),
+                    (
+                        "b".into(),
+                        service(
+                            "fixture.b@1",
+                            &[
+                                ("done", WorkflowEdge::Finish),
+                                ("failed", WorkflowEdge::Fail),
+                            ],
+                        ),
+                    ),
+                    (
+                        "c".into(),
+                        service(
+                            "fixture.c@1",
+                            &[
+                                ("done", WorkflowEdge::Finish),
+                                ("failed", WorkflowEdge::Fail),
+                            ],
+                        ),
+                    ),
                 ]),
             }
             .compile(|_| true)
@@ -2172,44 +2196,57 @@ mod inclusion_tests {
                     slots: BTreeMap::new(),
                 },
                 BTreeMap::new(),
-            ).unwrap();
+            )
+            .unwrap();
             let admitted = RefCell::new(BTreeSet::<String>::new());
             let cancellation = RefCell::new(Vec::<String>::new());
             let script = RefCell::new(
-                script.into_iter().map(|(name, outcome)| {
-                    (name.to_owned(), outcome.to_owned())
-                }).collect::<VecDeque<_>>(),
+                script
+                    .into_iter()
+                    .map(|(name, outcome)| (name.to_owned(), outcome.to_owned()))
+                    .collect::<VecDeque<_>>(),
             );
             let allowed = RefCell::new(None::<(String, String)>);
-            let report = compiled.execute_suspending::<_, String>(
-                &mut (),
-                Some(&mut frame),
-                |node, _, _, _, _, _| {
-                    if node == "start" {
-                        return WorkflowInvokePoll::Ready(Ok("spawn".into()));
-                    }
-                    if admitted.borrow_mut().insert(node.to_owned()) {
-                        return WorkflowInvokePoll::Started;
-                    }
-                    let ready = allowed.borrow().as_ref().is_some_and(|(name, _)| name == node);
-                    if ready {
-                        WorkflowInvokePoll::Ready(Ok(allowed.borrow_mut().take().unwrap().1))
-                    } else {
-                        WorkflowInvokePoll::Waiting
-                    }
-                },
-                || false,
-                (
-                    |scope| cancellation.borrow_mut().push(scope.to_owned()),
-                    || {
-                        assert_eq!(admitted.borrow().len(), 3, "{label}: siblings were not admitted");
-                        let next = script.borrow_mut().pop_front()
-                            .expect("join waited for an unprovided settlement");
-                        assert!(allowed.replace(Some(next)).is_none());
+            let report = compiled
+                .execute_suspending::<_, String>(
+                    &mut (),
+                    Some(&mut frame),
+                    |node, _, _, _, _, _| {
+                        if node == "start" {
+                            return WorkflowInvokePoll::Ready(Ok("spawn".into()));
+                        }
+                        if admitted.borrow_mut().insert(node.to_owned()) {
+                            return WorkflowInvokePoll::Started;
+                        }
+                        let ready = allowed
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|(name, _)| name == node);
+                        if ready {
+                            WorkflowInvokePoll::Ready(Ok(allowed.borrow_mut().take().unwrap().1))
+                        } else {
+                            WorkflowInvokePoll::Waiting
+                        }
                     },
-                ),
-                None,
-            ).unwrap();
+                    || false,
+                    (
+                        |scope| cancellation.borrow_mut().push(scope.to_owned()),
+                        || {
+                            assert_eq!(
+                                admitted.borrow().len(),
+                                3,
+                                "{label}: siblings were not admitted"
+                            );
+                            let next = script
+                                .borrow_mut()
+                                .pop_front()
+                                .expect("join waited for an unprovided settlement");
+                            assert!(allowed.replace(Some(next)).is_none());
+                        },
+                    ),
+                    None,
+                )
+                .unwrap();
             assert_eq!(report.final_outcome, expected, "{label}");
             assert_eq!(report.executed_nodes, 4 - cancelled_count as u64, "{label}");
             assert_eq!(admitted.borrow().len(), 3, "{label}");
@@ -2223,23 +2260,35 @@ mod inclusion_tests {
         let compiled = WorkflowTopology {
             entry: "start".into(),
             nodes: BTreeMap::from([
-                ("start".into(), service("fixture.start@1", &[(
-                    "spawn",
-                    WorkflowEdge::Fork {
-                        branches: BTreeMap::from([
-                            ("a".into(), "slow".into()),
-                            ("b".into(), "fast".into()),
-                        ]),
-                        policy: crate::WorkflowJoinPolicy::All(
-                            crate::WorkflowJoinAllPolicy::CollectAll,
-                        ),
-                        outputs: BTreeMap::new(),
-                        on_success: Box::new(WorkflowEdge::Finish),
-                        on_failure: Box::new(WorkflowEdge::Finish),
-                    },
-                )])),
-                ("slow".into(), service("fixture.slow@1", &[("done", WorkflowEdge::Finish)])),
-                ("fast".into(), service("fixture.fast@1", &[("done", WorkflowEdge::Finish)])),
+                (
+                    "start".into(),
+                    service(
+                        "fixture.start@1",
+                        &[(
+                            "spawn",
+                            WorkflowEdge::Fork {
+                                branches: BTreeMap::from([
+                                    ("a".into(), "slow".into()),
+                                    ("b".into(), "fast".into()),
+                                ]),
+                                policy: crate::WorkflowJoinPolicy::All(
+                                    crate::WorkflowJoinAllPolicy::CollectAll,
+                                ),
+                                outputs: BTreeMap::new(),
+                                on_success: Box::new(WorkflowEdge::Finish),
+                                on_failure: Box::new(WorkflowEdge::Finish),
+                            },
+                        )],
+                    ),
+                ),
+                (
+                    "slow".into(),
+                    service("fixture.slow@1", &[("done", WorkflowEdge::Finish)]),
+                ),
+                (
+                    "fast".into(),
+                    service("fixture.fast@1", &[("done", WorkflowEdge::Finish)]),
+                ),
             ]),
         }
         .compile(|_| true)
@@ -2283,21 +2332,33 @@ mod inclusion_tests {
         let compiled = WorkflowTopology {
             entry: "start".into(),
             nodes: BTreeMap::from([
-                ("start".into(), service("fixture.start@1", &[(
-                    "spawn",
-                    WorkflowEdge::Fork {
-                        branches: BTreeMap::from([
-                            ("a".into(), "slow".into()),
-                            ("b".into(), "fast".into()),
-                        ]),
-                        policy: crate::WorkflowJoinPolicy::FirstCompleted,
-                        outputs: BTreeMap::new(),
-                        on_success: Box::new(WorkflowEdge::Finish),
-                        on_failure: Box::new(WorkflowEdge::Finish),
-                    },
-                )])),
-                ("slow".into(), service("fixture.slow@1", &[("done", WorkflowEdge::Finish)])),
-                ("fast".into(), service("fixture.fast@1", &[("done", WorkflowEdge::Finish)])),
+                (
+                    "start".into(),
+                    service(
+                        "fixture.start@1",
+                        &[(
+                            "spawn",
+                            WorkflowEdge::Fork {
+                                branches: BTreeMap::from([
+                                    ("a".into(), "slow".into()),
+                                    ("b".into(), "fast".into()),
+                                ]),
+                                policy: crate::WorkflowJoinPolicy::FirstCompleted,
+                                outputs: BTreeMap::new(),
+                                on_success: Box::new(WorkflowEdge::Finish),
+                                on_failure: Box::new(WorkflowEdge::Finish),
+                            },
+                        )],
+                    ),
+                ),
+                (
+                    "slow".into(),
+                    service("fixture.slow@1", &[("done", WorkflowEdge::Finish)]),
+                ),
+                (
+                    "fast".into(),
+                    service("fixture.fast@1", &[("done", WorkflowEdge::Finish)]),
+                ),
             ]),
         }
         .compile(|_| true)
@@ -2311,37 +2372,42 @@ mod inclusion_tests {
         let cancellations = RefCell::new(Vec::new());
         let fast_ready = Cell::new(false);
         let wait_calls = Cell::new(0);
-        let result = compiled.execute_suspending::<_, String>(
-            &mut (),
-            Some(&mut frame),
-            |node, _, _, _, _, _| {
-                if node == "start" {
-                    return WorkflowInvokePoll::Ready(Ok("spawn".into()));
-                }
-                if admitted.borrow_mut().insert(node.to_owned()) {
-                    return WorkflowInvokePoll::Started;
-                }
-                if node == "fast" && fast_ready.get() {
-                    WorkflowInvokePoll::Ready(Ok("done".into()))
-                } else {
-                    WorkflowInvokePoll::Waiting
-                }
-            },
-            || false,
-            (
-                |scope| cancellations.borrow_mut().push(scope.to_owned()),
-                || {
-                    assert_eq!(admitted.borrow().len(), 2);
-                    assert_eq!(wait_calls.get(), 0, "no busy spinning over pending work");
-                    wait_calls.set(wait_calls.get() + 1);
-                    fast_ready.set(true);
+        let result = compiled
+            .execute_suspending::<_, String>(
+                &mut (),
+                Some(&mut frame),
+                |node, _, _, _, _, _| {
+                    if node == "start" {
+                        return WorkflowInvokePoll::Ready(Ok("spawn".into()));
+                    }
+                    if admitted.borrow_mut().insert(node.to_owned()) {
+                        return WorkflowInvokePoll::Started;
+                    }
+                    if node == "fast" && fast_ready.get() {
+                        WorkflowInvokePoll::Ready(Ok("done".into()))
+                    } else {
+                        WorkflowInvokePoll::Waiting
+                    }
                 },
-            ),
-            None,
-        ).unwrap();
+                || false,
+                (
+                    |scope| cancellations.borrow_mut().push(scope.to_owned()),
+                    || {
+                        assert_eq!(admitted.borrow().len(), 2);
+                        assert_eq!(wait_calls.get(), 0, "no busy spinning over pending work");
+                        wait_calls.set(wait_calls.get() + 1);
+                        fast_ready.set(true);
+                    },
+                ),
+                None,
+            )
+            .unwrap();
         assert_eq!(result.executed_nodes, 2);
         assert_eq!(result.final_outcome, "spawn/success");
-        assert_eq!(&*admitted.borrow(), &BTreeSet::from(["fast".into(), "slow".into()]));
+        assert_eq!(
+            &*admitted.borrow(),
+            &BTreeSet::from(["fast".into(), "slow".into()])
+        );
         assert_eq!(wait_calls.get(), 1);
         assert_eq!(cancellations.borrow().len(), 1);
         assert!(cancellations.borrow()[0].ends_with("/a"));
