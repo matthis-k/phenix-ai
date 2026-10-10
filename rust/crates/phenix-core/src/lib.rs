@@ -21,6 +21,7 @@ mod metadata;
 mod observable;
 mod persistence;
 mod plugin;
+mod plugin_pending;
 mod reconciliation;
 mod runtime;
 mod sdk;
