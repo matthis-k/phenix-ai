@@ -1833,11 +1833,12 @@ impl CompiledWorkflow {
     }
 
     pub(crate) fn requires_frame(&self) -> bool {
-        !self.scoped_subplans.is_empty() || self.plan.steps.values().any(|step| match step {
-            PlanStep::Fork { .. } => true,
-            PlanStep::Invoke { transfers, .. } => !transfers.is_empty(),
-            _ => false,
-        })
+        !self.scoped_subplans.is_empty()
+            || self.plan.steps.values().any(|step| match step {
+                PlanStep::Fork { .. } => true,
+                PlanStep::Invoke { transfers, .. } => !transfers.is_empty(),
+                _ => false,
+            })
     }
 
     pub(crate) fn validate_frame_schema(
@@ -2359,7 +2360,11 @@ mod inclusion_tests {
             }
         }"#;
         let error = serde_json::from_str::<WorkflowEdge>(encoded).unwrap_err();
-        assert!(error.to_string().contains("duplicate child-private initial slot"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate child-private initial slot")
+        );
     }
 
     #[test]
@@ -2522,7 +2527,10 @@ mod inclusion_tests {
                     ))
                 },
                 || false,
-                (|_| {}, || unreachable!("all fixture calls settle immediately")),
+                (
+                    |_| {},
+                    || unreachable!("all fixture calls settle immediately"),
+                ),
                 None,
             )
             .unwrap();
@@ -2540,7 +2548,9 @@ mod inclusion_tests {
                     data.expect("private child frame")
                         .set(&key("private"), PhenixValue::U64(123))
                         .unwrap();
-                    Err(WorkflowInvocationError::Failed("injected failure".to_owned()))
+                    Err(WorkflowInvocationError::Failed(
+                        "injected failure".to_owned(),
+                    ))
                 } else {
                     Ok("delegate".to_owned())
                 }

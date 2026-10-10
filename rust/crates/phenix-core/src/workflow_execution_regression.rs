@@ -1654,10 +1654,16 @@ fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit()
                     revision: 1,
                     slots: BTreeMap::from([
                         (Key::parse("child_input").unwrap(), Type::U64),
-                        (Key::parse("items").unwrap(), Type::List(Box::new(Type::U64))),
+                        (
+                            Key::parse("items").unwrap(),
+                            Type::List(Box::new(Type::U64)),
+                        ),
                         (Key::parse("item").unwrap(), Type::U64),
                         (Key::parse("result").unwrap(), Type::U64),
-                        (Key::parse("collected").unwrap(), Type::List(Box::new(Type::U64))),
+                        (
+                            Key::parse("collected").unwrap(),
+                            Type::List(Box::new(Type::U64)),
+                        ),
                         (Key::parse("child_output").unwrap(), Type::U64),
                     ]),
                 },
