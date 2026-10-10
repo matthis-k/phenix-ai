@@ -469,47 +469,117 @@ impl CompiledWorkflow {
             Option<&mut WorkflowFrame>,
             &mut dyn FnMut() -> bool,
         ) -> Result<String, WorkflowInvocationError<Error>>,
-        mut cancelled: impl FnMut() -> bool,
+        cancelled: impl FnMut() -> bool,
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
-        let mut root = Cursor::at(self.plan.entry.clone(), frame.as_deref().cloned());
+        self.execute_driven(
+            state,
+            frame,
+            |node, import, _, state, frame, cancellation| {
+                WorkflowInvokePoll::Ready(invoke(node, import, state, frame, cancellation))
+            },
+            cancelled,
+            |_| {},
+            || unreachable!("a synchronous Invoke cannot suspend"),
+            step_limit,
+        )
+    }
+
+    /// Drive the *same* lowered Invoke/Fork/Join/Exit state machine with a
+    /// pending-capable node boundary. Nothing changes the selected providers,
+    /// frame ownership, join policy, or normal outcome vocabulary.
+    pub(crate) fn execute_suspending<State, Error>(
+        &self,
+        state: &mut State,
+        frame: Option<&mut WorkflowFrame>,
+        invoke: impl FnMut(
+            &str,
+            &InterfaceId,
+            &str,
+            &mut State,
+            Option<&mut WorkflowFrame>,
+            &mut dyn FnMut() -> bool,
+        ) -> WorkflowInvokePoll<Error>,
+        cancelled: impl FnMut() -> bool,
+        cancel_scope: impl FnMut(&str),
+        wait_for_settlement: impl FnMut(),
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
+        self.execute_driven(
+            state,
+            frame,
+            invoke,
+            cancelled,
+            cancel_scope,
+            wait_for_settlement,
+            step_limit,
+        )
+    }
+
+    fn execute_driven<State, Error>(
+        &self,
+        state: &mut State,
+        frame: Option<&mut WorkflowFrame>,
+        mut invoke: impl FnMut(
+            &str,
+            &InterfaceId,
+            &str,
+            &mut State,
+            Option<&mut WorkflowFrame>,
+            &mut dyn FnMut() -> bool,
+        ) -> WorkflowInvokePoll<Error>,
+        mut cancelled: impl FnMut() -> bool,
+        mut cancel_scope: impl FnMut(&str),
+        mut wait_for_settlement: impl FnMut(),
+        step_limit: Option<NonZeroU64>,
+    ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
+        let mut root = Cursor::at(
+            self.plan.entry.clone(),
+            frame.as_deref().cloned(),
+            "root".into(),
+        );
         let mut count = 0u64;
         let result = (|| {
             loop {
-                if self
-                    .tick(
-                        &mut root,
-                        state,
-                        &mut invoke,
-                        &mut cancelled,
-                        (&mut count, step_limit),
-                        0,
-                    )?
-                    .is_some()
-                {
-                    let PlanStepId::Exit { node, outcome } = &root.step else {
-                        unreachable!("a settled root has an Exit identity");
-                    };
-                    match &self.plan.steps[&root.step] {
-                        PlanStep::Exit { failed: true } => {
-                            return Err(WorkflowRunError::ExplicitFailure {
-                                node: node.clone(),
-                                outcome: outcome.clone(),
-                                executed_nodes: count,
-                            });
+                match self.tick(
+                    &mut root,
+                    state,
+                    &mut invoke,
+                    &mut cancelled,
+                    &mut cancel_scope,
+                    (&mut count, step_limit),
+                    0,
+                )? {
+                    TickStatus::Progress => {}
+                    TickStatus::Blocked => wait_for_settlement(),
+                    TickStatus::Settled(_) => {
+                        let PlanStepId::Exit { node, outcome } = &root.step else {
+                            unreachable!("a settled root has an Exit identity");
+                        };
+                        match &self.plan.steps[&root.step] {
+                            PlanStep::Exit { failed: true } => {
+                                return Err(WorkflowRunError::ExplicitFailure {
+                                    node: node.clone(),
+                                    outcome: outcome.clone(),
+                                    executed_nodes: count,
+                                });
+                            }
+                            PlanStep::Exit { failed: false } => {
+                                return Ok(WorkflowRunReport {
+                                    last_node: node.clone(),
+                                    final_outcome: outcome.clone(),
+                                    executed_nodes: count,
+                                });
+                            }
+                            _ => unreachable!("only Exit settles the root"),
                         }
-                        PlanStep::Exit { failed: false } => {
-                            return Ok(WorkflowRunReport {
-                                last_node: node.clone(),
-                                final_outcome: outcome.clone(),
-                                executed_nodes: count,
-                            });
-                        }
-                        _ => unreachable!("only Exit settles the root"),
                     }
                 }
             }
         })();
+        if result.is_err() {
+            cancel_scope("root");
+        }
         if let (Some(destination), Some(last_frame)) = (frame, root.frame) {
             *destination = last_frame;
         }
