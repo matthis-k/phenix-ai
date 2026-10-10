@@ -1,6 +1,6 @@
 # Repository file audit matrix
 
-Source: `main` nontruncated Git tree at tracker creation, 2026-10-10. The [merged provisional inventory](../post-redesign-file-dispositions.md) gives the expected disposition and explanation for 592 prior files. Four files added after that snapshot are identified as `New`. Each file below is individually actionable. `TODO` means **not yet verified**, including files marked Keep. An earlier expected classification is not proof of current use or safety to delete.
+Source: `main` nontruncated Git tree `d488c4056ee334938c2ca88aec9017379a3ef7c4` at tracker creation, 2026-10-10. The [merged provisional inventory](../post-redesign-file-dispositions.md) gives the expected disposition and explanation for 592 prior files. Four files added after that snapshot are identified as `New`. Each file below is individually actionable. `TODO` means **not yet verified**, including files marked Keep. An earlier expected classification is not proof of current use or safety to delete.
 
 ## Updating each row
 
@@ -909,6 +909,17 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | F0594 | TODO | `spec/worker-task-dag.md` | Keep | Retain normative specification until checked against implementation; consolidate stale/contradictory clauses after migration. | #731 + spec lifecycle audit | pending | 
 | F0595 | TODO | `spec/workspace-execution.md` | Keep | Retain normative specification until checked against implementation; consolidate stale/contradictory clauses after migration. | #731 + spec lifecycle audit | pending | 
 | F0596 | TODO | `spec/workspace-persistence.md` | Keep | Retain normative specification until checked against implementation; consolidate stale/contradictory clauses after migration. | #731 + spec lifecycle audit | pending | 
+
+## Tracker-branch-only files
+
+These four files are new on #764 and are not part of the 596-file main snapshot. They must also receive an explicit keep/archive/retire decision before this tracker closes.
+
+| ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
+| --- | --- | --- | --- | --- | --- | --- |
+| F0597 | TODO | `spec/microkernel-migration-tracker.md` | Keep | Retain single authoritative cross-PR dependency state until closeout; archive final outcomes on main. | S6-03 | pending |
+| F0598 | TODO | `spec/microkernel-tracker/repository-file-matrix.md` | Keep | Preserve exact path decisions and removing PR evidence; reconcile main and branch inventories. | S5-08 | pending |
+| F0599 | TODO | `spec/microkernel-tracker/pr726-file-matrix.md` | Keep | Carry 58 path dispositions and extraction/removal proof after #726 lands. | S5-08 | pending |
+| F0600 | TODO | `spec/microkernel-tracker/pr-task-matrices.md` | Keep | Link owner PR task comments and archive the final per-PR evidence index. | S6-03 | pending |
 
 ## Reconciliation gate
 
