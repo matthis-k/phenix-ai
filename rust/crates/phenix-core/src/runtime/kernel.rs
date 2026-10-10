@@ -619,6 +619,18 @@ impl RootExecutionHandle {
         import: &ResolvedImportHandle,
         input: &[u8],
     ) -> Result<Vec<u8>, KernelError> {
+        self.invoke_import_with_cancellation(import, input, None)
+    }
+
+    /// A native worker's cooperative cancellation is chained to the selected
+    /// provider call and every delegated Layer. Plain synchronous roots still
+    /// enter without an ancestor token.
+    pub(crate) fn invoke_import_with_cancellation(
+        &self,
+        import: &ResolvedImportHandle,
+        input: &[u8],
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Vec<u8>, KernelError> {
         let key = (import.importer().clone(), import.interface().clone());
         let selected = self
             .runtime
@@ -678,7 +690,9 @@ impl RootExecutionHandle {
             provenance: self.provenance.as_ref(),
         };
         let constraints = self.constraints.with_authority(authority);
-        let scope = CallScope::external_with_constraints(Arc::clone(&self.runtime), &constraints);
+        let mut scope =
+            CallScope::external_with_constraints(Arc::clone(&self.runtime), &constraints);
+        scope.cancellation = cancellation.map(CallCancellationToken::from_task);
         invoke_component_service_with(
             runtime,
             ComponentInvocationPlan {
