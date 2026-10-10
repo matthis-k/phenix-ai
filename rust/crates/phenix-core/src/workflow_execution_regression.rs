@@ -1668,6 +1668,29 @@ fn pinned_portable_projection_rejects_adapter_disagreement_without_provider_retr
         }) if selected == "tools" && reported == "final"
     ));
 
+    // The native pending path also checks the same pinned portable
+    // projection and cannot turn an adapter disagreement into a retry.
+    let pending_result = root.execute_workflow_pending(
+        (&component_id(TOPOLOGY), "portable"),
+        &mut (),
+        |_, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+        |_, _, _, _| Ok::<_, String>("tools".into()),
+        || false,
+        None,
+    );
+    assert!(matches!(
+        pending_result,
+        Err(WorkflowRunError::NodeFailed {
+            error: WorkflowBoundCallError::Invocation(
+                WorkflowNodeDispatchError::ProjectionMismatch {
+                    selected,
+                    reported,
+                }
+            ),
+            ..
+        }) if selected == "final" && reported == "tools"
+    ));
+
     // The failure is terminal; a separately admitted root may invoke the
     // provider again and consumes its next response without implicit replay.
     let next_root = kernel.root_execution_handle(&Authority::default());
