@@ -103,12 +103,7 @@ impl PhenixRuntime {
         step_limit: Option<std::num::NonZeroU64>,
     ) -> Result<phenix_sdk::AgentLoopResponse, String> {
         let root = self.root_execution_handle(caller_authority);
-        phenix_plugin_catalog::run_agent_workflow_pending(
-            &root,
-            command,
-            cancelled,
-            step_limit,
-        )
+        phenix_plugin_catalog::run_agent_workflow_pending(&root, command, cancelled, step_limit)
     }
 
     pub fn root_execution_handle_in_generation(
@@ -154,12 +149,7 @@ impl PhenixRuntime {
         let root = self
             .root_execution_handle_in_generation(generation, constraints)
             .map_err(|error| error.to_string())?;
-        phenix_plugin_catalog::run_agent_workflow_pending(
-            &root,
-            command,
-            cancelled,
-            step_limit,
-        )
+        phenix_plugin_catalog::run_agent_workflow_pending(&root, command, cancelled, step_limit)
     }
 
     pub fn build_plugin_artifact(
