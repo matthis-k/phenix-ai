@@ -1130,6 +1130,7 @@ impl RootExecutionHandle {
                 }
             },
             cancelled,
+            (
             |scope| {
                 retired_scopes.borrow_mut().push(scope.to_owned());
                 group.cancel_scope(scope);
@@ -1160,6 +1161,7 @@ impl RootExecutionHandle {
                     }
                 }
             },
+            ),
             step_limit,
         );
         // A completed Join may have cancelled unselected siblings. Their
