@@ -41,6 +41,14 @@ pub enum NativeAbiError {
     TruncatedTable { offered: usize, required: usize },
     UnavailableFeatures(u64),
     MissingEntrypoint(&'static str),
+    InvalidTicket,
+    WrongCorrelation {
+        expected: NativeCallTicket,
+        observed: NativeCallTicket,
+    },
+    UnknownCallStatus(u32),
+    InvalidTerminalBuffer,
+    InvalidPendingBuffer,
 }
 
 impl NativeAbiHeader {
@@ -131,6 +139,43 @@ pub struct NativeCallResult {
     pub status: u32,
     pub ticket: NativeCallTicket,
     pub payload: NativeOwnedBuffer,
+}
+
+impl NativeCallResult {
+    /// Validate one native callback against the selected root's ticket before
+    /// reading its payload, recording a normal outcome or releasing any lease.
+    /// Polling `Pending` is not a terminal settlement.
+    pub fn validate_for(&self, expected: NativeCallTicket) -> Result<(), NativeAbiError> {
+        if expected.root_id == 0 || expected.call_id == 0 {
+            return Err(NativeAbiError::InvalidTicket);
+        }
+        if self.ticket != expected {
+            return Err(NativeAbiError::WrongCorrelation {
+                expected,
+                observed: self.ticket,
+            });
+        }
+        match self.status {
+            RESULT_READY | RESULT_ERROR => {
+                if self.payload.has_valid_shape() {
+                    Ok(())
+                } else {
+                    Err(NativeAbiError::InvalidTerminalBuffer)
+                }
+            }
+            RESULT_PENDING => {
+                if self.payload.ptr.is_null()
+                    && self.payload.len == 0
+                    && self.payload.release.is_none()
+                {
+                    Ok(())
+                } else {
+                    Err(NativeAbiError::InvalidPendingBuffer)
+                }
+            }
+            other => Err(NativeAbiError::UnknownCallStatus(other)),
+        }
+    }
 }
 
 /// The host verifies each scoped operation against selected imports, plugin
@@ -241,6 +286,56 @@ mod tests {
         let ticket = NativeCallTicket { root_id: 10, call_id: 5 };
         assert_ne!(ticket, NativeCallTicket { root_id: 11, call_id: 5 });
         assert_ne!(ticket, NativeCallTicket { root_id: 10, call_id: 6 });
+    }
+
+    #[test]
+    fn native_callback_rejects_foreign_tickets_unknown_tags_and_bad_buffers() {
+        unsafe extern "C" fn release(_: *mut c_void, _: *mut u8, _: usize) {}
+        let expected = NativeCallTicket { root_id: 42, call_id: 9 };
+        let empty = || NativeOwnedBuffer {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            owner: core::ptr::null_mut(),
+            release: Some(release),
+        };
+        let valid = NativeCallResult {
+            ticket: expected,
+            status: RESULT_READY,
+            payload: empty(),
+        };
+        assert_eq!(valid.validate_for(expected), Ok(()));
+        assert_eq!(
+            valid.validate_for(NativeCallTicket { root_id: 43, call_id: 9 }),
+            Err(NativeAbiError::WrongCorrelation {
+                expected: NativeCallTicket { root_id: 43, call_id: 9 },
+                observed: expected,
+            })
+        );
+        assert_eq!(
+            valid.validate_for(NativeCallTicket { root_id: 0, call_id: 9 }),
+            Err(NativeAbiError::InvalidTicket)
+        );
+        let unknown = NativeCallResult { status: 999, ..valid };
+        assert_eq!(
+            unknown.validate_for(expected),
+            Err(NativeAbiError::UnknownCallStatus(999))
+        );
+        let bad_pending = NativeCallResult { status: RESULT_PENDING, ..unknown };
+        assert_eq!(
+            bad_pending.validate_for(expected),
+            Err(NativeAbiError::InvalidPendingBuffer)
+        );
+        let legal_pending = NativeCallResult {
+            status: RESULT_PENDING,
+            ticket: expected,
+            payload: NativeOwnedBuffer {
+                ptr: core::ptr::null_mut(),
+                len: 0,
+                owner: core::ptr::null_mut(),
+                release: None,
+            },
+        };
+        assert_eq!(legal_pending.validate_for(expected), Ok(()));
     }
 
     #[test]
