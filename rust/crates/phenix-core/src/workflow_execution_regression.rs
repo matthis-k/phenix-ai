@@ -293,7 +293,10 @@ fn native_selection_never_falls_back_to_embedded_factory_for_same_plugin_id() {
         configuration: BTreeMap::new(),
     };
     let candidate = resolve_with_workflows_and_native_tool(
-        BASIC, false, vec![topology()], Some(artifact.clone()),
+        BASIC,
+        false,
+        vec![topology()],
+        Some(artifact.clone()),
     );
     let mut kernel = Kernel::new(candidate.kernel_config().clone());
     kernel.activate_resolved_generation(&candidate).unwrap();
@@ -304,9 +307,14 @@ fn native_selection_never_falls_back_to_embedded_factory_for_same_plugin_id() {
         })
     });
     for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
-        kernel.register_embedded_factory(plugin_id(name), move || {
-            Box::new(MockNode { kind, model_calls: 0 })
-        }).unwrap();
+        kernel
+            .register_embedded_factory(plugin_id(name), move || {
+                Box::new(MockNode {
+                    kind,
+                    model_calls: 0,
+                })
+            })
+            .unwrap();
     }
     assert!(matches!(
         kernel.activate_all(),
@@ -326,9 +334,8 @@ fn native_registration_rejects_wrong_selected_content_or_execution_kind() {
         revision: crate::ArtifactRevision::from_content(b"not the selected module"),
         configuration: BTreeMap::new(),
     };
-    let native = resolve_with_workflows_and_native_tool(
-        BASIC, false, vec![topology()], Some(artifact),
-    );
+    let native =
+        resolve_with_workflows_and_native_tool(BASIC, false, vec![topology()], Some(artifact));
     let mut kernel = Kernel::new(native.kernel_config().clone());
     kernel.activate_resolved_generation(&native).unwrap();
     assert!(matches!(
@@ -340,7 +347,9 @@ fn native_registration_rejects_wrong_selected_content_or_execution_kind() {
     kernel.activate_resolved_generation(&embedded).unwrap();
     assert!(matches!(
         kernel.register_native_shared_library(plugin_id(TOOL_PROVIDER), &source),
-        Err(NativeRegistrationError::Kernel(KernelError::WrongExecutionKind(_)))
+        Err(NativeRegistrationError::Kernel(
+            KernelError::WrongExecutionKind(_)
+        ))
     ));
 }
 
