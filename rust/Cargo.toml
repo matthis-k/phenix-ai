@@ -13,6 +13,8 @@ members = [
   "crates/phenix-binding-lua",
   "crates/phenix-contract",
   "crates/phenix-core",
+  "crates/phenix-plugin-abi",
+  "crates/phenix-native-loader",
   "crates/phenix-domain",
   "crates/phenix-client",
   "crates/phenix-runtime",

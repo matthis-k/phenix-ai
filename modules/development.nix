@@ -67,6 +67,8 @@
           "phenix-client"
           "phenix-contract"
           "phenix-core"
+          "phenix-plugin-abi"
+          "phenix-native-loader"
           "phenix-domain"
           "phenix-provider-sdk"
           "phenix-runtime"
