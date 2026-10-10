@@ -2049,7 +2049,7 @@ impl CompiledWorkflow {
         let PlanStep::Invoke {
             import,
             on_result,
-            transfers,
+            transfers: _,
         } = &self.plan.steps[position.step]
         else {
             unreachable!("compiled Invoke has an Invoke step")
@@ -2122,32 +2122,9 @@ impl CompiledWorkflow {
                 outcome: outcome.clone(),
             }
         })?;
-        if let Some(mappings) = transfers.get(&outcome) {
-            // A cross-frame transition must be handled by the scheduler
-            // using isolate_subplan/publish_subplan, not copied on the
-            // caller's flat frame. A child Exit may return directly to root.
-            let target_node = match &target {
-                PlanStepId::Invoke(node)
-                | PlanStepId::Fork { node, .. }
-                | PlanStepId::Join { node, .. }
-                | PlanStepId::Exit { node, .. } => node,
-            };
-            let crosses = self.scope_for_node(name).map(|scope| &scope.prefix)
-                != self.scope_for_node(target_node).map(|scope| &scope.prefix)
-                || (matches!(target, PlanStepId::Exit { .. })
-                    && self.scope_for_node(name).is_some());
-            if !crosses {
-                let frame = data.ok_or_else(|| WorkflowRunError::StructuredFrameRequired {
-                    node: name.clone(),
-                })?;
-                frame.transfer_slots(mappings).map_err(|error| {
-                    WorkflowRunError::InvalidTransitionFrame {
-                        node: name.clone(),
-                        error,
-                    }
-                })?;
-            }
-        }
+        // All transition writes are owned by the cursor scheduler. It
+        // chooses the correct child or parent frame before applying them,
+        // even when the transition does not cross an inclusion boundary.
         Ok(WorkflowInvokeAdvance::Next {
             step: target,
             outcome,
