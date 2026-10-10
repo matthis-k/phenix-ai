@@ -16,15 +16,104 @@ use phenix_plugin_abi::{
     RESULT_READY,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ffi::{CStr, CString, c_char, c_int, c_void},
     fmt,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Condvar, LazyLock, Mutex, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 pub const NATIVE_SUPPORTED_FEATURES: u64 =
     FEATURE_PENDING_CALLS | FEATURE_WAKE_POLL | FEATURE_HOST_CANCELLATION;
+
+/// Opaque IDs, not pointers, are passed as host callback contexts. The global
+/// registry stores weak references and cannot dereference a callback after
+/// its generation was retired. There is no TLS-derived authority.
+static NEXT_HOST_ID: AtomicUsize = AtomicUsize::new(1);
+static HOST_REGISTRY: LazyLock<Mutex<BTreeMap<usize, Weak<WakeHub>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+struct WakeHub {
+    calls: Mutex<BTreeMap<(u64, u64), CallPermit>>,
+    notified: Condvar,
+}
+
+struct CallPermit {
+    wake: bool,
+    cancelled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+}
+
+/// Clonable wake receiver for a root-owned native worker. An untrusted plugin
+/// may not fabricate a settlement with wake; Core always polls its result.
+#[derive(Clone)]
+pub struct NativeWakeHandle {
+    hub: Arc<WakeHub>,
+}
+
+impl NativeWakeHandle {
+    /// Wait for a matching wake, or return to check cancellation and poll.
+    /// No timeout ever settles the invocation or retires a generation.
+    pub fn wait_for(&self, ticket: NativeCallTicket, interval: Duration) -> bool {
+        let mut calls = self.hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        let key = (ticket.root_id, ticket.call_id);
+        if !calls.get(&key).is_some_and(|call| call.wake) {
+            calls = self
+                .hub
+                .notified
+                .wait_timeout(calls, interval)
+                .unwrap_or_else(|error| error.into_inner())
+                .0;
+        }
+        if let Some(call) = calls.get_mut(&key) {
+            let signalled = call.wake;
+            call.wake = false;
+            signalled
+        } else {
+            false
+        }
+    }
+}
+
+fn hub_for(context: *mut c_void) -> Option<Arc<WakeHub>> {
+    // A numeric registry identity is never dereferenced as a C pointer.
+    HOST_REGISTRY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&(context as usize))
+        .and_then(Weak::upgrade)
+}
+
+unsafe extern "C" fn native_wake(context: *mut c_void, ticket: NativeCallTicket) {
+    if let Some(hub) = hub_for(context) {
+        let mut calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(call) = calls.get_mut(&(ticket.root_id, ticket.call_id)) {
+            call.wake = true;
+            hub.notified.notify_all();
+        }
+    }
+}
+
+unsafe extern "C" fn native_is_cancelled(context: *mut c_void, ticket: NativeCallTicket) -> u32 {
+    let Some(hub) = hub_for(context) else {
+        return 1; // A retired host cannot authorize a late callback.
+    };
+    let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+    if calls
+        .get(&(ticket.root_id, ticket.call_id))
+        .and_then(|permit| permit.cancelled.as_ref())
+        .is_some_and(|predicate| predicate())
+    {
+        1
+    } else if !calls.contains_key(&(ticket.root_id, ticket.call_id)) {
+        1
+    } else {
+        0
+    }
+}
 
 #[derive(Debug)]
 pub enum NativeLoadError {
