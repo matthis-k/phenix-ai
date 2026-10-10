@@ -410,28 +410,11 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
         },
     }])
     .unwrap();
-    let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_generation(&resolved).unwrap();
-    for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
-        kernel
-            .register_embedded_factory(plugin_id(name), move || {
-                Box::new(MockNode {
-                    kind,
-                    model_calls: 0,
-                })
-            })
-            .unwrap();
-    }
-    kernel
-        .register_native_shared_library(plugin_id(TOOL_PROVIDER), &library)
-        .unwrap();
-    kernel.activate_all().unwrap();
-    let root = kernel.root_execution_handle(&Authority::default());
     // The real loaded artifact must preserve the same selected provider,
     // outcomes and typed branch state in both scheduler modes.
     macro_rules! execute_native {
-        ($method:ident, $frame:expr) => {
-            root.$method(
+        ($root:expr, $method:ident, $frame:expr) => {
+            $root.$method(
                 (&component_id(TOPOLOGY), "turn"),
                 (&mut (), $frame),
                 |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
@@ -457,6 +440,26 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
         };
     }
     for pending in [false, true] {
+        // Each mode starts from a fresh selected provider. The model fixture
+        // advances state per turn, so reusing one instance would compare
+        // different turns instead of the two dispatch modes.
+        let mut kernel = Kernel::new(resolved.kernel_config().clone());
+        kernel.activate_resolved_generation(&resolved).unwrap();
+        for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
+            kernel
+                .register_embedded_factory(plugin_id(name), move || {
+                    Box::new(MockNode {
+                        kind,
+                        model_calls: 0,
+                    })
+                })
+                .unwrap();
+        }
+        kernel
+            .register_native_shared_library(plugin_id(TOOL_PROVIDER), &library)
+            .unwrap();
+        kernel.activate_all().unwrap();
+        let root = kernel.root_execution_handle(&Authority::default());
         let mut frame = WorkflowFrame::new(
             resolved
                 .generation_topology()
@@ -472,9 +475,9 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
         )
         .unwrap();
         let report = if pending {
-            execute_native!(execute_workflow_with_frame_pending, &mut frame)
+            execute_native!(root, execute_workflow_with_frame_pending, &mut frame)
         } else {
-            execute_native!(execute_workflow_with_frame, &mut frame)
+            execute_native!(root, execute_workflow_with_frame, &mut frame)
         };
         assert_eq!(report.final_outcome, "final", "native pending={pending}");
         assert_eq!(report.executed_nodes, 4, "native pending={pending}");
@@ -486,9 +489,9 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
             frame.get(&Key::parse("beta").unwrap()),
             Some(&PhenixValue::U64(7))
         );
+        drop(root);
+        drop(kernel);
     }
-    drop(root);
-    drop(kernel);
     std::fs::remove_dir_all(folder).unwrap();
 }
 
