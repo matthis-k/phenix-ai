@@ -284,6 +284,54 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
 }
 
 #[test]
+fn pending_and_cooperative_paths_match_basic_and_advanced_node_semantics() {
+    for selected in [BASIC, ADVANCED] {
+        let mut histories = Vec::new();
+        for native_pending in [false, true] {
+            let resolved = resolve(selected, false);
+            let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
+            let root = kernel.root_execution_handle(&Authority::default());
+            let mut seen = Vec::new();
+            let prepare = |node: &str, _: &InterfaceId, seen: &mut Vec<String>| {
+                seen.push(node.to_owned());
+                Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
+            };
+            let project = |_: &str, _: &InterfaceId, output: &[u8], _: &mut Vec<String>| {
+                match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                    PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                    _ => Err("invalid provider result".into()),
+                }
+            };
+            let report = if native_pending {
+                root.execute_workflow_pending(
+                    (&component_id(TOPOLOGY), "turn"),
+                    &mut seen,
+                    prepare,
+                    project,
+                    || false,
+                    None,
+                )
+            } else {
+                root.execute_workflow(
+                    (&component_id(TOPOLOGY), "turn"),
+                    &mut seen,
+                    prepare,
+                    project,
+                    || false,
+                    None,
+                )
+            }
+            .unwrap();
+            assert_eq!(report.final_outcome, "final");
+            assert_eq!(report.executed_nodes, 3);
+            histories.push(seen);
+        }
+        assert_eq!(histories[0], histories[1]);
+        assert_eq!(histories[0], ["model", "tool", "model"]);
+    }
+}
+
+#[test]
 fn pending_non_agent_fork_uses_pinned_imports_and_ordered_frame_join() {
     let resolved =
         selected_fork_generation(WorkflowJoinPolicy::All(WorkflowJoinAllPolicy::CollectAll));
