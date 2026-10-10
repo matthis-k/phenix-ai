@@ -33,11 +33,27 @@ impl CancellationToken {
 #[derive(Clone, Debug)]
 pub struct CallCancellationToken {
     cancelled: Arc<AtomicBool>,
+    parent: Option<Arc<CallCancellationToken>>,
 }
 
 impl CallCancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+            || self.parent.as_ref().is_some_and(|parent| parent.is_cancelled())
+    }
+
+    /// Preserve all ancestor cancellation predicates when a service Layer
+    /// delegates, or a native worker enters the canonical provider boundary.
+    pub(crate) fn with_parent(mut self, parent: Option<&CallCancellationToken>) -> Self {
+        self.parent = parent.cloned().map(Arc::new);
+        self
+    }
+
+    pub(crate) fn from_task(task: &CancellationToken) -> Self {
+        Self {
+            cancelled: Arc::clone(&task.cancelled),
+            parent: None,
+        }
     }
 }
 
@@ -255,7 +271,10 @@ impl TaskRuntime {
             runtime: self,
             plugin: plugin.clone(),
             id,
-            cancellation: CallCancellationToken { cancelled },
+            cancellation: CallCancellationToken {
+                cancelled,
+                parent: None,
+            },
         }
     }
 
