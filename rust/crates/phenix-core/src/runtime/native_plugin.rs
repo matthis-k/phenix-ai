@@ -26,7 +26,10 @@ pub enum NativeRegistrationError {
     Kernel(KernelError),
     Loader(NativeLoadError),
     ArtifactRead(String),
-    LocatorMismatch { declared: String, selected: String },
+    LocatorMismatch {
+        declared: String,
+        selected: String,
+    },
     RevisionMismatch {
         expected: crate::ArtifactRevision,
         actual: crate::ArtifactRevision,
