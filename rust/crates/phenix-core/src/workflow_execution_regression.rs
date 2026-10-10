@@ -1401,6 +1401,10 @@ fn typed_include_generation_unbound() -> ResolvedGeneration {
                             WorkflowEdge::IncludeMapped {
                                 workflow: "reusable".into(),
                                 site: "answer".into(),
+                                initial: BTreeMap::from([(
+                                    Key::parse("child_output").unwrap(),
+                                    PhenixValue::U64(0),
+                                )]),
                                 inputs: BTreeMap::from([(
                                     Key::parse("parent_input").unwrap(),
                                     Key::parse("child_input").unwrap(),
@@ -1442,19 +1446,30 @@ fn typed_include_generation_unbound() -> ResolvedGeneration {
 
 fn typed_include_generation() -> ResolvedGeneration {
     typed_include_generation_unbound()
-        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
-            owner: component_id(TOPOLOGY),
-            name: "turn".into(),
-            schema: WorkflowFrameSchema {
-                revision: 1,
-                slots: BTreeMap::from([
-                    (Key::parse("parent_input").unwrap(), Type::U64),
-                    (Key::parse("child_input").unwrap(), Type::U64),
-                    (Key::parse("child_output").unwrap(), Type::U64),
-                    (Key::parse("parent_output").unwrap(), Type::U64),
-                ]),
+        .with_workflow_frame_schemas([
+            WorkflowFrameDeclaration {
+                owner: component_id(TOPOLOGY),
+                name: "turn".into(),
+                schema: WorkflowFrameSchema {
+                    revision: 1,
+                    slots: BTreeMap::from([
+                        (Key::parse("parent_input").unwrap(), Type::U64),
+                        (Key::parse("parent_output").unwrap(), Type::U64),
+                    ]),
+                },
             },
-        }])
+            WorkflowFrameDeclaration {
+                owner: component_id(TOPOLOGY),
+                name: "reusable".into(),
+                schema: WorkflowFrameSchema {
+                    revision: 1,
+                    slots: BTreeMap::from([
+                        (Key::parse("child_input").unwrap(), Type::U64),
+                        (Key::parse("child_output").unwrap(), Type::U64),
+                    ]),
+                },
+            },
+        ])
         .unwrap()
 }
 
@@ -1478,8 +1493,6 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
         schema,
         BTreeMap::from([
             (parent_input.clone(), PhenixValue::U64(6)),
-            (child_input.clone(), PhenixValue::U64(0)),
-            (child_output.clone(), PhenixValue::U64(0)),
             (parent_output.clone(), PhenixValue::U64(0)),
         ]),
     )
@@ -1492,7 +1505,7 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
             |node, _, frame, seen| {
                 if node == "__include__/answer/work" {
                     assert_eq!(frame.get(&child_input), Some(&PhenixValue::U64(6)));
-                    assert_eq!(frame.get(&parent_input), Some(&PhenixValue::U64(6)));
+                    assert!(frame.get(&parent_input).is_none());
                 }
                 seen.push(node.to_owned());
                 Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap())
@@ -1513,8 +1526,8 @@ fn mapped_inlined_subplan_passes_typed_input_output_through_pinned_provider() {
     assert_eq!(report.executed_nodes, 3);
     assert_eq!(report.final_outcome, "final");
     assert_eq!(seen, ["model", "__include__/answer/work", "model",]);
-    assert_eq!(frame.get(&child_input), Some(&PhenixValue::U64(6)));
-    assert_eq!(frame.get(&child_output), Some(&PhenixValue::U64(18)));
+    assert!(frame.get(&child_input).is_none());
+    assert!(frame.get(&child_output).is_none());
     assert_eq!(frame.get(&parent_output), Some(&PhenixValue::U64(18)));
 }
 
@@ -1537,6 +1550,22 @@ fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit()
                             WorkflowEdge::IncludeMapped {
                                 workflow: "batch".into(),
                                 site: "batch-attempt".into(),
+                                initial: BTreeMap::from([
+                                    (
+                                        Key::parse("items").unwrap(),
+                                        PhenixValue::List(vec![
+                                            PhenixValue::U64(2),
+                                            PhenixValue::U64(3),
+                                        ]),
+                                    ),
+                                    (Key::parse("item").unwrap(), PhenixValue::U64(0)),
+                                    (Key::parse("result").unwrap(), PhenixValue::U64(0)),
+                                    (
+                                        Key::parse("collected").unwrap(),
+                                        PhenixValue::List(Vec::new()),
+                                    ),
+                                    (Key::parse("child_output").unwrap(), PhenixValue::U64(0)),
+                                ]),
                                 inputs: BTreeMap::from([(
                                     Key::parse("parent_input").unwrap(),
                                     Key::parse("child_input").unwrap(),
@@ -1606,29 +1635,34 @@ fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit()
         },
     };
     let resolved = resolve_with_workflows(BASIC, false, vec![parent, child])
-        .with_workflow_frame_schemas([WorkflowFrameDeclaration {
-            owner,
-            name: "turn".into(),
-            schema: WorkflowFrameSchema {
-                revision: 1,
-                slots: BTreeMap::from([
-                    (Key::parse("parent_input").unwrap(), Type::U64),
-                    (Key::parse("child_input").unwrap(), Type::U64),
-                    (
-                        Key::parse("items").unwrap(),
-                        Type::List(Box::new(Type::U64)),
-                    ),
-                    (Key::parse("item").unwrap(), Type::U64),
-                    (Key::parse("result").unwrap(), Type::U64),
-                    (
-                        Key::parse("collected").unwrap(),
-                        Type::List(Box::new(Type::U64)),
-                    ),
-                    (Key::parse("child_output").unwrap(), Type::U64),
-                    (Key::parse("parent_output").unwrap(), Type::U64),
-                ]),
+        .with_workflow_frame_schemas([
+            WorkflowFrameDeclaration {
+                owner: owner.clone(),
+                name: "turn".into(),
+                schema: WorkflowFrameSchema {
+                    revision: 1,
+                    slots: BTreeMap::from([
+                        (Key::parse("parent_input").unwrap(), Type::U64),
+                        (Key::parse("parent_output").unwrap(), Type::U64),
+                    ]),
+                },
             },
-        }])
+            WorkflowFrameDeclaration {
+                owner,
+                name: "batch".into(),
+                schema: WorkflowFrameSchema {
+                    revision: 1,
+                    slots: BTreeMap::from([
+                        (Key::parse("child_input").unwrap(), Type::U64),
+                        (Key::parse("items").unwrap(), Type::List(Box::new(Type::U64))),
+                        (Key::parse("item").unwrap(), Type::U64),
+                        (Key::parse("result").unwrap(), Type::U64),
+                        (Key::parse("collected").unwrap(), Type::List(Box::new(Type::U64))),
+                        (Key::parse("child_output").unwrap(), Type::U64),
+                    ]),
+                },
+            },
+        ])
         .unwrap();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
@@ -1643,18 +1677,6 @@ fn mapped_included_subplan_can_own_bounded_fork_without_leaking_its_child_exit()
         schema,
         BTreeMap::from([
             (Key::parse("parent_input").unwrap(), PhenixValue::U64(9)),
-            (Key::parse("child_input").unwrap(), PhenixValue::U64(0)),
-            (
-                Key::parse("items").unwrap(),
-                PhenixValue::List(vec![PhenixValue::U64(2), PhenixValue::U64(3)]),
-            ),
-            (Key::parse("item").unwrap(), PhenixValue::U64(0)),
-            (Key::parse("result").unwrap(), PhenixValue::U64(0)),
-            (
-                Key::parse("collected").unwrap(),
-                PhenixValue::List(Vec::new()),
-            ),
-            (Key::parse("child_output").unwrap(), PhenixValue::U64(0)),
             (Key::parse("parent_output").unwrap(), PhenixValue::U64(0)),
         ]),
     )
@@ -1742,7 +1764,20 @@ fn mapped_subplan_incompatible_type_rejects_before_provider_dispatch() {
             ]),
         },
     };
-    let outcome = declaration.with_workflow_frame_schemas([altered]);
+    let outcome = declaration.with_workflow_frame_schemas([
+        altered,
+        WorkflowFrameDeclaration {
+            owner: component_id(TOPOLOGY),
+            name: "reusable".into(),
+            schema: WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::from([
+                    (Key::parse("child_input").unwrap(), Type::U64),
+                    (Key::parse("child_output").unwrap(), Type::U64),
+                ]),
+            },
+        },
+    ]);
     assert!(matches!(
         outcome,
         Err(crate::GenerationResolutionError::InvalidWorkflow { error, .. })
