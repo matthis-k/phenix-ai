@@ -25,6 +25,12 @@ static NEXT_NATIVE_TICKET: AtomicU64 = AtomicU64::new(1);
 pub enum NativeRegistrationError {
     Kernel(KernelError),
     Loader(NativeLoadError),
+    ArtifactRead(String),
+    LocatorMismatch { declared: String, selected: String },
+    RevisionMismatch {
+        expected: crate::ArtifactRevision,
+        actual: crate::ArtifactRevision,
+    },
 }
 
 impl From<KernelError> for NativeRegistrationError {
@@ -166,16 +172,45 @@ impl Kernel {
     /// generation and explicitly registered; no manifest discovery, authority
     /// expansion, or implicit provider fallback is permitted here.
     ///
-    /// The transitional manifest kind is `Embedded` because the native ABI
-    /// loader is an intrinsic bootstrap and is not yet a separate resolved
-    /// artifact kind. This method never turns a guest adapter into bootstrap.
+    /// The declaration must explicitly select `PluginExecution::Native`
+    /// with the exact artifact locator and SHA-256 content revision. Dynamic
+    /// module bytes are never discovered from plugin code at resolution time.
     pub fn register_native_shared_library(
         &mut self,
         plugin: PluginId,
         path: &Path,
     ) -> Result<(), NativeRegistrationError> {
+        let manifest = self.config().manifest(&plugin).ok_or_else(|| {
+            NativeRegistrationError::Kernel(KernelError::UnknownPlugin(plugin.clone()))
+        })?;
+        let artifact = match &manifest.execution {
+            crate::PluginExecution::Native { artifact } => artifact,
+            _ => {
+                return Err(NativeRegistrationError::Kernel(
+                    KernelError::WrongExecutionKind(plugin),
+                ));
+            }
+        };
+        let selected = path.to_string_lossy().into_owned();
+        if artifact.locator != selected {
+            return Err(NativeRegistrationError::LocatorMismatch {
+                declared: artifact.locator.clone(),
+                selected,
+            });
+        }
+        let content = std::fs::read(path)
+            .map_err(|error| NativeRegistrationError::ArtifactRead(error.to_string()))?;
+        let actual = crate::ArtifactRevision::from_content(&content);
+        if actual != artifact.revision {
+            return Err(NativeRegistrationError::RevisionMismatch {
+                expected: artifact.revision.clone(),
+                actual,
+            });
+        }
         let library = NativePluginLibrary::load(path)?;
-        self.register_embedded_factory(plugin, native_library_factory(library))?;
+        // This is an already-resolved Native artifact. The ordinary factory
+        // registration API intentionally remains Embedded-only.
+        self.preload_embedded_factory(plugin, native_library_factory(library));
         Ok(())
     }
 }
