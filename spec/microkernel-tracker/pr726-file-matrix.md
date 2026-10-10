@@ -67,6 +67,24 @@ Completion means link to the implementing PR/commit, comparison of consumers and
 | W057 | IN PROGRESS | `spec/declarative-workflow-topology.md` | +508/-0 NEW | SIMPLIFY | #726 docs | Record actual vs target behavior and link normative RFC; remove obsolete migration claims and repeated status log. | #726 topology spec is a transitional implementation record, not the authority. Reconcile statements with `spec/kernel-runtime-rfc.md`, retain only current contract and migration gaps, and remove obsolete chronological repetition. |
 | W058 | IN PROGRESS | `spec/native-plugin-abi-and-guest-runtimes.md` | +59/-1 | KEEP | native implementation PR | Update implemented ABI stage claims only after verified loader/guest milestones; no premature Lua completion. | `spec/native-plugin-abi-and-guest-runtimes.md` labels itself specification-only, identifies implemented first ABI/loader slices, and distinguishes guest Lua from client Lua. Keep normative target, revise concrete milestones after native owner verifies callback/lease and guest adapter. |
 
+## Baseline growth accounting at #726 head `5fce639b`
+
+The full changed-file list reports 58 files, **+19,611/-266**, net **+19,345** lines. GitHub supplied inline patches for 56 files only. The two missing patches are `workflow.rs` (+4,734) and `workflow_execution_regression.rs` (+2,961). Their file-level additions reconcile the patch subtotal (+11,916) to the reported total (+19,611).
+
+| Source category | Files | Added | Deleted | Scope |
+| --- | ---: | ---: | ---: | --- |
+| Rust with production and possible inline test code | 38 | 15,646 | 258 | Includes `workflow.rs`; not a pure production LOC count |
+| Dedicated Rust test/fixture files | 3 | 3,271 | 0 | `workflow_execution_regression.rs`, `agent_loop_regression.rs`, `pending_plugin.rs` fixture |
+| Nix, Cargo, CI and script metadata | 14 | 125 | 7 | Includes Cargo lockfile changes |
+| Documentation | 3 | 569 | 1 | README and two specifications |
+| **Total** | **58** | **19,611** | **266** | |
+
+**Minimum identified test additions: 8,814 lines.** This includes the 3,271 dedicated-test lines plus 5,543 lines from new Rust modules' terminal `#[cfg(test)]` blocks. The test blocks inspected were `plugin_pending.rs` (29), `workflow_join.rs` (146), `workflow_frame.rs` (246), `workflow_projection.rs` (124), `workflow_tasks.rs` (509), `phenix-native-loader/src/lib.rs` (425), `phenix-plugin-agent-topology/src/lib.rs` (503), `phenix-plugin-abi/src/lib.rs` (141), `runtime_adapter.rs` (955) and `workflow.rs` (2,465). Modified existing files may contain additional inline tests, so this is a **lower bound**, not an exact test/production split. It does not classify blank/comment lines as separate code.
+
+At most **10,103 added lines** are non-test Rust under this lower-bound classification. That is an *upper bound* on added production Rust lines, not a proven amount of live production logic. Exactly **2,153 added lines** belong to the native extraction candidate W016/W023/W040-W044; some of those are tests. Relocating these paths must be counted as moved, not removed.
+
+Before concluding #726 is leaner: compute remaining inline-test changes in modified files, audit dead compatibility paths after #731 parity, record executable entrypoints and package graph before/after, and link exact CI for the branch where removals occur.
+
 ## Code growth gate
 
 Every iteration records the exact added/deleted production LOC, test LOC, live execution paths, retired duplicate APIs and paths moved to separately owned PRs. The goal is not an arbitrary LOC quota: the final kernel must reuse old dispatch/lease/resolver machinery and retire the old agent progression after parity. Native ABI extraction may relocate LOC across PRs, which must be counted as moved rather than deleted.
