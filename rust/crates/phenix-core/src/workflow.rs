@@ -88,6 +88,40 @@ where
     deserializer.deserialize_map(UniqueSlots)
 }
 
+/// Private initializer maps are also canonical author data. A duplicate
+/// slot must reject before JSON decoding can silently select the last value.
+fn deserialize_unique_initial_slots<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<crate::Key, PhenixValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueInitial;
+    impl<'de> serde::de::Visitor<'de> for UniqueInitial {
+        type Value = BTreeMap<crate::Key, PhenixValue>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("child-private initial slots without duplicate identities")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut entries: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut values = BTreeMap::new();
+            while let Some((slot, value)) = entries.next_entry::<crate::Key, PhenixValue>()? {
+                if values.insert(slot.clone(), value).is_some() {
+                    return Err(M::Error::custom(format!(
+                        "duplicate child-private initial slot {slot}"
+                    )));
+                }
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_map(UniqueInitial)
+}
+
 /// A workflow belongs to the component that imports its node services.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -187,7 +221,7 @@ pub enum WorkflowEdge {
         #[serde(deserialize_with = "deserialize_unique_transfer_slots")]
         outputs: BTreeMap<crate::Key, crate::Key>,
         /// Explicit initial values of child-private slots, never read from parent.
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_unique_initial_slots")]
         initial: BTreeMap<crate::Key, PhenixValue>,
     },
 }
