@@ -2113,7 +2113,7 @@ impl CompiledWorkflow {
         &self,
         position: InvokePosition<'_>,
         state: &mut State,
-        mut data: Option<&mut crate::WorkflowFrame>,
+        data: Option<&mut crate::WorkflowFrame>,
         invoke: &mut impl FnMut(
             &str,
             &InterfaceId,
@@ -2159,7 +2159,7 @@ impl CompiledWorkflow {
             import,
             position.scope,
             state,
-            data.as_deref_mut(),
+            data,
             cancelled,
         ) {
             WorkflowInvokePoll::Started => {
