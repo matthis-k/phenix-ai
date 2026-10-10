@@ -575,9 +575,9 @@ fn declarative_basic_profile_activates_without_legacy_agent_loop() {
     use phenix_core::Bytes;
     use phenix_sdk::{AgentLoopCommand, AgentLoopResponse, AgentLoopUsage};
 
-    let mut runtime = PhenixRuntimeBuilder::with_selected_suite(
-        &BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]),
-    )
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
     .unwrap()
     .build()
     .unwrap();
