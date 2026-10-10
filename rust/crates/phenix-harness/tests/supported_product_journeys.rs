@@ -11,12 +11,12 @@ use phenix_harness::{
 use phenix_plugin_catalog::{
     ArtifactCommand, ArtifactResponse, CliProbeRequest, ContextCommand, ContextResponse,
     DebugCommand, DebugResponse, ExecutionAuthority, ExecutionCommand, ExecutionResponse,
-    FrontendCommand, FrontendResponse, HookCommand, HookResponse, JobCommand, JobResponse,
-    LanguageCommand, LanguageResponse, ModelCommand, ModelInferenceRequest, ModelInferenceResponse,
-    ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-    RoutingProfile, SessionCommand, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTreeCommand, SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
-    artifact_component_manifest, model_inference_service, planning_component_manifest,
+    FrontendCommand, FrontendResponse, JobCommand, JobResponse, LanguageCommand, LanguageResponse,
+    ModelCommand, ModelInferenceRequest, ModelInferenceResponse, ModelResponse, ModelTarget,
+    PlanningCommand, PlanningResponse, RepositoryWorkSnapshot, RoutingProfile, SessionCommand,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTreeCommand, SessionTreeResponse,
+    WorkspaceCommand, WorkspaceResponse, artifact_component_manifest, model_inference_service,
+    planning_component_manifest,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelFeatures,
@@ -88,9 +88,6 @@ fn invoke(harness: &mut PhenixRuntime, service: &str, input: Value) -> Value {
         ),
         "phenix.frontend-services@1" => {
             invoke_structural_json::<FrontendCommand, FrontendResponse>(harness, service, input)
-        }
-        "phenix.hooks@1" => {
-            invoke_structural_json::<HookCommand, HookResponse>(harness, service, input)
         }
         "phenix.workspace@1" => {
             invoke_structural_json::<WorkspaceCommand, WorkspaceResponse>(harness, service, input)
@@ -190,22 +187,6 @@ where
     let output: PhenixValue =
         serde_json::from_slice(&output).unwrap_or_else(|error| panic!("{service}: {error}"));
     Response::try_from(Project(&output)).unwrap_or_else(|error| panic!("{service}: {error}"))
-}
-
-fn invoke_value_raw(
-    harness: &mut PhenixRuntime,
-    service: &ServiceId,
-    request: &PhenixValue,
-) -> PhenixValue {
-    let output = harness
-        .invoke(
-            service,
-            &serde_json::to_vec(request).unwrap(),
-            &default_suite_authority(),
-            None,
-        )
-        .unwrap();
-    serde_json::from_slice(&output).unwrap()
 }
 
 fn fixture_manifest(id: &str, service: ServiceId) -> PluginManifest {
@@ -814,45 +795,6 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     assert!(phenix_identity.content.contains("persistent memory"));
     assert!(phenix_identity.content.contains("Active skills"));
     assert_eq!(report.request, "print the model surface");
-}
-
-#[test]
-fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
-    let hook_service = ServiceId::parse("phenix.hooks@1").unwrap();
-
-    let mut default = PhenixRuntimeBuilder::with_default_suite()
-        .unwrap()
-        .build()
-        .unwrap();
-    default.activate().unwrap();
-    let request = HookCommand::GetConfiguration {
-        revision: "missing".into(),
-    };
-    let error = default
-        .invoke(
-            &hook_service,
-            &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-            &default_suite_authority(),
-            None,
-        )
-        .unwrap_err();
-    assert!(error.to_string().contains("no eligible provider"));
-
-    let selected = BTreeSet::new();
-    let mut replacement_builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
-    replacement_builder
-        .add_embedded(
-            fixture_manifest("fixture.hooks", hook_service.clone()),
-            || Box::new(EchoTool),
-        )
-        .unwrap();
-    let mut replacement = replacement_builder.build().unwrap();
-    replacement.activate().unwrap();
-    let request = PhenixValue::Bool(true);
-    assert_eq!(
-        invoke_value_raw(&mut replacement, &hook_service, &request),
-        request
-    );
 }
 
 #[test]
