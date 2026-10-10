@@ -921,7 +921,7 @@ impl RootExecutionHandle {
             .native_workflow_tasks()
             .expect("selected workflow has a pinned generation");
         let mut in_flight = BTreeMap::<String, WorkflowPendingImport>::new();
-        compiled.execute_suspending(
+        let result = compiled.execute_suspending(
             state,
             Some(frame),
             |node, interface, scope, state, frame, cancellation| {
@@ -1041,7 +1041,17 @@ impl RootExecutionHandle {
                 group.wait_settlement_for(Duration::from_millis(50));
             },
             step_limit,
-        )
+        );
+        // A completed Join may have cancelled unselected siblings. Their
+        // provider callbacks can still be running; root settlement must not
+        // discard their physical generation leases. Drain each remaining
+        // ticket before returning the caller-visible root result.
+        for (_, task) in in_flight {
+            let _ = task.cancel();
+            let _ = task.join();
+        }
+        group.close().expect("all admitted native callbacks have settled");
+        result
     }
 
     pub fn invoke(
