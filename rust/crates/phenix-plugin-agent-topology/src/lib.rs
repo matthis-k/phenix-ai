@@ -289,10 +289,16 @@ mod tests {
             let mut kernel = Kernel::new(compiled.kernel_config().clone());
             kernel.activate_resolved_generation(&compiled).unwrap();
             let effect_counter = Arc::clone(&effects);
-            kernel.register_embedded_factory(
-                PluginId::parse("fixture.providers").unwrap(),
-                move || Box::new(ToolFlow { effects: Arc::clone(&effect_counter) }),
-            ).unwrap();
+            kernel
+                .register_embedded_factory(
+                    PluginId::parse("fixture.providers").unwrap(),
+                    move || {
+                        Box::new(ToolFlow {
+                            effects: Arc::clone(&effect_counter),
+                        })
+                    },
+                )
+                .unwrap();
             kernel.activate_all().unwrap();
             let root = kernel.root_execution_handle(&Authority::default());
             let command = AgentLoopCommand::Run {
@@ -312,7 +318,8 @@ mod tests {
                 run_agent_workflow_pending(&root, command, || false, None)
             } else {
                 run_agent_workflow(&root, command, || false, None)
-            }.unwrap();
+            }
+            .unwrap();
             assert!(matches!(
                 &outcome,
                 AgentLoopResponse::Completed { output, usage }
