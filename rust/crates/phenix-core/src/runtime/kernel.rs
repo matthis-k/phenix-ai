@@ -649,7 +649,11 @@ fn project_workflow_output<State, Error>(
     let selected = selected_workflow_outcome::<Error>(workflow, node, import, output)?;
     let snapshot = frame.as_deref().cloned();
     match project(node, interface, output, frame.as_deref_mut(), state) {
-        Ok(reported) if selected.as_ref().is_none_or(|expected| expected == &reported) => {
+        Ok(reported)
+            if selected
+                .as_ref()
+                .is_none_or(|expected| expected == &reported) =>
+        {
             Ok(reported)
         }
         Ok(reported) => {
@@ -848,7 +852,13 @@ impl RootExecutionHandle {
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
                 project_workflow_output(
-                    compiled, node, service, import, &output, state, None,
+                    compiled,
+                    node,
+                    service,
+                    import,
+                    &output,
+                    state,
+                    None,
                     |node, interface, output, _, state| project(node, interface, output, state),
                 )
             },
@@ -904,10 +914,21 @@ impl RootExecutionHandle {
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
                 project_workflow_output(
-                    compiled, node, interface, binding, &output, state, Some(frame),
+                    compiled,
+                    node,
+                    interface,
+                    binding,
+                    &output,
+                    state,
+                    Some(frame),
                     |node, interface, output, frame, state| {
-                        project(node, interface, output,
-                            frame.expect("framed entry supplies a data frame"), state)
+                        project(
+                            node,
+                            interface,
+                            output,
+                            frame.expect("framed entry supplies a data frame"),
+                            state,
+                        )
                     },
                 )
             },
@@ -1083,7 +1104,12 @@ impl RootExecutionHandle {
                         }
                     };
                     match project_workflow_output(
-                        compiled, node, interface, binding, &output, state,
+                        compiled,
+                        node,
+                        interface,
+                        binding,
+                        &output,
+                        state,
                         frame.as_deref_mut(),
                         |node, interface, output, frame, state| {
                             project(node, interface, output, frame, state)
