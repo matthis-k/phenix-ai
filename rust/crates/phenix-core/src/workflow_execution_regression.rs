@@ -284,6 +284,38 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
 }
 
 #[test]
+fn native_selection_never_falls_back_to_embedded_factory_for_same_plugin_id() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../phenix-native-loader/tests/fixtures/pending_plugin.rs");
+    let artifact = crate::PluginArtifact {
+        locator: source.to_string_lossy().into_owned(),
+        revision: crate::ArtifactRevision::from_content(&std::fs::read(&source).unwrap()),
+        configuration: BTreeMap::new(),
+    };
+    let candidate = resolve_with_workflows_and_native_tool(
+        BASIC, false, vec![topology()], Some(artifact.clone()),
+    );
+    let mut kernel = Kernel::new(candidate.kernel_config().clone());
+    kernel.activate_resolved_generation(&candidate).unwrap();
+    kernel.preload_embedded_factory(plugin_id(TOOL_PROVIDER), || {
+        Box::new(MockNode {
+            kind: "tool",
+            model_calls: 0,
+        })
+    });
+    for (name, kind) in [(BASIC, "basic"), (ADVANCED, "advanced")] {
+        kernel.register_embedded_factory(plugin_id(name), move || {
+            Box::new(MockNode { kind, model_calls: 0 })
+        }).unwrap();
+    }
+    assert!(matches!(
+        kernel.activate_all(),
+        Err(KernelError::NativeArtifactUnavailable { plugin, revision })
+            if plugin == plugin_id(TOOL_PROVIDER) && revision == artifact.revision
+    ));
+}
+
+#[test]
 fn native_registration_rejects_wrong_selected_content_or_execution_kind() {
     use crate::NativeRegistrationError;
     use std::path::Path;
