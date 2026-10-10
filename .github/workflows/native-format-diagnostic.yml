@@ -1,0 +1,20 @@
+name: Native format diagnostic
+on:
+  push:
+    branches:
+      - feat/native-abi-loader-extraction
+
+permissions:
+  contents: read
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Print native loader formatting diff
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all --manifest-path rust/Cargo.toml
+          git diff -- rust/crates/phenix-native-loader/src/lib.rs
+          git diff -- rust/crates/phenix-plugin-abi/src/lib.rs
