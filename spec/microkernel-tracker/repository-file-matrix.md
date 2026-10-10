@@ -325,31 +325,31 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0218 | TODO | `rust/crates/phenix-model-adapter-acp/Cargo.toml` | Keep | ACP model-provider adapter implementation. | — | pending |
-| F0219 | TODO | `rust/crates/phenix-model-adapter-acp/src/lib.rs` | Keep | ACP model-provider adapter implementation. | — | pending |
+| F0218 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/Cargo.toml` | Keep | ACP model-provider adapter implementation. | — | Main `8362e03e`: passive ACP model adapter package depends on domain and model adapter interfaces. KEEP replaceable model transport; test selected provider activation without Core code changes. |
+| F0219 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/src/lib.rs` | Keep | ACP model-provider adapter implementation. | — | Main `a6190729`: 1,254-line ACP model adapter owns persistent agent sessions, auth, cancellation and MCP tool bridge; provider-specific behavior remains outside Core. REFACTOR old MCP bridge transport with #765 strict routing; preserve turn continuity, event ordering and tool callbacks. |
 | F0220 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/src/mcp_bridge.rs` | Keep | ACP model-provider adapter implementation. | — | BREAKING #765 (`d2d64a42`): removed old MCP 2025 protocol downgrade and response formatting; discovery and requests use 2026-07-28 only. Prior format tests deleted. Source/Clippy rerun required. |
-| F0221 | TODO | `rust/crates/phenix-model-adapter-acp/tests/fixtures/acp_continuity_agent.rs` | Keep | ACP model-provider adapter implementation. | — | pending |
-| F0222 | TODO | `rust/crates/phenix-model-adapter-acp/tests/fixtures/acp_tool_bridge_agent.rs` | Keep | ACP model-provider adapter implementation. | — | pending |
-| F0223 | TODO | `rust/crates/phenix-model-adapter-acp/tests/persistent_continuity.rs` | Keep | ACP model-provider adapter implementation. | — | pending |
-| F0224 | TODO | `rust/crates/phenix-model-adapter-acp/tests/tool_bridge.rs` | Keep | ACP model-provider adapter implementation. | — | pending |
+| F0221 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/tests/fixtures/acp_continuity_agent.rs` | Keep | ACP model-provider adapter implementation. | — | Main `d2d0aefc`: standalone ACP continuity agent fixture with model options and text notifications. KEEP test process, not production provider; run persistent continuity test. |
+| F0222 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/tests/fixtures/acp_tool_bridge_agent.rs` | Keep | ACP model-provider adapter implementation. | — | Main `f2ad7d8b`: fixture ACP agent handles MCP connect/calls and tool notifications. KEEP strict MCP conformance fixture while migrating protocol; reject implicit tool routing. |
+| F0223 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/tests/persistent_continuity.rs` | Keep | ACP model-provider adapter implementation. | — | Main `f282fcc8`: persistent session test verifies Phenix session reuses one ACP conversation. KEEP protocol lifecycle canary; verify cancellation/reconnect when #725 durable admission changes. |
+| F0224 | IN PROGRESS | `rust/crates/phenix-model-adapter-acp/tests/tool_bridge.rs` | Keep | ACP model-provider adapter implementation. | — | Main `de74b0ad`: live ACP fixture executes a Phenix-provided tool and continues the model turn. KEEP selected tool bridge regression; verify #726 agent topology and #765 strict MCP contract. |
 
 ### `rust/crates/phenix-model-adapter-native`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0225 | TODO | `rust/crates/phenix-model-adapter-native/Cargo.toml` | Keep | Native model-provider adapter implementation. | — | pending |
-| F0226 | TODO | `rust/crates/phenix-model-adapter-native/src/credentials.rs` | Keep | Native model-provider adapter implementation. | — | pending |
-| F0227 | TODO | `rust/crates/phenix-model-adapter-native/src/lib.rs` | Keep | Native model-provider adapter implementation. | — | pending |
-| F0228 | TODO | `rust/crates/phenix-model-adapter-native/src/oauth.rs` | Keep | Native model-provider adapter implementation. | — | pending |
-| F0229 | TODO | `rust/crates/phenix-model-adapter-native/src/providers.rs` | Keep | Native model-provider adapter implementation. | — | pending |
-| F0230 | TODO | `rust/crates/phenix-model-adapter-native/src/schema_adapter.rs` | Keep | Native model-provider adapter implementation. | — | pending |
+| F0225 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/Cargo.toml` | Keep | Native model-provider adapter implementation. | — | Main `d070a50b`: passive native model adapter package is separate from generic Core and native plugin ABI/loader. KEEP provider adapter, test full Basic/Full packaging. |
+| F0226 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/src/credentials.rs` | Keep | Native model-provider adapter implementation. | — | Main `69390ae4`: credentials module persists provider keys/OAuth tokens with secure file permissions. KEEP provider-specific secret owner; audit redaction, permission checks and Linux/macOS/Windows path behavior. |
+| F0227 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/src/lib.rs` | Keep | Native model-provider adapter implementation. | — | Main `b97a4fd1`: NativeModelAdapter implements model session, catalog, auth, streaming, tool calls and opt-in tool round limit. KEEP provider plugin; verify usage, cancellation and response identity in real #726 Basic/Full turn. |
+| F0228 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/src/oauth.rs` | Keep | Native model-provider adapter implementation. | — | Main `5d39209c`: OAuth authorization/challenge/token parsing and CredentialStore integration. KEEP auth implementation outside Core; test redirect state mismatch, token expiry and provider selection. |
+| F0229 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/src/providers.rs` | Keep | Native model-provider adapter implementation. | — | Main `c7023a6a`: provider-ID mapping for OpenAI/Zen/Go and gateway adapters with canonical auth tests. REFACTOR static provider registry into plugin-owned provider descriptors when #731 makes selection data-driven; keep exact provider IDs. |
+| F0230 | IN PROGRESS | `rust/crates/phenix-model-adapter-native/src/schema_adapter.rs` | Keep | Native model-provider adapter implementation. | — | Main `b874235d`: typed PhenixSchema to external JSON schema/arguments converter; five tests cover object root and null/scalar conversion. KEEP provider wire conversion; test unsupported schema rejection with real native tool call. |
 
 ### `rust/crates/phenix-model-adapter`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0231 | TODO | `rust/crates/phenix-model-adapter/Cargo.toml` | Keep | Shared model-adapter application contract, never required by Core. | — | pending |
-| F0232 | TODO | `rust/crates/phenix-model-adapter/src/lib.rs` | Keep | Shared model-adapter application contract, never required by Core. | — | pending |
+| F0231 | IN PROGRESS | `rust/crates/phenix-model-adapter/Cargo.toml` | Keep | Shared model-adapter application contract, never required by Core. | — | Main `fc0e6e28`: shared model adapter contract crate is passive-library role and imports only application/domain types. KEEP model transport interface independent of Core. |
+| F0232 | IN PROGRESS | `rust/crates/phenix-model-adapter/src/lib.rs` | Keep | Shared model-adapter application contract, never required by Core. | — | Main `3d261c79`: ModelAdapter and ModelSession traits define host tool callback, streaming events, persistent session opening and feature negotiation. KEEP application plugin contract; #726 topology invokes it without second agent executor. |
 
 ### `rust/crates/phenix-plugin-api`
 
