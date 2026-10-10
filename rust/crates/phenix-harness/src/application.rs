@@ -11067,25 +11067,7 @@ mod tests {
     }
 
     #[test]
-    fn application_agent_selection_is_pinned_to_the_resolved_execution_contract() {
-        let legacy = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
-            "phenix.agent-loop".to_owned(),
-        ]))
-        .unwrap()
-        .build()
-        .unwrap();
-        let bound = bound_application_agent_plugin(
-            legacy.resolved_generation(),
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert_eq!(
-            bound.as_ref().map(PluginId::as_str),
-            Some("phenix.agent-loop"),
-            "explicitly selected legacy contract remains supported and authoritative"
-        );
-
+    fn application_agent_selection_uses_only_resolved_declarative_topology() {
         let declarative = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
             phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
         ]))
@@ -11105,7 +11087,6 @@ mod tests {
         let neither = crate::PhenixRuntimeBuilder::with_selected_suite_excluding(
             &BTreeSet::from([phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned()]),
             &BTreeSet::from([
-                "phenix.agent-loop".to_owned(),
                 "phenix.agent-topology".to_owned(),
                 "phenix.basic-agent-nodes".to_owned(),
             ]),
