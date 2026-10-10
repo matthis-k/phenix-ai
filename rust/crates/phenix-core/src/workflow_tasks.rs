@@ -77,13 +77,17 @@ impl WorkflowPendingTasks {
         }
     }
 
+    fn scope_contains(parent: &str, candidate: &str) -> bool {
+        candidate == parent
+            || candidate
+                .strip_prefix(parent)
+                .is_some_and(|remainder| remainder.starts_with('/'))
+    }
+
     fn scoped(&self, scope: &str) -> bool {
-        self.cancelled_scopes.iter().any(|cancelled| {
-            scope == cancelled
-                || scope
-                    .strip_prefix(cancelled)
-                    .is_some_and(|remainder| remainder.starts_with('/'))
-        })
+        self.cancelled_scopes
+            .iter()
+            .any(|cancelled| Self::scope_contains(cancelled, scope))
     }
 
     /// Admit only while the pinned root is open and the enclosing scope has
@@ -108,12 +112,7 @@ impl WorkflowPendingTasks {
         self.cancelled_scopes.insert(scope.into());
         let mut signalled = Vec::new();
         for (id, state) in &mut self.active {
-            if (id.scope == scope
-                || id
-                    .scope
-                    .strip_prefix(scope)
-                    .is_some_and(|rest| rest.starts_with('/')))
-                && *state == WorkflowTaskState::Pending
+            if Self::scope_contains(scope, &id.scope) && *state == WorkflowTaskState::Pending
             {
                 *state = WorkflowTaskState::Cancelling;
                 signalled.push(id.clone());
