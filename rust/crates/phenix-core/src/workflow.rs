@@ -2075,6 +2075,150 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn suspended_join_policies_preserve_settlement_and_sibling_cancellation() {
+        use std::{
+            cell::RefCell,
+            collections::VecDeque,
+            num::NonZeroUsize,
+        };
+
+        let cases = [
+            (
+                "all-collect",
+                crate::WorkflowJoinPolicy::All(crate::WorkflowJoinAllPolicy::CollectAll),
+                vec![("b", "failed"), ("a", "done"), ("c", "done")],
+                "spawn/failure",
+                0usize,
+            ),
+            (
+                "all-fail-fast",
+                crate::WorkflowJoinPolicy::All(crate::WorkflowJoinAllPolicy::FailFast),
+                vec![("b", "failed")],
+                "spawn/failure",
+                2,
+            ),
+            (
+                "first-completed",
+                crate::WorkflowJoinPolicy::FirstCompleted,
+                vec![("b", "done")],
+                "spawn/success",
+                2,
+            ),
+            (
+                "first-success",
+                crate::WorkflowJoinPolicy::FirstSuccess,
+                vec![("b", "failed"), ("a", "done")],
+                "spawn/success",
+                1,
+            ),
+            (
+                "quorum",
+                crate::WorkflowJoinPolicy::Quorum(NonZeroUsize::new(2).unwrap()),
+                vec![("b", "done"), ("a", "done")],
+                "spawn/success",
+                1,
+            ),
+            (
+                "unreachable-quorum",
+                crate::WorkflowJoinPolicy::Quorum(NonZeroUsize::new(2).unwrap()),
+                vec![("b", "failed"), ("a", "failed")],
+                "spawn/failure",
+                1,
+            ),
+        ];
+        for (label, policy, script, expected, cancelled_count) in cases {
+            let compiled = WorkflowTopology {
+                entry: "start".into(),
+                nodes: BTreeMap::from([
+                    (
+                        "start".into(),
+                        service(
+                            "fixture.start@1",
+                            &[(
+                                "spawn",
+                                WorkflowEdge::Fork {
+                                    branches: BTreeMap::from([
+                                        ("a".into(), "a".into()),
+                                        ("b".into(), "b".into()),
+                                        ("c".into(), "c".into()),
+                                    ]),
+                                    policy,
+                                    outputs: BTreeMap::new(),
+                                    on_success: Box::new(WorkflowEdge::Finish),
+                                    on_failure: Box::new(WorkflowEdge::Finish),
+                                },
+                            )],
+                        ),
+                    ),
+                    ("a".into(), service("fixture.a@1", &[
+                        ("done", WorkflowEdge::Finish),
+                        ("failed", WorkflowEdge::Fail),
+                    ])),
+                    ("b".into(), service("fixture.b@1", &[
+                        ("done", WorkflowEdge::Finish),
+                        ("failed", WorkflowEdge::Fail),
+                    ])),
+                    ("c".into(), service("fixture.c@1", &[
+                        ("done", WorkflowEdge::Finish),
+                        ("failed", WorkflowEdge::Fail),
+                    ])),
+                ]),
+            }
+            .compile(|_| true)
+            .unwrap();
+            let mut frame = crate::WorkflowFrame::new(
+                crate::WorkflowFrameSchema {
+                    revision: 1,
+                    slots: BTreeMap::new(),
+                },
+                BTreeMap::new(),
+            ).unwrap();
+            let admitted = RefCell::new(BTreeSet::<String>::new());
+            let cancellation = RefCell::new(Vec::<String>::new());
+            let script = RefCell::new(
+                script.into_iter().map(|(name, outcome)| {
+                    (name.to_owned(), outcome.to_owned())
+                }).collect::<VecDeque<_>>(),
+            );
+            let allowed = RefCell::new(None::<(String, String)>);
+            let report = compiled.execute_suspending::<_, String>(
+                &mut (),
+                Some(&mut frame),
+                |node, _, _, _, _, _| {
+                    if node == "start" {
+                        return WorkflowInvokePoll::Ready(Ok("spawn".into()));
+                    }
+                    if admitted.borrow_mut().insert(node.to_owned()) {
+                        return WorkflowInvokePoll::Started;
+                    }
+                    let ready = allowed.borrow().as_ref().is_some_and(|(name, _)| name == node);
+                    if ready {
+                        WorkflowInvokePoll::Ready(Ok(allowed.borrow_mut().take().unwrap().1))
+                    } else {
+                        WorkflowInvokePoll::Waiting
+                    }
+                },
+                || false,
+                (
+                    |scope| cancellation.borrow_mut().push(scope.to_owned()),
+                    || {
+                        assert_eq!(admitted.borrow().len(), 3, "{label}: siblings were not admitted");
+                        let next = script.borrow_mut().pop_front()
+                            .expect("join waited for an unprovided settlement");
+                        assert!(allowed.replace(Some(next)).is_none());
+                    },
+                ),
+                None,
+            ).unwrap();
+            assert_eq!(report.final_outcome, expected, "{label}");
+            assert_eq!(report.executed_nodes, 4 - cancelled_count as u64, "{label}");
+            assert_eq!(admitted.borrow().len(), 3, "{label}");
+            assert_eq!(cancellation.borrow().len(), cancelled_count, "{label}");
+            assert!(script.borrow().is_empty(), "{label}");
+        }
+    }
+
+    #[test]
     fn suspended_fork_reserves_optional_step_budget_before_sibling_dispatch() {
         let compiled = WorkflowTopology {
             entry: "start".into(),
