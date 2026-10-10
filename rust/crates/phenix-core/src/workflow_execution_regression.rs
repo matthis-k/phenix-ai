@@ -283,6 +283,35 @@ fn nested_fork_yields_to_outer_siblings_without_new_root_or_binding() {
     assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(8)));
 }
 
+#[test]
+fn native_registration_rejects_wrong_selected_content_or_execution_kind() {
+    use crate::NativeRegistrationError;
+    use std::path::Path;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../phenix-native-loader/tests/fixtures/pending_plugin.rs");
+    let artifact = crate::PluginArtifact {
+        locator: source.to_string_lossy().into_owned(),
+        revision: crate::ArtifactRevision::from_content(b"not the selected module"),
+        configuration: BTreeMap::new(),
+    };
+    let native = resolve_with_workflows_and_native_tool(
+        BASIC, false, vec![topology()], Some(artifact),
+    );
+    let mut kernel = Kernel::new(native.kernel_config().clone());
+    kernel.activate_resolved_generation(&native).unwrap();
+    assert!(matches!(
+        kernel.register_native_shared_library(plugin_id(TOOL_PROVIDER), &source),
+        Err(NativeRegistrationError::RevisionMismatch { .. })
+    ));
+    let embedded = resolve_with_workflow(BASIC, false, topology());
+    let mut kernel = Kernel::new(embedded.kernel_config().clone());
+    kernel.activate_resolved_generation(&embedded).unwrap();
+    assert!(matches!(
+        kernel.register_native_shared_library(plugin_id(TOOL_PROVIDER), &source),
+        Err(NativeRegistrationError::Kernel(KernelError::WrongExecutionKind(_)))
+    ));
+}
+
 #[cfg(unix)]
 #[test]
 fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
