@@ -39,7 +39,10 @@ pub struct CallCancellationToken {
 impl CallCancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
-            || self.parent.as_ref().is_some_and(|parent| parent.is_cancelled())
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.is_cancelled())
     }
 
     /// Preserve all ancestor cancellation predicates when a service Layer
