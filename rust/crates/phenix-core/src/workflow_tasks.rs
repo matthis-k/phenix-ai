@@ -363,13 +363,15 @@ impl WorkflowNativeTaskGroup {
                 if token.is_cancelled() {
                     return Err(WorkflowNativeDispatchError::Cancelled);
                 }
-                let response = bound_root
-                    .invoke_import(&import, &request)
-                    .map_err(WorkflowNativeDispatchError::Invoke)?;
+                let response = bound_root.invoke_import_with_cancellation(
+                    &import,
+                    &request,
+                    Some(&token),
+                );
                 if token.is_cancelled() {
                     return Err(WorkflowNativeDispatchError::Cancelled);
                 }
-                Ok(response)
+                response.map_err(WorkflowNativeDispatchError::Invoke)
             },
             |result| match result {
                 Ok(_) => WorkflowTaskState::Completed,
