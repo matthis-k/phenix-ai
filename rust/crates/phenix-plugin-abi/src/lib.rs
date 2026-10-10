@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn native_callback_rejects_foreign_tickets_unknown_tags_and_bad_buffers() {
-        unsafe extern "C" fn release(_: *mut c_void, _: *mut u8, _: usize) {}
+        extern "C" fn release(_: *mut c_void, _: *mut u8, _: usize) {}
         let expected = NativeCallTicket { root_id: 42, call_id: 9 };
         let empty = || NativeOwnedBuffer {
             ptr: core::ptr::null_mut(),
