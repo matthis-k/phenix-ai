@@ -132,9 +132,9 @@ unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
     Result{status:1,ticket,payload:buffer(
         if simple {
             if cfg!(phenix_native_revision_b) {
-                b"fixture finished B"
+                &b"fixture finished B"[..]
             } else {
-                b"fixture finished"
+                &b"fixture finished"[..]
             }
         } else {
             br#"{"type":"string","value":"done"}"#
