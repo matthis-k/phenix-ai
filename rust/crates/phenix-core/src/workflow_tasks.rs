@@ -17,6 +17,7 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     thread,
+    time::Duration,
 };
 
 /// Correlated completion identity. The generation component prevents a late
@@ -276,6 +277,13 @@ impl<T> WorkflowNativeTask<T> {
 
     pub fn is_finished(&self) -> bool {
         self.task.is_finished()
+            || self
+                .shared
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .pending
+                .state(&self.id)
+                .is_some_and(WorkflowTaskState::terminal)
     }
 
     pub fn join(self) -> thread::Result<T> {
@@ -476,6 +484,17 @@ impl WorkflowNativeTaskGroup {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .recv()
+            .ok()
+    }
+
+    /// Wait for a native callback but periodically return to the scheduler
+    /// so caller-owned cancellation predicates can be observed. This is not
+    /// a provider timeout and never settles a pending task by itself.
+    pub fn wait_settlement_for(&self, interval: Duration) -> Option<WorkflowTaskId> {
+        self.completion_rx
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .recv_timeout(interval)
             .ok()
     }
 
