@@ -89,7 +89,7 @@ where
 }
 
 /// A workflow belongs to the component that imports its node services.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowDeclaration {
     pub owner: ComponentId,
@@ -99,7 +99,7 @@ pub struct WorkflowDeclaration {
 
 /// An execution topology. The map key names a node within this workflow;
 /// service identity remains independent of node identity.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowTopology {
     pub entry: String,
@@ -111,7 +111,7 @@ pub struct WorkflowTopology {
 ///
 /// Branch names belong to the contract adapter, not to the kernel. An adapter
 /// projects a typed provider response into one of these declared outcomes.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowNode {
     pub import: InterfaceId,
@@ -120,7 +120,7 @@ pub struct WorkflowNode {
 }
 
 /// Branches are explicit. The kernel never guesses a default transition.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkflowEdge {
     Next {
