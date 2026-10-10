@@ -261,6 +261,41 @@ impl NativePluginLibrary {
         }))
     }
 
+    /// Load from the already-verified artifact bytes, not from a mutable
+    /// locator that could be swapped after content-revision validation.
+    ///
+    /// Stage into a newly created private directory, map the image, and
+    /// unlink the staging file immediately. POSIX keeps loaded pages resident
+    /// until the last handle closes. Relative dynamic dependencies are not
+    /// discovered or implicitly trusted; native artifacts must be self-
+    /// contained or use explicit absolute runtime library references.
+    pub fn load_staged(content: &[u8]) -> Result<Arc<Self>, NativeLoadError> {
+        static NEXT_STAGE: AtomicUsize = AtomicUsize::new(1);
+        let id = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "phenix-native-{}-{id}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| NativeLoadError::Open(error.to_string()))?
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&directory)
+            .map_err(|error| NativeLoadError::Open(error.to_string()))?;
+        let staged = directory.join(format!(
+            "module.{}",
+            std::env::consts::DLL_EXTENSION
+        ));
+        let result = (|| {
+            std::fs::write(&staged, content)
+                .map_err(|error| NativeLoadError::Open(error.to_string()))?;
+            Self::load(&staged)
+        })();
+        let _ = std::fs::remove_file(staged);
+        let _ = std::fs::remove_dir(directory);
+        result
+    }
+
     pub fn header(&self) -> NativeAbiHeader {
         let _guard = self.gate.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: the table and image are resident for self's lifetime.
