@@ -45,6 +45,7 @@ impl Kernel {
             resident_generations: BTreeMap::new(),
             authority_ceiling: None,
             embedded_factories: BTreeMap::new(),
+            native_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
             tasks: Arc::new(TaskRuntime::default()),
@@ -199,6 +200,20 @@ impl Kernel {
             .ok_or_else(|| KernelError::EmbeddedFactoryMissing(plugin.clone()))
     }
 
+    pub(super) fn take_native_instance(
+        &self,
+        plugin: &PluginId,
+        artifact: &crate::PluginArtifact,
+    ) -> Result<Box<dyn PluginInstance>, KernelError> {
+        self.native_factories
+            .get(&(plugin.clone(), artifact.revision.clone()))
+            .map(|factory| factory())
+            .ok_or_else(|| KernelError::NativeArtifactUnavailable {
+                plugin: plugin.clone(),
+                revision: artifact.revision.clone(),
+            })
+    }
+
     pub fn activate_all(&mut self) -> Result<(), KernelError> {
         if self.generation_state.active
             && self
@@ -241,8 +256,11 @@ impl Kernel {
             let instance = (|| -> Result<Option<Box<dyn PluginInstance>>, KernelError> {
                 match &manifest.execution {
                     PluginExecution::ResourceOnly => Ok(None),
-                    PluginExecution::Embedded | PluginExecution::Native { .. } => {
+                    PluginExecution::Embedded => {
                         self.take_embedded_instance(plugin).map(Some)
+                    }
+                    PluginExecution::Native { artifact } => {
+                        self.take_native_instance(plugin, artifact).map(Some)
                     }
                     PluginExecution::Runtime { runtime, artifact } => {
                         let binding =
