@@ -155,6 +155,16 @@ unsafe extern "C" fn native_invoke_import(
     {
         return host_owned_result(ticket, Err("native host dispatcher has closed".into()));
     }
+    // An import request is also a reason to wake the owning Core dispatcher.
+    // Record the wake under the same admitted-ticket mutex so the host cannot
+    // miss it if the guest queues an import just before the host parks.
+    {
+        let mut calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(call) = calls.get_mut(&(ticket.root_id, ticket.call_id)) {
+            call.wake = true;
+            hub.notified.notify_all();
+        }
+    }
     host_owned_result(
         ticket,
         receiver
@@ -926,6 +936,12 @@ mod tests {
         ));
         assert!(receiver.try_recv().is_err());
         let guest = std::thread::spawn(invoke);
+        // A guest import itself wakes the native dispatch loop; the host
+        // must not wait for its periodic fallback poll to serve the import.
+        let wake = NativeWakeHandle {
+            hub: Arc::clone(&hub),
+        };
+        assert!(wake.wait_for(ticket, Duration::from_secs(5)));
         let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(request.interface, "fixture.allowed@1");
         assert_eq!(request.input, b"request");
