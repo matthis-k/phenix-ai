@@ -1692,6 +1692,7 @@ dependencies = [
  "getrandom 0.4.3",
  "parking_lot",
  "phenix-contract",
+ "phenix-plugin-abi",
  "phenix-sdk-macros",
  "rusqlite",
  "serde",
