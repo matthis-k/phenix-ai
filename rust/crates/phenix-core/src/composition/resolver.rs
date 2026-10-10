@@ -1081,7 +1081,10 @@ impl ResolvedGeneration {
                     name: declaration.name.clone(),
                     error: Box::new(error),
                 })?;
-            scoped_plans.insert((declaration.owner.clone(), declaration.name.clone()), scopes);
+            scoped_plans.insert(
+                (declaration.owner.clone(), declaration.name.clone()),
+                scopes,
+            );
             if let Some(existing) = compiled.frame_schema() {
                 if existing != &declaration.schema {
                     return Err(GenerationResolutionError::FrameSchemasAlreadyBound);

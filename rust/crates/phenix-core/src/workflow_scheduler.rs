@@ -119,18 +119,15 @@ impl CompiledWorkflow {
         let mut children = branches
             .iter()
             .map(|(key, step)| {
-                (
-                    key.clone(),
-                    {
-                        let mut child = Cursor::at(
-                            step.clone(),
-                            Some(frame.clone()),
-                            child_scope(&cursor.scope, "fork", node, key),
-                        );
-                        child.subplan_parents = cursor.subplan_parents.clone();
-                        child
-                    },
-                )
+                (key.clone(), {
+                    let mut child = Cursor::at(
+                        step.clone(),
+                        Some(frame.clone()),
+                        child_scope(&cursor.scope, "fork", node, key),
+                    );
+                    child.subplan_parents = cursor.subplan_parents.clone();
+                    child
+                })
             })
             .collect::<BTreeMap<_, _>>();
         if let Some(map) = map {
@@ -182,18 +179,15 @@ impl CompiledWorkflow {
                         node: node.to_owned(),
                         error,
                     })?;
-                children.insert(
-                    format!("{index:020}"),
-                    {
-                        let mut child = Cursor::at(
-                            map.branch_entry.clone(),
-                            Some(snapshot),
-                            child_scope(&cursor.scope, "map", node, &index.to_string()),
-                        );
-                        child.subplan_parents = cursor.subplan_parents.clone();
-                        child
-                    },
-                );
+                children.insert(format!("{index:020}"), {
+                    let mut child = Cursor::at(
+                        map.branch_entry.clone(),
+                        Some(snapshot),
+                        child_scope(&cursor.scope, "map", node, &index.to_string()),
+                    );
+                    child.subplan_parents = cursor.subplan_parents.clone();
+                    child
+                });
             }
         }
         Ok(ActiveFork {
@@ -290,7 +284,8 @@ impl CompiledWorkflow {
         let target_scope = if is_root_exit {
             None
         } else {
-            self.scope_for_node(target_node).map(|scope| scope.prefix.clone())
+            self.scope_for_node(target_node)
+                .map(|scope| scope.prefix.clone())
         };
         // Only the destination lineage remains live. A child finishing
         // through a parent continuation must publish its declared outputs
@@ -309,12 +304,12 @@ impl CompiledWorkflow {
                 .expect("entered scope retains one parent snapshot");
             let subplan = &self.scoped_subplans[&retiring];
             let child = cursor.frame.take().expect("selected child has a frame");
-            parent.publish_subplan(&child, &subplan.outputs).map_err(|error| {
-                WorkflowRunError::InvalidTransitionFrame {
+            parent
+                .publish_subplan(&child, &subplan.outputs)
+                .map_err(|error| WorkflowRunError::InvalidTransitionFrame {
                     node: target_node.clone(),
                     error,
-                }
-            })?;
+                })?;
             // The compiler's flat IncludeMapped edge also carries exactly
             // these child-to-parent output aliases. They are now published
             // through the isolated frames rather than re-applied as a flat
@@ -348,17 +343,15 @@ impl CompiledWorkflow {
                     error: crate::WorkflowFrameError::IncompatibleSchema,
                 });
             }
-            let parent = cursor.frame.take().ok_or_else(|| {
-                WorkflowRunError::StructuredFrameRequired {
-                    node: target_node.clone(),
-                }
-            })?;
+            let parent =
+                cursor
+                    .frame
+                    .take()
+                    .ok_or_else(|| WorkflowRunError::StructuredFrameRequired {
+                        node: target_node.clone(),
+                    })?;
             let child = parent
-                .isolate_subplan(
-                    scope.schema.clone(),
-                    &scope.inputs,
-                    scope.initial.clone(),
-                )
+                .isolate_subplan(scope.schema.clone(), &scope.inputs, scope.initial.clone())
                 .map_err(|error| WorkflowRunError::InvalidTransitionFrame {
                     node: target_node.clone(),
                     error,
@@ -372,11 +365,13 @@ impl CompiledWorkflow {
             }
         }
         if !remaining.is_empty() {
-            let frame = cursor.frame.as_mut().ok_or_else(|| {
-                WorkflowRunError::StructuredFrameRequired {
-                    node: target_node.clone(),
-                }
-            })?;
+            let frame =
+                cursor
+                    .frame
+                    .as_mut()
+                    .ok_or_else(|| WorkflowRunError::StructuredFrameRequired {
+                        node: target_node.clone(),
+                    })?;
             frame.transfer_slots(&remaining).map_err(|error| {
                 WorkflowRunError::InvalidTransitionFrame {
                     node: target_node.clone(),

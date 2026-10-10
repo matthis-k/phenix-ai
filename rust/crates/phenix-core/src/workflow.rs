@@ -690,18 +690,21 @@ impl WorkflowTopology {
                         outputs,
                         initial,
                         ..
-                    } = edge else {
+                    } = edge
+                    else {
                         continue;
                     };
                     let prefix = format!("{qualified}__include__/{site}/");
                     if let Some(schema) = schemas.get(&(owner.clone(), workflow.clone())) {
-                        let parent = schemas.get(&(owner.clone(), name.to_owned())).ok_or_else(|| {
-                            WorkflowCompileError::InvalidFrameTransfer {
-                                node: node.clone(),
-                                outcome: outcome.clone(),
-                                reason: "scoped include requires a declared parent frame".into(),
-                            }
-                        })?;
+                        let parent =
+                            schemas
+                                .get(&(owner.clone(), name.to_owned()))
+                                .ok_or_else(|| WorkflowCompileError::InvalidFrameTransfer {
+                                    node: node.clone(),
+                                    outcome: outcome.clone(),
+                                    reason: "scoped include requires a declared parent frame"
+                                        .into(),
+                                })?;
                         let fail = |reason: String| WorkflowCompileError::InvalidFrameTransfer {
                             node: node.clone(),
                             outcome: outcome.clone(),
@@ -709,12 +712,14 @@ impl WorkflowTopology {
                         };
                         let mut initialized = initial.keys().cloned().collect::<BTreeSet<_>>();
                         for (from, to) in inputs {
-                            let source_type = parent.slots.get(from).ok_or_else(|| {
-                                fail(format!("undeclared parent input {from}"))
-                            })?;
-                            let child_type = schema.slots.get(to).ok_or_else(|| {
-                                fail(format!("undeclared child input {to}"))
-                            })?;
+                            let source_type = parent
+                                .slots
+                                .get(from)
+                                .ok_or_else(|| fail(format!("undeclared parent input {from}")))?;
+                            let child_type = schema
+                                .slots
+                                .get(to)
+                                .ok_or_else(|| fail(format!("undeclared child input {to}")))?;
                             if !initialized.insert(to.clone()) {
                                 return Err(fail(format!("child input {to} is initialized twice")));
                             }
@@ -740,12 +745,14 @@ impl WorkflowTopology {
                             })?;
                         }
                         for (from, to) in outputs {
-                            let child_type = schema.slots.get(from).ok_or_else(|| {
-                                fail(format!("undeclared child output {from}"))
-                            })?;
-                            let parent_type = parent.slots.get(to).ok_or_else(|| {
-                                fail(format!("undeclared parent output {to}"))
-                            })?;
+                            let child_type = schema
+                                .slots
+                                .get(from)
+                                .ok_or_else(|| fail(format!("undeclared child output {from}")))?;
+                            let parent_type = parent
+                                .slots
+                                .get(to)
+                                .ok_or_else(|| fail(format!("undeclared parent output {to}")))?;
                             if !matches!(
                                 parent_type.accepts(child_type),
                                 crate::SchemaCompatibility::Exact
@@ -757,7 +764,10 @@ impl WorkflowTopology {
                         scopes.insert(
                             prefix.clone(),
                             ScopedSubplanFrame {
-                                entry: format!("{prefix}{}", selected[&(owner.clone(), workflow.clone())].entry),
+                                entry: format!(
+                                    "{prefix}{}",
+                                    selected[&(owner.clone(), workflow.clone())].entry
+                                ),
                                 prefix: prefix.clone(),
                                 schema: schema.clone(),
                                 inputs: inputs.clone(),
@@ -771,7 +781,9 @@ impl WorkflowTopology {
                         return Err(WorkflowCompileError::InvalidFrameTransfer {
                             node: node.clone(),
                             outcome: outcome.clone(),
-                            reason: "mapped include requires the selected child's explicit frame schema".into(),
+                            reason:
+                                "mapped include requires the selected child's explicit frame schema"
+                                    .into(),
                         });
                     }
                     visit(owner, workflow, &prefix, selected, schemas, scopes)?;
@@ -1763,10 +1775,7 @@ impl CompiledWorkflow {
         )
     }
 
-    pub(crate) fn bind_scoped_subplans(
-        &mut self,
-        scopes: BTreeMap<String, ScopedSubplanFrame>,
-    ) {
+    pub(crate) fn bind_scoped_subplans(&mut self, scopes: BTreeMap<String, ScopedSubplanFrame>) {
         self.scoped_subplans = scopes;
     }
 
@@ -1899,9 +1908,13 @@ impl CompiledWorkflow {
                             });
                         }
                     }
-                    if !matches!(node_schema.slots.get(collection), Some(crate::Type::List(_)))
-                        || !matches!(node_schema.slots.get(output_slot), Some(crate::Type::List(_)))
-                    {
+                    if !matches!(
+                        node_schema.slots.get(collection),
+                        Some(crate::Type::List(_))
+                    ) || !matches!(
+                        node_schema.slots.get(output_slot),
+                        Some(crate::Type::List(_))
+                    ) {
                         return Err(WorkflowCompileError::InvalidFork {
                             node: name.clone(),
                             outcome: outcome.clone(),
@@ -2312,10 +2325,9 @@ mod inclusion_tests {
             ((owner(), "main".into()), parent_schema.clone()),
             ((owner(), "child".into()), child_schema),
         ]);
-        let scopes = WorkflowTopology::selected_scoped_subplans(
-            &owner(), "main", &selected, &schemas,
-        )
-        .unwrap();
+        let scopes =
+            WorkflowTopology::selected_scoped_subplans(&owner(), "main", &selected, &schemas)
+                .unwrap();
         assert_eq!(scopes.len(), 1);
         // An incomplete private initialization or an absent child contract
         // must fail during candidate preparation, not after its first Invoke.
@@ -2328,24 +2340,23 @@ mod inclusion_tests {
             .unwrap()
             .branches
             .get_mut("delegate")
-            .unwrap() else {
+            .unwrap()
+        else {
             unreachable!()
         };
         initial.remove(&key("private"));
         assert!(matches!(
             WorkflowTopology::selected_scoped_subplans(
-                &owner(), "main", &missing_initial, &schemas
+                &owner(),
+                "main",
+                &missing_initial,
+                &schemas
             ),
             Err(WorkflowCompileError::InvalidFrameTransfer { .. })
         ));
-        let without_child = BTreeMap::from([(
-            (owner(), "main".into()),
-            parent_schema.clone(),
-        )]);
+        let without_child = BTreeMap::from([((owner(), "main".into()), parent_schema.clone())]);
         assert!(matches!(
-            WorkflowTopology::selected_scoped_subplans(
-                &owner(), "main", &selected, &without_child
-            ),
+            WorkflowTopology::selected_scoped_subplans(&owner(), "main", &selected, &without_child),
             Err(WorkflowCompileError::InvalidFrameTransfer { .. })
         ));
         let topology = WorkflowTopology::inline_selected(&owner(), "main", &selected).unwrap();
@@ -2392,10 +2403,7 @@ mod inclusion_tests {
             )
             .unwrap();
         assert_eq!(report.executed_nodes, 3);
-        assert_eq!(
-            seen,
-            ["start", "__include__/private/work", "after"]
-        );
+        assert_eq!(seen, ["start", "__include__/private/work", "after"]);
         assert_eq!(frame.get(&key("published")), Some(&PhenixValue::U64(42)));
         assert_eq!(frame.get(&key("secret")), Some(&PhenixValue::U64(808)));
         assert!(frame.get(&key("private")).is_none());
