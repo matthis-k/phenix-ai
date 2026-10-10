@@ -17,7 +17,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -40,6 +40,16 @@ pub use trace::{
     DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY, ProvenanceBuffer,
     RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink,
 };
+
+static NEXT_RUNTIME_ROOT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_runtime_root_id() -> u64 {
+    NEXT_RUNTIME_ROOT_ID.fetch_update(
+        Ordering::AcqRel,
+        Ordering::Acquire,
+        |value| value.checked_add(1),
+    ).expect("runtime root identity space is exhausted")
+}
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
@@ -296,6 +306,7 @@ impl RootExecutionConstraints {
 #[derive(Clone)]
 pub(super) struct CallScope {
     generation: Arc<GenerationTopology>,
+    root_id: u64,
     authority: Authority,
     pinned_bindings: Arc<BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>>,
     cancellation: Option<CallCancellationToken>,
@@ -321,6 +332,7 @@ impl CallScope {
     ) -> Self {
         Self {
             generation,
+            root_id: next_runtime_root_id(),
             authority: constraints.authority.clone(),
             pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation: None,
@@ -357,6 +369,7 @@ impl CallScope {
     ) -> Self {
         Self {
             generation,
+            root_id: next_runtime_root_id(),
             authority: authority.clone(),
             pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation,
@@ -369,6 +382,7 @@ impl CallScope {
     pub(super) fn delegated(&self, authority: Authority, transactions: TransactionContext) -> Self {
         Self {
             generation: Arc::clone(&self.generation),
+            root_id: self.root_id,
             authority,
             pinned_bindings: Arc::clone(&self.pinned_bindings),
             cancellation: self.cancellation.clone(),
@@ -825,6 +839,7 @@ fn constrain_authority_to_ceiling(
 /// generations concurrently.
 pub struct RootExecutionHandle {
     runtime: Arc<GenerationTopology>,
+    root_id: u64,
     constraints: RootExecutionConstraints,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -842,6 +857,7 @@ impl Clone for RootExecutionHandle {
         self.root_leases.fetch_add(1, Ordering::AcqRel);
         Self {
             runtime: Arc::clone(&self.runtime),
+            root_id: self.root_id,
             constraints: self.constraints.clone(),
             states: self.states.clone(),
             instances: self.instances.clone(),
@@ -857,6 +873,12 @@ impl Clone for RootExecutionHandle {
 }
 
 impl RootExecutionHandle {
+    /// Stable identity of this root across native child calls and clones.
+    #[must_use]
+    pub fn root_id(&self) -> u64 {
+        self.root_id
+    }
+
     #[must_use]
     pub fn generation(&self) -> Option<&GenerationId> {
         self.runtime.generation()
