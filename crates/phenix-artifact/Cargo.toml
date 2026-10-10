@@ -1,0 +1,11 @@
+[package]
+name = "phenix-artifact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+phenix-contract.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+object = { version = "0.36", default-features = false, features = ["read", "elf", "std"] }

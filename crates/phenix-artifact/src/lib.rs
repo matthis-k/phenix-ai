@@ -1,0 +1,156 @@
+use object::{Object, ObjectSection};
+use phenix_contract::{Code, Descriptor, Failure, SECTION_BYTES};
+use sha2::{Digest, Sha256};
+pub fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+pub fn extract(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
+    let invalid = |m: String| Failure::new(Code::DescriptorInvalid, m);
+    let object = object::File::parse(bytes).map_err(|e| invalid(e.to_string()))?;
+    if object.format() != object::BinaryFormat::Elf
+        || object.kind() != object::ObjectKind::Dynamic
+        || object.architecture() != object::Architecture::X86_64
+        || !object.is_little_endian()
+    {
+        return Err(Failure::new(
+            Code::ArtifactInvalid,
+            "expected x86_64 Linux ELF shared library",
+        ));
+    }
+    let mut sections = object
+        .sections()
+        .filter(|s| s.name().ok() == Some(".phenix"));
+    let section = sections
+        .next()
+        .ok_or_else(|| invalid("missing .phenix descriptor section".into()))?;
+    if sections.next().is_some() {
+        return Err(invalid("duplicate descriptor section".into()));
+    }
+    let data = section.data().map_err(|e| invalid(e.to_string()))?;
+    if data.len() != SECTION_BYTES {
+        return Err(invalid("invalid descriptor section size".into()));
+    }
+    let size = u32::from_be_bytes(
+        data[..4]
+            .try_into()
+            .map_err(|_| invalid("descriptor length".into()))?,
+    ) as usize;
+    let end = 4usize
+        .checked_add(size)
+        .ok_or_else(|| invalid("descriptor overflow".into()))?;
+    let payload = data
+        .get(4..end)
+        .ok_or_else(|| invalid("descriptor outside section".into()))?;
+    if data[end..].iter().any(|&b| b != 0) {
+        return Err(invalid("nonzero descriptor padding".into()));
+    }
+    Descriptor::decode(payload)?;
+    Ok(payload.to_vec())
+}
+
+use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageRecord {
+    pub format: String,
+    pub artifact: String,
+    pub descriptor: String,
+    pub target: String,
+    pub artifact_sha256: String,
+    pub descriptor_sha256: String,
+}
+#[derive(Debug)]
+pub struct VerifiedPackage {
+    artifact: PathBuf,
+    record: PackageRecord,
+    descriptor: Descriptor,
+}
+fn read(path: &Path, code: Code) -> Result<Vec<u8>, Failure> {
+    std::fs::read(path).map_err(|e| Failure::new(code, e.to_string()))
+}
+fn relative(root: &Path, path: &str) -> Result<PathBuf, Failure> {
+    let p = Path::new(path);
+    if p.as_os_str().is_empty() || !p.components().all(|x| matches!(x, Component::Normal(_))) {
+        return Err(Failure::new(
+            Code::ArtifactInvalid,
+            "package path must contain only relative normal components",
+        ));
+    }
+    let absolute = root
+        .join(p)
+        .canonicalize()
+        .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
+    if !absolute.starts_with(root) {
+        return Err(Failure::new(
+            Code::ArtifactInvalid,
+            "package path escapes trusted package",
+        ));
+    }
+    Ok(absolute)
+}
+impl VerifiedPackage {
+    pub fn artifact(&self) -> &Path {
+        &self.artifact
+    }
+    pub fn record(&self) -> &PackageRecord {
+        &self.record
+    }
+    pub fn descriptor(&self) -> &Descriptor {
+        &self.descriptor
+    }
+    /// Trusted control-plane caller attests a read-only package source. The CLI
+    /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
+    pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
+        let root = root
+            .canonicalize()
+            .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
+        let record: PackageRecord =
+            serde_json::from_slice(&read(&root.join("package.json"), Code::ArtifactInvalid)?)
+                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
+        if record.format != "phenix.package.v1" || record.target != "x86_64-unknown-linux-gnu" {
+            return Err(Failure::new(
+                Code::ArtifactInvalid,
+                "unsupported package format or target",
+            ));
+        }
+        let artifact = relative(&root, &record.artifact)?;
+        let descriptor_path = relative(&root, &record.descriptor)?;
+        let executable = read(&artifact, Code::ArtifactInvalid)?;
+        let metadata = read(&descriptor_path, Code::DescriptorInvalid)?;
+        if digest(&executable) != record.artifact_sha256 {
+            return Err(Failure::new(
+                Code::ArtifactInvalid,
+                "artifact digest mismatch",
+            ));
+        }
+        if digest(&metadata) != record.descriptor_sha256 {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "descriptor digest mismatch",
+            ));
+        }
+        let extracted = extract(&executable)?;
+        if extracted != metadata {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "packaged metadata differs from embedded metadata",
+            ));
+        }
+        let descriptor = Descriptor::decode(&metadata)?;
+        Ok(Self {
+            artifact,
+            record,
+            descriptor,
+        })
+    }
+    pub fn recheck(&self) -> Result<(), Failure> {
+        if digest(&read(&self.artifact, Code::ArtifactInvalid)?) != self.record.artifact_sha256 {
+            return Err(Failure::new(
+                Code::ArtifactInvalid,
+                "artifact changed after preparation",
+            ));
+        }
+        Ok(())
+    }
+}

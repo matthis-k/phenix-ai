@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as work:
         if canonical is None:
             canonical = descriptor.read_bytes()
         assert descriptor.read_bytes() == canonical
-        records.append(record)
+        records.append(dict(package_path=str(package), **record))
         for mode in ["--strip-debug", "--strip-unneeded", "--strip-all"]:
             stripped = work / (mode + ".so")
             subprocess.run(["objcopy", mode, str(artifact), str(stripped)], check=True)
@@ -35,4 +35,4 @@ with tempfile.TemporaryDirectory() as work:
     bad = work / "bad.so"
     bad.write_bytes(b"\x7fELF truncated")
     assert subprocess.run([describe, str(bad), str(work / "bad.bin")], capture_output=True).returncode != 0
-    print(json.dumps(dict(format="phenix.p0-evidence.v1", packages=records, binutils=subprocess.check_output(["ld", "--version"], text=True).splitlines()[0])))
+    print(json.dumps(dict(format="phenix.p0-evidence.v1", packages=records, binutils=subprocess.check_output(["ld", "--version"], text=True).splitlines()[0], configurations=["thin-gnu", "fat-gnu", "off-gnu", "thin-lld-gc", "thin-gnu-repeat"], strip_modes=["debug", "unneeded", "all"])))

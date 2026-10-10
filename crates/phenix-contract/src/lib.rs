@@ -2,26 +2,51 @@ pub mod abi;
 pub mod descriptor;
 pub mod value;
 pub use descriptor::*;
-pub use value::*;
 use serde::{Deserialize, Serialize};
+pub use value::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Code {
-    DescriptorInvalid, ArtifactInvalid, AbiIncompatible, MissingBinding, AmbiguousBinding,
-    SchemaRejected, Denied, PluginFailed, InfrastructureFailure, ReentrancyRejected, ScopeRejected,
+    DescriptorInvalid,
+    ArtifactInvalid,
+    AbiIncompatible,
+    MissingBinding,
+    AmbiguousBinding,
+    SchemaRejected,
+    Denied,
+    PluginFailed,
+    InfrastructureFailure,
+    ReentrancyRejected,
+    ScopeRejected,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Failure { pub code: Code, pub message: String }
+pub struct Failure {
+    pub code: Code,
+    pub message: String,
+}
 impl Failure {
-    pub fn new(code: Code, message: impl Into<String>) -> Self { Self { code, message: message.into() } }
-    pub fn to_value(&self) -> Value { Value::map([("code", Value::String(format!("{:?}", self.code))), ("message", Value::String(self.message.clone()))]) }
+    pub fn new(code: Code, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+    pub fn to_value(&self) -> Value {
+        Value::map([
+            ("code", Value::String(format!("{:?}", self.code))),
+            ("message", Value::String(self.message.clone())),
+        ])
+    }
     pub fn from_value(value: Value) -> Result<Self, Failure> {
-        serde_json::from_value(value.to_json()).map_err(|e| Self::new(Code::PluginFailed, e.to_string()))
+        serde_json::from_value(value.to_json())
+            .map_err(|e| Self::new(Code::PluginFailed, e.to_string()))
     }
 }
 impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{:?}: {}", self.code, self.message) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
 }
 impl std::error::Error for Failure {}
 pub trait Portable: Sized {
@@ -36,6 +61,13 @@ pub trait Operation {
     const DEFINITION: OperationDef;
 }
 #[derive(Debug)]
-pub enum CallError<E> { Domain(E), Kernel(Failure) }
+pub enum CallError<E> {
+    Domain(E),
+    Kernel(Failure),
+}
 pub type CallResult<T, E> = Result<T, CallError<E>>;
-impl<E> From<Failure> for CallError<E> { fn from(value: Failure) -> Self { Self::Kernel(value) } }
+impl<E> From<Failure> for CallError<E> {
+    fn from(value: Failure) -> Self {
+        Self::Kernel(value)
+    }
+}

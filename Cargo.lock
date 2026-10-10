@@ -94,6 +94,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-artifact"
+version = "0.1.0"
+dependencies = [
+ "object",
+ "phenix-contract",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "phenix-conformance"
+version = "0.1.0"
+dependencies = [
+ "phenix-artifact",
+ "phenix-contract",
+ "phenix-kernel",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-contract"
 version = "0.1.0"
 dependencies = [
@@ -106,17 +127,17 @@ name = "phenix-kernel"
 version = "0.1.0"
 dependencies = [
  "libloading",
- "object",
+ "phenix-artifact",
  "phenix-contract",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]
 name = "phenix-macros"
 version = "0.1.0"
 dependencies = [
+ "phenix-contract",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

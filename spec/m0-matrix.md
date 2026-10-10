@@ -1,25 +1,48 @@
 # P0 and M0.0 acceptance matrix
 
-Branch `rewrite/minimal-kernel` starts at `11cdf0eca7e80965d0dfca3762d1fd65bb19e10f`. The GitHub root commit has no parents. Its merge base with observed main `1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063` is that same root, 1,215 commits behind. Existing branches and PRs remain references.
+PR [#771](https://github.com/matthis-k/phenix-ai/pull/771) owns this matrix. Branch `rewrite/minimal-kernel` starts at `11cdf0eca7e80965d0dfca3762d1fd65bb19e10f`. The root has no parents. Its merge base with observed main `1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063` is that root, 1,215 commits behind. No architecture was merged or cherry-picked. Existing branches and PRs remain references.
 
-Statuses: implemented means code exists; tested means the named semantic check passed; unproven means acceptance evidence is still absent. This file owns the task matrix. CI evidence records own exact artifact identities.
+Implemented means code exists. Tested means the named semantic check has passed locally. CI evidence is authoritative for the exact PR head; the PR body links that run. M0.0 acceptance requires all four Nix checks on the same head. An earlier green run does not certify a changed head.
 
-| Task | Files | Acceptance criterion | Status | Evidence / remaining work |
+| Task | Concrete files | Acceptance criterion | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| Root-based branch | Git ancestry | Root has no parents and is ancestor of main | Tested | Local rev-list and GitHub compare agree |
-| Contract freeze | spec/m0-contracts.md, include/phenix.h | Concrete values, descriptor, ABI, deployment and inspection | Implemented | Review against executable tests |
-| P0 ELF extraction | contract/descriptor.rs, kernel/package.rs | Extract without execution, canonical payload, SHA-256 | Tested locally | Rust 1.99 release, thin LTO, symbols stripped; Nix proof pending |
-| P0 retention matrix | flake.nix, tests/descriptor.py | Nix GNU and LLVM linkers, LTO off/thin/fat, stripping | Implemented | Canonical Nix check pending |
-| Public typed SDK | crates/phenix-sdk, crates/phenix-macros | Annotations generate imports, exports and ABI glue | Tested locally | Separate examples release build passes |
-| Canonical wire | contract/value.rs | RFC bytes, bounded decoding, ordering and malformed input | Tested locally | Unit test passes; expand vectors |
-| Offline package validation | kernel/package.rs | Hash final artifact, verify extracted bytes, reject tampering | Partial | Extraction exists; package preparation next |
-| Native loader | kernel/native.rs | Header negotiation, ownership and instance teardown | Not started | Depends on P0 proof |
-| Resolver | kernel/resolve.rs | Explicit selection, missing/ambiguous/schema errors before load | Not started | Depends on offline packages |
-| Scoped dispatcher | kernel/runtime.rs | Root and import share dispatch, authenticated scope, deny before effect | Not started | Depends on loader and resolver |
-| Trusted CLI / inspection | kernel/bin/phenix-kernel.rs | Typed response and parsed versioned JSON | Not started | Depends on runtime |
-| External plugin pair | examples/* | Public SDK only, separate workspace and lockfile | Tested locally | Native artifacts compile; actual cross-plugin call pending |
-| Native conformance | tests/native.rs or product driver | Calls, domain errors, denied counter, panic, thread/cycle rejection | Not started | Actual artifacts required |
-| Nix packaging | flake.nix | Distinct kernel/plugins, final package records, closure | Implemented | Real builds running |
-| Exact-head CI | .github/workflows/minimal-kernel.yml | Run canonical checks on recorded branch SHA | Not started | Push after first coherent gate |
+| Root-based branch | Git ancestry, PR #771 | Parentless root is ancestor of main | Tested | Local rev-list and GitHub compare agree |
+| Contract freeze | spec/m0-contracts.md, include/phenix.h | Concrete wire, contributions, ABI, authority and inspection | Implemented | Executable model is frozen for this milestone |
+| P0 extraction decision | contract/src/descriptor/, artifact/src/lib.rs, spec/p0-decision.md | Inspect optimized ELF without executing code | Tested | Nix descriptor check; embedded section is the sole path |
+| P0 retention | tests/descriptor.py, flake.nix | GNU/lld, LTO off/thin/fat, three strip modes, clean repeat | Tested | m0-descriptor/evidence.json records final hashes and paths |
+| Canonical wire and schemas | contract/src/value.rs, descriptor/mod.rs | Bounded decoding, canonical maps, typed request/result/error | Tested | Contract unit vectors; real native schema rejection |
+| Single-source contributions | macros/src/lib.rs, descriptor/encode.rs | Declare/Require/Provide and glue derive from annotations | Tested | Duplicate export compile-fail; structural schema comparison |
+| Typed public SDK | sdk/src/lib.rs, macros/src/lib.rs | Typed operation markers and scoped import stubs | Tested | Separate fixture compilation; six compile-fail cases |
+| Public distribution boundary | flake.nix, examples/Cargo.toml, examples/Cargo.lock | Plugins consume packaged SDK with no private kernel sources | Implemented | Native derivations physically build from the SDK distribution |
+| Offline package verification | artifact/src/lib.rs | Final artifact/descriptor hashes and embedded equality before loading | Tested | Tampering, wrong ownership, unsupported ABI and mismatch cases |
+| Canonical resolver | kernel/src/resolve.rs | Explicit selection; missing, ambiguous, incompatible and absent choices reject | Tested | Native conformance; artifact-order permutation |
+| Native loader | kernel/src/native.rs, tests/abi-negative.c | Header before table; null/short/incompatible tables reject | Implemented | Actual faulty native files; final native check owns evidence |
+| Root and scoped dispatch | kernel/src/runtime.rs | Same path for root and nested effects; host authenticates caller | Tested | Real consumer -> provider invocation |
+| Operation authority | kernel/src/runtime.rs | Deny before effect; immutable selected grants and ceilings | Tested | Denied import leaves provider counter zero |
+| Thread and scope ownership | kernel/src/runtime.rs | Forged, expired and wrong-thread scopes reject before pointer access | Tested | Scope boundary tests; Host is not Send |
+| Instance reentrancy | examples/cycle/src/lib.rs, kernel/src/runtime.rs | Self-call rejects before another instance entry | Implemented | Native cycle fixture; final native check owns evidence |
+| Buffer ownership | contract/src/abi.rs, SDK glue | Producing-side release once for success, domain and malformed replies | Tested | Counted-release tests, C/Rust layout assertions, native round trips |
+| Recoverable panics | SDK glue, examples/provider/src/lib.rs | Catch FFI unwind; reject future calls to poisoned state | Implemented | Native panic/poison fixture; process-fatal events remain fatal |
+| Trusted CLI / inspection | kernel/src/bin/phenix-kernel.rs, tests/product.py | Parsed JSON, typed result, root summary, hashes and verification phases | Tested | Nix-built CLI product check |
+| Pre-load nonexecution | examples/provider/src/lib.rs, conformance/src/main.rs, tests/product.py | Constructor witness stays absent during offline checks | Tested | Witness appears only after actual native loading |
+| Nix deployment closure | flake.nix | Separate kernel, SDK, tooling and plugin products; no Nix resolver | Tested | m0-contract, m0-descriptor, m0-native, m0-product |
+| Exact-head CI | .github/workflows/minimal-kernel.yml | All canonical checks, commit stamp, paths, digests and CI run | Configured | Live status and exact run are recorded in the PR body |
 
-Dependency order: accept P0, complete offline package preparation and resolver, load/invoke, prove denial and ownership, assemble product closure, run exact-head CI. M0.1 onward stays deferred.
+## Remaining acceptance work
+
+1. Run all four checks on the final committed head, including the new loaded-ABI, cycle and panic-poison cases.
+2. Attach the GitHub run and realized evidence to the PR. Keep failed or unproven requirements visible.
+3. Review the public C/Rust ABI and trusted-source assumption against the frozen contracts.
+
+## Mechanism ownership
+
+| Mechanism | Executable need | Lifetime | Simpler alternative rejected |
+| --- | --- | --- | --- |
+| Offline ELF reader | Constructor witness must stay absent during inspection | Preparation | dlopen inspection executes constructors |
+| Constant descriptor encoder | External declarations need identical canonical bytes | Artifact lifetime | Handwritten manifests duplicate declarations |
+| Resolver snapshot | Consumer requires explicit compatible provider | Loaded process | Discovery during nested calls can change selection |
+| Scoped dispatcher | Denied imports must leave provider state unchanged | Synchronous call | Direct Rust calls bypass native ABI and policy |
+| Scope records | Forged/expired/wrong-thread callbacks must reject safely | Provider entry until return | A raw kernel pointer cannot authenticate before dereference |
+| Native image owner | Instance and reply callbacks need resident code | Create through stop and release | Unowned dlopen handles permit early unloading |
+
+Later work starts with M0.1 contract addenda after M0.0 evidence is accepted. Optional imports, substitutions, richer attenuation, asynchronous lifecycle, generations and product conformance expansion remain deferred. This PR does not implement those milestones.

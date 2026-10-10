@@ -1,0 +1,32 @@
+name: Minimal kernel conformance
+on:
+  push:
+    branches: [rewrite/minimal-kernel]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  conformance:
+    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@v31
+      - name: Canonical checks on the exact branch head
+        run: nix flake check -L
+      - name: Record realized conformance outputs and commit
+        run: |
+          nix build .#phenix-m0-conformance --out-link result-conformance
+          mkdir ci-evidence
+          cp -RL result-conformance/* ci-evidence/
+          git rev-parse HEAD > ci-evidence/kernel-commit.txt
+          nix path-info --json ./result-conformance > ci-evidence/nix-output.json
+          nix --version > ci-evidence/nix-version.txt
+          printf '%s\n' "$GITHUB_RUN_ID" > ci-evidence/ci-run.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minimal-kernel-evidence-${{ github.sha }}
+          path: ci-evidence

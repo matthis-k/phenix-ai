@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "example-alternate"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-consumer"
 version = "0.1.0"
 dependencies = [
@@ -14,6 +22,14 @@ dependencies = [
 name = "example-contracts"
 version = "0.1.0"
 dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-cycle"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
  "phenix-sdk",
 ]
 
@@ -49,6 +65,7 @@ dependencies = [
 name = "phenix-macros"
 version = "0.1.0"
 dependencies = [
+ "phenix-contract",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

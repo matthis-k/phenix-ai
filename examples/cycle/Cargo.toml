@@ -1,0 +1,9 @@
+[package]
+name = "example-cycle"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+phenix-sdk.workspace = true
+example-contracts.workspace = true

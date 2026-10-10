@@ -7,6 +7,5 @@ license.workspace = true
 phenix-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
-object = { version = "0.36", default-features = false, features = ["read", "elf", "std"] }
+phenix-artifact = { path = "../phenix-artifact" }
 libloading = "0.8"
