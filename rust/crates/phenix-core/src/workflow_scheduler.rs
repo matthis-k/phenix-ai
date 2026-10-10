@@ -48,6 +48,8 @@ struct Cursor {
     scope: String,
     submitted: bool,
     frame: Option<WorkflowFrame>,
+    /// Suspended parent frames, one per currently entered included subplan.
+    subplan_parents: Vec<(String, WorkflowFrame)>,
     active: Option<Box<ActiveFork>>,
     join_decision: Option<WorkflowJoinDecision>,
 }
@@ -59,6 +61,7 @@ impl Cursor {
             scope,
             submitted: false,
             frame,
+            subplan_parents: Vec::new(),
             active: None,
             join_decision: None,
         }
@@ -118,11 +121,15 @@ impl CompiledWorkflow {
             .map(|(key, step)| {
                 (
                     key.clone(),
-                    Cursor::at(
-                        step.clone(),
-                        Some(frame.clone()),
-                        child_scope(&cursor.scope, "fork", node, key),
-                    ),
+                    {
+                        let mut child = Cursor::at(
+                            step.clone(),
+                            Some(frame.clone()),
+                            child_scope(&cursor.scope, "fork", node, key),
+                        );
+                        child.subplan_parents = cursor.subplan_parents.clone();
+                        child
+                    },
                 )
             })
             .collect::<BTreeMap<_, _>>();
@@ -177,11 +184,15 @@ impl CompiledWorkflow {
                     })?;
                 children.insert(
                     format!("{index:020}"),
-                    Cursor::at(
-                        map.branch_entry.clone(),
-                        Some(snapshot),
-                        child_scope(&cursor.scope, "map", node, &index.to_string()),
-                    ),
+                    {
+                        let mut child = Cursor::at(
+                            map.branch_entry.clone(),
+                            Some(snapshot),
+                            child_scope(&cursor.scope, "map", node, &index.to_string()),
+                        );
+                        child.subplan_parents = cursor.subplan_parents.clone();
+                        child
+                    },
                 );
             }
         }
@@ -260,6 +271,122 @@ impl CompiledWorkflow {
         Ok(())
     }
 
+    /// Apply one transition against exactly the selected execution frame.
+    /// The four-step IR is unchanged: includes are compiler-owned boundary
+    /// metadata, not provider calls or independent executors.
+    fn transition_frame<E>(
+        &self,
+        cursor: &mut Cursor,
+        target: &PlanStepId,
+        slots: Option<&BTreeMap<crate::Key, crate::Key>>,
+    ) -> Result<(), WorkflowRunError<E>> {
+        let target_node = match target {
+            PlanStepId::Invoke(node)
+            | PlanStepId::Fork { node, .. }
+            | PlanStepId::Join { node, .. }
+            | PlanStepId::Exit { node, .. } => node,
+        };
+        let is_root_exit = cursor.scope == "root" && matches!(target, PlanStepId::Exit { .. });
+        let target_scope = if is_root_exit {
+            None
+        } else {
+            self.scope_for_node(target_node).map(|scope| scope.prefix.clone())
+        };
+        // Only the destination lineage remains live. A child finishing
+        // through a parent continuation must publish its declared outputs
+        // before that parent is allowed to execute the next provider.
+        let mut remaining = slots.cloned().unwrap_or_default();
+        while let Some((prefix, _)) = cursor.subplan_parents.last() {
+            if target_scope
+                .as_ref()
+                .is_some_and(|destination| destination.starts_with(prefix))
+            {
+                break;
+            }
+            let (retiring, mut parent) = cursor
+                .subplan_parents
+                .pop()
+                .expect("entered scope retains one parent snapshot");
+            let subplan = &self.scoped_subplans[&retiring];
+            let child = cursor.frame.take().expect("selected child has a frame");
+            parent.publish_subplan(&child, &subplan.outputs).map_err(|error| {
+                WorkflowRunError::InvalidTransitionFrame {
+                    node: target_node.clone(),
+                    error,
+                }
+            })?;
+            // The compiler's flat IncludeMapped edge also carries exactly
+            // these child-to-parent output aliases. They are now published
+            // through the isolated frames rather than re-applied as a flat
+            // transfer; unrelated parent-owned transfers remain ordered.
+            for (source, target) in &subplan.outputs {
+                if remaining.get(source) == Some(target) {
+                    remaining.remove(source);
+                }
+            }
+            cursor.frame = Some(parent);
+        }
+
+        let mut entering = self
+            .scoped_subplans
+            .values()
+            .filter(|scope| {
+                target_scope
+                    .as_ref()
+                    .is_some_and(|target| target.starts_with(&scope.prefix))
+                    && !cursor
+                        .subplan_parents
+                        .iter()
+                        .any(|(prefix, _)| prefix == &scope.prefix)
+            })
+            .collect::<Vec<_>>();
+        entering.sort_by_key(|scope| scope.prefix.len());
+        for scope in entering {
+            if target_node != &scope.entry {
+                return Err(WorkflowRunError::InvalidTransitionFrame {
+                    node: target_node.clone(),
+                    error: crate::WorkflowFrameError::IncompatibleSchema,
+                });
+            }
+            let parent = cursor.frame.take().ok_or_else(|| {
+                WorkflowRunError::StructuredFrameRequired {
+                    node: target_node.clone(),
+                }
+            })?;
+            let child = parent
+                .isolate_subplan(
+                    scope.schema.clone(),
+                    &scope.inputs,
+                    scope.initial.clone(),
+                )
+                .map_err(|error| WorkflowRunError::InvalidTransitionFrame {
+                    node: target_node.clone(),
+                    error,
+                })?;
+            cursor.subplan_parents.push((scope.prefix.clone(), parent));
+            cursor.frame = Some(child);
+            for (source, target) in &scope.inputs {
+                if remaining.get(source) == Some(target) {
+                    remaining.remove(source);
+                }
+            }
+        }
+        if !remaining.is_empty() {
+            let frame = cursor.frame.as_mut().ok_or_else(|| {
+                WorkflowRunError::StructuredFrameRequired {
+                    node: target_node.clone(),
+                }
+            })?;
+            frame.transfer_slots(&remaining).map_err(|error| {
+                WorkflowRunError::InvalidTransitionFrame {
+                    node: target_node.clone(),
+                    error,
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     /// Advance a scope at most one provider invocation, including when a
     /// nested Fork is ready. Returning a terminal settlement never converts
     /// a provider or adapter error into a declared normal failure.
@@ -308,7 +435,12 @@ impl CompiledWorkflow {
                     cancelled,
                     (count, admissions, step_limit),
                 )? {
-                    WorkflowInvokeAdvance::Next(step) => {
+                    WorkflowInvokeAdvance::Next { step, outcome } => {
+                        let slots = match &self.plan.steps[&cursor.step] {
+                            PlanStep::Invoke { transfers, .. } => transfers.get(&outcome),
+                            _ => unreachable!("Invoke advance starts at an Invoke"),
+                        };
+                        self.transition_frame(cursor, &step, slots)?;
                         cursor.step = step;
                         cursor.submitted = false;
                     }
@@ -449,22 +581,9 @@ impl CompiledWorkflow {
                         unreachable!("Join cannot resume pending scope")
                     }
                 };
-                if let Some(slots) = transfer {
-                    let PlanStepId::Join { node, .. } = &cursor.step else {
-                        unreachable!("compiled Join has a Join identity")
-                    };
-                    let frame = cursor.frame.as_mut().ok_or_else(|| {
-                        WorkflowRunError::StructuredFrameRequired { node: node.clone() }
-                    })?;
-                    // Child outputs have already been joined. Transfer observes
-                    // that completed frame and publishes one atomic update.
-                    frame.transfer_slots(slots).map_err(|error| {
-                        WorkflowRunError::InvalidTransitionFrame {
-                            node: node.clone(),
-                            error,
-                        }
-                    })?;
-                }
+                // Join outputs are staged first. A mapped subplan return
+                // publishes only declared child fields into its parent frame.
+                self.transition_frame(cursor, next, transfer.as_ref())?;
                 cursor.step = next.clone();
             }
             PlanStep::Exit { .. } => {}
@@ -605,8 +724,18 @@ impl CompiledWorkflow {
         if result.is_err() {
             cancel_scope("root");
         }
-        if let (Some(destination), Some(last_frame)) = (frame, root.frame) {
-            *destination = last_frame;
+        if let Some(destination) = frame {
+            if result.is_err() {
+                // A failed included plan cannot replace its caller's frame
+                // with private child state or partially published outputs.
+                if let Some((_, original)) = root.subplan_parents.first() {
+                    *destination = original.clone();
+                } else if let Some(last_frame) = root.frame {
+                    *destination = last_frame;
+                }
+            } else if let Some(last_frame) = root.frame {
+                *destination = last_frame;
+            }
         }
         result
     }
