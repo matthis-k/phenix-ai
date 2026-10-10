@@ -6640,11 +6640,9 @@ fn runtime_plugin_inspection_value(
                     let (execution_kind, runtime, artifact_revision) = match &manifest.execution {
                         PluginExecution::Embedded => ("embedded", None, None),
                         PluginExecution::ResourceOnly => ("resource_only", None, None),
-                        PluginExecution::Native { artifact } => (
-                            "native",
-                            None,
-                            Some(artifact.revision.as_ref().to_owned()),
-                        ),
+                        PluginExecution::Native { artifact } => {
+                            ("native", None, Some(artifact.revision.as_ref().to_owned()))
+                        }
                         PluginExecution::Runtime { runtime, artifact } => (
                             "runtime",
                             Some(runtime.as_str().to_owned()),
