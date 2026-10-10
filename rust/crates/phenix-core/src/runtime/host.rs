@@ -226,16 +226,15 @@ impl<'a> PluginHost<'a> {
         }
         let delegated = self.scope.authority.attenuate(handle.effective_authority());
         let provenance = ComponentProviderProvenance::from_plan(
-            interface,
+            interface.clone(),
             plan,
             handle,
             None,
             delegated.clone(),
         );
-        let scope = self.scope.delegated(
-            delegated,
-            TransactionContext::coordinated_by(self.plugin),
-        );
+        let scope = self
+            .scope
+            .delegated(delegated, TransactionContext::coordinated_by(self.plugin));
         invoke_component_service_with(
             self.runtime,
             ComponentInvocationPlan {
