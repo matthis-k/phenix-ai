@@ -49,7 +49,6 @@ impl From<NativeLoadError> for NativeRegistrationError {
 
 struct NativePluginAdapter {
     instance: Arc<Mutex<NativePluginInstance>>,
-    endpoint_id: u64,
 }
 
 struct NativeSharedEndpoint {
@@ -65,7 +64,6 @@ fn native_library_factory(
             .expect("native plugin instance identity space exhausted");
         Box::new(NativePluginAdapter {
             instance: Arc::new(Mutex::new(library.instance(endpoint_id))),
-            endpoint_id,
         })
     }
 }
