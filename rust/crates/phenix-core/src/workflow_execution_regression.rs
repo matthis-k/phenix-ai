@@ -1584,7 +1584,10 @@ fn pending_native_scheduler_preserves_real_mapped_subplan_frame_boundaries() {
     assert_eq!(report.final_outcome, "final");
     assert_eq!(seen, ["model", "__include__/answer/work", "model"]);
     assert_eq!(frame.get(&key("parent_input")), Some(&PhenixValue::U64(6)));
-    assert_eq!(frame.get(&key("parent_output")), Some(&PhenixValue::U64(18)));
+    assert_eq!(
+        frame.get(&key("parent_output")),
+        Some(&PhenixValue::U64(18))
+    );
     assert!(frame.get(&key("child_input")).is_none());
     assert!(frame.get(&key("child_output")).is_none());
 }

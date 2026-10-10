@@ -2154,14 +2154,7 @@ impl CompiledWorkflow {
                 });
             }
         }
-        let outcome = match invoke(
-            name,
-            import,
-            position.scope,
-            state,
-            data,
-            cancelled,
-        ) {
+        let outcome = match invoke(name, import, position.scope, state, data, cancelled) {
             WorkflowInvokePoll::Started => {
                 if !position.already_submitted {
                     *admissions = admissions
