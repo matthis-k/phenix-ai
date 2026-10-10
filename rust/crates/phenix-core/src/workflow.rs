@@ -2118,8 +2118,10 @@ mod inclusion_tests {
                 }
             },
             || false,
-            |_| {},
-            || panic!("budget exhaustion cannot wait on a pending callback"),
+            (
+                |_| {},
+                || panic!("budget exhaustion cannot wait on a pending callback"),
+            ),
             Some(NonZeroU64::new(2).unwrap()),
         );
         assert!(matches!(
@@ -2182,13 +2184,15 @@ mod inclusion_tests {
                 }
             },
             || false,
-            |scope| cancellations.borrow_mut().push(scope.to_owned()),
-            || {
-                assert_eq!(admitted.borrow().len(), 2);
-                assert_eq!(wait_calls.get(), 0, "no busy spinning over pending work");
-                wait_calls.set(wait_calls.get() + 1);
-                fast_ready.set(true);
-            },
+            (
+                |scope| cancellations.borrow_mut().push(scope.to_owned()),
+                || {
+                    assert_eq!(admitted.borrow().len(), 2);
+                    assert_eq!(wait_calls.get(), 0, "no busy spinning over pending work");
+                    wait_calls.set(wait_calls.get() + 1);
+                    fast_ready.set(true);
+                },
+            ),
             None,
         ).unwrap();
         assert_eq!(result.executed_nodes, 2);
