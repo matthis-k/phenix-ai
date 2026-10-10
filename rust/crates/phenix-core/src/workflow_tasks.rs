@@ -679,6 +679,151 @@ mod tests {
     }
 
     #[test]
+    fn native_cancellation_reaches_the_running_provider_host_call_scope() {
+        use crate::{
+            ComponentExport, ComponentId, ComponentImport, InterfaceId, InterfaceSchema,
+            PhenixValue, PluginHost, PluginInstance, ServiceId,
+        };
+        use std::sync::atomic::AtomicBool;
+
+        struct CancellableProvider {
+            started: mpsc::Sender<()>,
+            observed: Arc<AtomicBool>,
+        }
+
+        impl PluginInstance for CancellableProvider {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke_component(
+                &mut self,
+                _component: &ComponentId,
+                _service: &ServiceId,
+                _input: &[u8],
+                host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                self.started.send(()).unwrap();
+                let started = std::time::Instant::now();
+                loop {
+                    if host
+                        .cancellation_token()
+                        .is_some_and(|token| token.is_cancelled())
+                    {
+                        self.observed.store(true, Ordering::Release);
+                        return serde_json::to_vec(&PhenixValue::String("cancelled".into()))
+                            .map_err(|error| error.to_string());
+                    }
+                    if started.elapsed() > std::time::Duration::from_secs(3) {
+                        return Err("host never observed native scope cancellation".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+
+        let plugin = PluginId::parse("fixture.native-cancel-provider").unwrap();
+        let owner_plugin = PluginId::parse("fixture.native-cancel-topology").unwrap();
+        let owner = ComponentId::parse("fixture.native-cancel-topology").unwrap();
+        let interface = InterfaceId::parse("fixture.native-cancel@1").unwrap();
+        let provider_component = ComponentId::parse("fixture.native-cancel-provider").unwrap();
+        let schema = InterfaceSchema::default();
+        let selected = ResolvedGeneration::resolve(
+            [
+                PluginManifest {
+                    id: owner_plugin.clone(),
+                    version: 1,
+                    execution: PluginExecution::ResourceOnly,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                PluginManifest {
+                    id: plugin.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+            ],
+            [
+                ComponentManifest {
+                    id: owner.clone(),
+                    owner: owner_plugin,
+                    imports: vec![ComponentImport {
+                        interface: interface.clone(),
+                        schema: schema.clone(),
+                        required: true,
+                        authority: Authority::default(),
+                    }],
+                    exports: Vec::new(),
+                    listeners: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                ComponentManifest {
+                    id: provider_component,
+                    owner: plugin.clone(),
+                    imports: Vec::new(),
+                    exports: vec![ComponentExport {
+                        interface: interface.clone(),
+                        schema,
+                        priority: 100,
+                        required_authority: Authority::default(),
+                    }],
+                    listeners: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+            ],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let binding = selected
+            .component_graph()
+            .import_handle(&owner, &interface)
+            .unwrap()
+            .unwrap()
+            .clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let observed = Arc::new(AtomicBool::new(false));
+        let mut kernel = Kernel::new(selected.kernel_config().clone());
+        kernel.activate_resolved_generation(&selected).unwrap();
+        let flag = Arc::clone(&observed);
+        kernel
+            .register_embedded_factory(plugin, move || {
+                Box::new(CancellableProvider {
+                    started: started_tx.clone(),
+                    observed: Arc::clone(&flag),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+        let group = kernel
+            .root_execution_handle(&Authority::default())
+            .native_workflow_tasks()
+            .unwrap();
+        let task = group
+            .dispatch_import_pending("root/native", binding, Vec::new())
+            .unwrap();
+        let ticket = task.id().clone();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(group.cancel_root(), vec![ticket.clone()]);
+        assert!(matches!(
+            task.join().unwrap(),
+            Err(WorkflowNativeDispatchError::Cancelled)
+        ));
+        assert!(observed.load(Ordering::Acquire));
+        assert_eq!(group.wait_settlement(), Some(ticket.clone()));
+        assert_eq!(group.state(&ticket), Some(WorkflowTaskState::Cancelled));
+        group.close().unwrap();
+    }
+
+    #[test]
     fn native_wakeup_order_follows_real_settlement_not_branch_identity() {
         let selected = empty_generation_with(None);
         let mut kernel = Kernel::new(selected.kernel_config().clone());
