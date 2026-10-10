@@ -273,8 +273,20 @@ impl NativePluginLibrary {
     /// This constructor supplies no host capabilities beyond an inert table.
     #[must_use]
     pub fn instance(self: &Arc<Self>, generation: u64) -> NativePluginInstance {
+        let id = NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed);
+        assert_ne!(id, 0, "native host identity space exhausted");
+        let hub = Arc::new(WakeHub {
+            calls: Mutex::new(BTreeMap::new()),
+            notified: Condvar::new(),
+        });
+        HOST_REGISTRY
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id, Arc::downgrade(&hub));
         NativePluginInstance {
             module: Arc::clone(self),
+            hub,
+            registry_id: id,
             host: Box::new(NativeHostV1 {
                 header: NativeAbiHeader {
                     major: phenix_plugin_abi::NATIVE_ABI_MAJOR,
@@ -282,9 +294,9 @@ impl NativePluginLibrary {
                     table_bytes: std::mem::size_of::<NativeHostV1>(),
                     required_features: 0,
                 },
-                context: std::ptr::null_mut(),
-                is_cancelled: None,
-                wake: None,
+                context: id as *mut c_void,
+                is_cancelled: Some(native_is_cancelled),
+                wake: Some(native_wake),
                 invoke_import: None,
             }),
             generation,
@@ -313,6 +325,8 @@ pub enum NativeInvocation {
 /// guarded, validated table resident in NativePluginLibrary.
 pub struct NativePluginInstance {
     module: Arc<NativePluginLibrary>,
+    hub: Arc<WakeHub>,
+    registry_id: usize,
     host: Box<NativeHostV1>,
     generation: u64,
     state: NativeInstanceState,
@@ -327,6 +341,12 @@ pub struct NativePluginInstance {
 unsafe impl Send for NativePluginInstance {}
 
 impl NativePluginInstance {
+    pub fn wake_handle(&self) -> NativeWakeHandle {
+        NativeWakeHandle {
+            hub: Arc::clone(&self.hub),
+        }
+    }
+
     pub fn state(&self) -> NativeInstanceState {
         self.state
     }
@@ -367,14 +387,38 @@ impl NativePluginInstance {
         interface: &str,
         input: &[u8],
     ) -> Result<NativeInvocation, NativeLoadError> {
+        self.begin_with_cancellation(ticket, scope, component, interface, input, None)
+    }
+
+    /// Register this callback's attenuation/cancellation predicate before
+    /// entering the native plugin, including synchronous reentrant wakeups.
+    pub fn begin_with_cancellation(
+        &mut self,
+        ticket: NativeCallTicket,
+        scope: u64,
+        component: &str,
+        interface: &str,
+        input: &[u8],
+        cancellation: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) -> Result<NativeInvocation, NativeLoadError> {
         if self.state != NativeInstanceState::Active {
             return Err(NativeLoadError::Lifecycle("begin requires active instance"));
         }
         if ticket.root_id == 0 || ticket.call_id == 0 {
             return Err(NativeLoadError::InvalidResult(NativeAbiError::InvalidTicket));
         }
-        if self.pending.contains(&(ticket.root_id, ticket.call_id)) {
+        let key = (ticket.root_id, ticket.call_id);
+        if self.pending.contains(&key) {
             return Err(NativeLoadError::MissingOrDuplicateCall(ticket));
+        }
+        {
+            let mut calls = self.hub.calls.lock().unwrap_or_else(|e| e.into_inner());
+            if calls
+                .insert(key, CallPermit { wake: false, cancelled: cancellation })
+                .is_some()
+            {
+                return Err(NativeLoadError::MissingOrDuplicateCall(ticket));
+            }
         }
         let _guard = self.module.gate.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: request's borrowed bytes must remain valid for this call;
@@ -392,11 +436,17 @@ impl NativePluginInstance {
             input: borrowed(input),
         };
         let result = unsafe { table.begin.expect("validated ABI table")(table.context, request) };
-        let value = decode_result(result, ticket)?;
-        if matches!(value, NativeInvocation::Pending) {
-            self.pending.insert((ticket.root_id, ticket.call_id));
+        let value = decode_result(result, ticket);
+        if matches!(value, Ok(NativeInvocation::Pending)) {
+            self.pending.insert(key);
+        } else {
+            self.hub
+                .calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
         }
-        Ok(value)
+        value
     }
 
     pub fn poll(&mut self, ticket: NativeCallTicket) -> Result<NativeInvocation, NativeLoadError> {
@@ -413,6 +463,11 @@ impl NativePluginInstance {
         let result = decode_result(raw, ticket)?;
         if !matches!(result, NativeInvocation::Pending) {
             self.pending.remove(&(ticket.root_id, ticket.call_id));
+            self.hub
+                .calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&(ticket.root_id, ticket.call_id));
         }
         Ok(result)
     }
@@ -452,6 +507,10 @@ impl NativePluginInstance {
 
 impl Drop for NativePluginInstance {
     fn drop(&mut self) {
+        HOST_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.registry_id);
         if self.state == NativeInstanceState::Active && self.pending.is_empty() {
             let _ = self.stop_and_destroy();
         }
