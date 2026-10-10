@@ -363,10 +363,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0236 | TODO | `rust/crates/phenix-plugin-artifacts/Cargo.toml` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | pending |
-| F0237 | TODO | `rust/crates/phenix-plugin-artifacts/src/component.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | pending |
-| F0238 | TODO | `rust/crates/phenix-plugin-artifacts/src/implementation.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | pending |
-| F0239 | TODO | `rust/crates/phenix-plugin-artifacts/src/lib.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | pending |
+| F0236 | IN PROGRESS | `rust/crates/phenix-plugin-artifacts/Cargo.toml` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | Main `83bbae6d`: executable artifact plugin package with Core and SDK dependencies. KEEP concrete content/provenance store outside kernel; verify selected plugin activation. |
+| F0237 | IN PROGRESS | `rust/crates/phenix-plugin-artifacts/src/component.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | Main `3bb7c7d8`: ArtifactInterface registers typed artifact component and ordinary import contract, with binding test. KEEP service provider schema; verify third-party replacement. |
+| F0238 | IN PROGRESS | `rust/crates/phenix-plugin-artifacts/src/implementation.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | Main `adca0921`: artifact plugin implements content-addressed records, reads, provenance/revalidation and durable namespace. KEEP plugin policy; test immutable revision and restart revalidation before selected discovery. |
+| F0239 | IN PROGRESS | `rust/crates/phenix-plugin-artifacts/src/lib.rs` | Keep | Artifact-specific plugin behavior, outside the kernel. | — | Main `c1db1d95`: artifact library only exports typed component and implementation. KEEP minimal module shell. |
 
 ### `rust/crates/phenix-plugin-basic-agent`
 
@@ -381,8 +381,8 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0244 | TODO | `rust/crates/phenix-plugin-basic-context/Cargo.toml` | Keep | Minimal replaceable context provider useful as a baseline and fixture. | — | pending |
-| F0245 | TODO | `rust/crates/phenix-plugin-basic-context/src/lib.rs` | Keep | Minimal replaceable context provider useful as a baseline and fixture. | — | pending |
+| F0244 | IN PROGRESS | `rust/crates/phenix-plugin-basic-context/Cargo.toml` | Keep | Minimal replaceable context provider useful as a baseline and fixture. | — | Main `698aaa92`: Basic context is isolated runtime plugin, not Core agent mechanism. KEEP baseline until rich context replaces it in product; check duplicate product selection. |
+| F0245 | IN PROGRESS | `rust/crates/phenix-plugin-basic-context/src/lib.rs` | Keep | Minimal replaceable context provider useful as a baseline and fixture. | — | Main `a71e454e`: minimal durable context read/write with typed ContextInterface, exact resource revision and authoring identity test. KEEP as replaceable basic provider; verify #731 selected context substitution. |
 
 ### `rust/crates/phenix-plugin-basic-model`
 
@@ -418,8 +418,8 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0266 | TODO | `rust/crates/phenix-plugin-basic-tools/Cargo.toml` | Refactor | Become a standard plugin-defined tool kind/template consumer/provider. | #730, #731 | pending |
-| F0267 | TODO | `rust/crates/phenix-plugin-basic-tools/src/lib.rs` | Refactor | Become a standard plugin-defined tool kind/template consumer/provider. | #730, #731 | pending |
+| F0266 | IN PROGRESS | `rust/crates/phenix-plugin-basic-tools/Cargo.toml` | Refactor | Become a standard plugin-defined tool kind/template consumer/provider. | #730, #731 | Main `be9e6954`: basic tools plugin package depends on Core/SDK and persisted tool catalog. REFACTOR catalog declaration to plugin-kind authoring after #730/#731; retain concrete provider. |
+| F0267 | IN PROGRESS | `rust/crates/phenix-plugin-basic-tools/src/lib.rs` | Refactor | Become a standard plugin-defined tool kind/template consumer/provider. | #730, #731 | Main `586f21a5`: BasicToolsInterface stores definition schemas and indexed tool IDs in durable namespace, with authoring regression. REFACTOR static kind/catalog schema selection; preserve stable CallableId and browse/load semantics. |
 
 ### `rust/crates/phenix-plugin-catalog`
 
@@ -427,57 +427,57 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | --- | --- | --- | --- | --- | --- | --- |
 | F0268 | IN PROGRESS | `rust/crates/phenix-plugin-catalog/Cargo.toml` | Retire | Delete static roster crate manifest once first-party discovery/fixtures move. | #728, #730, #731 | Static catalog Cargo package remains imported by Harness and Basic setup. Retire manifest only after dynamic selection replaces all exports, durable schema projection, workspace/Cargo/Nix registration and test consumers. |
 | F0269 | IN PROGRESS | `rust/crates/phenix-plugin-catalog/src/lib.rs` | Retire | Remove manually maintained first-party plugin re-export/registration catalog once dynamic discovery works. | #730, #731 | `catalog/src/lib.rs:7-212` reexports and registers a large manual first-party provider roster; `:237` does special durable schema projection. RETIRE after #728/#730 descriptors supply both roles and #731 proves unknown third-party installation. #765 marks static roster for descriptor-based discovery and consumer replacement in #731. Annotated at #765 head `cf700548`; CI pending. |
-| F0270 | TODO | `rust/crates/phenix-plugin-catalog/tests/coordination.rs` | Move | Move provider coordination verification into application integration tests before retiring roster. | #730, #731 | pending |
+| F0270 | IN PROGRESS | `rust/crates/phenix-plugin-catalog/tests/coordination.rs` | Move | Move provider coordination verification into application integration tests before retiring roster. | #730, #731 | Main `ef18405a`: 559-line coordination tests join budget, route, context and attempts through catalog imports. MOVE tests to product integration before retiring static catalog; retain cross-plugin reservation and terminal-accounting checks. |
 
 ### `rust/crates/phenix-plugin-command-toolbelt`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0271 | TODO | `rust/crates/phenix-plugin-command-toolbelt/Cargo.toml` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | pending |
-| F0272 | TODO | `rust/crates/phenix-plugin-command-toolbelt/src/component.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | pending |
-| F0273 | TODO | `rust/crates/phenix-plugin-command-toolbelt/src/implementation.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | pending |
-| F0274 | TODO | `rust/crates/phenix-plugin-command-toolbelt/src/lib.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | pending |
+| F0271 | IN PROGRESS | `rust/crates/phenix-plugin-command-toolbelt/Cargo.toml` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | Main `a98019af`: command-toolbelt is a runtime plugin for concrete external CLI probes. KEEP optional product implementation, not plugin registration mechanism. |
+| F0272 | IN PROGRESS | `rust/crates/phenix-plugin-command-toolbelt/src/component.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | Main `5550f48c`: CLI component declares workspace import, discover/version/auth-state typed exports with authority attenuation tests. KEEP provider identity; verify selected workspace binding. |
+| F0273 | IN PROGRESS | `rust/crates/phenix-plugin-command-toolbelt/src/implementation.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | Main `993d09d9`: CLI discovery/version/auth-state operations invoke scoped WorkspaceInterface rather than ambient shell. KEEP adapter; verify false availability, secret redaction and workspace capability checks. |
+| F0274 | IN PROGRESS | `rust/crates/phenix-plugin-command-toolbelt/src/lib.rs` | Keep | Concrete command implementations are separate from tool registration mechanisms. | — | Main `c1db1d95`: command-toolbelt only exports component and implementation. KEEP thin module entry. |
 
 ### `rust/crates/phenix-plugin-context`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0275 | TODO | `rust/crates/phenix-plugin-context/Cargo.toml` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0276 | TODO | `rust/crates/phenix-plugin-context/src/component.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0277 | TODO | `rust/crates/phenix-plugin-context/src/implementation.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0278 | TODO | `rust/crates/phenix-plugin-context/src/implementation_state.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0279 | TODO | `rust/crates/phenix-plugin-context/src/lib.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0280 | TODO | `rust/crates/phenix-plugin-context/src/materialization.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0281 | TODO | `rust/crates/phenix-plugin-context/src/materialization_integration.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0282 | TODO | `rust/crates/phenix-plugin-context/src/projection_state.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0283 | TODO | `rust/crates/phenix-plugin-context/src/prompt.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0284 | TODO | `rust/crates/phenix-plugin-context/src/state_integration.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
-| F0285 | TODO | `rust/crates/phenix-plugin-context/src/state_service.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | pending |
+| F0275 | IN PROGRESS | `rust/crates/phenix-plugin-context/Cargo.toml` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `6dd42d06`: rich context plugin is runtime implementation coupled to execution and SDK contracts. REFACTOR orchestration imports only after #731 selected workflow integration; retain context projection. |
+| F0276 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/component.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `a72eea32`: Context component requires execution import, optional language import and explicit authority; three tests. KEEP resolved graph contract; verify #726 selected agent topology. |
+| F0277 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/implementation.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `0df28fc2`: `implementation.rs` defines context_manifest/context_factory but `src/lib.rs` declares only `implementation_state`, not `implementation`. RETIRE candidate as uncompiled stale implementation after repository-wide module/include reference search and test parity; do not maintain an alternate context executor. |
+| F0278 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/implementation_state.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `559eff9a`: active `implementation_state` defines context manifest/factory, state, projection, discovery and compaction admission in one large module. SIMPLIFY overlapping state persistence, but retain canonical context lifecycle and all exact revision tests. |
+| F0279 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/lib.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `38217aa1`: lib.rs imports implementation_state and does not mod implementation.rs; exports active factory and context DTOs. KEEP active entry, delete obsolete module after build/test reference check. |
+| F0280 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/materialization.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `951507ce`: context materialization computes cache identity and ordered prompt sections, with stale revision/compaction tests. KEEP prompt projection; #726 model invocation must use committed snapshot only. |
+| F0281 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/materialization_integration.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `82071532`: integration asserts committed compaction controls model-visible request context. KEEP product regression; run after #731 selected context integration. |
+| F0282 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/projection_state.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `6c095423`: ContextProjectionState manages admission, CAS compaction, revision and cache epoch; invalidation tests. KEEP scoped context projection; verify no duplicate state machine in new workflow. |
+| F0283 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/prompt.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `b2f79d40`: context prompt assembly defines fixed harness identity and stable section ordering. REFACTOR hardcoded product identity into selected product profile after #731, retain exact-reference ordering. |
+| F0284 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/state_integration.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `e435fefb`: context restart, compaction, delegation and injection tests include `legacy_resources` fixtures. REFACTOR stale legacy-only cases after new context semantics proven, preserve CAS and durable restart. |
+| F0285 | IN PROGRESS | `rust/crates/phenix-plugin-context/src/state_service.rs` | Refactor | Retain context projection and prompt policy, remove overlapping orchestration/registration. | #731 | Main `b2b35aff`: ContextStateService serializes projection state with 16MiB bound and CAS support. KEEP durable plugin-owned state; #725 ensure root receipt and state mutation commit together. |
 
 ### `rust/crates/phenix-plugin-debug`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0286 | TODO | `rust/crates/phenix-plugin-debug/Cargo.toml` | Keep | Optional inspection provider based on generic Core observability. | — | pending |
-| F0287 | TODO | `rust/crates/phenix-plugin-debug/src/component.rs` | Keep | Optional inspection provider based on generic Core observability. | — | pending |
-| F0288 | TODO | `rust/crates/phenix-plugin-debug/src/implementation.rs` | Keep | Optional inspection provider based on generic Core observability. | — | pending |
-| F0289 | TODO | `rust/crates/phenix-plugin-debug/src/lib.rs` | Keep | Optional inspection provider based on generic Core observability. | — | pending |
+| F0286 | IN PROGRESS | `rust/crates/phenix-plugin-debug/Cargo.toml` | Keep | Optional inspection provider based on generic Core observability. | — | Main `e81d73ed`: debug plugin package optional inspection provider outside Core. KEEP replaceable diagnostics. |
+| F0287 | IN PROGRESS | `rust/crates/phenix-plugin-debug/src/component.rs` | Keep | Optional inspection provider based on generic Core observability. | — | Main `e6e90874`: DebugInterface typed component imports optional model/session/planning providers; tests fail closed on missing imports. KEEP composable diagnostic endpoint. |
+| F0288 | IN PROGRESS | `rust/crates/phenix-plugin-debug/src/implementation.rs` | Keep | Optional inspection provider based on generic Core observability. | — | Main `2166f7d7`: debug runtime-trace sink, optional snapshot imports and listener record typed correlations. KEEP plugin diagnostics; verify no duplicate unbounded log store and correct ACP/Lua detail retrieval. |
+| F0289 | IN PROGRESS | `rust/crates/phenix-plugin-debug/src/lib.rs` | Keep | Optional inspection provider based on generic Core observability. | — | Main `417e9eb3`: SDK-derived debug plugin identity and exports, unsafe-free. KEEP thin plugin entry. |
 
 ### `rust/crates/phenix-plugin-efficiency-evaluation`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0290 | TODO | `rust/crates/phenix-plugin-efficiency-evaluation/Cargo.toml` | Keep | Optional benchmarking and evaluation implementation. | — | pending |
-| F0291 | TODO | `rust/crates/phenix-plugin-efficiency-evaluation/src/benchmark_outcomes.rs` | Keep | Optional benchmarking and evaluation implementation. | — | pending |
-| F0292 | TODO | `rust/crates/phenix-plugin-efficiency-evaluation/src/implementation.rs` | Keep | Optional benchmarking and evaluation implementation. | — | pending |
-| F0293 | TODO | `rust/crates/phenix-plugin-efficiency-evaluation/src/lib.rs` | Keep | Optional benchmarking and evaluation implementation. | — | pending |
+| F0290 | IN PROGRESS | `rust/crates/phenix-plugin-efficiency-evaluation/Cargo.toml` | Keep | Optional benchmarking and evaluation implementation. | — | Main `6138ee9b`: efficiency evaluation is optional plugin, not kernel scheduler. KEEP package unless product no longer selects it; verify actual consumers. |
+| F0291 | IN PROGRESS | `rust/crates/phenix-plugin-efficiency-evaluation/src/benchmark_outcomes.rs` | Keep | Optional benchmarking and evaluation implementation. | — | Main `7e84f4d7`: durable benchmark outcome/evidence provider publishes immutable terminal evidence with restart and idempotency tests. KEEP plugin domain, no Core evaluator. |
+| F0292 | IN PROGRESS | `rust/crates/phenix-plugin-efficiency-evaluation/src/implementation.rs` | Keep | Optional benchmarking and evaluation implementation. | — | Main `d778ae35`: evaluator imports execution evidence and exports derived result, tests declared execution dependency. KEEP derived evaluation; verify its owner identity under selected descriptors. |
+| F0293 | IN PROGRESS | `rust/crates/phenix-plugin-efficiency-evaluation/src/lib.rs` | Keep | Optional benchmarking and evaluation implementation. | — | Main `94644ec4`: efficiency plugin exports benchmark and evaluator modules. KEEP thin module entry. |
 
 ### `rust/crates/phenix-plugin-environment-local`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0294 | TODO | `rust/crates/phenix-plugin-environment-local/Cargo.toml` | Keep | Concrete local execution environment implementation. | — | pending |
-| F0295 | TODO | `rust/crates/phenix-plugin-environment-local/src/lib.rs` | Keep | Concrete local execution environment implementation. | — | pending |
+| F0294 | IN PROGRESS | `rust/crates/phenix-plugin-environment-local/Cargo.toml` | Keep | Concrete local execution environment implementation. | — | Main `f57f3750`: local execution environment plugin packages shell/filesystem backend, independent of generic Core. KEEP, avoid implicit backend selection. |
+| F0295 | IN PROGRESS | `rust/crates/phenix-plugin-environment-local/src/lib.rs` | Keep | Concrete local execution environment implementation. | — | Main `0ab5b91e`: 1,950-line local environment owns sandboxed path/FD handling, subprocess output capture/termination and optional policy. KEEP contract executor; verify read/write isolation, spawned-child termination and no default timeouts while #731 migrates tool selection. |
 
 ### `rust/crates/phenix-plugin-execution`
 
