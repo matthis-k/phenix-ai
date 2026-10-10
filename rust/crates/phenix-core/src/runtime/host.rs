@@ -48,6 +48,12 @@ impl<'a> PluginHost<'a> {
         }
     }
 
+    /// Opaque identity assigned by Core, shared by every delegated call
+    /// belonging to the same root. Plugins cannot select their own root ID.
+    pub fn root_id(&self) -> u64 {
+        self.scope.root_id
+    }
+
     pub fn cancellation_token(&self) -> Option<&CallCancellationToken> {
         self.scope.cancellation.as_ref()
     }
