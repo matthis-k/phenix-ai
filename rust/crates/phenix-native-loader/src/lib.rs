@@ -1015,7 +1015,10 @@ mod tests {
             NativeInvocation::Failed(message)
                 if String::from_utf8_lossy(&message).contains("cancelled")
         ));
-        assert!(receiver.try_recv().is_err(), "cancelled import was dispatched");
+        assert!(
+            receiver.try_recv().is_err(),
+            "cancelled import was dispatched"
+        );
         HOST_REGISTRY.lock().unwrap().remove(&registry_id);
     }
 
