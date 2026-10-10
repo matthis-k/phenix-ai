@@ -423,21 +423,21 @@ fn loaded_native_dylib_executes_real_generation_pinned_fork_with_typed_join() {
                         if node == "alpha-tool" {
                             frame
                                 .set(&Key::parse("alpha").unwrap(), PhenixValue::U64(5))
-                .unwrap();
-                    } else if node == "beta-tool" {
-                        frame
-                            .set(&Key::parse("beta").unwrap(), PhenixValue::U64(7))
-                            .unwrap();
-                    }
-                    match serde_json::from_slice::<PhenixValue>(output).unwrap() {
-                        PhenixValue::String(outcome) => Ok::<_, String>(outcome),
-                        _ => Err("invalid native contract result".to_owned()),
-                    }
-                },
-                || false,
-                None,
-            )
-            .unwrap()
+                                .unwrap();
+                        } else if node == "beta-tool" {
+                            frame
+                                .set(&Key::parse("beta").unwrap(), PhenixValue::U64(7))
+                                .unwrap();
+                        }
+                        match serde_json::from_slice::<PhenixValue>(output).unwrap() {
+                            PhenixValue::String(outcome) => Ok::<_, String>(outcome),
+                            _ => Err("invalid native contract result".to_owned()),
+                        }
+                    },
+                    || false,
+                    None,
+                )
+                .unwrap()
         };
     }
     for pending in [false, true] {
