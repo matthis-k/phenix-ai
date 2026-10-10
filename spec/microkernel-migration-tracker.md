@@ -67,7 +67,7 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S4-04 | IN PROGRESS | #763 | S4-02; S4-03 | #763 carries combined CI changes in `.github/workflows/ci.yml` and `modules/development.nix` on #725. It validates the current partial stack, not final portable entry/native/product parity; rerun against exact merge candidates. |
 | S4-05 | TODO | owner to assign | S2-04; S4-02 | Selected plugin upgrades preserve old roots, generation provenance, Environment pins, journal events and durable compatibility. |
 | S5-01 | IN PROGRESS | #766 | #726 | The imperative `phenix-plugin-basic-agent` crate, its factory registration and old execution tests are deleted on #766, stacked directly on #726. Head `6ca962f` now removes stale deleted-plugin test selection and regenerates impact metadata. Earlier CI failed agent/product test fixtures and workflow-sync; the corrected head requires exact-head verification and declarative product parity. No compatibility runner. |
-| S5-02 | IN PROGRESS | #767 | #766 | The `phenix-plugin-hooks` crate, Advanced default, catalog exports, Nix/Cargo registration and legacy hook test are deleted in #767 `435863b`. Dead fixture, inherited legacy selections, rustfmt and generated impact metadata were corrected after the prior failed CI. Verify Core Event/Layer paths and exact-head CI; no compatibility dispatcher. |
+| S5-02 | IN PROGRESS | #767 | #766 | The `phenix-plugin-hooks` crate, Advanced default, catalog exports, Nix/Cargo registration and legacy hook tests are deleted on #767. Branch was reconstructed on exact #766 head using a force-with-lease; GitHub reports a clean stack. #767 `bbfbe50` deletes the stale hook migration guide, `9a7079a` updates Event coverage, and `68aba30` updates canonical Layer/Event spec. Current-head source/CI and generic Event/Layer parity still required. |
 | S5-03 | TODO | cleanup implementation PR to create | S4-01 | Replace hardcoded `phenix-plugin-catalog` factories/manifest lists, harness builder and default Basic profiles with portable discovery. |
 | S5-04 | TODO | cleanup implementation PR to create | S4-01 | Move AI-specific contracts from Core/SDK to plugin-owned interfaces; preserve required selected contract identity while deleting retired APIs and adapter paths. |
 | S5-05 | TODO | cleanup implementation PR to create | S4-02 | Audit `phenix-plugin-step-runner` and `phenix-plugin-execution/src/tool_schedule.rs`; keep tool semantics, remove duplicated orchestration. |
@@ -120,7 +120,7 @@ Breaking changes are accepted. No deprecation interval, legacy parser, wire fall
 
 ## Source audit handoff, 2026-10-10
 
-- **Repository file matrix:** 600 unique paths, 2 PROVEN, 75 IN PROGRESS and 523 TODO. All 28 provisional `Review` rows have individual source inspections. Only `LICENSE` and `.gitignore` have final static KEEP proofs; another file's source inspection is not a green test.
+- **Repository file matrix:** 600 unique paths, 2 PROVEN, 78 IN PROGRESS and 520 TODO. All 28 provisional `Review` rows have individual source inspections. Only `LICENSE` and `.gitignore` have final static KEEP proofs; another file's source inspection is not a green test.
 - **#726 file matrix:** 58/58 source-triaged at head `5fce639b`; 50 IN PROGRESS and 8 BLOCKED on native extraction or legacy retirement. Zero files are certified complete. The new exact ownership notes cover `composition/component.rs`, `runtime/kernel.rs`, `workflow_scheduler.rs`, `tasks.rs`, `workflow_tasks.rs`, `plugin/host`, the portable agent nodes and product assembly.
 - **Central stages:** 4 PROVEN architectural/document baselines, 17 IN PROGRESS implementation or audit gates, 21 TODO. Partial proof is recorded in the individual stage row, with acceptance gaps still open.
 - **Owner comments:** Numbered source-evidence updates were applied in place to the task matrices on [#726](https://github.com/matthis-k/phenix-ai/pull/726#issuecomment-6094025633), [#728](https://github.com/matthis-k/phenix-ai/pull/728#issuecomment-6094025933), [#729](https://github.com/matthis-k/phenix-ai/pull/729#issuecomment-6094026212), [#730](https://github.com/matthis-k/phenix-ai/pull/730#issuecomment-6094026435), [#731](https://github.com/matthis-k/phenix-ai/pull/731#issuecomment-6094026655), [#760](https://github.com/matthis-k/phenix-ai/pull/760#issuecomment-6094026951), [#725](https://github.com/matthis-k/phenix-ai/pull/725#issuecomment-6094025363) and [#763](https://github.com/matthis-k/phenix-ai/pull/763#issuecomment-6094027226). No unchecked owner task was silently promoted.
@@ -147,13 +147,13 @@ The [#733 audit](post-redesign-file-dispositions.md) already lists concrete down
 
 ## 2026-10-10 cleanup and CI handoff
 
-Owner heads, updated 2026-10-10: #765 `ff26aaa3`, #766 `ff60387`, #767 `8285aad`, #768 `3ddb504`. The [owner matrix index](microkernel-tracker/pr-task-matrices.md) now links 83 individually numbered implementation checklists L765-01..05, L766-01..06, L767-01..05 and L768-01..05. Old planned rows for the already-open agent/hooks cleanup PRs were removed.
+Owner heads, updated 2026-10-10: #765 `ff26aaa3`, #766 `ff60387`, #767 `68aba30`, #768 `d4a426a`. The [owner matrix index](microkernel-tracker/pr-task-matrices.md) now links 83 individually numbered implementation checklists L765-01..05, L766-01..06, L767-01..05 and L768-01..05. Old planned rows for the already-open agent/hooks cleanup PRs were removed.
 
 - #765: exact-head [reduced CI 38029647180](https://github.com/matthis-k/phenix-ai/actions/runs/38029647180) passed; strict contract and consumer semantics still need targeted proof.
 - #766: earlier [CI 38029939148](https://github.com/matthis-k/phenix-ai/actions/runs/38029939148) failed on tests that explicitly selected or excluded the deleted `phenix.agent-loop` ID and a generated CI shard reference. Follow-up commits `3daa7b4`, `01f5a74`, `a0a2c0f`, `6ca962f` remove those references without reintroducing the plugin. Recheck current-head Harness agent/product tests, generated workflow parity, format/Clippy and application output.
 - #767: earlier [CI 38029944725](https://github.com/matthis-k/phenix-ai/actions/runs/38029944725) failed for inherited legacy tests, rustfmt and an unused test helper. Follow-ups through `435863b` correct those failures and generated metadata for both deleted crates. Recheck current-head CI, Event/Layer parity and inherited #766 parent reconciliation.
 - #764: previous [maintenance run 38029893213](https://github.com/matthis-k/phenix-ai/actions/runs/38029893213) failed trailing spaces on repository-file matrix rows. Commit `bc59221` trims 596 trailing spaces. The owner index now has 78 tasks across 11 PRs. Validate this tracker head without claiming implementation proof.
-- Current counts are **43 central gates**: 4 PROVEN, 18 IN PROGRESS, 21 TODO; **600 main-tracker paths**: 2 PROVEN, 75 IN PROGRESS, 523 TODO; **58 #726 paths**: 50 IN PROGRESS, 8 BLOCKED. Prior handoff counts in this file were stale; those rows, not narrative estimates, are the source of truth.
+- Current counts are **43 central gates**: 4 PROVEN, 18 IN PROGRESS, 21 TODO; **600 main-tracker paths**: 2 PROVEN, 78 IN PROGRESS, 520 TODO; **58 #726 paths**: 50 IN PROGRESS, 8 BLOCKED. Prior handoff counts in this file were stale; those rows, not narrative estimates, are the source of truth.
 
 Next unblocked work: L766-03/04 and L767-02/03 real parity, W014/W022/W026/W031-W033 duplicate responsibility audit on #726, and S2-02 native ABI/loader extraction into its own PR. Keep cleanup code off this tracking branch.
 
@@ -163,7 +163,16 @@ Next unblocked work: L766-03/04 and L767-02/03 real parity, W014/W022/W026/W031-
 
 #768 owns actual **application-level alternate-executor deletion** as a separate stacked PR. In `application.rs`, it removes the optional old service import, `bound_application_agent_plugin` and service dispatch, and keeps the selected pending workflow path. It removes one foreign-service-only canary; `application_prompt_executes_selected_declarative_only_graph` already checks all four Basic/Advanced/Full profiles for independently selected turn provider, provider-initiated cancel, normal completion and durable journal replay. Record any missing semantics in L768-03, not as an old-route compatibility shim.
 
-The #767 head and its base #766 are changing together; GitHub currently reports mergeability needs reconciliation. Do not merge the stacked branches until their exact parent relationship, CI and file inventories are clean.
+Branches #767 and #768 were reconstructed on current parent commits using exact file copies, verified branch differences and force-with-lease ref updates. Both now have clean stacked ancestry and GitHub reports mergeable. Their new CI runs remain pending; source parity and final integration still gate merging.
+
+## Stack reconciliation and spec retirement, 2026-10-10
+
+- Rebuilt #767 on #766 at `ff60387`; its [rebased head](https://github.com/matthis-k/phenix-ai/commit/92a70d467d23444589ce51d70240be6bfcc0581a) copied the 17 changed hook paths, preserved the current parent elsewhere and removed all five hook crate files. Source docs then advanced to `68aba30`.
+- Rebuilt #768 on #767 at `68aba30`. Its clean diff now contains only `phenix-harness/src/application.rs` and `src/tests.rs` (head `d4a426a`). The obsolete tests calling `bound_application_agent_plugin` are replaced with direct compiled-plan presence/absence assertions.
+- #767 source architecture checks previously failed on stale coverage paths `phenix-plugin-hooks/src/implementation.rs` and `src/ownership_regression.rs`. Removed the obsolete `spec/lifecycle-hooks.md` migration guide and updated `spec/kernel-hooks.md` and `spec/plugin-events.md` to describe canonical Layer/Event execution without compatibility claims.
+- #726 `3dca0cc` deduplicated nested-scope matching in the native ticket ledger; exact rustfmt follow-up `1c032d7` repairs the only failing Source job from [CI 38032579155](https://github.com/matthis-k/phenix-ai/actions/runs/38032579155). Core, Clippy and other substantive shards passed on the prior unformatted head.
+
+This is verified source/branch reconciliation, **not** a semantic completion certificate. Updated heads still require exact CI and product/client proof.
 
 ## Non-negotiable acceptance
 
