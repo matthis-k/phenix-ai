@@ -652,50 +652,50 @@ Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0390 | TODO | `rust/crates/phenix-plugin-sessions/Cargo.toml` | Keep | Session semantics and storage outside Core. | — | pending |
-| F0391 | TODO | `rust/crates/phenix-plugin-sessions/src/history_integration.rs` | Keep | Session semantics and storage outside Core. | — | pending |
-| F0392 | TODO | `rust/crates/phenix-plugin-sessions/src/implementation.rs` | Keep | Session semantics and storage outside Core. | — | pending |
-| F0393 | TODO | `rust/crates/phenix-plugin-sessions/src/lib.rs` | Keep | Session semantics and storage outside Core. | — | pending |
+| F0390 | IN PROGRESS | `rust/crates/phenix-plugin-sessions/Cargo.toml` | Keep | Session semantics and storage outside Core. | — | Main `760f1f5f`: session runtime plugin owns typed state and durable history outside Core. KEEP until selected session implementation parity. |
+| F0391 | IN PROGRESS | `rust/crates/phenix-plugin-sessions/src/history_integration.rs` | Keep | Session semantics and storage outside Core. | — | Main `ff931576`: integration asserts exact portable model/tool history addressing. KEEP history regression; #725 durable sessions and ACP resume must preserve it. |
+| F0392 | IN PROGRESS | `rust/crates/phenix-plugin-sessions/src/implementation.rs` | Keep | Session semantics and storage outside Core. | — | Main `ed5e5751`: Session plugin manages IDs, journal append/reads, transition, close/rename and durable storage. KEEP sole journal state owner; avoid duplicate session history in #725. |
+| F0393 | IN PROGRESS | `rust/crates/phenix-plugin-sessions/src/lib.rs` | Keep | Session semantics and storage outside Core. | — | Main `29633e48`: lib exports active session implementation and SDK typed contracts. KEEP thin module entry. |
 
 ### `rust/crates/phenix-plugin-step-runner`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0394 | TODO | `rust/crates/phenix-plugin-step-runner/Cargo.toml` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending |
-| F0395 | TODO | `rust/crates/phenix-plugin-step-runner/src/lib.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending |
+| F0394 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/Cargo.toml` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | Main `678537c4`: step-runner is a runtime plugin, not a generic scheduler. REFACTOR after #726 #731; retain single step transport and model invocation while deleting own root progression. |
+| F0395 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/src/lib.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | Main `9f95059a`: step runner lib defines helper and central invocation endpoints, skill activation, context recovery and route defaults. SIMPLIFY helpers after #726/731; generic workflow owns loop and cancellation, preserve isolated helper bounds. |
 | F0396 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/src/runner.rs` | Refactor | Limit to one step invocation; remove any graph/run progression authority. | #726, #729 | `step-runner/runner.rs:245+` handles delegated workers/tasks, reservations, retry and step execution. Audit whether these are domain tool semantics or a second control-flow owner; transfer only graph progression after equivalent delegated-worker tests. #765 marks delegated worker/policy owner; move duplicated graph progression only after cancellation, budget and no-replay tests. Annotated at #765 head `cf700548`; CI pending. |
-| F0397 | TODO | `rust/crates/phenix-plugin-step-runner/tests/invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending |
-| F0398 | TODO | `rust/crates/phenix-plugin-step-runner/tests/planned_step.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending |
-| F0399 | TODO | `rust/crates/phenix-plugin-step-runner/tests/recovery_invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | pending |
+| F0397 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/tests/invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | Main `2cad7569`: tests direct invocation, context overflow pruning and optional default invocation path. KEEP semantic cases in canonical step tests, drop duplicate fixture when #726 is integrated. |
+| F0398 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/tests/planned_step.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | Main `f6aee2b8`: 1,004-line integration proves route failure cleanup, retry lineage, usage release, model fallback and iterative dispatch. MOVE key assertions to #726 canonical plan/step tests before shrinking runner. |
+| F0399 | IN PROGRESS | `rust/crates/phenix-plugin-step-runner/tests/recovery_invocation.rs` | Refactor | Keep step execution; remove agent-loop progression once topology owns control flow. | #726, #729 | Main `b83b4b30`: context fallback and durable history recovery tests show explicit resource and policy suppression. KEEP behavior as plugin-defined recovery; verify session replay and #725 receipt contracts. |
 
 ### `rust/crates/phenix-plugin-workspace`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0400 | TODO | `rust/crates/phenix-plugin-workspace/Cargo.toml` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | pending |
-| F0401 | TODO | `rust/crates/phenix-plugin-workspace/src/component.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | pending |
-| F0402 | TODO | `rust/crates/phenix-plugin-workspace/src/implementation.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | pending |
-| F0403 | TODO | `rust/crates/phenix-plugin-workspace/src/lib.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | pending |
+| F0400 | IN PROGRESS | `rust/crates/phenix-plugin-workspace/Cargo.toml` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | Main `318b33ac`: workspace plugin has separate domain-local execution and state. KEEP product-owned workspace, not default Core execution environment. |
+| F0401 | IN PROGRESS | `rust/crates/phenix-plugin-workspace/src/component.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | Main `af73c9e0`: workspace component requires EnvironmentInterface import with authority attenuation tests. KEEP provider contract, #728/760 third-party environment selection proof. |
+| F0402 | IN PROGRESS | `rust/crates/phenix-plugin-workspace/src/implementation.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | Main `9b783a54`: 2,521-line workspace service handles path limits, durable write-intent journal, file operations and subprocess via typed environment. KEEP workspace policy; audit duplicate backend sandbox and #725 commit receipt fencing. |
+| F0403 | IN PROGRESS | `rust/crates/phenix-plugin-workspace/src/lib.rs` | Keep | Workspace selection, policies and state remain domain-specific plugins. | — | Main `86f8ac30`: workspace lib exports component and implementation; no alternate plugin construction path. KEEP thin entry. |
 
 ### `rust/crates/phenix-provider-sdk`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0404 | TODO | `rust/crates/phenix-provider-sdk/Cargo.toml` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0405 | TODO | `rust/crates/phenix-provider-sdk/src/auth.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0406 | TODO | `rust/crates/phenix-provider-sdk/src/lib.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0407 | TODO | `rust/crates/phenix-provider-sdk/src/protocol.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0408 | TODO | `rust/crates/phenix-provider-sdk/src/runtime.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0409 | TODO | `rust/crates/phenix-provider-sdk/src/store.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
-| F0410 | TODO | `rust/crates/phenix-provider-sdk/src/types.rs` | Keep | Reusable provider integration helpers, outside Core. | — | pending |
+| F0404 | IN PROGRESS | `rust/crates/phenix-provider-sdk/Cargo.toml` | Keep | Reusable provider integration helpers, outside Core. | — | Main `3b8077cd`: provider SDK passive library, separate from Core. KEEP transport/auth utilities; verify no transitive runtime permission escalation. |
+| F0405 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/auth.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `47f81f68`: provider auth definitions compose token/OAuth methods without duplicate state. KEEP typed auth definitions; ensure plugin credentials never leak in diagnostics. |
+| F0406 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/lib.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `7efd419b`: provider SDK exports protocol/auth/model catalog interfaces and HTTP helper, with provider definition. KEEP replaceable protocol package; #731 must not register first-party provider IDs inside Core. |
+| F0407 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/protocol.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `181062af`: 2,833-line HTTP protocol conversion for OpenAI/Anthropic/Go/Zen and model-tool identities. KEEP provider translation, consider split per protocol without duplicating schema identity; test tool-argument/reasoning/usage fidelity. |
+| F0408 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/runtime.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `de1ff147`: provider runtime executes authenticated network calls, model catalog, caching and stable session identity. KEEP application model executor; #726 uses it through generic typed model invocation. |
+| F0409 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/store.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `9eacd2a8`: credential store uses secure filesystem modes and separate typed token slots; records env var name, not secret. KEEP provider-owned secrets, verify redaction and permissions. |
+| F0410 | IN PROGRESS | `rust/crates/phenix-provider-sdk/src/types.rs` | Keep | Reusable provider integration helpers, outside Core. | — | Main `7c7b6f1d`: provider SDK validates endpoints, tokens, header names and wire errors. KEEP typed protocol primitives, preserve exact error identity. |
 
 ### `rust/crates/phenix-runtime`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0411 | TODO | `rust/crates/phenix-runtime/Cargo.toml` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | pending |
-| F0412 | TODO | `rust/crates/phenix-runtime/src/lib.rs` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | pending |
-| F0413 | TODO | `rust/crates/phenix-runtime/src/main.rs` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | pending |
+| F0411 | IN PROGRESS | `rust/crates/phenix-runtime/Cargo.toml` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | Main `6378745a`: phenix-runtime packages kernel-only executable. KEEP zero-plugin product, no AI domain dependency required. |
+| F0412 | IN PROGRESS | `rust/crates/phenix-runtime/src/lib.rs` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | Main `d94102da`: Runtime wraps Core and currently imports old phenix-client ServiceRequest/Response JSONL envelopes. REFACTOR transport DTO after F0079/F0080 client consumer audit; preserve kernel-only startup and missing-service tests. |
+| F0413 | IN PROGRESS | `rust/crates/phenix-runtime/src/main.rs` | Keep | Standalone generic kernel runtime with no AI plugin requirement. | — | Main `5ed98cb9`: kernel-only main boots Runtime with stdio JSONL dispatch. KEEP minimal executable; test empty graph and plugin-selected service parity. |
 
 ### `rust/crates/phenix-sdk-macros`
 
