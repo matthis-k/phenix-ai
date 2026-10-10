@@ -11169,168 +11169,178 @@ mod tests {
     async fn application_prompt_executes_selected_declarative_only_graph() {
         use phenix_sdk::{AgentTurnStepInterface, agent_turn_step_service};
 
-        let mut builder = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION.to_owned(),
-            phenix_plugin_catalog::SDK_PLUGIN.to_owned(),
-            phenix_plugin_catalog::OPTIONS_PLUGIN.to_owned(),
-            "phenix.environment.local".to_owned(),
-            "phenix.workspace".to_owned(),
-        ]))
-        .unwrap();
-        let owner = PluginId::parse("fixture.application-declarative-turn").unwrap();
-        let component = ComponentId::parse("fixture.application-declarative-turn").unwrap();
-        builder
-            .add_embedded(
-                PluginManifest {
-                    id: owner.clone(),
-                    version: 1,
-                    execution: PluginExecution::Embedded,
-                    dependencies: Vec::new(),
-                    services: vec![ServiceContribution {
-                        role: ServiceRole::Terminal,
-                        service: agent_turn_step_service(),
-                        priority: 200,
-                        required_authority: Authority::default(),
-                    }],
-                    resource_namespaces: Vec::new(),
-                    maximum_authority: default_suite_authority(),
-                },
-                || Box::new(DeclarativeApplicationTurn { cancel_next: true }),
-            )
+        // Exercise the real application worker, session journal and client
+        // projection across each selected declarative product composition.
+        // Each profile receives an independent stateful cancellation fixture.
+        for profile in [
+            phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION,
+            phenix_plugin_catalog::ADVANCED_AGENT_CONFIGURATION,
+            "phenix.product.basic",
+            "phenix.product.full",
+        ] {
+            let mut builder = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+                profile.to_owned(),
+                phenix_plugin_catalog::SDK_PLUGIN.to_owned(),
+                phenix_plugin_catalog::OPTIONS_PLUGIN.to_owned(),
+                "phenix.environment.local".to_owned(),
+                "phenix.workspace".to_owned(),
+            ]))
             .unwrap();
-        builder.add_component(ComponentManifest {
-            id: component.clone(),
-            owner,
-            imports: Vec::new(),
-            exports: vec![ComponentExport {
-                interface: AgentTurnStepInterface::interface_id(),
-                schema: AgentTurnStepInterface::schema(),
-                priority: 200,
-                required_authority: Authority::default(),
-            }],
-            listeners: Vec::new(),
-            maximum_authority: default_suite_authority(),
-        });
-        builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
-        let mut harness = builder.build().unwrap();
-        assert!(
-            harness
-                .resolved_generation()
-                .plugins()
-                .iter()
-                .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
-        );
-        harness.activate().unwrap();
-        let worker = ApplicationWorker::new(harness).unwrap();
-        let (sdk, generation) = {
-            let harness = worker.harness.lock();
-            (
+            let owner = PluginId::parse("fixture.application-declarative-turn").unwrap();
+            let component = ComponentId::parse("fixture.application-declarative-turn").unwrap();
+            builder
+                .add_embedded(
+                    PluginManifest {
+                        id: owner.clone(),
+                        version: 1,
+                        execution: PluginExecution::Embedded,
+                        dependencies: Vec::new(),
+                        services: vec![ServiceContribution {
+                            role: ServiceRole::Terminal,
+                            service: agent_turn_step_service(),
+                            priority: 200,
+                            required_authority: Authority::default(),
+                        }],
+                        resource_namespaces: Vec::new(),
+                        maximum_authority: default_suite_authority(),
+                    },
+                    || Box::new(DeclarativeApplicationTurn { cancel_next: true }),
+                )
+                .unwrap();
+            builder.add_component(ComponentManifest {
+                id: component.clone(),
+                owner,
+                imports: Vec::new(),
+                exports: vec![ComponentExport {
+                    interface: AgentTurnStepInterface::interface_id(),
+                    schema: AgentTurnStepInterface::schema(),
+                    priority: 200,
+                    required_authority: Authority::default(),
+                }],
+                listeners: Vec::new(),
+                maximum_authority: default_suite_authority(),
+            });
+            builder.bind_provider(AgentTurnStepInterface::interface_id(), component);
+            let mut harness = builder.build().unwrap();
+            assert!(
                 harness
                     .resolved_generation()
-                    .resolve_sdk_contributions([sdk_contribution()])
-                    .unwrap(),
-                ReferenceGenerationId::from(harness.generation()),
+                    .plugins()
+                    .iter()
+                    .all(|plugin| plugin.id.as_str() != "phenix.agent-loop")
+            );
+            harness.activate().unwrap();
+            let worker = ApplicationWorker::new(harness).unwrap();
+            let (sdk, generation) = {
+                let harness = worker.harness.lock();
+                (
+                    harness
+                        .resolved_generation()
+                        .resolve_sdk_contributions([sdk_contribution()])
+                        .unwrap(),
+                    ReferenceGenerationId::from(harness.generation()),
+                )
+            };
+            let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+            let service = SdkApplicationService::new(
+                &sdk,
+                worker.projection().store(),
+                SharedCallableRegistry::default(),
+                PluginRuntimeId::parse("fixture.declarative-app-runtime").unwrap(),
+                generation,
+                callbacks,
+                ClientReferenceIdentity::new(
+                    ClientConnectionId::parse("fixture-declarative-app-client").unwrap(),
+                    ReferenceGenerationId::parse("fixture-declarative-app-generation").unwrap(),
+                ),
             )
-        };
-        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
-        let service = SdkApplicationService::new(
-            &sdk,
-            worker.projection().store(),
-            SharedCallableRegistry::default(),
-            PluginRuntimeId::parse("fixture.declarative-app-runtime").unwrap(),
-            generation,
-            callbacks,
-            ClientReferenceIdentity::new(
-                ClientConnectionId::parse("fixture-declarative-app-client").unwrap(),
-                ReferenceGenerationId::parse("fixture-declarative-app-generation").unwrap(),
-            ),
-        )
-        .unwrap();
-        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
-        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker,
-            service,
-            transport.clone(),
-            receiver,
-            2,
-        ));
-        let created = invoke_transport_operation::<CreateSession>(
-            &transport,
-            SessionCreateInput {
-                working_directory: "/workspace".into(),
-                title: None,
-            },
-        )
-        .await
-        .unwrap();
-        let cancelled = tokio::time::timeout(
-            Duration::from_secs(5),
-            invoke_transport_operation::<Prompt>(
+            .unwrap();
+            let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+            let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+                worker,
+                service,
+                transport.clone(),
+                receiver,
+                2,
+            ));
+            let created = invoke_transport_operation::<CreateSession>(
                 &transport,
-                PromptInput {
-                    session_id: created.session_id.clone(),
-                    content: vec![Content::Text {
-                        text: "declarative-cancel".into(),
-                    }],
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
                 },
-            ),
-        )
-        .await
-        .expect("provider-initiated declarative cancellation must not hang")
-        .expect("typed cancellation must be a terminal prompt response");
-        assert_eq!(cancelled.stop_reason, StopReason::Cancelled);
+            )
+            .await
+            .unwrap();
+            let cancelled = tokio::time::timeout(
+                Duration::from_secs(5),
+                invoke_transport_operation::<Prompt>(
+                    &transport,
+                    PromptInput {
+                        session_id: created.session_id.clone(),
+                        content: vec![Content::Text {
+                            text: "declarative-cancel".into(),
+                        }],
+                    },
+                ),
+            )
+            .await
+            .expect("provider-initiated declarative cancellation must not hang")
+            .expect("typed cancellation must be a terminal prompt response");
+            assert_eq!(cancelled.stop_reason, StopReason::Cancelled);
 
-        let completed = tokio::time::timeout(
-            Duration::from_secs(5),
-            invoke_transport_operation::<Prompt>(
+            let completed = tokio::time::timeout(
+                Duration::from_secs(5),
+                invoke_transport_operation::<Prompt>(
+                    &transport,
+                    PromptInput {
+                        session_id: created.session_id.clone(),
+                        content: vec![Content::Text {
+                            text: "declarative application prompt".into(),
+                        }],
+                    },
+                ),
+            )
+            .await
+            .expect("declarative application prompt must not hang")
+            .expect("resolved declarative agent turn must complete");
+            assert_eq!(completed.stop_reason, StopReason::EndTurn);
+            let resumed = invoke_transport_operation::<ResumeSession>(
                 &transport,
-                PromptInput {
-                    session_id: created.session_id.clone(),
-                    content: vec![Content::Text {
-                        text: "declarative application prompt".into(),
-                    }],
+                SessionResumeInput {
+                    session_id: created.session_id,
+                    after_sequence: None,
                 },
-            ),
-        )
-        .await
-        .expect("declarative application prompt must not hang")
-        .expect("resolved declarative agent turn must complete");
-        assert_eq!(completed.stop_reason, StopReason::EndTurn);
-        let resumed = invoke_transport_operation::<ResumeSession>(
-            &transport,
-            SessionResumeInput {
-                session_id: created.session_id,
-                after_sequence: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert!(resumed.updates.iter().any(|entry| {
-            matches!(
-                &entry.update,
-                SessionChange::TextDelta { text, .. } if text == "declarative-client-output"
             )
-        }));
-        assert!(resumed.updates.iter().any(|entry| {
-            matches!(
-                &entry.update,
-                SessionChange::Execution {
-                    execution_id,
-                    update: ExecutionChange::State { state: ExecutionState::Completed },
-                } if execution_id == &completed.execution_id
-            )
-        }));
-        assert!(resumed.updates.iter().any(|entry| {
-            matches!(
-                &entry.update,
-                SessionChange::Execution {
-                    execution_id,
-                    update: ExecutionChange::State { state: ExecutionState::Cancelled },
-                } if execution_id == &cancelled.execution_id
-            )
-        }));
-        drop(transport);
-        worker_task.await.unwrap();
+            .await
+            .unwrap();
+            assert!(resumed.updates.iter().any(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::TextDelta { text, .. } if text == "declarative-client-output"
+                )
+            }));
+            assert!(resumed.updates.iter().any(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        execution_id,
+                        update: ExecutionChange::State { state: ExecutionState::Completed },
+                    } if execution_id == &completed.execution_id
+                )
+            }));
+            assert!(resumed.updates.iter().any(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        execution_id,
+                        update: ExecutionChange::State { state: ExecutionState::Cancelled },
+                    } if execution_id == &cancelled.execution_id
+                )
+            }));
+            drop(transport);
+            worker_task.await.unwrap();
+        }
     }
 
     /// Verify the terminal agent contract through the application dispatch,
