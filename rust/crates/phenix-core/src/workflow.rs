@@ -1842,6 +1842,7 @@ impl CompiledWorkflow {
         &self,
         cursor: &PlanStepId,
         scope: &str,
+        already_submitted: bool,
         state: &mut State,
         mut data: Option<&mut crate::WorkflowFrame>,
         invoke: &mut impl FnMut(
@@ -1853,9 +1854,9 @@ impl CompiledWorkflow {
             &mut dyn FnMut() -> bool,
         ) -> WorkflowInvokePoll<Error>,
         cancelled: &mut impl FnMut() -> bool,
-        budget: (&mut u64, Option<NonZeroU64>),
+        budget: (&mut u64, &mut u64, Option<NonZeroU64>),
     ) -> Result<WorkflowInvokeAdvance, WorkflowRunError<Error>> {
-        let (count, limit) = budget;
+        let (count, admissions, limit) = budget;
         let PlanStepId::Invoke(name) = cursor else {
             unreachable!("invoke dispatch requires an Invoke identity")
         };
@@ -1873,15 +1874,30 @@ impl CompiledWorkflow {
                 executed_nodes: *count,
             });
         }
-        if limit.is_some_and(|limit| *count >= limit.get()) {
-            return Err(WorkflowRunError::StepLimitReached {
-                next_node: name.clone(),
-                executed_nodes: *count,
-            });
+        if !already_submitted {
+            // Each in-flight Invoke consumes a budget reservation at admission
+            // rather than at completion. Concurrent siblings must not exceed
+            // an opt-in step cap while all their callbacks are pending.
+            if limit.is_some_and(|limit| *admissions >= limit.get()) {
+                return Err(WorkflowRunError::StepLimitReached {
+                    next_node: name.clone(),
+                    executed_nodes: *count,
+                });
+            }
         }
         let outcome = match invoke(name, import, scope, state, data.as_deref_mut(), cancelled) {
-            WorkflowInvokePoll::Started => return Ok(WorkflowInvokeAdvance::Started),
-            WorkflowInvokePoll::Waiting => return Ok(WorkflowInvokeAdvance::Waiting),
+            WorkflowInvokePoll::Started => {
+                if !already_submitted {
+                    *admissions = admissions
+                        .checked_add(1)
+                        .ok_or(WorkflowRunError::StepCounterOverflow)?;
+                }
+                return Ok(WorkflowInvokeAdvance::Started);
+            }
+            WorkflowInvokePoll::Waiting => {
+                assert!(already_submitted, "native Invoke must admit before waiting");
+                return Ok(WorkflowInvokeAdvance::Waiting);
+            },
             WorkflowInvokePoll::Ready(Ok(outcome)) => outcome,
             WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled)) => {
                 return Err(WorkflowRunError::Cancelled {
@@ -1896,6 +1912,11 @@ impl CompiledWorkflow {
                 });
             }
         };
+        if !already_submitted {
+            *admissions = admissions
+                .checked_add(1)
+                .ok_or(WorkflowRunError::StepCounterOverflow)?;
+        }
         *count = count
             .checked_add(1)
             .ok_or(WorkflowRunError::StepCounterOverflow)?;
