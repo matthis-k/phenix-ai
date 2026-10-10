@@ -585,55 +585,55 @@ Initial coverage: 596 main-tree files at `d488c405`. Baseline audit: 592 paths, 
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0358 | TODO | `rust/crates/phenix-plugin-models/Cargo.toml` | Keep | Model selection, routing and provider behavior stays application-side. | — | pending |
-| F0359 | TODO | `rust/crates/phenix-plugin-models/src/component.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | pending |
+| F0358 | IN PROGRESS | `rust/crates/phenix-plugin-models/Cargo.toml` | Keep | Model selection, routing and provider behavior stays application-side. | — | Main `e519c30a`: model routing runtime plugin remains outside Core. KEEP model service package, test dynamic provider selection. |
+| F0359 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/component.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | Main `7bf162cf`: component exports model routing and exact dispatch with authority-bound import tests. KEEP selected graph; verify #728/#760 third-party provider registration. |
 | F0360 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/implementation_sdk.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | BREAKING #765 (`c13199ad4`, later formatting at `d2d64a42`) removed `normalize_legacy_profile`. Persistence reads now strictly decode canonical routing records; no schema migration reader or compatibility fallback. |
 | F0361 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/implementation_sdk/catalog.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | BREAKING #765: removed provider catalog manifest normalization; owner and profile records decode without historical coercion. CI on `d2d64a42` pending. |
 | F0362 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/implementation_sdk/packaged.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | BREAKING #765: removed packaged manifest normalization and automatic ownership adoption of pre-existing matching profiles. Foreign IDs now reject even on initial packaging. |
 | F0363 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/implementation_sdk/tests.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | BREAKING #765: removed old raw-option and legacy adoption tests; replaced adoption test with explicit foreign-ownership rejection. No compatibility fixtures retained. |
-| F0364 | TODO | `rust/crates/phenix-plugin-models/src/lib.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | pending |
-| F0365 | TODO | `rust/crates/phenix-plugin-models/src/routing_service.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | pending |
-| F0366 | TODO | `rust/crates/phenix-plugin-models/src/routing_state.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | pending |
+| F0364 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/lib.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | Main `b4610952`: module entry binds component, implementation_sdk, routing service and state, without competing agent scheduler. KEEP module wiring. |
+| F0365 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/routing_service.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | Main `6230d443`: RoutingServiceState persists evidence and features but rebuilds derived estimates on restore, with snapshot tests. KEEP durable routing truth; reject stale decisions after model refresh. |
+| F0366 | IN PROGRESS | `rust/crates/phenix-plugin-models/src/routing_state.rs` | Keep | Model selection, routing and provider behavior stays application-side. | — | Main `451b2539`: RoutingRuntimeState selects routes through SDK policy and tracks effective features, generation and feedback. KEEP application routing; check #731 one owner of selection, not extra Core resolver. |
 
 ### `rust/crates/phenix-plugin-openai-codex`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0367 | TODO | `rust/crates/phenix-plugin-openai-codex/Cargo.toml` | Keep | Specific model provider integration. | — | pending |
-| F0368 | TODO | `rust/crates/phenix-plugin-openai-codex/src/lib.rs` | Keep | Specific model provider integration. | — | pending |
+| F0367 | IN PROGRESS | `rust/crates/phenix-plugin-openai-codex/Cargo.toml` | Keep | Specific model provider integration. | — | Main `74810af3`: Codex provider is standalone network/auth runtime plugin; dependencies isolated from generic Core. KEEP provider package. |
+| F0368 | IN PROGRESS | `rust/crates/phenix-plugin-openai-codex/src/lib.rs` | Keep | Specific model provider integration. | — | Main `8e83cc94`: Codex provider owns HTTP/OAuth, request conversion, session execution and secure credentials in one 1,640-line module. KEEP provider; candidate SPLIT auth from transport only for maintainability, not a second model loop. Verify cancellation and stream errors. |
 
 ### `rust/crates/phenix-plugin-options`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0369 | TODO | `rust/crates/phenix-plugin-options/Cargo.toml` | Keep | Application options provider; avoid a second kernel resolver. | — | pending |
-| F0370 | TODO | `rust/crates/phenix-plugin-options/src/lib.rs` | Keep | Application options provider; avoid a second kernel resolver. | — | pending |
+| F0369 | IN PROGRESS | `rust/crates/phenix-plugin-options/Cargo.toml` | Keep | Application options provider; avoid a second kernel resolver. | — | Main `99b596a2`: options provider runtime-plugin with its own durable scoped setting store. KEEP product-level options, not general kernel config. |
+| F0370 | IN PROGRESS | `rust/crates/phenix-plugin-options/src/lib.rs` | Keep | Application options provider; avoid a second kernel resolver. | — | Main `83a8d290`: options service models key/subject/scope, startup precedence, persistent assignments and resolved values. KEEP user/product settings; check duplication with generic configuration resolver and #731 declarative profiles. |
 
 ### `rust/crates/phenix-plugin-planning`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0371 | TODO | `rust/crates/phenix-plugin-planning/Cargo.toml` | Keep | Optional planning policy implementation. | — | pending |
-| F0372 | TODO | `rust/crates/phenix-plugin-planning/src/component.rs` | Keep | Optional planning policy implementation. | — | pending |
-| F0373 | TODO | `rust/crates/phenix-plugin-planning/src/implementation.rs` | Keep | Optional planning policy implementation. | — | pending |
-| F0374 | TODO | `rust/crates/phenix-plugin-planning/src/lib.rs` | Keep | Optional planning policy implementation. | — | pending |
+| F0371 | IN PROGRESS | `rust/crates/phenix-plugin-planning/Cargo.toml` | Keep | Optional planning policy implementation. | — | Main `885b6002`: planning provider is optional domain policy plugin, not workflow scheduler. KEEP unless selected product ceases to use it. |
+| F0372 | IN PROGRESS | `rust/crates/phenix-plugin-planning/src/component.rs` | Keep | Optional planning policy implementation. | — | Main `0390d334`: planning component exposes ordinary typed service; consumer can bind without Core registration. KEEP selected provider. |
+| F0373 | IN PROGRESS | `rust/crates/phenix-plugin-planning/src/implementation.rs` | Keep | Optional planning policy implementation. | — | Main `7ebbde8f`: planning implementation persists objectives, plan steps and immutable decisions, validates DAG cycles and explores estimates without spawning workers. KEEP authoring policy; #726 IR owns execution scheduling. |
+| F0374 | IN PROGRESS | `rust/crates/phenix-plugin-planning/src/lib.rs` | Keep | Optional planning policy implementation. | — | Main `c1db1d95`: planning lib exports component/implementation only. KEEP minimal plugin entry. |
 
 ### `rust/crates/phenix-plugin-providers`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0375 | TODO | `rust/crates/phenix-plugin-providers/Cargo.toml` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | pending |
-| F0376 | TODO | `rust/crates/phenix-plugin-providers/README.md` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | pending |
-| F0377 | TODO | `rust/crates/phenix-plugin-providers/src/lib.rs` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | pending |
+| F0375 | IN PROGRESS | `rust/crates/phenix-plugin-providers/Cargo.toml` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | Main `bd62f3e7`: common providers bundle is resource-only plugin rather than default runtime engine. KEEP data package; check static hard-coded COMMON_PROVIDERS replacement requirements. |
+| F0376 | IN PROGRESS | `rust/crates/phenix-plugin-providers/README.md` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | Main `f032d579`: provider README documents endpoint, protocol and API auth table for bundled presets. KEEP docs; must agree with selected provider definitions. |
+| F0377 | IN PROGRESS | `rust/crates/phenix-plugin-providers/src/lib.rs` | Keep | Provider presets and registration data; avoid Nix-authoritative semantics. | — | Main `62d1d45`: COMMON_PROVIDERS array contains 12 statically authored presets, exports definitions/manifest and unique IDs tests. KEEP optional presets but REMOVE hardwired registration from product after #730/#731. |
 
 ### `rust/crates/phenix-plugin-repository-workers`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0378 | TODO | `rust/crates/phenix-plugin-repository-workers/Cargo.toml` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | pending |
-| F0379 | TODO | `rust/crates/phenix-plugin-repository-workers/src/component.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | pending |
-| F0380 | TODO | `rust/crates/phenix-plugin-repository-workers/src/implementation.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | pending |
-| F0381 | TODO | `rust/crates/phenix-plugin-repository-workers/src/lib.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | pending |
+| F0378 | IN PROGRESS | `rust/crates/phenix-plugin-repository-workers/Cargo.toml` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | Main `0a575d85`: repository-workers is optional runtime plugin packaging PR work queue policy. KEEP separate product plugin, no scheduler in generic Core. |
+| F0379 | IN PROGRESS | `rust/crates/phenix-plugin-repository-workers/src/component.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | Main `171fffbe`: repository work queue has a typed importable interface and binding regression. KEEP service identity. |
+| F0380 | IN PROGRESS | `rust/crates/phenix-plugin-repository-workers/src/implementation.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | Main `292e02b0`: repository worker queue reconciles PR checklists and selects work from given snapshots, tests dependency and green-claim integrity. KEEP policy; #764 tracker remains authoritative state, no mirrored checkboxes. |
+| F0381 | IN PROGRESS | `rust/crates/phenix-plugin-repository-workers/src/lib.rs` | Keep | Optional repository-worker orchestration built on generic Core primitives. | — | Main `a5fe825c`: module exposes typed queue service backed by repository policy; generic service integration test. KEEP provider wrapper, no GitHub authority in Core. |
 
 ### `rust/crates/phenix-plugin-session-tree`
 
