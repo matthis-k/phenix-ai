@@ -209,7 +209,7 @@ impl Kernel {
                 actual,
             });
         }
-        let library = NativePluginLibrary::load(path)?;
+        let library = NativePluginLibrary::load_staged(&content)?;
         // This is an already-resolved Native artifact. The ordinary factory
         // registration API intentionally remains Embedded-only.
         self.preload_embedded_factory(plugin, native_library_factory(library));
