@@ -13,7 +13,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0001 | TODO | `.githooks/pre-commit` | Review | Determine whether it duplicates canonical Nix-owned commit checks. | Nix tooling parity | pending | 
+| F0001 | IN PROGRESS | `.githooks/pre-commit` | Review | Determine whether it duplicates canonical Nix-owned commit checks. | Nix tooling parity | Current hook calls Nix maintenance `fix`, re-stages only original paths and runs staged whitespace check. `modules/development.nix` generates this hook and checks `diff -u` against the tracked file. Candidate KEEP; run exact-head `phenix-maintenance-git-hooks` equivalence and hook test before PROVEN. | 
 
 ### `.github/`
 
@@ -29,10 +29,10 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0007 | TODO | `.gitignore` | Keep | Repository generated-content hygiene. | — | pending | 
+| F0007 | PROVEN | `.gitignore` | Keep | Repository generated-content hygiene. | — | KEEP. Direct source review on main `d488c405`, blob `b5e60517`: excludes Nix `result*`, `/rust/target/`, `.direnv`, cache and log files. Git-only hygiene; no runtime replacement or test needed. | 
 | F0008 | TODO | `AGENTS.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending | 
 | F0009 | TODO | `DEVELOPMENT.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending | 
-| F0010 | TODO | `LICENSE` | Keep | Repository licensing. | — | pending | 
+| F0010 | PROVEN | `LICENSE` | Keep | Repository licensing. | — | KEEP. Direct source review on main `d488c405`, blob `831ecf00`: MIT grant, 2026 copyright, attribution and redistribution notice remain part of repository distribution. No runtime substitute or CI test applies. | 
 | F0011 | TODO | `README.md` | Keep | Repo operator/developer or architecture guidance; update stale references after migration. | #731 + docs sync | pending | 
 
 ### `config/`
@@ -54,16 +54,16 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0017 | TODO | `modules/cargo-source.nix` | Review (new) | Inspect source-dependency pin and its Nix consumers; retain only if not duplicating package derivations. | CI source derivation parity | pending | 
-| F0018 | TODO | `modules/commit-candidate.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
-| F0019 | TODO | `modules/development.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
-| F0020 | TODO | `modules/flake-module.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
+| F0017 | IN PROGRESS | `modules/cargo-source.nix` | Review (new) | Inspect source-dependency pin and its Nix consumers; retain only if not duplicating package derivations. | CI source derivation parity | Live consumer paths: `modules/rust-artifacts.nix`, `modules/package-sets.nix`, `modules/harness-product.nix`, `modules/lua-binding-integration.nix`. Source `9941dcf2` derives local Rust dependency closure from Cargo manifests. Candidate KEEP; compare Nix closure and cached rebuild behavior before certification. | 
+| F0018 | IN PROGRESS | `modules/commit-candidate.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Imported by `modules/development.nix`. Source `c138bc02` defines staged-only `maintenance commit`, with success, unrelated-edit and untracked-file fixture cases. Candidate KEEP; verify current-head Nix test target and hook interaction before certification. | 
+| F0019 | IN PROGRESS | `modules/development.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Owns maintenance registration, generated-hook parity check and safety-policy check used by the dev/CI entry. Review production shell/check dependency closure and execute exact-head Nix checks before KEEP proof. | 
+| F0020 | IN PROGRESS | `modules/flake-module.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | Source `9451a73c` exports `phenixWrapped` for phenix, kernel, runtime, harness and Stitch packages; imported as default flake module. Candidate KEEP; verify these exports by flake evaluation and consumer checks. | 
 | F0021 | TODO | `modules/harness-product.nix` | Refactor | Thin portable product config wrapper; remove duplicated product selection. | #731 | pending | 
 | F0022 | TODO | `modules/lua-binding-integration.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
 | F0023 | TODO | `modules/package-sets.nix` | Refactor | Remove hardcoded plugin-name identity map and migration aliases after portable profile selection. | #730, #731 | pending | 
 | F0024 | TODO | `modules/plugin-packaging.nix` | Refactor | Nix packages deployment artifacts, not tool/skill resolution or provider selection authority. | #730, #731 | pending | 
 | F0025 | TODO | `modules/rust-artifacts.nix` | Keep | Retain Nix deployment/build capability; no runtime semantic authority. | — | pending | 
-| F0026 | TODO | `modules/stitch.nix` | Review | Establish its live package consumer and unique responsibility before retaining/removing. | consumer + CI references | pending | 
+| F0026 | IN PROGRESS | `modules/stitch.nix` | Review | Establish its live package consumer and unique responsibility before retaining/removing. | consumer + CI references | Live consumer confirmed: `flake.nix` imports `modules/stitch.nix`; it exports `stitch`/`stitch-mcp` packages/apps. `modules/development.nix` invokes its `stitch-runtime-smoke` check. Source `ea7d94c4`. Candidate KEEP, not dead code; pending exact-head Nix smoke and MCP package check. | 
 
 ### `rust/`
 
@@ -793,7 +793,7 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
 | F0490 | TODO | `scripts/check-plugin-architecture.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
-| F0491 | TODO | `scripts/check-rust-safety-policy.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
+| F0491 | IN PROGRESS | `scripts/check-rust-safety-policy.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | Script `86183104` reads Cargo metadata to enforce `#![forbid(unsafe_code)]` across production targets; `modules/development.nix` invokes it. MOVE only after an equivalent Nix-owned rule, negative fixture and CI proof; current live consumer blocks deletion. | 
 | F0492 | TODO | `scripts/check-spec-lifecycle-fixtures.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
 | F0493 | TODO | `scripts/check-spec-lifecycle.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
 | F0494 | TODO | `scripts/check-structural-boundaries.sh` | Move | Move enforcement/check logic into Nix-supported dev tooling, retaining coverage before retiring standalone shell script. | Nix check replacement + CI proof | pending | 
