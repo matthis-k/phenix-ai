@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn connection_requires_current_version_before_tool_requests() {
         let bridge = ToolBridge::default();
-        let connection = McpConnectionId::new("fixture-mcp-connection".into());
+        let connection = McpConnectionId::new("fixture-mcp-connection");
         bridge
             .state
             .lock()
