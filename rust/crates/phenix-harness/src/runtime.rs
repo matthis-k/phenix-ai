@@ -92,6 +92,25 @@ impl PhenixRuntime {
         phenix_plugin_catalog::run_agent_workflow(&root, command, cancelled, step_limit)
     }
 
+    /// Execute the unchanged selected agent topology over the native pending
+    /// Core Invoke scheduler. This is opt-in until Basic/Full parity tests
+    /// cover streaming, cancellation and all legacy side effects.
+    pub fn run_declared_agent_workflow_pending(
+        &self,
+        command: phenix_sdk::AgentLoopCommand,
+        caller_authority: &Authority,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<std::num::NonZeroU64>,
+    ) -> Result<phenix_sdk::AgentLoopResponse, String> {
+        let root = self.root_execution_handle(caller_authority);
+        phenix_plugin_catalog::run_agent_workflow_pending(
+            &root,
+            command,
+            cancelled,
+            step_limit,
+        )
+    }
+
     pub fn root_execution_handle_in_generation(
         &self,
         generation: &GenerationId,
@@ -120,6 +139,27 @@ impl PhenixRuntime {
             .root_execution_handle_in_generation(generation, constraints)
             .map_err(|error| error.to_string())?;
         phenix_plugin_catalog::run_agent_workflow(&root, command, cancelled, step_limit)
+    }
+
+    /// Pending agent execution stays inside the explicitly pinned resident
+    /// generation, including after default-generation promotion.
+    pub fn run_declared_agent_workflow_pending_in_generation(
+        &self,
+        generation: &GenerationId,
+        constraints: &RootExecutionConstraints,
+        command: phenix_sdk::AgentLoopCommand,
+        cancelled: impl FnMut() -> bool,
+        step_limit: Option<std::num::NonZeroU64>,
+    ) -> Result<phenix_sdk::AgentLoopResponse, String> {
+        let root = self
+            .root_execution_handle_in_generation(generation, constraints)
+            .map_err(|error| error.to_string())?;
+        phenix_plugin_catalog::run_agent_workflow_pending(
+            &root,
+            command,
+            cancelled,
+            step_limit,
+        )
     }
 
     pub fn build_plugin_artifact(
