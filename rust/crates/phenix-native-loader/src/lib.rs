@@ -832,6 +832,53 @@ mod tests {
             "native fixture could not compile: {}",
             String::from_utf8_lossy(&build.stderr)
         );
+        // A replacement with a different content hash must live beside
+        // the original loaded image, not reuse the first module's statics.
+        let revision_b = out.join(format!(
+            "libnative_fixture_b.{}",
+            std::env::consts::DLL_EXTENSION
+        ));
+        let replacement = Command::new("rustc")
+            .arg("--edition=2024")
+            .arg("--crate-type=cdylib")
+            .arg("--crate-name=phenix_native_test_fixture")
+            .arg("--cfg=phenix_native_revision_b")
+            .arg(&fixture)
+            .arg("-o")
+            .arg(&revision_b)
+            .output()
+            .unwrap();
+        assert!(
+            replacement.status.success(),
+            "replacement fixture could not compile: {}",
+            String::from_utf8_lossy(&replacement.stderr)
+        );
+        let replacement_image = NativePluginLibrary::load_staged(
+            &std::fs::read(&revision_b).unwrap(),
+        )
+        .unwrap();
+        let mut replacement_instance = replacement_image.instance(18);
+        replacement_instance.prepare_and_start().unwrap();
+        let replacement_ticket = NativeCallTicket {
+            root_id: 3,
+            call_id: 11,
+        };
+        assert_eq!(
+            replacement_instance
+                .begin_component(
+                    replacement_ticket,
+                    5,
+                    "fixture.native",
+                    "fixture.test@1",
+                    b"hello",
+                )
+                .unwrap(),
+            NativeInvocation::Pending
+        );
+        assert_eq!(
+            replacement_instance.poll(replacement_ticket).unwrap(),
+            NativeInvocation::Ready(b"fixture finished B".to_vec())
+        );
         let module = NativePluginLibrary::load(&lib).unwrap();
         let mut instance = module.instance(17);
         instance.prepare_and_start().unwrap();
@@ -847,6 +894,12 @@ mod tests {
         assert_eq!(
             instance.poll(ticket).unwrap(),
             NativeInvocation::Ready(b"fixture finished".to_vec())
+        );
+        // The old resident remains pinned to revision A even after B was
+        // staged and invoked under an independent instance and ABI table.
+        assert_ne!(
+            std::fs::read(&lib).unwrap(),
+            std::fs::read(&revision_b).unwrap()
         );
         assert!(matches!(
             instance.poll(ticket),
@@ -891,9 +944,13 @@ mod tests {
             .expect("native callback did not complete after its host import reply");
         assert_eq!(returned, NativeInvocation::Ready(b"from host".to_vec()));
         instance.stop_and_destroy().unwrap();
+        replacement_instance.stop_and_destroy().unwrap();
         assert_eq!(instance.state(), NativeInstanceState::Destroyed);
+        assert_eq!(replacement_instance.state(), NativeInstanceState::Destroyed);
         drop(instance);
         drop(module);
+        drop(replacement_instance);
+        drop(replacement_image);
         std::fs::remove_dir_all(out).unwrap();
     }
 
