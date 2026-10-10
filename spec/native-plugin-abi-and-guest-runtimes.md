@@ -1,6 +1,6 @@
 # Native plugin ABI and extensible guest runtime bindings
 
-status: ABI contract implemented; dynamic loader and guest runtime adapters pending
+status: specification-only
 scope: native loader, runtime adapter plugins, guest bindings, resident generations
 depends_on:
   - spec/plugin-runtime-bridges.md
