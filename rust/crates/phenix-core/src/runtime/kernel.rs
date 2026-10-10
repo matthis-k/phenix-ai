@@ -636,8 +636,7 @@ fn project_workflow_output<State, Error>(
     interface: &InterfaceId,
     import: &ResolvedImportHandle,
     output: &[u8],
-    state: &mut State,
-    mut frame: Option<&mut crate::WorkflowFrame>,
+    execution: (&mut State, Option<&mut crate::WorkflowFrame>),
     project: impl FnOnce(
         &str,
         &InterfaceId,
@@ -646,6 +645,7 @@ fn project_workflow_output<State, Error>(
         &mut State,
     ) -> Result<String, Error>,
 ) -> Result<String, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<Error>>> {
+    let (state, mut frame) = execution;
     let selected = selected_workflow_outcome::<Error>(workflow, node, import, output)?;
     let snapshot = frame.as_deref().cloned();
     match project(node, interface, output, frame.as_deref_mut(), state) {
@@ -857,8 +857,7 @@ impl RootExecutionHandle {
                     service,
                     import,
                     &output,
-                    state,
-                    None,
+                    (state, None),
                     |node, interface, output, _, state| project(node, interface, output, state),
                 )
             },
@@ -919,8 +918,7 @@ impl RootExecutionHandle {
                     interface,
                     binding,
                     &output,
-                    state,
-                    Some(frame),
+                    (state, Some(frame)),
                     |node, interface, output, frame, state| {
                         project(
                             node,
@@ -1109,8 +1107,7 @@ impl RootExecutionHandle {
                         interface,
                         binding,
                         &output,
-                        state,
-                        frame.as_deref_mut(),
+                        (state, frame.as_deref_mut()),
                         |node, interface, output, frame, state| {
                             project(node, interface, output, frame, state)
                         },
