@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn disabling_optional_application_tool_adapter_preserves_selected_workflow() {
+    fn disabling_application_tool_adapter_never_restores_a_missing_workflow() {
         let tools = application_agent_tool_manifest(default_suite_authority())
             .id
             .as_str()
@@ -1293,15 +1293,15 @@ mod tests {
                 .expect("the application tool adapter is optional");
         let runtime = builder
             .build()
-            .expect("the selected workflow must not require an optional tool adapter");
+            .expect("a generic Core graph may resolve without an application workflow");
         let owner = ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap();
         assert!(
             runtime
                 .resolved_generation()
                 .generation_topology()
                 .workflow(&owner, "agent.turn")
-                .is_some(),
-            "disabling optional application tools must preserve the declarative workflow"
+                .is_none(),
+            "disabled application tools must not silently reselect a different agent workflow"
         );
     }
 
