@@ -11,9 +11,8 @@
 use phenix_plugin_abi::{
     FEATURE_HOST_CANCELLATION, FEATURE_PENDING_CALLS, FEATURE_WAKE_POLL, NativeAbiError,
     NativeAbiHeader, NativeCallRequest, NativeCallResult, NativeCallTicket, NativeHostV1,
-    NativeSlice,
-    NativeOwnedBuffer, NativePluginEntryV1, NativePluginV1, RESULT_ERROR, RESULT_PENDING,
-    RESULT_READY,
+    NativeOwnedBuffer, NativePluginEntryV1, NativePluginV1, NativeSlice, RESULT_ERROR,
+    RESULT_PENDING, RESULT_READY,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -58,7 +57,11 @@ impl NativeWakeHandle {
     /// Wait for a matching wake, or return to check cancellation and poll.
     /// No timeout ever settles the invocation or retires a generation.
     pub fn wait_for(&self, ticket: NativeCallTicket, interval: Duration) -> bool {
-        let mut calls = self.hub.calls.lock().unwrap_or_else(|error| error.into_inner());
+        let mut calls = self
+            .hub
+            .calls
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let key = (ticket.root_id, ticket.call_id);
         if !calls.get(&key).is_some_and(|call| call.wake) {
             calls = self
@@ -103,9 +106,9 @@ unsafe extern "C" fn native_is_cancelled(context: *mut c_void, ticket: NativeCal
     };
     let permitted = {
         let calls = hub.calls.lock().unwrap_or_else(|error| error.into_inner());
-        calls.get(&(ticket.root_id, ticket.call_id)).map(|permit| {
-            permit.cancelled.clone()
-        })
+        calls
+            .get(&(ticket.root_id, ticket.call_id))
+            .map(|permit| permit.cancelled.clone())
     };
     match permitted {
         None => 1,
@@ -125,7 +128,10 @@ pub enum NativeLoadError {
     InvalidResult(NativeAbiError),
     OversizedResult(usize),
     MissingOrDuplicateCall(NativeCallTicket),
-    UnexpectedStatus { expected_pending: bool, observed: u32 },
+    UnexpectedStatus {
+        expected_pending: bool,
+        observed: u32,
+    },
     Lifecycle(&'static str),
     PluginFailed(u32),
 }
@@ -163,8 +169,8 @@ mod image {
 
     impl NativeImage {
         pub fn open(path: &Path) -> Result<Self, NativeLoadError> {
-            let filename =
-                CString::new(path.as_os_str().as_bytes()).map_err(|_| NativeLoadError::InvalidPath)?;
+            let filename = CString::new(path.as_os_str().as_bytes())
+                .map_err(|_| NativeLoadError::InvalidPath)?;
             // SAFETY: filename is terminated, flags have POSIX-defined values.
             let handle = unsafe { dlopen(filename.as_ptr(), 2) };
             if handle.is_null() {
@@ -248,7 +254,10 @@ impl NativePluginLibrary {
         // NativeAbiHeader prefix, even if the rest of its table is absent.
         let header = unsafe { std::ptr::read_unaligned(table.cast::<NativeAbiHeader>()) };
         header
-            .validate(std::mem::size_of::<NativePluginV1>(), NATIVE_SUPPORTED_FEATURES)
+            .validate(
+                std::mem::size_of::<NativePluginV1>(),
+                NATIVE_SUPPORTED_FEATURES,
+            )
             .map_err(NativeLoadError::IncompatibleAbi)?;
         // SAFETY: header's table-size claim permits reading the full static
         // function table. A malicious native library is trusted, not sandboxed.
@@ -387,23 +396,22 @@ impl NativePluginInstance {
 
     pub fn prepare_and_start(&mut self) -> Result<(), NativeLoadError> {
         if self.state != NativeInstanceState::Created {
-            return Err(NativeLoadError::Lifecycle("prepare requires created instance"));
+            return Err(NativeLoadError::Lifecycle(
+                "prepare requires created instance",
+            ));
         }
         let _guard = self.module.gate.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: the table was negotiated at load, host is boxed and remains
         // resident through destroy, and C ABI callbacks must not unwind.
         let table = unsafe { &*self.module.table };
         let prepared = unsafe {
-            table.prepare.expect("validated ABI table")(
-                table.context,
-                &*self.host,
-                self.generation,
-            )
+            table.prepare.expect("validated ABI table")(table.context, &*self.host, self.generation)
         };
         if prepared != 0 {
             return Err(NativeLoadError::PluginFailed(prepared));
         }
-        let started = unsafe { table.start.expect("validated ABI table")(table.context, self.generation) };
+        let started =
+            unsafe { table.start.expect("validated ABI table")(table.context, self.generation) };
         if started != 0 {
             return Err(NativeLoadError::PluginFailed(started));
         }
@@ -439,7 +447,9 @@ impl NativePluginInstance {
             return Err(NativeLoadError::Lifecycle("begin requires active instance"));
         }
         if ticket.root_id == 0 || ticket.call_id == 0 {
-            return Err(NativeLoadError::InvalidResult(NativeAbiError::InvalidTicket));
+            return Err(NativeLoadError::InvalidResult(
+                NativeAbiError::InvalidTicket,
+            ));
         }
         let key = (ticket.root_id, ticket.call_id);
         if self.pending.contains(&key) {
@@ -448,7 +458,13 @@ impl NativePluginInstance {
         {
             let mut calls = self.hub.calls.lock().unwrap_or_else(|e| e.into_inner());
             if calls
-                .insert(key, CallPermit { wake: false, cancelled: cancellation })
+                .insert(
+                    key,
+                    CallPermit {
+                        wake: false,
+                        cancelled: cancellation,
+                    },
+                )
                 .is_some()
             {
                 return Err(NativeLoadError::MissingOrDuplicateCall(ticket));
@@ -519,7 +535,9 @@ impl NativePluginInstance {
 
     pub fn stop_and_destroy(&mut self) -> Result<(), NativeLoadError> {
         if !self.pending.is_empty() {
-            return Err(NativeLoadError::Lifecycle("pending callbacks must settle before stop"));
+            return Err(NativeLoadError::Lifecycle(
+                "pending callbacks must settle before stop",
+            ));
         }
         if self.state != NativeInstanceState::Active {
             return Err(NativeLoadError::Lifecycle("stop requires active instance"));
@@ -528,7 +546,8 @@ impl NativePluginInstance {
         // SAFETY: no active tickets remain and the host remains valid through
         // both lifecycle calls; the image is pinned by Arc.
         let table = unsafe { &*self.module.table };
-        let stopped = unsafe { table.stop.expect("validated ABI table")(table.context, self.generation) };
+        let stopped =
+            unsafe { table.stop.expect("validated ABI table")(table.context, self.generation) };
         if stopped != 0 {
             return Err(NativeLoadError::PluginFailed(stopped));
         }
@@ -613,9 +632,8 @@ mod tests {
 
     #[test]
     fn invalid_native_image_fails_without_executing_untrusted_code() {
-        let invalid = NativePluginLibrary::load(Path::new(
-            "/path/that/does/not/exist/phenix-plugin.so",
-        ));
+        let invalid =
+            NativePluginLibrary::load(Path::new("/path/that/does/not/exist/phenix-plugin.so"));
         assert!(matches!(
             invalid,
             Err(NativeLoadError::Open(_)) | Err(NativeLoadError::UnsupportedPlatform)
@@ -625,34 +643,51 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn independently_compiled_native_library_executes_deferred_v1_call() {
-        use std::{process::Command, time::{SystemTime, UNIX_EPOCH}};
-        let unique=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let out=std::env::temp_dir().join(format!(
-            "phenix-native-loader-{}-{unique}",std::process::id()
+        use std::{
+            process::Command,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let out = std::env::temp_dir().join(format!(
+            "phenix-native-loader-{}-{unique}",
+            std::process::id()
         ));
         std::fs::create_dir_all(&out).unwrap();
-        let lib=out.join(format!("libnative_fixture.{}",std::env::consts::DLL_EXTENSION));
-        let fixture=Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/pending_plugin.rs");
-        let build=Command::new("rustc")
+        let lib = out.join(format!(
+            "libnative_fixture.{}",
+            std::env::consts::DLL_EXTENSION
+        ));
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pending_plugin.rs");
+        let build = Command::new("rustc")
             .arg("--edition=2024")
             .arg("--crate-type=cdylib")
             .arg("--crate-name=phenix_native_test_fixture")
             .arg(&fixture)
             .arg("-o")
             .arg(&lib)
-            .output().unwrap();
-        assert!(build.status.success(),
-            "native fixture could not compile: {}",String::from_utf8_lossy(&build.stderr));
-        let module=NativePluginLibrary::load(&lib).unwrap();
-        let mut instance=module.instance(17);
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "native fixture could not compile: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let module = NativePluginLibrary::load(&lib).unwrap();
+        let mut instance = module.instance(17);
         instance.prepare_and_start().unwrap();
-        assert_eq!(instance.state(),NativeInstanceState::Active);
-        let ticket=NativeCallTicket{root_id:3,call_id:9};
-        let first=instance.begin_component(
-            ticket,5,"fixture.native","fixture.test@1",b"hello"
-        ).unwrap();
-        assert_eq!(first,NativeInvocation::Pending);
+        assert_eq!(instance.state(), NativeInstanceState::Active);
+        let ticket = NativeCallTicket {
+            root_id: 3,
+            call_id: 9,
+        };
+        let first = instance
+            .begin_component(ticket, 5, "fixture.native", "fixture.test@1", b"hello")
+            .unwrap();
+        assert_eq!(first, NativeInvocation::Pending);
         assert_eq!(
             instance.poll(ticket).unwrap(),
             NativeInvocation::Ready(b"fixture finished".to_vec())
@@ -662,7 +697,7 @@ mod tests {
             Err(NativeLoadError::MissingOrDuplicateCall(_))
         ));
         instance.stop_and_destroy().unwrap();
-        assert_eq!(instance.state(),NativeInstanceState::Destroyed);
+        assert_eq!(instance.state(), NativeInstanceState::Destroyed);
         drop(instance);
         drop(module);
         std::fs::remove_dir_all(out).unwrap();
@@ -670,9 +705,15 @@ mod tests {
 
     #[test]
     fn result_correlations_fail_closed_before_deserialization() {
-        let ticket = NativeCallTicket { root_id: 1, call_id: 2 };
+        let ticket = NativeCallTicket {
+            root_id: 1,
+            call_id: 2,
+        };
         let result = NativeCallResult {
-            ticket: NativeCallTicket { root_id: 3, call_id: 2 },
+            ticket: NativeCallTicket {
+                root_id: 3,
+                call_id: 2,
+            },
             status: RESULT_PENDING,
             payload: NativeOwnedBuffer {
                 ptr: std::ptr::null_mut(),
@@ -683,7 +724,9 @@ mod tests {
         };
         assert!(matches!(
             decode_result(result, ticket),
-            Err(NativeLoadError::InvalidResult(NativeAbiError::WrongCorrelation { .. }))
+            Err(NativeLoadError::InvalidResult(
+                NativeAbiError::WrongCorrelation { .. }
+            ))
         ));
     }
 }
