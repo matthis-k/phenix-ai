@@ -387,7 +387,12 @@ fn pending_non_agent_fork_uses_pinned_imports_and_ordered_frame_join() {
     assert_eq!(report.executed_nodes, 4);
     assert_eq!(frame.get(&alpha), Some(&PhenixValue::U64(7)));
     assert_eq!(frame.get(&beta), Some(&PhenixValue::U64(11)));
-    assert_eq!(seen.iter().filter(|entry| entry.as_str() == "enter:model").count(), 2);
+    assert_eq!(
+        seen.iter()
+            .filter(|entry| entry.as_str() == "enter:model")
+            .count(),
+        2
+    );
     assert!(seen.contains(&"enter:alpha-tool".to_owned()));
     assert!(seen.contains(&"enter:beta-tool".to_owned()));
 }
