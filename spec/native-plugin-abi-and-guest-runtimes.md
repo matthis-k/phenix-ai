@@ -66,6 +66,13 @@ The kernel selects a runtime provider from the guest's declared runtime requirem
 
 ## Implemented ABI contract (PR #726)
 
+The loader is the only production crate allowed to contain audited unsafe
+FFI. `scripts/check-rust-safety-policy.sh` checks its exact Cargo package,
+`unsafe_boundary = "native-plugin-abi-v1"` metadata, and library target path.
+That target must declare `#![deny(unsafe_op_in_unsafe_fn)]`. Every other
+production Rust target must declare `#![forbid(unsafe_code)]`. This exception
+does not extend to the Core scheduler, SDK or guest adapters.
+
 The separate, zero-dependency `rust/crates/phenix-plugin-abi` crate now
 defines the **C-compatible ABI v1 table layout**: major/minor and size
 negotiation, required feature bits, opaque call tickets, borrowed inputs,

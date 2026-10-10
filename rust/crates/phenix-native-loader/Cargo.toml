@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.phenix]
 role = "passive-library"
+unsafe_boundary = "native-plugin-abi-v1"
 
 [dependencies]
 phenix-plugin-abi = { path = "../phenix-plugin-abi" }
