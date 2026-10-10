@@ -15,7 +15,7 @@ missing="$(
       | . as $package
       | .targets[]
       | select((.kind | index("lib")) or (.kind | index("bin")))
-      | [$package.name, ($package.metadata.phenix.unsafe_boundary // ""), .src_path]
+      | [$package.name, ($package.metadata.phenix.unsafe_boundary // "none"), .src_path]
       | @tsv
     ' |
     while IFS=
