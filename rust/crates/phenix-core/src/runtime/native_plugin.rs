@@ -213,9 +213,13 @@ impl Kernel {
             });
         }
         let library = NativePluginLibrary::load_staged(&content)?;
-        // This is an already-resolved Native artifact. The ordinary factory
-        // registration API intentionally remains Embedded-only.
-        self.preload_embedded_factory(plugin, native_library_factory(library));
+        // One plugin ID can have multiple resident versions. The loader's
+        // own factory table is keyed by immutable content revision, never
+        // the plugin name alone, and cannot impersonate Embedded instances.
+        self.native_factories.insert(
+            (plugin, actual),
+            Arc::new(native_library_factory(library)),
+        );
         Ok(())
     }
 }
