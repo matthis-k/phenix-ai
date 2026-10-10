@@ -44,11 +44,11 @@ pub use trace::{
 static NEXT_RUNTIME_ROOT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_runtime_root_id() -> u64 {
-    NEXT_RUNTIME_ROOT_ID.fetch_update(
-        Ordering::AcqRel,
-        Ordering::Acquire,
-        |value| value.checked_add(1),
-    ).expect("runtime root identity space is exhausted")
+    NEXT_RUNTIME_ROOT_ID
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            value.checked_add(1)
+        })
+        .expect("runtime root identity space is exhausted")
 }
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
