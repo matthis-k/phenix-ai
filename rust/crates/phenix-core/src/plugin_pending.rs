@@ -85,10 +85,7 @@ mod tests {
         let (pending, completion) = PluginPendingCall::channel();
         assert_eq!(pending.poll(), PluginPendingPoll::Pending);
         completion.complete(Ok(vec![1, 2, 3])).unwrap();
-        assert_eq!(
-            pending.poll(),
-            PluginPendingPoll::Ready(Ok(vec![1, 2, 3]))
-        );
+        assert_eq!(pending.poll(), PluginPendingPoll::Ready(Ok(vec![1, 2, 3])));
         assert_eq!(pending.poll(), PluginPendingPoll::Abandoned);
     }
 
@@ -102,7 +99,9 @@ mod tests {
     #[test]
     fn deferred_plugin_failure_preserves_error() {
         let (pending, completion) = PluginPendingCall::channel();
-        completion.complete(Err("provider rejected request".into())).unwrap();
+        completion
+            .complete(Err("provider rejected request".into()))
+            .unwrap();
         assert_eq!(pending.wait(), Err("provider rejected request".into()));
     }
 }
