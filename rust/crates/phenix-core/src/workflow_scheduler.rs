@@ -277,10 +277,9 @@ impl CompiledWorkflow {
         ) -> WorkflowInvokePoll<Error>,
         cancelled: &mut impl FnMut() -> bool,
         cancel_scope: &mut impl FnMut(&str),
-        budget: (&mut u64, &mut u64, Option<NonZeroU64>),
-        depth: usize,
+        budget: (&mut u64, &mut u64, Option<NonZeroU64>, usize),
     ) -> Result<TickStatus, WorkflowRunError<Error>> {
-        let (count, admissions, step_limit) = budget;
+        let (count, admissions, step_limit, depth) = budget;
         // Invoke performs its own single pre-dispatch cancellation check.
         // A redundant check here would change cancellation ordering and
         // turn terminal-after-invoke cancellation into a pre-call failure.
@@ -363,8 +362,7 @@ impl CompiledWorkflow {
                         invoke,
                         cancelled,
                         cancel_scope,
-                        (count, admissions, step_limit),
-                        depth + 1,
+                        (count, admissions, step_limit, depth + 1),
                     )?;
                     match status {
                         TickStatus::Blocked => continue,
@@ -509,8 +507,10 @@ impl CompiledWorkflow {
                 WorkflowInvokePoll::Ready(invoke(node, import, state, frame, cancellation))
             },
             cancelled,
-            |_| {},
-            || unreachable!("a synchronous Invoke cannot suspend"),
+            (
+                |_| {},
+                || unreachable!("a synchronous Invoke cannot suspend"),
+            ),
             step_limit,
         )
     }
@@ -531,8 +531,7 @@ impl CompiledWorkflow {
             &mut dyn FnMut() -> bool,
         ) -> WorkflowInvokePoll<Error>,
         cancelled: impl FnMut() -> bool,
-        cancel_scope: impl FnMut(&str),
-        wait_for_settlement: impl FnMut(),
+        callbacks: (impl FnMut(&str), impl FnMut()),
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
         self.execute_driven(
@@ -540,8 +539,7 @@ impl CompiledWorkflow {
             frame,
             invoke,
             cancelled,
-            cancel_scope,
-            wait_for_settlement,
+            callbacks,
             step_limit,
         )
     }
@@ -559,10 +557,10 @@ impl CompiledWorkflow {
             &mut dyn FnMut() -> bool,
         ) -> WorkflowInvokePoll<Error>,
         mut cancelled: impl FnMut() -> bool,
-        mut cancel_scope: impl FnMut(&str),
-        mut wait_for_settlement: impl FnMut(),
+        callbacks: (impl FnMut(&str), impl FnMut()),
         step_limit: Option<NonZeroU64>,
     ) -> Result<WorkflowRunReport, WorkflowRunError<Error>> {
+        let (mut cancel_scope, mut wait_for_settlement) = callbacks;
         let mut root = Cursor::at(
             self.plan.entry.clone(),
             frame.as_deref().cloned(),
@@ -578,8 +576,7 @@ impl CompiledWorkflow {
                     &mut invoke,
                     &mut cancelled,
                     &mut cancel_scope,
-                    (&mut count, &mut admissions, step_limit),
-                    0,
+                    (&mut count, &mut admissions, step_limit, 0),
                 )? {
                     TickStatus::Progress => {}
                     TickStatus::Blocked => wait_for_settlement(),
