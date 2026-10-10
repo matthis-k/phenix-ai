@@ -367,7 +367,7 @@ impl Kernel {
                 (|| -> Result<Option<Box<dyn PluginInstance>>, KernelError> {
                     match &manifest.execution {
                         PluginExecution::ResourceOnly => Ok(None),
-                        PluginExecution::Embedded => self
+                        PluginExecution::Embedded | PluginExecution::Native { .. } => self
                             .embedded_factories
                             .get(plugin)
                             .map(|factory| factory())
