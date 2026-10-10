@@ -18,17 +18,12 @@ struct Manifest {
 
 fn manifest(context: &ModelContext<'_, '_>) -> Result<(Option<Vec<u8>>, Manifest), String> {
     let bytes = read_raw(context, MANIFEST)?;
-    let mut value: Manifest = bytes
+    let value: Manifest = bytes
         .as_deref()
         .map(serde_json::from_slice)
         .transpose()
         .map_err(|error| error.to_string())?
         .unwrap_or_default();
-    for ownership in value.providers.values_mut() {
-        for profile in ownership.owned.values_mut() {
-            *profile = normalize_legacy_profile(profile.clone());
-        }
-    }
     Ok((bytes, value))
 }
 
