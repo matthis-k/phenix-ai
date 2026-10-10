@@ -1,3 +1,6 @@
+// Legacy tool batch scheduler. #731 moves graph progression to Core plans;
+// preserve Exclusive/ParallelSafe policy and the no-default-limit behavior
+// as plugin-owned scheduling input until the replacement is tested.
 use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

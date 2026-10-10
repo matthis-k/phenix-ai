@@ -16,6 +16,9 @@ use std::{
     sync::Arc,
 };
 
+// Legacy imperative execution owner. #731 replaces this plugin with selected
+// agent topology and node providers. Remove it after Basic/Full model-turn,
+// tool, progress, usage, cancellation and side-effect parity tests pass.
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
 

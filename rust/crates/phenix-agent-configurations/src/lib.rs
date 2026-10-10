@@ -12,6 +12,9 @@ pub const ADVANCED_AGENT_CONFIGURATION: &str = "phenix.agent.advanced";
 pub const BASIC_PRODUCT_CONFIGURATION: &str = "phenix.product.basic";
 pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
+// Legacy plugin-ID profile expansion. #731 replaces this static list with
+// portable selected product declarations. Keep until CLI, Nix and runtime
+// selections agree and the old agent-loop is no longer the default.
 const BASIC_AGENT_DEFAULTS: &[&str] = &[
     "phenix.agent-loop",
     "phenix.application-agent-tools",

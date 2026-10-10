@@ -80,6 +80,9 @@ fn permission(value: &str) -> PermissionId {
     PermissionId::parse(value).expect("static permission is valid")
 }
 
+// Legacy durable-data reader, not an alternative runtime model selector.
+// Keep until a versioned profile migration proves that persisted records
+// no longer contain `backend = "phenix"` or unit `inference` options.
 fn normalize_legacy_profile(mut profile: RoutingProfile) -> RoutingProfile {
     for target in std::iter::once(&mut profile.default_target)
         .chain(profile.fallback_targets.iter_mut())

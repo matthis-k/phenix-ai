@@ -104,6 +104,9 @@ let
     workspace = "phenix.workspace";
   };
 
+  # Legacy plugin-name-to-Cargo-crate mapping. #730/#731 replace this with
+  # artifact-owned descriptors, while Nix remains responsible for packages.
+  # Retire after Basic/Full and third-party package parity checks pass.
   basicPluginCrates = {
     adapter-acp = "phenix-adapter-acp";
     agent-loop = "phenix-plugin-basic-agent";

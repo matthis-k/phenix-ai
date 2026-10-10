@@ -11,6 +11,9 @@ use phenix_plugin_catalog::{
 };
 
 impl PhenixRuntimeBuilder {
+    /// Legacy deterministic Basic fixture assembly. #731 replaces manual
+    /// factory selection with portable Basic descriptors; preserve the
+    /// echo-based regression journey in a test-only fixture after migration.
     pub fn with_basic_suite() -> Result<Self, KernelError> {
         let mut builder = Self::new();
         builder.set_component_authority(default_suite_authority());

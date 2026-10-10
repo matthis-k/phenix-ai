@@ -9,6 +9,9 @@ use phenix_core::{
 };
 use serde::{Deserialize, Serialize};
 
+// Legacy agent-loop protocol IDs. #731 moves agent-domain contracts out of
+// the generic SDK after consumer migration. Preserve wire identities and
+// recorded-session decoding until replacement clients pass compatibility.
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
 pub const AGENT_TOOL_EXECUTION_SERVICE: &str = "phenix.agent-tool-execution@1";
 pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";

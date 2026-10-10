@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 pub const BASIC_MODEL_PLUGIN: &str = "phenix.basic-model";
 pub const BASIC_MODEL_COMPONENT: &str = "phenix.basic-model";
 
+// Legacy deterministic echo model. #731 relocates this to test fixtures.
+// Remove it from production profiles only after real-model Basic/Full tests
+// prove the selected provider, turn handling and external client path.
 #[phenix_sdk::plugin("phenix.basic-model")]
 mod plugin {
     use super::{BASIC_MODEL_PLUGIN, BTreeMap, ModelInferenceRequest, ModelInferenceResponse};
