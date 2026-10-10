@@ -179,8 +179,8 @@ mod tests {
 
     #[test]
     fn declared_pending_and_cooperative_roots_preserve_basic_full_cancellation() {
-        use phenix_sdk::{AgentLoopCommand, AgentLoopResponse};
         use phenix_core::Bytes;
+        use phenix_sdk::{AgentLoopCommand, AgentLoopResponse};
 
         // Use the actual selected Basic/Full product graphs, not mocked
         // private topology or direct provider substitution. No external model
@@ -216,7 +216,8 @@ mod tests {
                         || true,
                         None,
                     )
-                }.unwrap();
+                }
+                .unwrap();
                 assert!(
                     matches!(
                         result,
