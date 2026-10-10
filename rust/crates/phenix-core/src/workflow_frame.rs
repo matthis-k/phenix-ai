@@ -215,6 +215,54 @@ impl WorkflowFrame {
         Ok(())
     }
 
+    /// Prepare a genuinely isolated subplan frame using only declared inputs.
+    ///
+    /// The child has its own schema and local identities. There is no implicit
+    /// read access to parent fields, even if they have the same name. Private
+    /// child fields require explicit initialized values. Input aliases are
+    /// validated before the child can execute.
+    pub fn isolate_subplan(
+        &self,
+        child_schema: WorkflowFrameSchema,
+        inputs: &BTreeMap<Key, Key>,
+        mut private_initial: BTreeMap<Key, PhenixValue>,
+    ) -> Result<Self, WorkflowFrameError> {
+        let mut destinations = BTreeSet::new();
+        for (parent_slot, child_slot) in inputs {
+            if !destinations.insert(child_slot) || private_initial.contains_key(child_slot) {
+                return Err(WorkflowFrameError::DuplicateOutputSlot(child_slot.clone()));
+            }
+            let value = self
+                .get(parent_slot)
+                .ok_or_else(|| WorkflowFrameError::UnknownSlot(parent_slot.clone()))?;
+            private_initial.insert(child_slot.clone(), value.clone());
+        }
+        Self::new(child_schema, private_initial)
+    }
+
+    /// Publish *only* declared local child outputs into the parent as one
+    /// atomic data transfer, without leaking any child-private fields.
+    /// Independently authored child and parent schemas may differ.
+    pub fn publish_subplan(
+        &mut self,
+        child: &Self,
+        outputs: &BTreeMap<Key, Key>,
+    ) -> Result<(), WorkflowFrameError> {
+        let mut candidate = self.clone();
+        let mut destinations = BTreeSet::new();
+        for (child_slot, parent_slot) in outputs {
+            if !destinations.insert(parent_slot) {
+                return Err(WorkflowFrameError::DuplicateOutputSlot(parent_slot.clone()));
+            }
+            let value = child
+                .get(child_slot)
+                .ok_or_else(|| WorkflowFrameError::UnknownSlot(child_slot.clone()))?;
+            candidate.set(parent_slot, value.clone())?;
+        }
+        *self = candidate;
+        Ok(())
+    }
+
     /// Explicitly select branch-produced data by slot. Unselected parent
     /// values remain intact. The caller must supply a schema-compatible branch.
     /// Core never combines or elevates the branches' authority.
@@ -300,6 +348,66 @@ mod tests {
         assert_eq!(frame.get(&key("counter")), Some(&PhenixValue::U64(7)));
         assert_eq!(frame.get(&key("payload")), Some(&PhenixValue::U64(42)));
         assert_eq!(original.get(&key("counter")), Some(&PhenixValue::U64(42)));
+    }
+
+    #[test]
+    fn independently_included_subplans_isolate_private_values_and_publish_atomically() {
+        let parent = WorkflowFrame::new(
+            WorkflowFrameSchema {
+                revision: 1,
+                slots: BTreeMap::from([
+                    (key("public_input"), Type::U64),
+                    (key("public_output"), Type::U64),
+                    (key("parent_secret"), Type::String),
+                ]),
+            },
+            BTreeMap::from([
+                (key("public_input"), PhenixValue::U64(5)),
+                (key("public_output"), PhenixValue::U64(0)),
+                (key("parent_secret"), PhenixValue::String("opaque".into())),
+            ]),
+        ).unwrap();
+        let child_schema = WorkflowFrameSchema {
+            revision: 3,
+            slots: BTreeMap::from([
+                (key("input"), Type::U64),
+                (key("local_private"), Type::U64),
+                (key("result"), Type::U64),
+            ]),
+        };
+        let inputs = BTreeMap::from([(key("public_input"), key("input"))]);
+        let initial = BTreeMap::from([
+            (key("local_private"), PhenixValue::U64(0)),
+            (key("result"), PhenixValue::U64(0)),
+        ]);
+        let mut first = parent.isolate_subplan(
+            child_schema.clone(), &inputs, initial.clone(),
+        ).unwrap();
+        let second = parent.isolate_subplan(child_schema, &inputs, initial).unwrap();
+        assert_eq!(first.get(&key("input")), Some(&PhenixValue::U64(5)));
+        assert_eq!(first.get(&key("parent_secret")), None);
+        assert_eq!(second.get(&key("local_private")), Some(&PhenixValue::U64(0)));
+        assert!(first.set(&key("parent_secret"), PhenixValue::Unit).is_err());
+        first.set(&key("local_private"), PhenixValue::U64(44)).unwrap();
+        first.set(&key("result"), PhenixValue::U64(77)).unwrap();
+
+        let mut published = parent.clone();
+        let before = published.clone();
+        assert!(published.publish_subplan(
+            &first,
+            &BTreeMap::from([
+                (key("result"), key("public_output")),
+                (key("local_private"), key("parent_secret")),
+            ]),
+        ).is_err());
+        assert_eq!(published, before, "failed output publication must roll back");
+        published.publish_subplan(
+            &first,
+            &BTreeMap::from([(key("result"), key("public_output"))]),
+        ).unwrap();
+        assert_eq!(published.get(&key("public_output")), Some(&PhenixValue::U64(77)));
+        assert_eq!(published.get(&key("parent_secret")), parent.get(&key("parent_secret")));
+        assert_eq!(second.get(&key("local_private")), Some(&PhenixValue::U64(0)));
     }
 
     #[test]
