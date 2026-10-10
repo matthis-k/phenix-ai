@@ -2309,6 +2309,24 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn portable_private_initializers_reject_duplicate_slot_identities() {
+        let encoded = r#"{
+            "kind": "include_mapped",
+            "workflow": "child",
+            "site": "private",
+            "on_exit": {},
+            "inputs": {},
+            "outputs": {},
+            "initial": {
+                "local": {"type": "u64", "value": 1},
+                "local": {"type": "u64", "value": 2}
+            }
+        }"#;
+        let error = serde_json::from_str::<WorkflowEdge>(encoded).unwrap_err();
+        assert!(error.to_string().contains("duplicate child-private initial slot"));
+    }
+
+    #[test]
     fn selected_subplan_owns_private_frame_and_publishes_only_declared_outputs() {
         let key = |name: &str| crate::Key::parse(name).unwrap();
         let mut selected = selected();

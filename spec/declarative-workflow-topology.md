@@ -364,8 +364,9 @@ The live application worker now selects the native pending scheduler when
 its pinned generation has the declarative agent topology and no explicitly
 bound legacy agent provider. Explicit legacy bindings keep their selected
 service route. The native plugin ABI entry and host wake/import callbacks
-are implemented; selected portable artifact discovery, private included-
-subplan frames and full live-product streaming parity remain open.
+are implemented; selected portable artifact discovery and full
+live-product streaming parity remain open. Selected mapped inclusions now
+prepare isolated child frames with explicit private initial values.
 During reconciliation, Core carries frame schemas only for workflows whose
 component and owning plugin manifest remain unchanged. It revalidates those
 schemas against the new compiled plan. Replacing the topology author retires
@@ -407,9 +408,19 @@ parent Transfer can also compose with child outputs when the sources and
 destinations are independent. Alias-dependent sequential return mappings
 reject candidate compilation rather than reading stale values.
 
-**Still outstanding:** private frame-slot qualification, published fields
-for subplans, cross-owner selection, alias-dependent sequential return mappings,
-and portable EntryBinding activation.
+Private child slots are no longer aliases in the root frame when both the
+parent and child supply selected frame schemas. Core validates the complete
+child initialization and every typed input/output alias before activation,
+rejects capability-bearing and duplicate private initial values, swaps to a
+genuinely isolated child frame at its inclusion entry, and publishes only
+declared child outputs on return. The same cursor machinery handles synchronous
+and native pending execution, including structured forks and failure rollback.
+Unframed mapped inclusion cannot silently bypass a selected parent frame
+contract. Legacy unframed compilation still supports its previous flat form.
+
+**Still outstanding:** cross-owner selection, alias-dependent sequential return
+mappings, full product/durable-restart conformance, and portable EntryBinding
+activation. The isolated scheduler behavior remains subject to latest-head CI.
 Selected frame and projection declarations survive reconciliation only when
 their workflow author still matches. The resolver validates them again
 before publishing the candidate generation.
@@ -461,10 +472,9 @@ client progress persistence, completion and cancellation fixtures were
 extended across Basic/Advanced and both product selections; final-head CI
 validation and broader live streaming/durable recovery proof remain required.
 
-**Still outstanding:** native Lua guest-adapter implementation, private
-included-subplan frame scheduling and publication, broader live Basic/Full
-streaming/progress/usage and durable side-effect conformance, and portable
-plan/EntryBinding artifact activation. Native ABI `begin/poll/wake`, selected
+**Still outstanding:** native Lua guest-adapter implementation, broader
+live Basic/Full streaming/progress/usage and durable side-effect conformance,
+and portable plan/EntryBinding artifact activation. Native ABI `begin/poll/wake`, selected
 import callbacks and provider-side cancellation are implemented, but their
 unit tests do not replace live product and restart acceptance tests.
 
