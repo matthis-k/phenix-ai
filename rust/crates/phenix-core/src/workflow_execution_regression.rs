@@ -2683,7 +2683,7 @@ fn typed_frame_execution_uses_pinned_imports_and_commits_each_node_output() {
 }
 
 #[test]
-fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects() {
+fn framed_projection_failure_rolls_back_in_sync_and_pending_modes() {
     let counter = Key::parse("counter").unwrap();
     let frame_schema = WorkflowFrameSchema {
         revision: 1,
@@ -2698,27 +2698,48 @@ fn typed_frame_projection_failure_rolls_back_data_without_replaying_side_effects
         .unwrap();
     let kernel = started_kernel(&resolved, &Arc::new(Mutex::new(Vec::new())));
     let root = kernel.root_execution_handle(&Authority::default());
-    let mut frame = WorkflowFrame::new(
-        frame_schema,
-        BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
-    )
-    .unwrap();
-    let result = root.execute_workflow_with_frame(
-        (&component_id(TOPOLOGY), "turn"),
-        (&mut (), &mut frame),
-        |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
-        |_, _, _, frame, _| {
-            frame.set(&counter, PhenixValue::U64(17)).unwrap();
-            Err::<String, _>("intentional invalid projection".into())
-        },
-        || false,
-        None,
-    );
-    assert!(matches!(
-        result,
-        Err(crate::WorkflowRunError::NodeFailed { .. })
-    ));
-    assert_eq!(frame.get(&counter), Some(&PhenixValue::U64(0)));
+
+    for pending in [false, true] {
+        let mut frame = WorkflowFrame::new(
+            frame_schema.clone(),
+            BTreeMap::from([(counter.clone(), PhenixValue::U64(0))]),
+        )
+        .unwrap();
+        let result = if pending {
+            root.execute_workflow_with_frame_pending(
+                (&component_id(TOPOLOGY), "turn"),
+                (&mut (), &mut frame),
+                |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+                |_, _, _, frame, _| {
+                    frame.set(&counter, PhenixValue::U64(17)).unwrap();
+                    Err::<String, _>("intentional invalid projection".into())
+                },
+                || false,
+                None,
+            )
+        } else {
+            root.execute_workflow_with_frame(
+                (&component_id(TOPOLOGY), "turn"),
+                (&mut (), &mut frame),
+                |_, _, _, _| Ok::<_, String>(serde_json::to_vec(&PhenixValue::Unit).unwrap()),
+                |_, _, _, frame, _| {
+                    frame.set(&counter, PhenixValue::U64(17)).unwrap();
+                    Err::<String, _>("intentional invalid projection".into())
+                },
+                || false,
+                None,
+            )
+        };
+        assert!(
+            matches!(result, Err(crate::WorkflowRunError::NodeFailed { .. })),
+            "projection errors must terminate execution in both modes: pending={pending}"
+        );
+        assert_eq!(
+            frame.get(&counter),
+            Some(&PhenixValue::U64(0)),
+            "projection failure must restore the frame: pending={pending}"
+        );
+    }
 }
 
 #[test]
