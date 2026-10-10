@@ -627,6 +627,53 @@ fn selected_workflow_outcome<E>(
     Ok(Some(outcome))
 }
 
+/// Validate the selected outcome and project a provider reply on the
+/// caller's scheduler thread. Frame edits commit only when projection succeeds
+/// and agrees with the selected outcome; provider side effects are not rolled back.
+fn project_workflow_output<State, Error>(
+    workflow: &crate::CompiledWorkflow,
+    node: &str,
+    interface: &InterfaceId,
+    import: &ResolvedImportHandle,
+    output: &[u8],
+    state: &mut State,
+    mut frame: Option<&mut crate::WorkflowFrame>,
+    project: impl FnOnce(
+        &str,
+        &InterfaceId,
+        &[u8],
+        Option<&mut crate::WorkflowFrame>,
+        &mut State,
+    ) -> Result<String, Error>,
+) -> Result<String, crate::workflow::WorkflowInvocationError<WorkflowNodeDispatchError<Error>>> {
+    let selected = selected_workflow_outcome::<Error>(workflow, node, import, output)?;
+    let snapshot = frame.as_deref().cloned();
+    match project(node, interface, output, frame.as_deref_mut(), state) {
+        Ok(reported) if selected.as_ref().is_none_or(|expected| expected == &reported) => {
+            Ok(reported)
+        }
+        Ok(reported) => {
+            if let (Some(original), Some(destination)) = (snapshot, frame) {
+                *destination = original;
+            }
+            Err(crate::workflow::WorkflowInvocationError::Failed(
+                WorkflowNodeDispatchError::ProjectionMismatch {
+                    selected: selected.expect("mismatched projected outcome"),
+                    reported,
+                },
+            ))
+        }
+        Err(error) => {
+            if let (Some(original), Some(destination)) = (snapshot, frame) {
+                *destination = original;
+            }
+            Err(crate::workflow::WorkflowInvocationError::Failed(
+                WorkflowNodeDispatchError::Project(error),
+            ))
+        }
+    }
+}
+
 impl RootExecutionHandle {
     /// Invoke the exact component import selected for this pinned generation.
     ///
@@ -800,21 +847,10 @@ impl RootExecutionHandle {
                     .invoke_import(import, &request)
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
-                let selected = selected_workflow_outcome::<Error>(compiled, node, import, &output)?;
-                let reported = project(node, service, &output, state)
-                    .map_err(WorkflowNodeDispatchError::Project)
-                    .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
-                if let Some(expected) = selected
-                    && reported != expected
-                {
-                    return Err(crate::workflow::WorkflowInvocationError::Failed(
-                        WorkflowNodeDispatchError::ProjectionMismatch {
-                            selected: expected,
-                            reported,
-                        },
-                    ));
-                }
-                Ok(reported)
+                project_workflow_output(
+                    compiled, node, service, import, &output, state, None,
+                    |node, interface, output, _, state| project(node, interface, output, state),
+                )
             },
             cancelled,
             step_limit,
@@ -867,33 +903,13 @@ impl RootExecutionHandle {
                     .invoke_import(binding, &request)
                     .map_err(WorkflowNodeDispatchError::Invoke)
                     .map_err(crate::workflow::WorkflowInvocationError::Failed)?;
-                let selected =
-                    selected_workflow_outcome::<Error>(compiled, node, binding, &output)?;
-                let snapshot = frame.clone();
-                match project(node, interface, &output, frame, state) {
-                    Ok(outcome)
-                        if selected
-                            .as_ref()
-                            .is_none_or(|expected| *expected == outcome) =>
-                    {
-                        Ok(outcome)
-                    }
-                    Ok(reported) => {
-                        *frame = snapshot;
-                        Err(crate::workflow::WorkflowInvocationError::Failed(
-                            WorkflowNodeDispatchError::ProjectionMismatch {
-                                selected: selected.expect("mismatched projected outcome"),
-                                reported,
-                            },
-                        ))
-                    }
-                    Err(error) => {
-                        *frame = snapshot;
-                        Err(crate::workflow::WorkflowInvocationError::Failed(
-                            WorkflowNodeDispatchError::Project(error),
-                        ))
-                    }
-                }
+                project_workflow_output(
+                    compiled, node, interface, binding, &output, state, Some(frame),
+                    |node, interface, output, frame, state| {
+                        project(node, interface, output,
+                            frame.expect("framed entry supplies a data frame"), state)
+                    },
+                )
             },
             cancelled,
             step_limit,
@@ -1066,46 +1082,19 @@ impl RootExecutionHandle {
                             ));
                         }
                     };
-                    let selected = match selected_workflow_outcome::<Error>(
-                        compiled, node, binding, &output,
+                    match project_workflow_output(
+                        compiled, node, interface, binding, &output, state,
+                        frame.as_deref_mut(),
+                        |node, interface, output, frame, state| {
+                            project(node, interface, output, frame, state)
+                        },
                     ) {
-                        Ok(selected) => selected,
+                        Ok(reported) => WorkflowInvokePoll::Ready(Ok(reported)),
                         Err(WorkflowInvocationError::Failed(error)) => {
-                            return failed(WorkflowBoundCallError::Invocation(error));
+                            failed(WorkflowBoundCallError::Invocation(error))
                         }
                         Err(WorkflowInvocationError::Cancelled) => {
-                            return WorkflowInvokePoll::Ready(Err(
-                                WorkflowInvocationError::Cancelled,
-                            ));
-                        }
-                    };
-                    let snapshot = frame.as_deref().cloned();
-                    match project(node, interface, &output, frame.as_deref_mut(), state) {
-                        Ok(reported)
-                            if selected
-                                .as_ref()
-                                .is_none_or(|expected| expected == &reported) =>
-                        {
-                            WorkflowInvokePoll::Ready(Ok(reported))
-                        }
-                        Ok(reported) => {
-                            if let (Some(original), Some(destination)) = (snapshot, frame) {
-                                *destination = original;
-                            }
-                            failed(WorkflowBoundCallError::Invocation(
-                                WorkflowNodeDispatchError::ProjectionMismatch {
-                                    selected: selected.expect("mismatched outcome was selected"),
-                                    reported,
-                                },
-                            ))
-                        }
-                        Err(error) => {
-                            if let (Some(original), Some(destination)) = (snapshot, frame) {
-                                *destination = original;
-                            }
-                            failed(WorkflowBoundCallError::Invocation(
-                                WorkflowNodeDispatchError::Project(error),
-                            ))
+                            WorkflowInvokePoll::Ready(Err(WorkflowInvocationError::Cancelled))
                         }
                     }
                 } else {
