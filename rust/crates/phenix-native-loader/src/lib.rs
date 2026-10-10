@@ -822,6 +822,94 @@ mod tests {
     }
 
     #[test]
+    fn correlated_host_imports_reject_reentry_and_dispatch_from_pending_workers() {
+        let hub = Arc::new(WakeHub {
+            calls: Mutex::new(BTreeMap::new()),
+            notified: Condvar::new(),
+        });
+        let registry_id = NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed);
+        HOST_REGISTRY
+            .lock()
+            .unwrap()
+            .insert(registry_id, Arc::downgrade(&hub));
+        let ticket = NativeCallTicket {
+            root_id: 19,
+            call_id: 23,
+        };
+        let (sender, receiver) = mpsc::channel();
+        hub.calls.lock().unwrap().insert(
+            (ticket.root_id, ticket.call_id),
+            CallPermit {
+                wake: false,
+                owner_thread: std::thread::current().id(),
+                cancelled: None,
+                import_sender: Some(sender),
+            },
+        );
+        let interface = b"fixture.allowed@1";
+        let input = b"request";
+        let invoke = || {
+            // SAFETY: slices are borrowed from live static buffers, the host
+            // registry owns the matching ticket, and the result is decoded
+            // with its paired release callback before returning.
+            let result = unsafe {
+                native_invoke_import(
+                    registry_id as *mut c_void,
+                    ticket,
+                    NativeSlice {
+                        ptr: interface.as_ptr(),
+                        len: interface.len(),
+                    },
+                    NativeSlice {
+                        ptr: input.as_ptr(),
+                        len: input.len(),
+                    },
+                )
+            };
+            decode_result(result, ticket).unwrap()
+        };
+        assert!(matches!(
+            invoke(),
+            NativeInvocation::Failed(reason)
+                if String::from_utf8_lossy(&reason).contains("host dispatch thread")
+        ));
+        assert!(receiver.try_recv().is_err());
+        let guest = std::thread::spawn(invoke);
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(request.interface, "fixture.allowed@1");
+        assert_eq!(request.input, b"request");
+        request.reply.send(Ok(b"response".to_vec())).unwrap();
+        assert_eq!(
+            guest.join().unwrap(),
+            NativeInvocation::Ready(b"response".to_vec())
+        );
+        let wrong = NativeCallTicket {
+            root_id: ticket.root_id,
+            call_id: ticket.call_id + 1,
+        };
+        // SAFETY: no memory is dereferenced before ticket admission fails.
+        let unexpected = unsafe {
+            native_invoke_import(
+                registry_id as *mut c_void,
+                wrong,
+                NativeSlice {
+                    ptr: interface.as_ptr(),
+                    len: interface.len(),
+                },
+                NativeSlice {
+                    ptr: input.as_ptr(),
+                    len: input.len(),
+                },
+            )
+        };
+        assert!(matches!(
+            decode_result(unexpected, wrong).unwrap(),
+            NativeInvocation::Failed(_)
+        ));
+        HOST_REGISTRY.lock().unwrap().remove(&registry_id);
+    }
+
+    #[test]
     fn result_correlations_fail_closed_before_deserialization() {
         let ticket = NativeCallTicket {
             root_id: 1,
