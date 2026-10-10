@@ -197,8 +197,7 @@ mod tests {
                     state,
                     output: Bytes::from(b"completed".to_vec()),
                 };
-                serde_json::to_vec(&PhenixValue::from(&response))
-                    .map_err(|error| error.to_string())
+                serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
             }
         }
 
