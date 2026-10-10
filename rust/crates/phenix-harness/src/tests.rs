@@ -760,16 +760,6 @@ fn default_application_agent_route_uses_the_selected_declarative_topology() {
     .build()
     .unwrap();
 
-    let selected = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &default_suite_authority(),
-    )
-    .expect("the Basic product resolves its selected agent execution entry");
-    assert_eq!(
-        selected, None,
-        "Basic defaults must not bind a legacy agent service"
-    );
-
     let workflow = runtime
         .resolved_generation()
         .generation_topology()
@@ -784,7 +774,7 @@ fn default_application_agent_route_uses_the_selected_declarative_topology() {
 }
 
 #[test]
-fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
+fn application_tool_adapter_does_not_synthesize_an_agent_workflow() {
     let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         "phenix.application-agent-tools".to_owned(),
     ]))
@@ -792,15 +782,15 @@ fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
     .build()
     .expect("the tool adapter must run without any agent");
 
-    let error = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &default_suite_authority(),
-    )
-    .expect_err("a prompt cannot start without a selected agent provider");
+    let owner =
+        phenix_core::ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("no resolved agent execution provider")
+        runtime
+            .resolved_generation()
+            .generation_topology()
+            .workflow(&owner, "agent.turn")
+            .is_none(),
+        "the tool adapter alone cannot create an agent workflow"
     );
 }
 
