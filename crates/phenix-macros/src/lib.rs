@@ -1,0 +1,94 @@
+use proc_macro::TokenStream;
+use quote::{format_ident,quote};
+use syn::{parse_macro_input,spanned::Spanned,ItemMod,ItemType,Data,DeriveInput,Fields,Type,Meta,Expr};
+fn args(tokens:proc_macro2::TokenStream)->syn::Result<std::collections::BTreeMap<String,String>>{
+    use syn::parse::Parser;
+    let metas=syn::punctuated::Punctuated::<Meta,syn::Token![,]>::parse_terminated.parse2(tokens)?;
+    let mut result=std::collections::BTreeMap::new();for m in metas{let Meta::NameValue(n)=m else{return Err(syn::Error::new(m.span(),"expected name = string"));};let Expr::Lit(v)=n.value else{return Err(syn::Error::new(n.span(),"expected string"));};let syn::Lit::Str(s)=v.lit else{return Err(syn::Error::new(v.span(),"expected string"));};let key=n.path.get_ident().ok_or_else(||syn::Error::new(n.path.span(),"expected key"))?.to_string();if result.insert(key,s.value()).is_some(){return Err(syn::Error::new(n.path.span(),"duplicate attribute"));}}
+    Ok(result)
+}
+fn required(map:&mut std::collections::BTreeMap<String,String>,key:&str)->syn::Result<String>{map.remove(key).ok_or_else(||syn::Error::new(proc_macro2::Span::call_site(),format!("missing {key}")))}
+fn no_extra(map:&std::collections::BTreeMap<String,String>)->syn::Result<()>{if map.is_empty(){Ok(())}else{Err(syn::Error::new(proc_macro2::Span::call_site(),"unknown annotation field"))}}
+#[proc_macro_derive(Portable)] pub fn portable(input:TokenStream)->TokenStream{
+    let input=parse_macro_input!(input as DeriveInput);
+    let result=(||{
+        if !input.generics.params.is_empty(){return Err(syn::Error::new(input.span(),"portable generics are outside M0.0"));}
+        let name=&input.ident;
+        let (schema,to,from)=match &input.data{
+            Data::Struct(s)=>{
+                let Fields::Named(fields)=&s.fields else{return Err(syn::Error::new(s.fields.span(),"use named portable fields"));};
+                let mut fields:Vec<_>=fields.named.iter().collect();fields.sort_by_key(|f|f.ident.as_ref().unwrap().to_string());
+                let names:Vec<_>=fields.iter().map(|f|f.ident.as_ref().unwrap()).collect();let keys:Vec<_>=names.iter().map(|n|n.to_string()).collect();let types:Vec<_>=fields.iter().map(|f|&f.ty).collect();
+                (quote!(::phenix_sdk::Schema::Struct(&[#(::phenix_sdk::Field{name:#keys,schema:<#types as ::phenix_sdk::Portable>::SCHEMA}),*])),
+                quote!(::phenix_sdk::Value::map([#((#keys,::phenix_sdk::Portable::to_value(&self.#names))),*])),
+                quote!{let ::phenix_sdk::Value::Map(mut fields)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected struct"));};
+                    let result=Self{#(#names:<#types as ::phenix_sdk::Portable>::from_value(fields.remove(#keys).ok_or_else(||::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,concat!("missing field ",#keys)))?)?),*};
+                    if !fields.is_empty(){return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown field"));}Ok(result)})
+            },
+            Data::Enum(e)=>{
+                if e.variants.iter().any(|v|!matches!(v.fields,Fields::Unit)){return Err(syn::Error::new(e.enum_token.span,"M0.0 supports unit error variants"));}
+                let mut variants:Vec<_>=e.variants.iter().map(|v|&v.ident).collect();variants.sort_by_key(|v|v.to_string());let keys:Vec<_>=variants.iter().map(|v|v.to_string()).collect();
+                (quote!(::phenix_sdk::Schema::Variants(&[#(#keys),*])),quote!(::phenix_sdk::Value::String(match self{#(Self::#variants=>#keys),*}.into())),quote!{let ::phenix_sdk::Value::String(v)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected variant"));};match v.as_str(){#(#keys=>Ok(Self::#variants),)*_=>Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown variant"))}})
+            },_=>return Err(syn::Error::new(input.span(),"unsupported portable type")),
+        };
+        Ok(quote!{impl ::phenix_sdk::Portable for #name{const SCHEMA: ::phenix_sdk::Schema=#schema;fn to_value(&self)->::phenix_sdk::Value{#to}fn from_value(value: ::phenix_sdk::Value)->Result<Self,::phenix_sdk::Failure>{#from}}})
+    })();result.unwrap_or_else(syn::Error::into_compile_error).into()
+}
+#[proc_macro_attribute] pub fn operation(attr:TokenStream,item:TokenStream)->TokenStream{
+    let item=parse_macro_input!(item as ItemType);
+    let result=(||{let mut args=args(attr.into())?;let interface=required(&mut args,"interface")?;let operation=required(&mut args,"operation")?;no_extra(&args)?;
+        let key=format!("{interface}/{operation}");
+        if !interface.rsplit_once('@').is_some_and(|(n,v)|!n.is_empty()&&v.parse::<u32>().is_ok_and(|n|n>0))||operation.is_empty()||key.contains(' '){return Err(syn::Error::new(item.span(),"invalid operation identity"));}
+        let Type::Tuple(types)=item.ty.as_ref() else{return Err(syn::Error::new(item.span(),"operation type is (Request, Response, Error)"));};
+        if types.elems.len()!=3{return Err(syn::Error::new(types.span(),"operation requires three types"));}let r=&types.elems[0];let s=&types.elems[1];let e=&types.elems[2];let name=&item.ident;let vis=&item.vis;
+        Ok(quote!{#vis struct #name;impl ::phenix_sdk::Operation for #name{type Request=#r;type Response=#s;type Error=#e;const DEFINITION: ::phenix_sdk::OperationDef=::phenix_sdk::OperationDef{key:#key,request:<#r as ::phenix_sdk::Portable>::SCHEMA,response:<#s as ::phenix_sdk::Portable>::SCHEMA,error:<#e as ::phenix_sdk::Portable>::SCHEMA};}})
+    })();result.unwrap_or_else(syn::Error::into_compile_error).into()
+}
+#[proc_macro_attribute] pub fn plugin(attr:TokenStream,item:TokenStream)->TokenStream{
+    let mut module=parse_macro_input!(item as ItemMod);
+    let result=(||{let mut attrs=args(attr.into())?;let id=required(&mut attrs,"id")?;let version=required(&mut attrs,"version")?;no_extra(&attrs)?;
+        if id.is_empty()||!id.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b)){return Err(syn::Error::new(module.span(),"invalid plugin ID"));}
+        let (_,items)=module.content.as_mut().ok_or_else(||syn::Error::new(module.ident.span(),"plugin requires an inline module"))?;
+        let mut imports=Vec::new();let mut exports=Vec::new();let mut dispatch=Vec::new();let mut state=None;
+        for item in items.iter_mut(){match item{
+            syn::Item::Struct(s) if s.ident=="State"=>{state=Some(s.ident.clone());},
+            syn::Item::Type(t)=>{let mut keep=Vec::new();for a in t.attrs.drain(..){if a.path().is_ident("import"){let op=t.ty.as_ref();let name=&t.ident;imports.push(quote!(::phenix_sdk::Declaration{operation:<#op as ::phenix_sdk::Operation>::DEFINITION,provenance:concat!(module_path!(),"::",stringify!(#name))}));}else{keep.push(a);}}t.attrs=keep;},
+            syn::Item::Fn(f)=>{let mut keep=Vec::new();for a in f.attrs.drain(..){if a.path().is_ident("export"){
+                let op:Type=a.parse_args()?;if f.sig.asyncness.is_some(){return Err(syn::Error::new(f.sig.span(),"async exports are deferred"));}let name=&f.sig.ident;
+                exports.push(quote!(::phenix_sdk::Declaration{operation:<#op as ::phenix_sdk::Operation>::DEFINITION,provenance:concat!(module_path!(),"::",stringify!(#name))}));
+                dispatch.push(quote!{if key==<#op as ::phenix_sdk::Operation>::DEFINITION.key{
+                    let request=<<#op as ::phenix_sdk::Operation>::Request as ::phenix_sdk::Portable>::from_value(value)?;
+                    return Ok(::phenix_sdk::reply(#name(state,&host,request)));
+                }});
+            }else{keep.push(a);}}f.attrs=keep;},_=>{},}}
+        let state=state.ok_or_else(||syn::Error::new(module.ident.span(),"plugin needs a Default State struct"))?;
+        let ni=imports.len();let ne=exports.len();if ne==0{return Err(syn::Error::new(module.ident.span(),"plugin must export an operation"));}
+        let descriptor=format_ident!("PHENIX_DESCRIPTOR");
+        let generated=quote!{
+            #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=::phenix_sdk::descriptor(#id,#version,[#(#imports),*],[#(#exports),*]);
+            const _:usize=#ni+#ne;
+            unsafe extern "C" fn __create(out:*mut *mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{
+                ::phenix_sdk::abi::boundary(||{if out.is_null(){return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null instance output"));}
+                unsafe{*out=::std::boxed::Box::into_raw(::std::boxed::Box::new(#state::default())).cast();}::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null)})
+            }
+            unsafe extern "C" fn __invoke(instance:*mut ::std::ffi::c_void,api:*const ::phenix_sdk::abi::HostApi,key: ::phenix_sdk::abi::Bytes,input: ::phenix_sdk::abi::Bytes)->::phenix_sdk::abi::Reply{
+                ::phenix_sdk::abi::boundary(||{
+                    let result=(||->Result<::phenix_sdk::abi::Reply,::phenix_sdk::Failure>{
+                        if instance.is_null()||api.is_null(){return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null invocation pointer"));}
+                        let state=unsafe{&mut *instance.cast::<#state>()};let host=unsafe{::phenix_sdk::Host::from_api(&*api)};
+                        let key=::std::str::from_utf8(unsafe{key.read()}?).map_err(|_|::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"invalid operation key"))?;
+                        let value=::phenix_sdk::Value::decode(unsafe{input.read()}?)?;#(#dispatch)*
+                        Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed,"operation absent from generated exports"))
+                    })();match result{Ok(reply)=>reply,Err(e)=>::phenix_sdk::abi::Reply::failure(e)}
+                })
+            }
+            unsafe extern "C" fn __stop(instance:*mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{
+                ::phenix_sdk::abi::boundary(||{if instance.is_null(){return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null stop pointer"));}drop(unsafe{::std::boxed::Box::from_raw(instance.cast::<#state>())});::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null)})
+            }
+            static __TABLE: ::phenix_sdk::abi::PluginTable=::phenix_sdk::abi::PluginTable{
+                header: ::phenix_sdk::abi::Header{major:1,minor:0,table_bytes: ::std::mem::size_of::<::phenix_sdk::abi::PluginTable>()as u32,features:0},create:__create,invoke:__invoke,stop:__stop};
+            #[no_mangle] pub extern "C" fn phenix_native_v1()->*const ::phenix_sdk::abi::Header{&__TABLE.header}
+        };
+        let file:syn::File=syn::parse2(generated)?;items.extend(file.items);Ok(quote!(#module))
+    })();result.unwrap_or_else(syn::Error::into_compile_error).into()
+}

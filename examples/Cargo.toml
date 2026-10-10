@@ -1,0 +1,11 @@
+[workspace]
+members = ["contracts", "provider", "consumer"]
+resolver = "2"
+[workspace.dependencies]
+phenix-sdk = { path = "../crates/phenix-sdk", version = "0.1.0" }
+example-contracts = { path = "contracts" }
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
