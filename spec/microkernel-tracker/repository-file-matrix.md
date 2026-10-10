@@ -76,34 +76,34 @@ Initial coverage: 596 main-tree files. Baseline audit: 592 paths. New since audi
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0029 | TODO | `rust/crates/phenix-acp-stdio/Cargo.toml` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0030 | TODO | `rust/crates/phenix-acp-stdio/examples/observable_callback_fixture.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0031 | TODO | `rust/crates/phenix-acp-stdio/src/client_tools.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0032 | TODO | `rust/crates/phenix-acp-stdio/src/lib.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0033 | TODO | `rust/crates/phenix-acp-stdio/src/transport.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0034 | TODO | `rust/crates/phenix-acp-stdio/tests/client_callback_retirement.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0035 | TODO | `rust/crates/phenix-acp-stdio/tests/client_tool_reconnect.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
-| F0036 | TODO | `rust/crates/phenix-acp-stdio/tests/nested_client_callable_input.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | pending |
+| F0029 | IN PROGRESS | `rust/crates/phenix-acp-stdio/Cargo.toml` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `a9964d80`: application-role stdio crate imports adapter, application contracts, Core and domain. KEEP package; require packaged startup and typed routing. |
+| F0030 | IN PROGRESS | `rust/crates/phenix-acp-stdio/examples/observable_callback_fixture.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `9b7f6ab5`: executable SDK/ACP callback fixture exercises Lua client-tool round trip. KEEP; run Lua observable-callback and package smoke. |
+| F0031 | IN PROGRESS | `rust/crates/phenix-acp-stdio/src/client_tools.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `42a84b8b`: merges runtime/client model-tool descriptors and dispatches client tool calls. REFACTOR after #731 moves AI tool DTOs from Core; prove duplicate IDs, permission and reconnect. |
+| F0032 | IN PROGRESS | `rust/crates/phenix-acp-stdio/src/lib.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `b33c2264`: unsafe-free module entry exports transport/client-tool functions used by fixture. KEEP; ACP package/callback smoke required. |
+| F0033 | IN PROGRESS | `rust/crates/phenix-acp-stdio/src/transport.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `eebf0ad6`: 2,026-line stdio, ChannelTransport and SDK callback host; protocol mapping is in separate adapter. KEEP transport; inspect overlap with canonical admission and test end-to-end ACP. |
+| F0034 | IN PROGRESS | `rust/crates/phenix-acp-stdio/tests/client_callback_retirement.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `45b81037`: disconnected callback listener retires owning generation in named regression. KEEP; rerun ACP shard and real disconnect. |
+| F0035 | IN PROGRESS | `rust/crates/phenix-acp-stdio/tests/client_tool_reconnect.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `6274e300`: reconnect regression requires fresh callable generation before readmission. KEEP; add live client reconnect proof. |
+| F0036 | IN PROGRESS | `rust/crates/phenix-acp-stdio/tests/nested_client_callable_input.rs` | Keep | ACP stdio application and transport boundary; independent from Core. | — | Main `8af8e49c`: nested client callable input admission has direct regression. KEEP; test ACP/reference scope on integrated product. |
 
 ### `rust/crates/phenix-adapter-acp`
 
 | ID | State | Exact path | Provisional decision | Explicit check | Prerequisite | Decision / current-head proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| F0037 | TODO | `rust/crates/phenix-adapter-acp/Cargo.toml` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0038 | TODO | `rust/crates/phenix-adapter-acp/src/callbacks.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0039 | TODO | `rust/crates/phenix-adapter-acp/src/dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0040 | TODO | `rust/crates/phenix-adapter-acp/src/elicitation.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0041 | TODO | `rust/crates/phenix-adapter-acp/src/errors.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0042 | TODO | `rust/crates/phenix-adapter-acp/src/extension_callbacks.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0043 | TODO | `rust/crates/phenix-adapter-acp/src/extension_dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0044 | TODO | `rust/crates/phenix-adapter-acp/src/extensions.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0045 | TODO | `rust/crates/phenix-adapter-acp/src/lib.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0046 | TODO | `rust/crates/phenix-adapter-acp/src/updates.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0047 | TODO | `rust/crates/phenix-adapter-acp/tests/application_dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0048 | TODO | `rust/crates/phenix-adapter-acp/tests/capabilities.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0049 | TODO | `rust/crates/phenix-adapter-acp/tests/disconnect.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0050 | TODO | `rust/crates/phenix-adapter-acp/tests/runtime_plugin.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
-| F0051 | TODO | `rust/crates/phenix-adapter-acp/tests/session_lifecycle.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | pending |
+| F0037 | IN PROGRESS | `rust/crates/phenix-adapter-acp/Cargo.toml` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `0131b4ac`: runtime-plugin adapter depends on typed app interface, Core and SDK, not Harness. KEEP; prove artifact selection without a static roster. |
+| F0038 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/callbacks.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `7586aaaf`: permission request/response ACP mapping with focused valid/invalid choice tests. KEEP; test real permission exchange. |
+| F0039 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `b6157e6f`: standard session, prompt, cancellation and config dispatch uses typed ApplicationTransport and rejects extra workspace/MCP. KEEP; verify product-selected generation and cancellation. |
+| F0040 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/elicitation.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `64d49332`: ACP form elicitation translates supported schema, rejects unsupported shapes. KEEP; round-trip through frontend. |
+| F0041 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/errors.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `6b0d2600`: error translator retains application error class, including cancellation/malformed input tests. KEEP; transport wire error proof needed. |
+| F0042 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/extension_callbacks.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `5a4be414`: descriptor-checked extension callbacks reject wrong capability/contract/shape. KEEP; test async response, stale generation. |
+| F0043 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/extension_dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `a4e45d4f`: static match table for typed extension operations; regression covers unknown, malformed, capability and client-tool paths. REFACTOR toward descriptor-selected dispatch; retain rejection semantics. |
+| F0044 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/extensions.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `ad44a9cb`: extension catalog derives operations/events/callbacks from app descriptor and filters ACP standard calls. KEEP; test dynamic descriptor advertisement. |
+| F0045 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/lib.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `d739b49b`: module exports adapter plugin manifest/factory, identity regression in runtime_plugin test. KEEP; test selected activation after #728/#760. |
+| F0046 | IN PROGRESS | `rust/crates/phenix-adapter-acp/src/updates.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `94b64cec`: session/execution update translators preserve correlation and descriptor extension fallback with unit tests. KEEP; full streaming sequence/usage proof needed. |
+| F0047 | IN PROGRESS | `rust/crates/phenix-adapter-acp/tests/application_dispatch.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `1a64b309`: application dispatch test checks prompt/session/config, rejects unsupported inputs and preserves resume identity. KEEP; rerun after #768. |
+| F0048 | IN PROGRESS | `rust/crates/phenix-adapter-acp/tests/capabilities.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `4f8c4542`: capability negotiation test filters unsupported optional methods. KEEP; verify selected dynamic plugin descriptors. |
+| F0049 | IN PROGRESS | `rust/crates/phenix-adapter-acp/tests/disconnect.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `0f18a0f8`: dropping adapter does not close durable session in regression. KEEP; add #725 fenced restart/reconnect. |
+| F0050 | IN PROGRESS | `rust/crates/phenix-adapter-acp/tests/runtime_plugin.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `24d52103`: adapter manifest/factory plugin identity fixture. KEEP; selected-provider canary after #728/#760. |
+| F0051 | IN PROGRESS | `rust/crates/phenix-adapter-acp/tests/session_lifecycle.rs` | Keep | Replaceable ACP protocol adapter, not kernel logic. | — | Main `e4c22937`: standard ACP load/close/cancel use canonical session operations. KEEP; test in-flight native pending cancellation. |
 
 ### `rust/crates/phenix-agent-configurations`
 
