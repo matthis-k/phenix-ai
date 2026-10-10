@@ -17,6 +17,24 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_ACTIVE_SCOPE_DEPTH: usize = 64;
 
+/// Typed child-scope identities must remain disjoint even when plugin-authored
+/// branch or node names contain '/', ':', or escape characters.
+fn child_scope(parent: &str, kind: &str, node: &str, branch: &str) -> String {
+    fn segment(value: &str) -> String {
+        use std::fmt::Write as _;
+        let mut encoded = String::new();
+        for byte in value.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+                encoded.push(char::from(byte));
+            } else {
+                write!(&mut encoded, "%{byte:02X}").expect("writing to a string cannot fail");
+            }
+        }
+        encoded
+    }
+    format!("{parent}/{kind}/{}/{}", segment(node), segment(branch))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TickStatus {
     Progress,
@@ -100,7 +118,7 @@ impl CompiledWorkflow {
                     Cursor::at(
                         step.clone(),
                         Some(frame.clone()),
-                        format!("{}/{}:{}/{}", cursor.scope, node, "fork", key),
+                        child_scope(&cursor.scope, "fork", node, key),
                     ),
                 )
             })
@@ -159,7 +177,7 @@ impl CompiledWorkflow {
                     Cursor::at(
                         map.branch_entry.clone(),
                         Some(snapshot),
-                        format!("{}/{}:{}/{}", cursor.scope, node, "map", index),
+                        child_scope(&cursor.scope, "map", node, &index.to_string()),
                     ),
                 );
             }
