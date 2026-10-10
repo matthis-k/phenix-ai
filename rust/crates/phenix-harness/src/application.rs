@@ -48,8 +48,7 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN,
     SessionCommand, SessionInterface, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
-    SessionRecord, SessionResponse, SessionTransition, agent_loop_progress_authority,
-    execution_review_service, sdk_contribution, session_service, workspace_service,
+    SessionRecord, SessionResponse, SessionTransition, execution_review_service, sdk_contribution, session_service, workspace_service,
 };
 use phenix_provider_sdk::{
     Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
@@ -3766,12 +3765,19 @@ pub fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginMa
                 role: ServiceRole::Terminal,
                 service: agent_loop_progress_service(),
                 priority: 100,
-                required_authority: agent_loop_progress_authority(),
+                required_authority: application_agent_progress_authority(),
             },
         ],
         resource_namespaces: Vec::new(),
         maximum_authority,
     }
+}
+
+fn application_agent_progress_authority() -> Authority {
+    Authority::new([
+        PermissionId::parse("kernel.persistence.read").expect("static permission"),
+        PermissionId::parse("kernel.persistence.write").expect("static permission"),
+    ])
 }
 
 fn application_agent_tool_component_id() -> ComponentId {
@@ -3814,7 +3820,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: SessionInterface::interface_id(),
                 schema: SessionInterface::schema(),
                 required: true,
-                authority: agent_loop_progress_authority(),
+                authority: application_agent_progress_authority(),
             },
             ComponentImport {
                 interface: LanguageInterface::interface_id(),
@@ -3918,7 +3924,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: AgentLoopProgressInterface::interface_id(),
                 schema: AgentLoopProgressInterface::schema(),
                 priority: 100,
-                required_authority: agent_loop_progress_authority(),
+                required_authority: application_agent_progress_authority(),
             },
         ],
         maximum_authority,
@@ -11442,11 +11448,19 @@ mod tests {
                 || Box::new(ForeignContractAgent),
             )
             .unwrap();
-        let mut component =
-            phenix_plugin_catalog::agent_loop_component_manifest(default_suite_authority());
-        component.id = ComponentId::parse("fixture.self-cancelling-agent.component").unwrap();
-        component.owner = owner;
-        component.imports.clear();
+        let component = phenix_core::ComponentManifest {
+            id: ComponentId::parse("fixture.self-cancelling-agent.component").unwrap(),
+            owner,
+            imports: Vec::new(),
+            exports: vec![phenix_core::ComponentExport {
+                interface: AgentLoopInterface::interface_id(),
+                schema: AgentLoopInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: default_suite_authority(),
+        };
         let selected = component.id.clone();
         builder.add_component(component);
         builder.bind_provider(AgentLoopInterface::interface_id(), selected);

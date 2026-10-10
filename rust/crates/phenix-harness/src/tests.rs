@@ -785,63 +785,6 @@ fn default_application_agent_route_uses_the_selected_declarative_topology() {
         workflow.is_some(),
         "Basic defaults must compile the declarative agent entry in the resolved generation"
     );
-    assert!(
-        !runtime
-            .kernel()
-            .config()
-            .manifests()
-            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
-        "Basic defaults must not implicitly install a legacy agent loop"
-    );
-}
-
-#[test]
-fn application_prompt_does_not_use_installed_agent_service_when_contract_disabled() {
-    use phenix_core::{ComponentId, ComponentInterface};
-    use phenix_plugin_catalog::agent_loop_component_id;
-    use phenix_sdk::AgentLoopInterface;
-
-    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
-        BASIC_AGENT_CONFIGURATION.to_owned(),
-        "phenix.agent-loop".to_owned(),
-    ]))
-    .unwrap();
-    builder.disable_provider(
-        AgentLoopInterface::interface_id(),
-        agent_loop_component_id(),
-    );
-    let runtime = builder
-        .build()
-        .expect("application agent import is optional until a prompt starts");
-
-    assert!(
-        runtime
-            .kernel()
-            .config()
-            .manifests()
-            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
-        "native service remains installed to exercise the no-fallback rule"
-    );
-    let bound = application::bound_application_agent_plugin(
-        runtime.resolved_generation(),
-        &default_suite_authority(),
-    )
-    .expect("the selected declarative topology remains available");
-    assert_eq!(
-        bound, None,
-        "disabling the agent contract must not route through its installed service"
-    );
-    assert!(
-        runtime
-            .resolved_generation()
-            .generation_topology()
-            .workflow(
-                &ComponentId::parse(phenix_plugin_catalog::AGENT_TOPOLOGY_PLUGIN).unwrap(),
-                "agent.turn",
-            )
-            .is_some(),
-        "the explicit declarative entry remains selected"
-    );
 }
 
 #[test]
