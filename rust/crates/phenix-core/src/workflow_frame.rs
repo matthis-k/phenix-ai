@@ -131,7 +131,7 @@ impl WorkflowFrameSchema {
         Ok(())
     }
 
-    fn validate_value(&self, slot: &Key, value: &PhenixValue) -> Result<(), WorkflowFrameError> {
+    pub(crate) fn validate_value(&self, slot: &Key, value: &PhenixValue) -> Result<(), WorkflowFrameError> {
         let schema = self
             .slots
             .get(slot)

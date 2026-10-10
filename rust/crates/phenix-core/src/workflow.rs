@@ -771,11 +771,8 @@ impl WorkflowTopology {
                             ));
                         }
                         for (slot, value) in initial {
-                            let kind = schema.slots.get(slot).ok_or_else(|| {
-                                fail(format!("unknown child-private slot {slot}"))
-                            })?;
-                            kind.parse(value).map_err(|error| {
-                                fail(format!("invalid initial value for {slot}: {error}"))
+                            schema.validate_value(slot, value).map_err(|error| {
+                                fail(format!("invalid child-private value for {slot}: {error}"))
                             })?;
                         }
                         for (from, to) in outputs {
