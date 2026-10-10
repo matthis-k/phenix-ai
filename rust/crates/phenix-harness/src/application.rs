@@ -6462,6 +6462,9 @@ fn execute_runtime_plugin_control(
                 if let PluginExecution::Runtime {
                     artifact: PluginArtifactInput::Build(plan),
                     ..
+                }
+                | PluginExecution::Native {
+                    artifact: PluginArtifactInput::Build(plan),
                 } = &mut request.manifest.execution
                 {
                     apply_runtime_plugin_default_build_authority(plan)?;
@@ -6471,12 +6474,18 @@ fn execute_runtime_plugin_control(
                     PluginExecution::Runtime {
                         artifact: PluginArtifactInput::Ready(artifact),
                         ..
+                    }
+                    | PluginExecution::Native {
+                        artifact: PluginArtifactInput::Ready(artifact),
                     } => Some(artifact.revision.as_ref().to_owned()),
                     PluginExecution::Embedded
                     | PluginExecution::ResourceOnly
                     | PluginExecution::Runtime {
                         artifact: PluginArtifactInput::Build(_),
                         ..
+                    }
+                    | PluginExecution::Native {
+                        artifact: PluginArtifactInput::Build(_),
                     } => None,
                 };
                 let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_PERMISSION);
@@ -6631,6 +6640,11 @@ fn runtime_plugin_inspection_value(
                     let (execution_kind, runtime, artifact_revision) = match &manifest.execution {
                         PluginExecution::Embedded => ("embedded", None, None),
                         PluginExecution::ResourceOnly => ("resource_only", None, None),
+                        PluginExecution::Native { artifact } => (
+                            "native",
+                            None,
+                            Some(artifact.revision.as_ref().to_owned()),
+                        ),
                         PluginExecution::Runtime { runtime, artifact } => (
                             "runtime",
                             Some(runtime.as_str().to_owned()),
