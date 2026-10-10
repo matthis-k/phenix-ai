@@ -10,22 +10,25 @@ use phenix_core::{
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    AdmittedContextItem, CachePlacement, ContextAdmissionRequest, ContextCandidate,
-    ContextCodeQueryRequest, ContextCommand, ContextDescriptor, ContextInjection,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
-    ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
-    ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
-    ContextSource, ContinuationExportResult, ContinuationImportRequest,
-    ContinuationProjectionRequest, ExactContextReference, ExecutionCommand,
-    ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    LanguageCommand, LanguageInterface, LanguageResponse, ProjectedContextEntry,
-    ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource, WorkerTaskState,
-    assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
-    context_service, derive_continuation_delta, project_continuation_import,
-    select_continuation_export,
+    AdmittedContextItem, AttemptOutcome, CachePlacement, CompactionProposal,
+    ContextAdmissionRequest, ContextCandidate, ContextCodeQueryRequest, ContextCommand,
+    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
+    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
+    ContextProjectionForm, ContextReducerCommand, ContextReducerInterface, ContextReducerProposal,
+    ContextReducerRequest, ContextReducerResponse, ContextReducerStage, ContextResourceKind,
+    ContextResourceRevision, ContextResponse, ContextRetention, ContextScope, ContextSource,
+    ContinuationExportResult, ContinuationImportRequest, ContinuationProjectionRequest,
+    ExactContextReference, ExecutionCommand, ExecutionContextProjection, ExecutionInterface,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    ExecutionResponse, ExecutionState, LanguageCommand, LanguageInterface, LanguageResponse,
+    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
+    RetentionTransition, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
+    StepAttemptResponse, UsageAttemptKind, WorkerTaskState, assemble_continuation_candidates,
+    build_continuation_packet, choose_cache_aware_compaction, context_service,
+    derive_continuation_delta, project_continuation_import, select_continuation_export,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 const CONTEXT_PLUGIN: &str = "phenix.context";
 const CONTEXT_NAMESPACE: &str = "phenix.context.state";
@@ -37,6 +40,8 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
+    attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
+    reducer: SdkClient<'host, 'runtime, ContextReducerInterface>,
     language: SdkClient<'host, 'runtime, LanguageInterface>,
 }
 
@@ -51,6 +56,8 @@ fn context<'host, 'runtime>(
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
             resources: SdkClient::new(host, context_component_id()),
+            attempts: SdkClient::new(host, context_component_id()),
+            reducer: SdkClient::new(host, context_component_id()),
             language: SdkClient::new(host, context_component_id()),
         },
         (),
@@ -82,8 +89,16 @@ pub fn context_manifest() -> PluginManifest {
 
 #[must_use]
 pub fn context_factory() -> Box<dyn PluginInstance> {
+    context_factory_with_reducer_stages(BTreeSet::new())
+}
+
+#[must_use]
+pub fn context_factory_with_reducer_stages(
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
+) -> Box<dyn PluginInstance> {
     Box::new(ContextPlugin {
         state: ContextStateService::default(),
+        enabled_reducer_stages,
     })
 }
 
@@ -97,6 +112,7 @@ fn capability(value: &str) -> PermissionId {
 
 struct ContextPlugin {
     state: ContextStateService,
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
 }
 
 impl PluginInstance for ContextPlugin {
@@ -129,6 +145,13 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
+        match &command {
+            ContextCommand::RequestReduction { request }
+            | ContextCommand::CommitReduction { request, .. } => {
+                require_reducer_stage_enabled(&self.enabled_reducer_stages, request.stage)?;
+            }
+            _ => {}
+        }
         let trace = context_command_trace(&command);
         context
             .kernel
@@ -172,6 +195,17 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .encode_value(&response)
             .map_err(|error| error.to_string())
+    }
+}
+
+fn require_reducer_stage_enabled(
+    enabled: &BTreeSet<ContextReducerStage>,
+    stage: ContextReducerStage,
+) -> Result<(), String> {
+    if enabled.contains(&stage) {
+        Ok(())
+    } else {
+        Err(format!("context reducer stage {stage:?} is disabled"))
     }
 }
 
@@ -284,6 +318,27 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
         ContextCommand::EvaluateCompactionCost { .. } => {
             ("compaction_cost_evaluation", None, None, None)
         }
+        ContextCommand::RequestReduction { request } => (
+            "context_reduction_request",
+            Some(request.execution_id.clone()),
+            Some(format!(
+                "{}:{}",
+                request.expected_projection.revision, request.expected_projection.cache_epoch
+            )),
+            Some(format!("stage={:?}", request.stage)),
+        ),
+        ContextCommand::CommitReduction { request, proposal } => (
+            "context_reduction_commit",
+            Some(request.execution_id.clone()),
+            Some(format!(
+                "{}:{}",
+                request.expected_projection.revision, request.expected_projection.cache_epoch
+            )),
+            Some(format!(
+                "stage={:?} reduction={}",
+                request.stage, proposal.reduction_id
+            )),
+        ),
         ContextCommand::PrepareCompaction { proposal } => (
             "compaction_prepare",
             Some(proposal.execution_id.clone()),
@@ -375,6 +430,25 @@ fn context_response_summary(response: &ContextResponse) -> Option<String> {
         ContextResponse::Admission { result, projection } => Some(format!(
             "result={result:?} projection={}:{}",
             projection.revision, projection.cache_epoch
+        )),
+        ContextResponse::ReductionProposed {
+            proposal,
+            measurement,
+        } => Some(format!(
+            "reduction={} stage={:?} saved_bytes={}",
+            proposal.reduction_id, proposal.stage, measurement.marginal_saved_bytes
+        )),
+        ContextResponse::ReductionCommitted {
+            proposal,
+            measurement,
+            commit,
+        } => Some(format!(
+            "reduction={} stage={:?} saved_bytes={} projection={}:{}",
+            proposal.reduction_id,
+            proposal.stage,
+            measurement.marginal_saved_bytes,
+            commit.committed_projection.revision,
+            commit.committed_projection.cache_epoch
         )),
         ContextResponse::CompactionPrepared {
             checkpoint_id,
@@ -520,6 +594,14 @@ fn handle(
                 .map_err(|error| format!("cache compaction cost evaluation failed: {error:?}"))?;
             Ok(ContextResponse::CompactionCostDecision { decision })
         }
+        ContextCommand::RequestReduction { request } => {
+            require_active_execution(context, &request.execution_id)?;
+            request_reduction(context, state, request)
+        }
+        ContextCommand::CommitReduction { request, proposal } => {
+            require_active_execution(context, &request.execution_id)?;
+            commit_reduction(context, state, request, proposal)
+        }
         ContextCommand::ExportContinuation { request } => {
             Ok(ContextResponse::ContinuationExported {
                 result: export_continuation(context, state, request)?,
@@ -538,6 +620,230 @@ fn handle(
             Err("context projection command leaked past state dispatcher".into())
         }
     }
+}
+
+fn request_reduction(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    request: ContextReducerRequest,
+) -> Result<ContextResponse, String> {
+    let actual_projection = state.projection_revision(&request.execution_id);
+    if request.expected_projection != actual_projection {
+        return Err(format!(
+            "context reducer request is stale: expected {:?}, actual {:?}",
+            request.expected_projection, actual_projection
+        ));
+    }
+    let response: ContextReducerResponse = context
+        .sdk
+        .reducer
+        .invoke_projected(&ContextReducerCommand::Reduce {
+            request: request.clone(),
+        })
+        .map_err(|error| format!("context reducer unavailable or failed: {error}"))?;
+    let ContextReducerResponse::Proposal { proposal } = response;
+    let measurement = proposal
+        .measure_against(&request, &actual_projection)
+        .map_err(|error| format!("context reducer proposal rejected: {error:?}"))?;
+    verify_reducer_helper_attempt(context, &request, &proposal)?;
+    Ok(ContextResponse::ReductionProposed {
+        proposal,
+        measurement,
+    })
+}
+
+fn commit_reduction(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    request: ContextReducerRequest,
+    proposal: ContextReducerProposal,
+) -> Result<ContextResponse, String> {
+    let actual_projection = state.projection_revision(&request.execution_id);
+    let measurement = proposal
+        .measure_against(&request, &actual_projection)
+        .map_err(|error| format!("context reducer proposal rejected at commit: {error:?}"))?;
+    verify_reducer_helper_attempt(context, &request, &proposal)?;
+
+    let compaction = reduction_compaction_proposal(state, &request, &proposal)?;
+    let previous = read_raw(context, CONTEXT_PROJECTION_STATE_KEY)?;
+    let mut next = state.clone();
+    let commit = next
+        .commit_compaction_proposal(compaction)
+        .map_err(|error| format!("context reduction commit failed: {error:?}"))?;
+    persist_state(context, &mut next, previous)?;
+    *state = next;
+
+    Ok(ContextResponse::ReductionCommitted {
+        proposal,
+        measurement,
+        commit,
+    })
+}
+
+fn reduction_compaction_proposal(
+    state: &ContextStateService,
+    request: &ContextReducerRequest,
+    proposal: &ContextReducerProposal,
+) -> Result<CompactionProposal, String> {
+    if proposal.omitted_item_ids.is_empty() && proposal.summaries.is_empty() {
+        return Err("context reducer proposal makes no projection change".into());
+    }
+
+    let projection = state.projection(&request.execution_id).ok_or_else(|| {
+        format!(
+            "context projection is not admitted: {}",
+            request.execution_id
+        )
+    })?;
+    if projection.revision != request.expected_projection {
+        return Err(format!(
+            "context reducer commit is stale: expected {:?}, actual {:?}",
+            request.expected_projection, projection.revision
+        ));
+    }
+
+    let next_cache_epoch = projection
+        .revision
+        .cache_epoch
+        .checked_add(1)
+        .ok_or_else(|| "context reducer cache epoch overflow".to_owned())?;
+    let mut transitions = Vec::new();
+    let mut exact_sources = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.exact_sources.clone())
+        .unwrap_or_default();
+    let mut tool_groups = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.tool_groups.clone())
+        .unwrap_or_default();
+    let mut compact_view = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.compact_view.as_ref().to_vec())
+        .unwrap_or_default();
+
+    for eligible in &request.eligible {
+        let admitted = projection
+            .admitted
+            .get(&eligible.item_id)
+            .ok_or_else(|| format!("context reducer item is not admitted: {}", eligible.item_id))?;
+        let summary = proposal
+            .summaries
+            .iter()
+            .find(|summary| summary.item_id == eligible.item_id);
+        let changes_item =
+            proposal.omitted_item_ids.contains(&eligible.item_id) || summary.is_some();
+        if changes_item && is_reduced_item(admitted) {
+            return Err(format!(
+                "context reducer cannot rewrite already reduced item: {}",
+                eligible.item_id
+            ));
+        }
+
+        if proposal.omitted_item_ids.contains(&eligible.item_id) {
+            let recovery = eligible.recovery.clone().ok_or_else(|| {
+                format!(
+                    "context reducer omitted item without recovery: {}",
+                    eligible.item_id
+                )
+            })?;
+            exact_sources.push(recovery.clone());
+            transitions.push(RetentionTransition {
+                item_id: eligible.item_id.clone(),
+                from: admitted.retention,
+                to: ContextRetention::Reference,
+                recovery: Some(recovery),
+            });
+        } else if let Some(summary) = summary {
+            let recovery = eligible.recovery.clone().ok_or_else(|| {
+                format!(
+                    "context reducer summarized item without recovery: {}",
+                    eligible.item_id
+                )
+            })?;
+            exact_sources.extend(summary.exact_sources.iter().cloned());
+            if !compact_view.is_empty() {
+                compact_view.extend_from_slice(b"\n\n");
+            }
+            compact_view.extend_from_slice(b"[");
+            compact_view.extend_from_slice(eligible.item_id.as_bytes());
+            compact_view.extend_from_slice(b"]\n");
+            compact_view.extend_from_slice(summary.content.as_ref());
+            transitions.push(RetentionTransition {
+                item_id: eligible.item_id.clone(),
+                from: admitted.retention,
+                to: ContextRetention::Compact,
+                recovery: Some(recovery),
+            });
+        }
+    }
+
+    exact_sources.sort();
+    exact_sources.dedup();
+    tool_groups.sort_by(|left, right| left.call_id.cmp(&right.call_id));
+    tool_groups.dedup_by(|left, right| left.call_id == right.call_id);
+    let content_identity = content_hash(&compact_view).as_str().to_owned();
+
+    Ok(CompactionProposal {
+        execution_id: request.execution_id.clone(),
+        expected_projection: request.expected_projection.clone(),
+        next_cache_epoch,
+        transitions,
+        checkpoint: ProjectionCheckpoint {
+            checkpoint_id: proposal.reduction_id.clone(),
+            execution_id: request.execution_id.clone(),
+            source_revision: request.expected_projection.clone(),
+            content_identity,
+            compact_view: Bytes::from(compact_view),
+            exact_sources,
+            tool_groups,
+        },
+    })
+}
+
+fn verify_reducer_helper_attempt(
+    context: &ContextPluginContext<'_, '_>,
+    request: &ContextReducerRequest,
+    proposal: &phenix_sdk::ContextReducerProposal,
+) -> Result<(), String> {
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::Get {
+            attempt_id: proposal.helper_attempt_id.clone(),
+        })
+        .map_err(|error| format!("context reducer helper attempt lookup failed: {error}"))?;
+    let StepAttemptResponse::AttemptLookup {
+        attempt: Some(attempt),
+    } = response
+    else {
+        return Err(format!(
+            "context reducer proposal references unknown helper attempt: {}",
+            proposal.helper_attempt_id
+        ));
+    };
+
+    if attempt.attribution.execution_id != request.execution_id {
+        return Err("context reducer helper attempt belongs to another execution".into());
+    }
+    if attempt.attribution.kind != UsageAttemptKind::Helper {
+        return Err("context reducer helper attempt is not an ordinary helper invocation".into());
+    }
+    if attempt.attribution.parent_attempt_id.as_deref() != Some(request.parent_attempt_id.as_str())
+    {
+        return Err("context reducer helper attempt parent does not match request".into());
+    }
+    if attempt.reservation_id.is_none() {
+        return Err("context reducer helper attempt has no charged reservation".into());
+    }
+    if attempt.phase != StepAttemptPhase::Settled
+        || attempt.outcome != Some(AttemptOutcome::Succeeded)
+    {
+        return Err("context reducer helper attempt did not settle successfully".into());
+    }
+    Ok(())
 }
 
 fn import_continuation(
@@ -1426,6 +1732,22 @@ fn parent_path(path: &str) -> Option<&str> {
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+
+    #[test]
+    fn reducer_stages_are_independently_disableable() {
+        let mut enabled = BTreeSet::new();
+        enabled.insert(ContextReducerStage::CodeEvidence);
+
+        assert!(require_reducer_stage_enabled(&enabled, ContextReducerStage::CodeEvidence).is_ok());
+        assert_eq!(
+            require_reducer_stage_enabled(&enabled, ContextReducerStage::ObservationSummary),
+            Err("context reducer stage ObservationSummary is disabled".into())
+        );
+        assert_eq!(
+            require_reducer_stage_enabled(&BTreeSet::new(), ContextReducerStage::CodeEvidence),
+            Err("context reducer stage CodeEvidence is disabled".into())
+        );
+    }
 
     #[test]
     fn invocation_preparation_keeps_request_budget_separate_from_context_candidates() {
