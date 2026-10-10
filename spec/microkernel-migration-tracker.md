@@ -49,22 +49,22 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 | S1-05 | TODO | #726 | S1-01 | Typed frame private/published slots, mapped includes, frame/alias and cancellation semantics; negative and positive integration tests. |
 | S1-06 | TODO | #726 | S1-02 | Native provider callbacks resume same scheduler; cancellation and lease retention until actual settlement, including failing and abandoned callbacks. |
 | S1-07 | IN PROGRESS | #726 | S1-01 | `workflow.rs::execute_bound` and `execute_bound_framed` use `execute_nodes`, which reaches the same cooperative scheduler. Audit remaining public/compatibility entry wrappers and test-only compiler helpers before deleting anything. Source evidence W033; no retirement claimed. |
-| S1-08 | TODO | #728 | S0-01 | SDK authoring: ordinary service `interface + implementation + provide` needs no workflow or manual registration; contract IDs stable. |
-| S1-09 | TODO | #728 | S1-08 | Typed static `Declare/Require/Provide/Modify/Observe` and owned portable descriptors; duplicate-key and schema rejection. |
+| S1-08 | IN PROGRESS | #728 | S0-01 | Source checked at `98d2682f`: `phenix-sdk/tests/service_only_provide_conformance.rs` resolves and invokes a service-only provider without workflow registration. Preserve this canary; prove third-party artifact activation, stable contract IDs and real Basic/Full use. |
+| S1-09 | IN PROGRESS | #728 | S1-08 | `phenix-contract/src/contribution.rs:21-40/125-209` defines inert typed contributions with sorted owner-verified artifact decoding, duplicate/forged owner rejection and tests. Full Prepare/Modify/Observe authoring and selected activation remain open. |
 | S1-10 | TODO | #728 | S1-09 | Selected plan definitions and EntryBindings accepted from artifacts; no builder-only registration and no second resolver. |
-| S2-01 | TODO | #760 | #728 | Freeze selected portable contributions, owner provenance and identity in candidate generation; deterministic enumeration, reject forged/stale artifacts. |
+| S2-01 | IN PROGRESS | #760 | #728 | `composition/resolver.rs` on #760 freezes selected portable contribution metadata into generation identity. Current implementation rejects some reselections; prove authenticated artifact replacement, promotion and deterministic identity before PROVEN. |
 | S2-02 | TODO | native implementation PR to create | #734; S1-03 | Extract ABI/loader/bridge changes from #726 into independently reviewable owner; retain Core only minimal generic invocation contract. |
 | S2-03 | TODO | native implementation PR to create | S2-02 | ABI table, buffer lifecycle, begin/poll/wake/cancel, callback ownership and native cross-import canary; no plugin-specific Core branch. |
 | S2-04 | TODO | native implementation PR to create | S2-03; #760 | Versioned side-by-side library residency, trial/promotion/retirement and failure isolation; canonical selected graph and physical lease proof. |
 | S2-05 | TODO | future guest adapter PR | S2-03 | Lua guest adapter as normal native plugin; `require("phenix")` guest vs Neovim client isolation and Rust <-> Lua imports. |
-| S3-01 | TODO | #729 | S1-01; S1-10 | Closed IR edit vocabulary, versioned slots, deterministic patch composition and provenance/conflict rejection. |
+| S3-01 | IN PROGRESS | #729 | S1-01; S1-10 | `graph_patch_order.rs:55` resolves slot insertion order with duplicate, cycle, ambiguity and qualified-slot tests. It is a pure precursor, **not** an IR edit compiler, owner authority check or live candidate patch application. |
 | S3-02 | TODO | #729 | S3-01 | Validate patch owner-only metadata, frame extension and attenuation before activating candidate. |
-| S3-03 | TODO | #730 | S1-09 | Typed contribution kind provider schemas; bounded pure template lowering and explicit bootstrapping/cycles. |
+| S3-03 | IN PROGRESS | #730 | S1-09 | `phenix-sdk/src/kind_lowering.rs:78` lowers bounded typed kind templates without callbacks. Tests cover deterministic order, malformed fields, cycles and limits. Selected provider/owner verification, authority and canonical generation integration remain open. |
 | S3-04 | TODO | #730 | S3-03 | Exceptional procedural preparation frozen *before* resolution; no callbacks in canonical resolver. |
-| S4-01 | TODO | #731 | S3-01; S3-03 | Migrate tools and skills from hand wiring to declared contributions. Test third-party replacement and non-agent kernel-only flow. |
+| S4-01 | IN PROGRESS | #731 | S3-01; S3-03 | `plugin_template_consumer_canary.rs:46` proves a non-agent Core graph with resource-only topology and two independently selected providers, including missing-provider rejection. Tool/skill migration to live templates has not begun; full gate remains blocked by #729/#730. |
 | S4-02 | TODO | #726 and #731 | S1-05; S1-10 | Real Basic/Full turn-tool-turn equivalence: outputs, typed continuations, IDs, budgets, events, streaming, progress, cancellation, error and side effects. |
-| S4-03 | TODO | #725 | #760 | Durable idempotent admission and writer claims, restart/orphan recovery, fencing, journal CAS and no replay of ambiguous side effects. |
-| S4-04 | TODO | #763 | S4-02; S4-03 | Full pinned-head integration CI on actual combined stack; include Nix product, SDK docs, Core, harness, native ABI and client checks. |
+| S4-03 | IN PROGRESS | #725 | #760 | PR #725 contains prompt-admission receipt and claim code in `harness/application.rs` and session/ACP/Lua contracts. Host-fenced orphan recovery, replay ambiguity, physical side-effect settlement and independent client reconnect are still merge gates. |
+| S4-04 | IN PROGRESS | #763 | S4-02; S4-03 | #763 carries combined CI changes in `.github/workflows/ci.yml` and `modules/development.nix` on #725. It validates the current partial stack, not final portable entry/native/product parity; rerun against exact merge candidates. |
 | S4-05 | TODO | owner to assign | S2-04; S4-02 | Selected plugin upgrades preserve old roots, generation provenance, Environment pins, journal events and durable compatibility. |
 | S5-01 | TODO | cleanup implementation PR to create | S4-02 | Remove legacy `phenix-plugin-basic-agent/src/agent_loop.rs` execution path and route-selection duplication; rehome behavior tests first. |
 | S5-02 | TODO | cleanup implementation PR to create | S4-01 | Retire `phenix-plugin-hooks` after Layers/Listener parity; remove Advanced default and Cargo/Nix references. |
@@ -88,6 +88,22 @@ Owners are non-overlapping. Status is conservative: a partial implementation or 
 
 Next unblocked tracker action: for W014/W022/W026/W031-W033, use the exact function inventory in the file matrix to trace callsites, identify genuinely duplicated work and run targeted sync/pending/frame/native callback conformance. Preserve the one existing scheduler. Next independent main-tree checks: F0001/F0018 hook-candidate Nix checks, F0017 dependency-closure builds, F0026 Stitch smoke and F0491 safety-rule replacement. Record exact-head test or source proof on each row; do not certify an entire group from one passing check.
 
+## Owner implementation checkpoint, 2026-10-10
+
+The source state is more specific than the original "design only" labels:
+
+| PR | Head reviewed | Executable source now present | Still missing |
+| --- | --- | --- | --- |
+| #728 | `98d2682f` | Portable owner-verified contribution set and service-only authoring conformance | Full selected portable entries/kinds and replacement |
+| #760 | `9cad397f` | Inert selected contribution identity bound into generation | Owner-authenticated reconfiguration, promotion and lifecycle |
+| #725 | `35f738c9` | Durable prompt receipts across application and session interfaces | Host-fenced recovery, ambiguous side effects and client reconnect parity |
+| #729 | `c2be8b61` | Deterministic `resolve_slot_order` with rejection tests | Canonical edit vocabulary, typed patches, authority and candidate application |
+| #730 | `c26b3d6a` | Pure bounded `lower_kinds` and rejection tests | Selected kind provider discovery, authority and resolution |
+| #731 | `7fca307b` | Non-agent Core topology/provider canary | Live first-party tool/skill template migration |
+| #763 | `54c5760d` | Combined-stack CI changes only | Exact final merge-head and native/client parity |
+
+**Review convention:** IN PROGRESS here is a source-checked partial implementation. It does not mean a task is functionally complete or that current-head CI passed. The owner PR's numbered task matrix remains the source for individual acceptance evidence.
+
 ## Current PR owners
 
 | PR | Actual state at 2026-10-10 | Scope rule |
@@ -96,9 +112,9 @@ Next unblocked tracker action: for W014/W022/W026/W031-W033, use the exact funct
 | [#728](https://github.com/matthis-k/phenix-ai/pull/728) | partial implementation; stacked on #726 | SDK + authoring envelopes and portable plan/entry metadata. |
 | [#760](https://github.com/matthis-k/phenix-ai/pull/760) | partial implementation; stacked on #728 | Selected contributions frozen into generation. |
 | [#725](https://github.com/matthis-k/phenix-ai/pull/725) | partial implementation; stacked on #760 | Durable prompt admission and claims. |
-| [#729](https://github.com/matthis-k/phenix-ai/pull/729) | design only | Generic IR patch composition. |
-| [#730](https://github.com/matthis-k/phenix-ai/pull/730) | design only | Contribution-kind templates and preparation. |
-| [#731](https://github.com/matthis-k/phenix-ai/pull/731) | design only | Tool/skill consumers and non-agent proof. |
+| [#729](https://github.com/matthis-k/phenix-ai/pull/729) | partial source implementation; three files, pure slot-order compiler | Generic IR patch composition; canonical typed edits and generation application remain open. |
+| [#730](https://github.com/matthis-k/phenix-ai/pull/730) | partial source implementation; three files, pure kind-template lowering | Kind schemas and lowering; selected provider integration remains open. |
+| [#731](https://github.com/matthis-k/phenix-ai/pull/731) | partial source implementation; non-agent Core graph canary only | Actual tool/skill template consumers and legacy retirement remain open. |
 | [#763](https://github.com/matthis-k/phenix-ai/pull/763) | integration branch, not a product PR | Full combined-stack validation only. |
 
 The [#733 audit](post-redesign-file-dispositions.md) already lists concrete downstream consumers, including `phenix-plugin-hooks`, `phenix-plugin-basic-model`, `phenix-plugin-catalog` and `phenix-plugin-step-runner`. Reuse that list, then test the exact implementation before deletion.
