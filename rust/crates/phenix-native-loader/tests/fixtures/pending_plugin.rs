@@ -65,15 +65,24 @@ unsafe extern "C" fn begin(_: *mut c_void,request:Request)->Result {
     assert!(request.ticket.call_id!=0);
     let comp=unsafe{std::slice::from_raw_parts(request.component.ptr,request.component.len)};
     let iface=unsafe{std::slice::from_raw_parts(request.interface.ptr,request.interface.len)};
-    assert_eq!(comp,b"fixture.native");
-    assert_eq!(iface,b"fixture.test@1");
+    assert!(
+        (comp == b"fixture.native" && iface == b"fixture.test@1")
+            || (comp == b"fixture.workflow-tool-provider"
+                && iface == b"fixture.workflow-tool@1")
+    );
     CALL.store(request.ticket.call_id,Ordering::Release);
     pending(request.ticket)
 }
 unsafe extern "C" fn poll(_: *mut c_void,ticket:Ticket)->Result {
     let expected=CALL.swap(0,Ordering::AcqRel);
     if expected!=ticket.call_id { return Result {status:2,ticket,payload:buffer(b"missing call")}; }
-    Result{status:1,ticket,payload:buffer(b"fixture finished")}
+    Result{status:1,ticket,payload:buffer(
+        if ticket.root_id == 3 {
+            b"fixture finished"
+        } else {
+            br#"{"type":"string","value":"done"}"#
+        }
+    )}
 }
 unsafe extern "C" fn cancel(_: *mut c_void, _:Ticket){}
 unsafe extern "C" fn stop(_: *mut c_void,_:u64)->u32 {0}
