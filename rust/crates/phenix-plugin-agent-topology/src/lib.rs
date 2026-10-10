@@ -3,7 +3,7 @@
 //! Standard agent-loop topology. There are no node implementations in this crate.
 
 mod runtime_adapter;
-pub use runtime_adapter::run_agent_workflow;
+pub use runtime_adapter::{run_agent_workflow, run_agent_workflow_pending};
 
 use phenix_core::{
     Authority, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
