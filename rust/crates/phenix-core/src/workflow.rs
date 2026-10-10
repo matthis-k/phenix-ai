@@ -2263,6 +2263,113 @@ mod inclusion_tests {
     }
 
     #[test]
+    fn selected_subplan_owns_private_frame_and_publishes_only_declared_outputs() {
+        let key = |name: &str| crate::Key::parse(name).unwrap();
+        let mut selected = selected();
+        selected
+            .get_mut(&(owner(), "main".into()))
+            .unwrap()
+            .nodes
+            .get_mut("start")
+            .unwrap()
+            .branches
+            .insert(
+                "delegate".into(),
+                WorkflowEdge::IncludeMapped {
+                    workflow: "child".into(),
+                    site: "private".into(),
+                    inputs: BTreeMap::from([(key("request"), key("input"))]),
+                    outputs: BTreeMap::from([(key("output"), key("published"))]),
+                    initial: BTreeMap::from([
+                        (key("output"), PhenixValue::U64(0)),
+                        (key("private"), PhenixValue::U64(77)),
+                    ]),
+                    on_exit: BTreeMap::from([(
+                        "returned".into(),
+                        WorkflowEdge::Next {
+                            node: "after".into(),
+                        },
+                    )]),
+                },
+            );
+        let parent_schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: ["request", "published", "secret"]
+                .into_iter()
+                .map(|name| (key(name), crate::Type::U64))
+                .collect(),
+        };
+        let child_schema = crate::WorkflowFrameSchema {
+            revision: 1,
+            slots: ["input", "output", "private"]
+                .into_iter()
+                .map(|name| (key(name), crate::Type::U64))
+                .collect(),
+        };
+        let schemas = BTreeMap::from([
+            ((owner(), "main".into()), parent_schema.clone()),
+            ((owner(), "child".into()), child_schema),
+        ]);
+        let scopes = WorkflowTopology::selected_scoped_subplans(
+            &owner(), "main", &selected, &schemas,
+        )
+        .unwrap();
+        assert_eq!(scopes.len(), 1);
+        let topology = WorkflowTopology::inline_selected(&owner(), "main", &selected).unwrap();
+        let mut compiled = topology.compile(|_| true).unwrap();
+        compiled.bind_scoped_subplans(scopes);
+        compiled.validate_frame_schema(&parent_schema).unwrap();
+        let mut frame = crate::WorkflowFrame::new(
+            parent_schema,
+            BTreeMap::from([
+                (key("request"), PhenixValue::U64(9)),
+                (key("published"), PhenixValue::U64(0)),
+                (key("secret"), PhenixValue::U64(808)),
+            ]),
+        )
+        .unwrap();
+        let mut seen = Vec::new();
+        let report = compiled
+            .execute_nodes(
+                &mut seen,
+                Some(&mut frame),
+                |node, _, seen, frame, _| {
+                    let frame = frame.expect("scoped workflow always has a frame");
+                    seen.push(node.to_owned());
+                    if node == "__include__/private/work" {
+                        assert_eq!(frame.get(&key("input")), Some(&PhenixValue::U64(9)));
+                        assert_eq!(frame.get(&key("private")), Some(&PhenixValue::U64(77)));
+                        assert!(frame.get(&key("secret")).is_none());
+                        assert!(frame.get(&key("request")).is_none());
+                        frame.set(&key("private"), PhenixValue::U64(99)).unwrap();
+                        frame.set(&key("output"), PhenixValue::U64(42)).unwrap();
+                        Ok::<_, WorkflowInvocationError<String>>("returned".into())
+                    } else if node == "start" {
+                        assert_eq!(frame.get(&key("secret")), Some(&PhenixValue::U64(808)));
+                        Ok("delegate".into())
+                    } else {
+                        assert_eq!(node, "after");
+                        assert_eq!(frame.get(&key("published")), Some(&PhenixValue::U64(42)));
+                        assert!(frame.get(&key("private")).is_none());
+                        Ok("done".into())
+                    }
+                },
+                || false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.executed_nodes, 3);
+        assert_eq!(
+            seen,
+            ["start", "__include__/private/work", "after"]
+        );
+        assert_eq!(frame.get(&key("published")), Some(&PhenixValue::U64(42)));
+        assert_eq!(frame.get(&key("secret")), Some(&PhenixValue::U64(808)));
+        assert!(frame.get(&key("private")).is_none());
+        assert!(frame.get(&key("input")).is_none());
+    }
+
+    #[test]
     fn suspended_join_policies_preserve_settlement_and_sibling_cancellation() {
         use std::{cell::RefCell, collections::VecDeque, num::NonZeroUsize};
 
