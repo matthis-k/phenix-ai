@@ -212,10 +212,9 @@ pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
     Kernel, LayerResult, NativeRegistrationError, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeAdapter,
-    PluginRuntimeCandidate, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
-    RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer, RuntimeTraceEvent,
-    RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
+    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginState, ProvenanceBuffer,
+    ProviderEndpointProvenance, RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer,
+    RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
 };
 pub use sdk::{
