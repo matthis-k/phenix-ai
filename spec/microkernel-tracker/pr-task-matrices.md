@@ -17,8 +17,9 @@ This file is an **index**, not a second implementation checklist. Each PR's link
 | [#765](https://github.com/matthis-k/phenix-ai/pull/765) | 5 | Strict routing, MCP and macro compatibility deletion | main; independent of #726 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/765#issuecomment-6094709270) |
 | [#766](https://github.com/matthis-k/phenix-ai/pull/766) | 6 | Imperative agent crate retirement and product parity | stacked on #726 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/766#issuecomment-6094709556) |
 | [#767](https://github.com/matthis-k/phenix-ai/pull/767) | 5 | Hook dispatcher crate retirement and Event/Layer parity | stacked on #766 | [Cleanup matrix](https://github.com/matthis-k/phenix-ai/pull/767#issuecomment-6094709854) |
+| [#768](https://github.com/matthis-k/phenix-ai/pull/768) | 5 | Retire application agent-service fallback; use selected pinned workflow only | stacked on #767 | [Application route matrix](https://github.com/matthis-k/phenix-ai/pull/768#issuecomment-6094811078) |
 
-Total: **78 individually numbered owner tasks**. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
+Total: **83 individually numbered owner tasks**. These tasks start unchecked unless the full stated acceptance proof is recorded. Existing implementation is not assumed wrong; it is not yet certified complete by this tracker.
 
 ## Planned owner PRs that must be opened before implementation
 
