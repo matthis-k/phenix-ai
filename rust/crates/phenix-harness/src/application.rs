@@ -48,7 +48,8 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN,
     SessionCommand, SessionInterface, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
-    SessionRecord, SessionResponse, SessionTransition, execution_review_service, sdk_contribution, session_service, workspace_service,
+    SessionRecord, SessionResponse, SessionTransition, execution_review_service, sdk_contribution,
+    session_service, workspace_service,
 };
 use phenix_provider_sdk::{
     Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
