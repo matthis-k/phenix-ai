@@ -161,6 +161,119 @@ mod tests {
     }
 
     #[test]
+    fn pending_and_cooperative_agent_runs_preserve_typed_output_and_usage() {
+        use phenix_core::{
+            Bytes, Kernel, PhenixValue, PluginHost, PluginInstance, Project,
+            ResolvedGenerationActivation, ServiceId,
+        };
+        use phenix_sdk::{
+            AgentLoopCommand, AgentLoopResponse, AgentTurnStepRequest, AgentTurnStepResponse,
+        };
+
+        struct TerminalTurn;
+
+        impl PluginInstance for TerminalTurn {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke_component(
+                &mut self,
+                component: &ComponentId,
+                _service: &ServiceId,
+                input: &[u8],
+                _host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                if component.as_str() != "fixture.turn-provider" {
+                    return Err(format!("unexpected tool batch invocation: {component}"));
+                }
+                let value: PhenixValue =
+                    serde_json::from_slice(input).map_err(|error| error.to_string())?;
+                let request = AgentTurnStepRequest::try_from(Project(&value))
+                    .map_err(|error| format!("{error:?}"))?;
+                let mut state = request.state;
+                state.usage.model_calls += 1;
+                let response = AgentTurnStepResponse::Final {
+                    state,
+                    output: Bytes::from(b"completed".to_vec()),
+                };
+                serde_json::to_vec(&PhenixValue::from(&response))
+                    .map_err(|error| error.to_string())
+            }
+        }
+
+        let provider_manifest = PluginManifest {
+            id: PluginId::parse("fixture.providers").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: Vec::new(),
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        };
+        let compiled = ResolvedGeneration::resolve(
+            [
+                agent_topology_manifest(Authority::default()),
+                provider_manifest.clone(),
+            ],
+            [
+                agent_topology_component_manifest(Authority::default()),
+                provider(
+                    "fixture.turn-provider",
+                    AgentTurnStepInterface::interface_id(),
+                    AgentTurnStepInterface::schema(),
+                ),
+                provider(
+                    "fixture.batch-provider",
+                    AgentToolBatchInterface::interface_id(),
+                    AgentToolBatchInterface::schema(),
+                ),
+            ],
+            [],
+            &Authority::default(),
+        )
+        .unwrap()
+        .with_workflows([agent_topology_declaration()])
+        .unwrap()
+        .with_workflow_projections(agent_topology_projections())
+        .unwrap();
+
+        let mut results = Vec::new();
+        for native_pending in [false, true] {
+            let mut kernel = Kernel::new(compiled.kernel_config().clone());
+            kernel.activate_resolved_generation(&compiled).unwrap();
+            kernel
+                .register_embedded_factory(provider_manifest.id.clone(), || Box::new(TerminalTurn))
+                .unwrap();
+            kernel.activate_all().unwrap();
+            let root = kernel.root_execution_handle(&Authority::default());
+            let command = AgentLoopCommand::Run {
+                execution_id: "parity".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: Bytes::from(b"prompt".to_vec()),
+                tools: Vec::new(),
+            };
+            let result = if native_pending {
+                run_agent_workflow_pending(&root, command, || false, None)
+            } else {
+                run_agent_workflow(&root, command, || false, None)
+            }
+            .unwrap();
+            assert!(matches!(
+                &result,
+                AgentLoopResponse::Completed { output, usage }
+                    if output.as_ref() == b"completed"
+                        && usage.model_calls == 1
+                        && usage.tool_calls == 0
+            ));
+            results.push(result);
+        }
+        assert_eq!(results[0], results[1]);
+    }
+
+    #[test]
     fn standard_branches_cover_every_typed_node_outcome() {
         use phenix_core::Bytes;
         use phenix_sdk::{
