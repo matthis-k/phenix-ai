@@ -90,6 +90,10 @@ pub enum KernelError {
         message: String,
     },
     EmbeddedFactoryMissing(PluginId),
+    NativeArtifactUnavailable {
+        plugin: PluginId,
+        revision: crate::ArtifactRevision,
+    },
     WrongExecutionKind(PluginId),
     ComponentGraph(ComponentGraphError),
     PluginRuntimeAdapterUnavailable(PluginRuntimeId),
