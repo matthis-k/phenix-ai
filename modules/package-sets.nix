@@ -78,7 +78,6 @@ let
 
   pluginIds = {
     adapter-acp = "phenix.adapter.acp";
-    agent-loop = "phenix.agent-loop";
     agent-topology = "phenix.agent-topology";
     api = "phenix.api";
     artifacts = "phenix.artifacts";
@@ -108,7 +107,6 @@ let
 
   basicPluginCrates = {
     adapter-acp = "phenix-adapter-acp";
-    agent-loop = "phenix-plugin-basic-agent";
     basic-agent-nodes = "phenix-plugin-basic-agent-nodes";
     api = "phenix-plugin-api";
     basic-context = "phenix-plugin-basic-context";
