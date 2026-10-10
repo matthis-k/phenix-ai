@@ -5282,10 +5282,12 @@ fn run_agent_execution(
             input,
             tools,
         };
-        // A bound agent contract is authoritative when present. When the
-        // pinned generation has no agent-loop import but has selected the
-        // declarative topology, the pre-admission resolver selects that
-        // topology instead. Never retry one path on failure of the other.
+        // An explicitly bound agent contract remains authoritative. When
+        // the pinned generation selects the declarative topology instead,
+        // use Core's structured pending scheduler for the live application
+        // request. It preserves native callbacks and generation leases while
+        // routing progress and completion through the existing application
+        // journal. Never retry either route through the other.
         let response = if let Some(binding) = agent_binding.as_ref() {
             let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
                 ApplicationError::InvalidInput {
@@ -5308,7 +5310,7 @@ fn run_agent_execution(
                 }
             })?
         } else {
-            phenix_plugin_catalog::run_agent_workflow(
+            phenix_plugin_catalog::run_agent_workflow_pending(
                 &root,
                 command,
                 || cancellation.load(Ordering::Acquire),
