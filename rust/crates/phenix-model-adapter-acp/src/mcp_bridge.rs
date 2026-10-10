@@ -257,7 +257,12 @@ impl ToolBridge {
                 missing.join(", ")
             )));
         }
-        Ok(version)
+        if version != selected {
+            return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                "MCP request version {version} differs from initialized connection version {selected}"
+            )));
+        }
+        Ok(selected)
     }
 
     fn list_tools(&self) -> Result<Value, agent_client_protocol::Error> {
@@ -690,6 +695,41 @@ mod tests {
         let params = params.as_object().unwrap();
         bridge.call_tool(Some(params)).unwrap();
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn connection_requires_current_version_before_tool_requests() {
+        let bridge = ToolBridge::default();
+        let connection = McpConnectionId("fixture-mcp-connection".into());
+        bridge
+            .state
+            .lock()
+            .unwrap()
+            .connections
+            .insert(connection.0.to_string(), None);
+
+        assert!(
+            bridge.request_protocol_version(&connection, None).is_err(),
+            "tool requests must not implicitly initialize a connection"
+        );
+        let missing = Map::new();
+        assert!(bridge.initialize(&connection, Some(&missing)).is_err());
+        assert!(bridge.connection_protocol(&connection).unwrap().is_none());
+
+        let old = json!({"protocolVersion": "2025-06-18"});
+        assert!(bridge.initialize(&connection, old.as_object()).is_err());
+        assert!(
+            bridge.connection_protocol(&connection).unwrap().is_none(),
+            "rejected protocol versions must not change connection state"
+        );
+
+        let current = json!({"protocolVersion": "2026-07-28"});
+        let result = bridge.initialize(&connection, current.as_object()).unwrap();
+        assert_eq!(result["protocolVersion"], "2026-07-28");
+        assert_eq!(
+            bridge.request_protocol_version(&connection, None).unwrap(),
+            ProtocolVersion::V_2026_07_28
+        );
     }
 
     #[test]
