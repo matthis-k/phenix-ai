@@ -11346,9 +11346,9 @@ mod tests {
 
             // Replay the same real application execution from durable state
             // after shutting down the worker and its selected generation.
-            let mut restored = crate::PhenixRuntimeBuilder::with_selected_suite(
-                &BTreeSet::from([profile.to_owned()]),
-            )
+            let mut restored = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+                profile.to_owned(),
+            ]))
             .unwrap()
             .build_with_persistence(LocalPersistence::open(&path).unwrap())
             .unwrap();
@@ -11362,7 +11362,10 @@ mod tests {
                 },
             )
             .unwrap();
-            assert_eq!(replay.updates, resumed.updates, "{profile}: journal changed after restart");
+            assert_eq!(
+                replay.updates, resumed.updates,
+                "{profile}: journal changed after restart"
+            );
             assert_eq!(replay.through_sequence, resumed.through_sequence);
             drop(restored_worker);
             let _ = fs::remove_file(&path);

@@ -853,10 +853,8 @@ mod tests {
             "replacement fixture could not compile: {}",
             String::from_utf8_lossy(&replacement.stderr)
         );
-        let replacement_image = NativePluginLibrary::load_staged(
-            &std::fs::read(&revision_b).unwrap(),
-        )
-        .unwrap();
+        let replacement_image =
+            NativePluginLibrary::load_staged(&std::fs::read(&revision_b).unwrap()).unwrap();
         let mut replacement_instance = replacement_image.instance(18);
         replacement_instance.prepare_and_start().unwrap();
         let replacement_ticket = NativeCallTicket {
