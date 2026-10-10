@@ -1770,6 +1770,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-abi"
+version = "0.1.0"
+
+[[package]]
 name = "phenix-plugin-api"
 version = "0.1.0"
 dependencies = [
