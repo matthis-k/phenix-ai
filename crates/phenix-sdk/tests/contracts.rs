@@ -69,7 +69,9 @@ fn declarations_match_independent_owned_metadata() {
     assert_eq!(bytes, metadata(expected).encode().unwrap());
     assert_eq!(
         bytes,
-        metadata(Reversed::CONTRACT.owned().unwrap()).encode().unwrap()
+        metadata(Reversed::CONTRACT.owned().unwrap())
+            .encode()
+            .unwrap()
     );
     assert_eq!(
         ContractMetadata::decode(&bytes).unwrap().encode().unwrap(),
@@ -92,7 +94,11 @@ fn external_types_and_raw_identifiers_have_portable_identity() {
             [
                 (
                     "cell".into(),
-                    ValueSchema::Ref(ValueSchema::List(Box::new(ValueSchema::String)).id().unwrap()),
+                    ValueSchema::Ref(
+                        ValueSchema::List(Box::new(ValueSchema::String))
+                            .id()
+                            .unwrap()
+                    ),
                 ),
                 (
                     "query".into(),

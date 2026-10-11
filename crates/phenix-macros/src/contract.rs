@@ -118,7 +118,8 @@ pub fn expand(
         {
             return Err(syn::Error::new(path.span(), "use the standard Result type"));
         }
-        let PathArguments::AngleBracketed(arguments) = &path.path.segments.last().unwrap().arguments
+        let PathArguments::AngleBracketed(arguments) =
+            &path.path.segments.last().unwrap().arguments
         else {
             return Err(syn::Error::new(
                 path.span(),
@@ -205,7 +206,10 @@ mod tests {
             "trait Bad { fn call(&self) -> other::Result<String, String>; }",
         ] {
             let item = syn::parse_str(source).unwrap();
-            assert!(expand(quote!(id = "example.bad@1"), item).is_err(), "{source}");
+            assert!(
+                expand(quote!(id = "example.bad@1"), item).is_err(),
+                "{source}"
+            );
         }
         for attributes in [
             quote!(id = "invalid"),
