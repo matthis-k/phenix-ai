@@ -22,7 +22,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
-| A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | Implemented; acceptance in `spec/a0-agent-matrix.md` |
+| A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
 | A1 | Agent contract definitions, default service plugins and agent loop | S5; S6 only if product needs parallel execution | Working replaceable agent profile | Deferred, not kernel scope |
 
 S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST maintain the semantic boundaries in the M1 RFC. S6 is a distinct optimization/capability gate: S5 must implement the correct partial order without relying on parallelism.

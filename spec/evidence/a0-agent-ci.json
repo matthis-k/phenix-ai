@@ -1,0 +1,383 @@
+{
+  "a0_nix_output": {
+    "/nix/store/pvbgavdkg5m8csr8hm8jdhvilphx1jvd-phenix-a0-agent": {
+      "ca": null,
+      "deriver": "/nix/store/xb08myyqqcnmxvdlbqxgxs5hnc6sky6b-phenix-a0-agent.drv",
+      "narHash": "sha256-t/+9yqqWtWt8lhFTPFcSbfnfEBS52MSWYyVlpjH4aLI=",
+      "narSize": 5848,
+      "references": [
+        "/nix/store/0smdjfhhlax0gj7d1lys5jlz023alw6h-example-agent-model-0.1.0",
+        "/nix/store/ar3rcn6mxji7h1xwi2lma3c75yw8l2lz-example-agent-tool-0.1.0",
+        "/nix/store/m4qfk1kv05vi1hsxvajk52ik78x0ngp8-example-agent-0.1.0",
+        "/nix/store/naqx6n1cnw5r32qaix9kwyhfap1a1ld7-example-agent-alternate-0.1.0"
+      ],
+      "registrationTime": 1791717020,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    },
+    "/nix/store/qr7rd6b6l3n2g13iplqyk72nzb5iy105-phenix-a0-agent-product": {
+      "ca": null,
+      "deriver": "/nix/store/slh7kxhs6biqvfnxs8v31hi01w4l4w14-phenix-a0-agent-product.drv",
+      "narHash": "sha256-MQgg3ni1S0Hl1wLYEuMASSB5HdCe17UkDKRkS0pYlvY=",
+      "narSize": 18288,
+      "references": [
+        "/nix/store/0smdjfhhlax0gj7d1lys5jlz023alw6h-example-agent-model-0.1.0",
+        "/nix/store/ar3rcn6mxji7h1xwi2lma3c75yw8l2lz-example-agent-tool-0.1.0",
+        "/nix/store/m4qfk1kv05vi1hsxvajk52ik78x0ngp8-example-agent-0.1.0",
+        "/nix/store/naqx6n1cnw5r32qaix9kwyhfap1a1ld7-example-agent-alternate-0.1.0"
+      ],
+      "registrationTime": 1791717020,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "archive_sha256": "bbbf3686213338ce727c3619017d56d35d724b23d895e4f934a3993d296dec83",
+  "artifact_id": 11700942067,
+  "conclusion": "success",
+  "format": "phenix.a0.ci-evidence.v1",
+  "gates": [
+    "a0-agent",
+    "a0-agent-product",
+    "m1-reference-wire",
+    "m1-metadata-state",
+    "m0-descriptor",
+    "m0-contract",
+    "m0-native",
+    "m0-product",
+    "m01-composition",
+    "m01-product",
+    "m04-public-sdk",
+    "m04-shipping",
+    "m03-generations",
+    "m02-imports",
+    "m02-pending",
+    "m02-pending-product",
+    "m02-lifecycle",
+    "m02-lifecycle-product"
+  ],
+  "implementation_commit": "4d47e783bb180fe19ec41c7f3b6eacf857474879",
+  "initial_attempts": [
+    {
+      "correction_commit": "4d47e783bb180fe19ec41c7f3b6eacf857474879",
+      "issue": "Incorrect test expectation for existing domain-error exit convention",
+      "run_id": 38134275923
+    }
+  ],
+  "m0_nix_output": {
+    "/nix/store/v0hk452n1fs4ij773qfybnaqx51y3kg2-phenix-m0-release": {
+      "ca": null,
+      "deriver": "/nix/store/87dpq912pcc0xbich7p2rdpq0ymm0mql-phenix-m0-release.drv",
+      "narHash": "sha256-+IOuJttJv3+nx7pgtn8M0oTd4j6iPspK+aYQ6ysry/w=",
+      "narSize": 4136,
+      "references": [
+        "/nix/store/iivx5zmqpdlf52622bp5460z9jwgp268-phenix-public-sdk-check-0.1.0",
+        "/nix/store/nn3zqvzgcixhf5zhzpjc3mfx1jkx7bpr-closure-info",
+        "/nix/store/qz1bw8dam0x5y6icj9ryh2vfxzhhm7jj-phenix-m0-conformance",
+        "/nix/store/w67b6929byil5nslb5dswpbrvabzx4zj-phenix-m04-shipping"
+      ],
+      "registrationTime": 1791717712,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "m1_state_nix_output": {
+    "/nix/store/l90yls13azdgc35f226vll9q4ga56bsl-phenix-artifact-0.1.0": {
+      "ca": null,
+      "deriver": "/nix/store/fx9ndjxnl6zwlnlw68bbl13pl7d5mrld-phenix-artifact-0.1.0.drv",
+      "narHash": "sha256-BQS4lEB+HSj29/xoCqTqQDNReQHl1tYmpcVcJ6V9EPU=",
+      "narSize": 1080,
+      "references": [],
+      "registrationTime": 1791717081,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "m1_wire_nix_output": {
+    "/nix/store/jwdd3m8z7p8a2vaw25nhzz7xnxhf3bbs-phenix-contract-0.1.0": {
+      "ca": null,
+      "deriver": "/nix/store/dskg2ckygrwkrvs92f77nxhs3jizqb4b-phenix-contract-0.1.0.drv",
+      "narHash": "sha256-ZRcGb67JsLEDKn20g7fWw3fot5Q0mqRfhVsINGjft5k=",
+      "narSize": 560,
+      "references": [],
+      "registrationTime": 1791717274,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "native": {
+    "cases": [
+      {
+        "case": "phenix",
+        "tool_calls": 1,
+        "turns": 2
+      },
+      {
+        "case": "repeat",
+        "tool_calls": 20,
+        "turns": 21
+      },
+      {
+        "case": "tool-error",
+        "tool_calls": 1,
+        "turns": 2
+      },
+      {
+        "case": "final",
+        "tool_calls": 0,
+        "turns": 1
+      },
+      {
+        "case": "empty-final",
+        "tool_calls": 0,
+        "turns": 1
+      },
+      {
+        "case": "second session",
+        "tool_calls": 1,
+        "turns": 2
+      },
+      {
+        "case": "model-error",
+        "error": "ModelFailed",
+        "tool_calls": 0
+      },
+      {
+        "case": "unknown-tool",
+        "error": "UnknownTool",
+        "tool_calls": 0
+      },
+      {
+        "case": "invalid-final",
+        "error": "InvalidReply",
+        "tool_calls": 0
+      },
+      {
+        "case": "duplicate",
+        "error": "InvalidReply",
+        "tool_calls": 1
+      },
+      {
+        "case": "phenix",
+        "error": "TurnLimit",
+        "tool_calls": 1
+      },
+      {
+        "case": "denied",
+        "operation": "example.model@1/complete",
+        "tool_calls": 0
+      },
+      {
+        "case": "denied",
+        "operation": "example.tool@1/execute",
+        "tool_calls": 0
+      },
+      {
+        "case": "alternate-provider",
+        "tool_calls": 0
+      }
+    ],
+    "exact_limit_completion": true,
+    "format": "phenix.a0.agent.v1",
+    "inspection": {
+      "authority": {
+        "operations": [
+          "example.agent@1/run",
+          "example.model@1/complete",
+          "example.tool@1/count",
+          "example.tool@1/execute"
+        ],
+        "resources": []
+      },
+      "bindings": [
+        {
+          "caller": "example.agent",
+          "operation": "example.model@1/complete",
+          "provider": "example.agent-model"
+        },
+        {
+          "caller": "example.agent",
+          "operation": "example.tool@1/execute",
+          "provider": "example.agent-tool"
+        }
+      ],
+      "calls": 0,
+      "denied_operations": 0,
+      "entry": {
+        "interface": "example.agent@1",
+        "operation": "run",
+        "provider": "example.agent"
+      },
+      "format": "phenix.inspect.v2",
+      "last_failure": null,
+      "lifecycle": {
+        "startup_order": [
+          "example.agent-model",
+          "example.agent-tool",
+          "example.agent",
+          "example.agent-alternate"
+        ],
+        "stop_failures": [],
+        "stopped": false
+      },
+      "plugins": [
+        {
+          "abi_negotiated": false,
+          "artifact_sha256": "4c6ebddba10520df0937f39d9321c691c8ff73126fbe1d97d5d9c24657a5c78a",
+          "descriptor_sha256": "1eef9a42f35a6d301c65c2958d74ff0bd81fdec2f4e4060edd894d7e113b13ab",
+          "id": "example.agent",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": false,
+          "artifact_sha256": "f136ed366b4598df6f10f3443fc262b75fac656f39afe216f61bf841c4a5b38e",
+          "descriptor_sha256": "8007c38d7a195b8cdbc64fcec2b2c652f87145153b0b87224c561aebf8ed7b2d",
+          "id": "example.agent-alternate",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": false,
+          "artifact_sha256": "9619619f8c4d099a43a41372f4614c4bd37f55a771a6b9e1d518eececb9f1dec",
+          "descriptor_sha256": "e8a61f6ccc57746a577ff86c12a358434da63e17d6bb3f4d7ecd2caa72fdbc07",
+          "id": "example.agent-model",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": false,
+          "artifact_sha256": "bbe7d0704808a89f2e2ea6f2fac67e183c71e8e676aa0f2e35e69a4a99055931",
+          "descriptor_sha256": "42fe2157ea55c6dfc30f11230b0147e823e714492ea2dfe794462372e13545f2",
+          "id": "example.agent-tool",
+          "offline_verified": true
+        }
+      ],
+      "resource": null,
+      "roots": {
+        "active": null,
+        "completed": 0,
+        "last_root_id": null
+      }
+    },
+    "isolation_after_failure": true,
+    "order_independent_inspection": true
+  },
+  "product": {
+    "denied-tool": {
+      "calls": 2,
+      "denied_operations": 1,
+      "outcome": {
+        "failure": {
+          "code": "Denied",
+          "context": {
+            "caller": "example.agent",
+            "operation": "example.tool@1/execute",
+            "provider": "example.agent-tool"
+          },
+          "message": "example.agent has no effective grant for example.tool@1/execute",
+          "phase": "invocation"
+        },
+        "kind": "kernel_failure"
+      }
+    },
+    "phenix": {
+      "calls": 4,
+      "denied_operations": 0,
+      "outcome": {
+        "kind": "success",
+        "value": {
+          "answer": "mock:PHENIX",
+          "model_turns": 2,
+          "tool_calls": 1
+        }
+      }
+    },
+    "repeat": {
+      "calls": 42,
+      "denied_operations": 0,
+      "outcome": {
+        "kind": "success",
+        "value": {
+          "answer": "mock:REPEAT",
+          "model_turns": 21,
+          "tool_calls": 20
+        }
+      }
+    },
+    "tool-error": {
+      "calls": 4,
+      "denied_operations": 0,
+      "outcome": {
+        "kind": "success",
+        "value": {
+          "answer": "recovered",
+          "model_turns": 2,
+          "tool_calls": 1
+        }
+      }
+    },
+    "turn-limit": {
+      "calls": 3,
+      "denied_operations": 0,
+      "outcome": {
+        "kind": "domain_error",
+        "value": "TurnLimit"
+      }
+    }
+  },
+  "production_closure": [
+    "/nix/store/8lahnh9pn3lrrnhax5nk7ibvjcbjmnkm-gcc-15.2.0-lib",
+    "/nix/store/clqknm3pgln8pxb6n7iamffk313nr91r-libidn2-2.3.8",
+    "/nix/store/dm73ixd67qqcxd29hvh22hkspirgw09p-phenix-kernel-0.1.0",
+    "/nix/store/dxszpyw0pn7h1cxi1y6l33nmwk7f5knn-libunistring-1.4.2",
+    "/nix/store/hps7pxvcgq32x46yx5a2nx53js5j41vb-xgcc-15.2.0-libgcc",
+    "/nix/store/ias8xacs1h3jy7xgwi2awvim61k2ji6c-glibc-2.42-67",
+    "/nix/store/wlj7fzgbchbxhd6hplwm2dwl15gizcn5-gcc-15.2.0-libgcc"
+  ],
+  "production_kernel": "/nix/store/dm73ixd67qqcxd29hvh22hkspirgw09p-phenix-kernel-0.1.0",
+  "report_sha256": {
+    "a0-agent-product/deployment.json": "3d4872130ed3e74f22669f5d04d18185092daf19ca85e1e2706ffcca0afc2345",
+    "a0-agent-product/product.json": "e5a2944fc256764338259f18e7271c1fe892728df27b6fb9a9e2d58cfa56ad7f",
+    "a0-agent/agent.json": "6ac06d4ca5641113b60d493d25d496cd2692ba9fd7d16741a9cdf20f93b6b41a",
+    "a0-agent/composition.json": "864f8a52bf274d2b73b04b6e110722745a4bee76eacf758750d73dd280ceea39",
+    "a0-nix-output.json": "4243334d6a2e019d0fe3e233ae95ce04d24108a5a9b02ca59981039909675318",
+    "composition-product/blue.json": "f1f0b8454ffa03c2afbd111f71b6bc79eb69928ee9a270c20d5420da93cdfd38",
+    "composition-product/product.json": "a7cb32fbdb4c9526f2ad3b4a1df5ccb8f30513ba4bce83814754191ac202f117",
+    "composition-product/switch.json": "dc95c1a4c72c191c61f7df2e4fab10971e9b83b464a68e62a1bb14ca720a31b2",
+    "composition/composition-policy.json": "7c34c1ecc139f5d5610ccdabfb7859b2f1514fdf3a9bed066ed8c2c3bfeac00a",
+    "composition/composition.json": "0b651f699d5ee1aada31d36ee857f3f1b0da5262bfaf1b4ac0b704b1fdd6b91a",
+    "composition/scoped-policy.json": "05126f79ed6aec4dc90dce3d27ade72ec18f89853287a5a08e1f92d6910a8b48",
+    "descriptor/evidence.json": "965138c25ded4cb09aa6d0676658d86efe06f020d1fb33b92f83e44a0a44fbf2",
+    "generations/concurrent.json": "cff12d1697df342265573a7bfadecc1041a89d086546c5bd9d76072cd1246f4e",
+    "generations/evidence.json": "6c8e6a6017f825b62c4174c86381176058b96ac45bfbb486ced5e659c68c153a",
+    "generations/identity-vector.json": "64768a975b066e90bb56673d80d79e3b47eb434cb0fe1c4a284cf087fd35c888",
+    "imports/composition.json": "939a78c4197571ba1576674215a1fe443e63c4ca1624b81cf8fd854018761454",
+    "imports/evidence.json": "ceea8983dd895353ece908cabe2b3e86c1b3c99151d4cee4468d7f0a29bb9f36",
+    "lifecycle-product/product.json": "5eaa3fca683d9dfc25daa36ef86986635c889fb98cdc9072179872ab339a6dda",
+    "lifecycle/lifecycle-policy.json": "6d167086a4cad9f2b2ea21f13543b8c840748def7e15141f8c14f90d1451dc27",
+    "lifecycle/lifecycle.json": "41979c75d15715fc8a08f8034933eb47ef2f9045f8635c9d280d700c9d69392b",
+    "m1-metadata-state/metadata.json": "f636f7d2f2c793c41e9f2f8980df2616391d413b1889f1c6bdcaaf2efdf017b8",
+    "m1-metadata-state/native.json": "8d5f8a9bb964bb388026ca6fe2db9f4d7c64a9677ee7a0d8f1fa2d7fe16a585f",
+    "m1-nix-output.json": "a0eded71c01c8d27e61f505250d93452ac46c34afb6368e98c67eb348bf22f6d",
+    "m1-reference-wire/evidence.json": "e3ebc4afde006eeca870bf203ed386ac46e1ed6ffe5f43a4ee9d445686ac5324",
+    "m1-state-nix-output.json": "b5412801a7015481fdf9bc25d45377cde2badc94e1f6c4875050e43876dc9a72",
+    "native/native.json": "c5ca540b35c6ac3dc387f224c897940a2de3a36cf288a75fca0f13964508c0fb",
+    "nix-output.json": "f6240171c66afa8f2448bea6d7aaebbc4738f110a4d06e0087e69c02d4d9981f",
+    "pending-product/evidence.json": "7c1e09f06a9006ad3559bef136b0e0b563fab1c7cef6e583fad037fd5373121a",
+    "pending/composition.json": "3f0eb1e13e5b8d2837ca309e0ad3655f41a639d6b6bb0b496a7d758b6f4a7551",
+    "pending/descriptor-evidence.json": "d934dfcfea707f1665c09f7dfc52ded6c93077f3bd2a369ba94ad3ed842aadb9",
+    "pending/evidence.json": "31b7a4136429b79201eace7e81cc173fd946f11379d15b8b33723d651674cf38",
+    "pending/retained-on-drop.json": "ec6c8cb1a7f4310dd9eee83c2f8b3aeaefcb3d2da237ff6e98d3c1c6abe9068d",
+    "product/failures.json": "cff584572ae5745fccd4adaef8eb03fe86a5aa469a66c7beb13fbdaf8a50eb5b",
+    "product/product.json": "f3983cc214731e5db7d8ae2d5ec1295db72e338cff9e75f7cddeefc8f42bc267",
+    "shipping/evidence.json": "061d9ef6a11a181d00b373b4ffb8030df9fcbe8386dd982e20842a8dcb3c3b3f"
+  },
+  "run_id": 38134340209
+}

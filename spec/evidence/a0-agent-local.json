@@ -1,0 +1,357 @@
+{
+  "cli": "scratch artifacts rejected; only full Nix product evidence can establish acceptance",
+  "compiler": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "format": "phenix.a0.local-evidence.v1",
+  "frozen_contract_commit": "70eaff8c5654396c309bf4420431a5fff51a28c3",
+  "implementation_commit": "4d47e783bb180fe19ec41c7f3b6eacf857474879",
+  "local_clippy": {
+    "agent_plugins": "pass with existing generated drop_non_drop diagnostic allowed",
+    "ci": "no allowances; pinned full warnings-denied check required",
+    "workspace": "pass with pre-existing deprecated atomic diagnostic allowed"
+  },
+  "native_profiles": {
+    "a0-local": {
+      "report": {
+        "cases": [
+          {
+            "case": "phenix",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "repeat",
+            "tool_calls": 20,
+            "turns": 21
+          },
+          {
+            "case": "tool-error",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "final",
+            "tool_calls": 0,
+            "turns": 1
+          },
+          {
+            "case": "empty-final",
+            "tool_calls": 0,
+            "turns": 1
+          },
+          {
+            "case": "second session",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "model-error",
+            "error": "ModelFailed",
+            "tool_calls": 0
+          },
+          {
+            "case": "unknown-tool",
+            "error": "UnknownTool",
+            "tool_calls": 0
+          },
+          {
+            "case": "invalid-final",
+            "error": "InvalidReply",
+            "tool_calls": 0
+          },
+          {
+            "case": "duplicate",
+            "error": "InvalidReply",
+            "tool_calls": 1
+          },
+          {
+            "case": "phenix",
+            "error": "TurnLimit",
+            "tool_calls": 1
+          },
+          {
+            "case": "denied",
+            "operation": "example.model@1/complete",
+            "tool_calls": 0
+          },
+          {
+            "case": "denied",
+            "operation": "example.tool@1/execute",
+            "tool_calls": 0
+          },
+          {
+            "case": "alternate-provider",
+            "tool_calls": 0
+          }
+        ],
+        "exact_limit_completion": true,
+        "format": "phenix.a0.agent.v1",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.agent@1/run",
+              "example.model@1/complete",
+              "example.tool@1/count",
+              "example.tool@1/execute"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.agent",
+              "operation": "example.model@1/complete",
+              "provider": "example.agent-model"
+            },
+            {
+              "caller": "example.agent",
+              "operation": "example.tool@1/execute",
+              "provider": "example.agent-tool"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.agent@1",
+            "operation": "run",
+            "provider": "example.agent"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": null,
+          "lifecycle": {
+            "startup_order": [
+              "example.agent-model",
+              "example.agent-tool",
+              "example.agent",
+              "example.agent-alternate"
+            ],
+            "stop_failures": [],
+            "stopped": false
+          },
+          "plugins": [
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "ccfb2feab20d8948191c49c96cc260cf176aa43920103ef81e9af7b30e01896a",
+              "descriptor_sha256": "1eef9a42f35a6d301c65c2958d74ff0bd81fdec2f4e4060edd894d7e113b13ab",
+              "id": "example.agent",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "17564d50e9653c0f84288353f6e92fd7769ade1142612c8cc89d2ba8128bd219",
+              "descriptor_sha256": "8007c38d7a195b8cdbc64fcec2b2c652f87145153b0b87224c561aebf8ed7b2d",
+              "id": "example.agent-alternate",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "7255c9f52151ffbdbf35c1a9678da03de45490880564a1a7b8c1f29295047357",
+              "descriptor_sha256": "e8a61f6ccc57746a577ff86c12a358434da63e17d6bb3f4d7ecd2caa72fdbc07",
+              "id": "example.agent-model",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "1491aa0542926e860560b6e70e90c69819bd0ba7ee9002cc8f90812d1efcb7de",
+              "descriptor_sha256": "42fe2157ea55c6dfc30f11230b0147e823e714492ea2dfe794462372e13545f2",
+              "id": "example.agent-tool",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "isolation_after_failure": true,
+        "order_independent_inspection": true
+      },
+      "report_sha256": "f5c8fbcf9a96f7fbf90b7ffc187afb773cfe07d26f400d48f088b072b532bccf"
+    },
+    "a0-release": {
+      "report": {
+        "cases": [
+          {
+            "case": "phenix",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "repeat",
+            "tool_calls": 20,
+            "turns": 21
+          },
+          {
+            "case": "tool-error",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "final",
+            "tool_calls": 0,
+            "turns": 1
+          },
+          {
+            "case": "empty-final",
+            "tool_calls": 0,
+            "turns": 1
+          },
+          {
+            "case": "second session",
+            "tool_calls": 1,
+            "turns": 2
+          },
+          {
+            "case": "model-error",
+            "error": "ModelFailed",
+            "tool_calls": 0
+          },
+          {
+            "case": "unknown-tool",
+            "error": "UnknownTool",
+            "tool_calls": 0
+          },
+          {
+            "case": "invalid-final",
+            "error": "InvalidReply",
+            "tool_calls": 0
+          },
+          {
+            "case": "duplicate",
+            "error": "InvalidReply",
+            "tool_calls": 1
+          },
+          {
+            "case": "phenix",
+            "error": "TurnLimit",
+            "tool_calls": 1
+          },
+          {
+            "case": "denied",
+            "operation": "example.model@1/complete",
+            "tool_calls": 0
+          },
+          {
+            "case": "denied",
+            "operation": "example.tool@1/execute",
+            "tool_calls": 0
+          },
+          {
+            "case": "alternate-provider",
+            "tool_calls": 0
+          }
+        ],
+        "exact_limit_completion": true,
+        "format": "phenix.a0.agent.v1",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.agent@1/run",
+              "example.model@1/complete",
+              "example.tool@1/count",
+              "example.tool@1/execute"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.agent",
+              "operation": "example.model@1/complete",
+              "provider": "example.agent-model"
+            },
+            {
+              "caller": "example.agent",
+              "operation": "example.tool@1/execute",
+              "provider": "example.agent-tool"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.agent@1",
+            "operation": "run",
+            "provider": "example.agent"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": null,
+          "lifecycle": {
+            "startup_order": [
+              "example.agent-model",
+              "example.agent-tool",
+              "example.agent",
+              "example.agent-alternate"
+            ],
+            "stop_failures": [],
+            "stopped": false
+          },
+          "plugins": [
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "a68929a369476b486bf2b5b27a5e304646ae2da839253b154931e9fd387bc9c0",
+              "descriptor_sha256": "1eef9a42f35a6d301c65c2958d74ff0bd81fdec2f4e4060edd894d7e113b13ab",
+              "id": "example.agent",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "4a2677b59e8aff2903fe26aedd0591f40d8699f465c8e9f552b4216412da6f83",
+              "descriptor_sha256": "8007c38d7a195b8cdbc64fcec2b2c652f87145153b0b87224c561aebf8ed7b2d",
+              "id": "example.agent-alternate",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "04107ec80ceb74fce1088299c3165c284b14880e315902f48568cde6dddc0011",
+              "descriptor_sha256": "e8a61f6ccc57746a577ff86c12a358434da63e17d6bb3f4d7ecd2caa72fdbc07",
+              "id": "example.agent-model",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": false,
+              "artifact_sha256": "feeec434ba3f1875d457992ec8e368dccbc318b3a2ac6459986fbca776b41ce4",
+              "descriptor_sha256": "42fe2157ea55c6dfc30f11230b0147e823e714492ea2dfe794462372e13545f2",
+              "id": "example.agent-tool",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "isolation_after_failure": true,
+        "order_independent_inspection": true
+      },
+      "report_sha256": "3add34934ee1fb10d4a12f06c9da669f90f88c4d6573ee6f19ed9ddea60debbc"
+    }
+  },
+  "sdk_only": {
+    "four_plugins_built": true,
+    "private_artifact_present": false,
+    "private_kernel_present": false
+  },
+  "source_sha256": {
+    ".github/workflows/minimal-kernel.yml": "4550775b8d877178da9fe4b555d1ea1b65ac599d14d1048fc69657b6f92d3696",
+    "Cargo.lock": "029b16403c9aff960482bb88dc45a4b77c4461513a9bf7aa47757bf23e27aadc",
+    "Cargo.toml": "3f8ed63826b7df1983cc688f104f6c04fb34d99146d148dd21322a4f4d4d775d",
+    "crates/phenix-conformance/src/bin/phenix-a0-agent.rs": "2c3c36317c5e6ba00b64a054e7c261e5569145a810eff091e6e6b3219bdc4130",
+    "examples/Cargo.lock": "f22c14b76c92ef987b56963984382892654f0240d2e1633efcd369957e6c0093",
+    "examples/Cargo.toml": "42f00fe9c4f1f55450c7643498405826797fdecfaa3430e713328910dbf73598",
+    "examples/agent-alternate/Cargo.toml": "37e996c61d2c1dbe69bced7a18b08ab07f281fcf7f94a0de01294238ec8bf2a1",
+    "examples/agent-alternate/src/lib.rs": "37b7afbc2ffed8c2df9d16ac70ae138e34fee3be84986a4269baf56591b21740",
+    "examples/agent-contracts/Cargo.toml": "05018128203f10b60f42ce9f5d11460e6359443e5c206751e5824d5dd92db24c",
+    "examples/agent-contracts/src/lib.rs": "781f480db2905f41e6266387db4bb655ad5d11df325e1536513b9e46821a5299",
+    "examples/agent-model/Cargo.toml": "1aca42502898e1be7dd73e68dfec53983bd81d6a669a043294351665770ed0f7",
+    "examples/agent-model/src/lib.rs": "6de9fc4ec994c1a6a1f317280ec9b4b4127a118da4f4e26b7db10035c0642893",
+    "examples/agent-tool/Cargo.toml": "e65ca11daf026ed10695d84e37780bf84ad922c0d7a81de1dafa5da4c4d5aa8e",
+    "examples/agent-tool/src/lib.rs": "bbde868cdc8beb8457b48745da4eeb263321e61d412fd3044b67d6da7b6860a3",
+    "examples/agent/Cargo.toml": "8eb55a29197548fb1ed890afafbb14bc05f137b193273ba6733b095c60af1a1e",
+    "examples/agent/src/lib.rs": "53afd6b8da9d4dc323083ba90f17640cc09508080ff2c92b8a2af6bab2b0bf30",
+    "flake.nix": "5bec3f0cfe96488cd5ddf9018a904959eab736939006042e6ec9d33b6d967ad5",
+    "spec/a0-agent-contract.md": "6384f4bc2e0124b1626f54b08c481ba4d5c0cc0d8e5369525d37aa79ee71364d",
+    "tests/a0-agent-product.py": "a3f4b4b5d20aedab7f086fc4e18efe85595e9c08aac56b9cd73eae1551cbb71c"
+  },
+  "workspace_unit_and_compile_fail_tests": "pass"
+}
