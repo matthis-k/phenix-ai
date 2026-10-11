@@ -18,7 +18,8 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | PROVEN at `2682be5f` in CI 38125329024 |
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | TESTED locally; full CI pending; `m1-live-state-matrix.md` |
-| S3 | Typed Rust value SDK and property/contract proc macros | S2 | External SDK-only annotated plugin | Not started |
+| S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | Freeze authored; implementation pending |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Not started |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
@@ -147,7 +148,10 @@ policy check, resolver, generation manager and pending tickets as M0. The
 
 ## 4. S3: Rust SDK, macros and ergonomic plugin state
 
-Owner: one S3 implementation PR.
+S3 is split before implementation: S3a owns typed values, static schemas and
+SDK state access; S3b owns generated contract/property authoring and ABI glue.
+The dependency and file ownership are frozen in `m1-value-sdk-contract.md`.
+Neither split changes the S4/S5 order or the complete S3 acceptance gate.
 
 | File | Required change |
 | --- | --- |
