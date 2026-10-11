@@ -27,3 +27,9 @@ reactive execution. S6 owns concurrent admissions; the current profile remains
 serial. Pending child imports for generated ABI 3 authoring belong to the S3
 host/SDK gate, using the existing ticket manager. No model I/O, persistence,
 skills, context or Basic service parity is claimed by this kernel stage.
+
+Initial CI 38168891184 passed the native and real CLI state gates, then failed
+M0.4 shipping because its all-example authoring scan included S2's independent
+ABI producers. The corrected scan excludes only those protocol fixture folders
+while retaining the original assertions for all M0/A0 authored plugins. Full
+CI acceptance is still pending; the failed run is not accepted evidence.
