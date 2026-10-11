@@ -43,6 +43,8 @@ Ordinary `bool`, `String`, `Vec<T>`, `Option<T>`, maps, structs, and enums remai
 
 The portable representation of a ref contains version, namespace/owner incarnation, cell identity, schema identity, and any non-secret versioning fields required to locate it. The kernel authenticates callers and separately validates read, watch, and write grants at each access. It MUST NOT serialize capabilities, raw native pointers, `Arc`, `dyn Any`, `TypeId`, mutex guards, or credentials. The kernel MUST bound payloads, reference nesting, and graph fan-out by explicit validated protocol limits, not arbitrary execution timeouts.
 
+The [S1a wire contract](m1-reference-wire-contract.md) fixes portable identities, schema hashing and the explicitly selected v2 encoding. S1b owns the dependent native state-host profile.
+
 ## 4. Live value semantics
 
 A kernel cell holds a stable `ValueId`, schema, owner incarnation, monotonic revision, and immutable current snapshot. Value bytes MAY be internally shared by `Arc<[u8]>`. Type-specific Rust objects MAY be cached inside one plugin, but never used as an ABI contract.
@@ -164,3 +166,4 @@ Any unsupported ABI profile, malformed graph, missing dependency, conflicting co
 ## 9. Milestones
 
 The ordered execution plan, acceptance gates, file-by-file ownership, and proof artifacts are in [m1-roadmap.md](m1-roadmap.md). Each implementation PR MUST include its stage's focused semantic tests and update the roadmap's evidence column. `PROVEN` requires tested executable behavior at the exact commit, not a checked box or green CI alone.
+

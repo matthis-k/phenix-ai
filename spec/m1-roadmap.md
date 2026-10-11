@@ -15,8 +15,9 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | ID | Proposed PR scope | Depends on | Exit gate | Status |
 | --- | --- | --- | --- | --- |
 | S0 | M1 RFC, this roadmap and M0-to-M1 links | #771 head | Consistent contract and file-level scope | Spec authored; review pending |
-| S1 | Contracts, stable identities and versioned wire/ABI proof | S0 | Independent schema/ABI vectors, no M0 regression | Not started |
-| S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1 | External native state and security fixtures | Not started |
+| S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | Contract frozen; implementation starting |
+| S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | Not started |
+| S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b | External native state and security fixtures | Not started |
 | S3 | Typed Rust value SDK and property/contract proc macros | S2 | External SDK-only annotated plugin | Not started |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
@@ -27,7 +28,9 @@ S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST
 
 ## 2. S1: contract and wire freeze
 
-Owner: one S1 implementation PR. Freeze descriptor/wire/ABI revisions and independent golden vectors before runtime code.
+S1a owns the [frozen portable reference wire contract](m1-reference-wire-contract.md), `crates/phenix-contract/src/reference.rs`, `crates/phenix-contract/src/value.rs`, the contract dependency/lockfile updates, `tests/m1-contract-vectors.json`, `tests/m1-wire-negative.py`, and the public-contract probe. `flake.nix` and the conformance workflow own its executable gate. This split proves canonical bytes before live state callbacks can use them.
+
+S1b depends on S1a and owns definition-only metadata, property/import-slot descriptors and the separately negotiated state-host ABI. The table below names the combined S1 scope. Freeze each profile before runtime code.
 
 | File | Required change |
 | --- | --- |
@@ -133,3 +136,4 @@ Each stage updates only its own source files, fixtures, the relevant RFC addendu
 Run focused tests while implementing, full `nix flake check -L` and release evidence before marking a stage accepted. Verify M0 tests, external independent artifacts, denied-effect counters, negative ABI cases, state/ref lifecycle, and canonical identity vectors. Nix builds remain declarative and CI read-only.
 
 Rules for restructuring stages: record a concrete dependency and file ownership before creating another PR. Do not reintroduce the old kernel, a second scheduler, temporary compatibility paths, or agent code into the kernel. Remove an obsolete code path only after its replacement has independent executable proof.
+
