@@ -113,3 +113,17 @@ and polls return `live::PendingResult<Response,Error>`. Cancel hooks return
 `Result<bool,Failure>`. Start runs after cell binding with local state only.
 Stop runs once during native teardown. Every exported contract operation
 requires exactly one matching handler. Field-only providers need no handlers.
+
+## Property location discovery
+
+`phenix.host.property.v2` accepts a v2 String containing a property operation
+key and uses the selected import slot from the ABI slot argument. It returns a
+typed location for that selected owner's property. Selection, the declared
+operation, the active authority and the property resource must pass the same
+state authorization checks before the location is returned. A location grants
+no authority and cannot discover unselected providers.
+
+Each generated property operation marker exposes `locate(host, slot)`.
+This lets an independent caller consume a field-only provider without an extra
+service whose only purpose is to return the field's location. Ordinary get,
+set and watch retain their frozen schemas and authorization.
