@@ -370,7 +370,7 @@ fn normalize_metadata(
     let mut add = |slot: &str,
                    name: &str,
                    revision: u64,
-                   provide: bool,
+                   provide: Option<bool>,
                    optional: bool|
      -> Result<Vec<Contribution>, Failure> {
         let definition = definitions.get(&(name.into(), revision)).ok_or_else(|| {
@@ -404,32 +404,34 @@ fn normalize_metadata(
                     ));
                 }
             }
-            let role = if provide { "Provide" } else { "Require" };
-            contributions.push(Contribution {
-                slot: Some(slot.into()),
-                optional,
-                implementation: None,
-                id: format!("{}/{slot}/{key}/{role}", metadata.plugin),
-                kind: "phenix.operation.v2".into(),
-                operation: key,
-                owner: metadata.plugin.clone(),
-                provenance: slot.into(),
-                role: role.into(),
-            });
+            if let Some(provide) = provide {
+                let role = if provide { "Provide" } else { "Require" };
+                contributions.push(Contribution {
+                    slot: Some(slot.into()),
+                    optional,
+                    implementation: None,
+                    id: format!("{}/{slot}/{key}/{role}", metadata.plugin),
+                    kind: "phenix.operation.v2".into(),
+                    operation: key,
+                    owner: metadata.plugin.clone(),
+                    provenance: slot.into(),
+                    role: role.into(),
+                });
+            }
         }
         Ok(contributions)
     };
     for p in &metadata.provides {
         descriptor
             .exports
-            .extend(add(&p.slot, &p.contract, p.revision, true, false)?);
+            .extend(add(&p.slot, &p.contract, p.revision, Some(true), false)?);
     }
     for p in &metadata.properties {
         descriptor.exports.extend(add(
             &format!("property.{}", p.id),
             &property_contract(&metadata.plugin, &p.id)?,
             1,
-            true,
+            Some(true),
             false,
         )?);
     }
@@ -438,9 +440,14 @@ fn normalize_metadata(
             &r.slot,
             &r.contract,
             r.revision_min,
-            false,
+            Some(false),
             r.cardinality == Cardinality::Optional,
         )?);
+    }
+    // A native definition declares a delegation ceiling, without selecting or
+    // importing a provider. Runtime grants still intersect every ancestor.
+    for definition in &metadata.definitions {
+        add("", &definition.contract, definition.revision, None, false)?;
     }
     descriptor.contracts = declarations.into_values().collect();
     descriptor.authority_ceiling = descriptor.contracts.iter().map(|c| c.key.clone()).collect();

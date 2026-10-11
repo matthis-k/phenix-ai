@@ -1,7 +1,7 @@
 pub mod live;
 use abi::{Bytes, HostApi, Reply};
 pub use phenix_contract::*;
-pub use phenix_macros::{contract, operation, plugin, LivePortable, Portable};
+pub use phenix_macros::{contract, operation, plugin, property, LivePortable, Portable};
 use std::{marker::PhantomData, rc::Rc};
 /// An import host borrowed for one synchronous call. It cannot cross threads.
 /// Unsupported authoring forms fail at compile time.

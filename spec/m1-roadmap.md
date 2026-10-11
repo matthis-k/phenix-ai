@@ -19,7 +19,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | PROVEN at `6ce818c4`, CI 38170397949; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
-| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Contracts and native metadata encoder tested; generated native authoring remains |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Native metadata, generated ABI 3, fields and typed slots tested; authenticated pending imports remain |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1 and G2 below; not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3 and G4 below; not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |

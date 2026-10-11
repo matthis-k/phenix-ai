@@ -158,6 +158,8 @@ pub fn expand(
                     error: <#error as ::phenix_sdk::live::Portable>::SCHEMA,
                 };
             }
+            impl __sealed::Sealed for #symbol {}
+            impl Member for #symbol {}
         }, quote!(#symbol::DEFINITION)));
     }
     if methods.is_empty() {
@@ -178,6 +180,8 @@ pub fn expand(
         #visibility mod #name {
             #[allow(unused_imports)]
             use super::*;
+            mod __sealed { pub trait Sealed {} }
+            pub trait Member: ::phenix_sdk::live::Operation + __sealed::Sealed {}
             #(#declarations)*
             pub const CONTRACT: ::phenix_sdk::StaticContract = ::phenix_sdk::StaticContract {
                 contract: #id,

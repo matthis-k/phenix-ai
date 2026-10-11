@@ -128,6 +128,41 @@
       resources = plugin "example-resource-provider";
       valueProvider = plugin "example-value-provider";
       valueClient = plugin "example-value-client";
+      authoredProvider = plugin "example-authoring-provider";
+      authoredClient = plugin "example-authoring-client";
+      authoredField = plugin "example-authoring-field";
+      authoredApi = rust.buildRustPackage {
+        pname = "example-authoring-api";
+        version = "0.1.0";
+        src = pluginSource;
+        buildAndTestSubdir = "examples";
+        cargoRoot = "examples";
+        cargoLock.lockFile = ./examples/Cargo.lock;
+        cargoBuildFlags = [ "-p" "example-authoring-api" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = false;
+        installPhase = ''
+          test ! -e ../crates/phenix-kernel
+          test ! -e ../crates/phenix-artifact
+          mkdir -p $out/bin
+          cp target/*/release/example-authoring-api $out/bin/
+        '';
+      };
+      authoredDefinitions = pkgs.runCommand "phenix-authored-definitions" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p $out
+        ${authoredApi}/bin/example-authoring-api $out/descriptor.bin
+        python - "$out" <<'PY'
+        import hashlib, json, sys
+        from pathlib import Path
+        out = Path(sys.argv[1])
+        digest = hashlib.sha256((out / "descriptor.bin").read_bytes()).hexdigest()
+        (out / "package.json").write_text(json.dumps(dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest)))
+        PY
+        ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
+      '';
+      authoringCheck = pkgs.runCommand "phenix-m1-native-authoring" { } ''
+        ${conformanceBinary}/bin/phenix-m1-authoring ${authoredProvider} ${authoredClient} ${authoredField} ${authoredDefinitions} $out
+      '';
       staticSchemaProbe = (build "phenix-contract" publicSource).overrideAttrs (old: {
         cargoBuildFlags = [ "-p" "phenix-contract" "--bin" "phenix-static-schema-probe" ];
       });
@@ -474,6 +509,7 @@
         };
       };
       checks.${system} = {
+        m1-native-authoring = authoringCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;

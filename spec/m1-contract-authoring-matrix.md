@@ -1,6 +1,6 @@
 # S3b generated authoring matrix
 
-Status: partial implementation; native metadata slice tested locally, current-head full CI required
+Status: partial implementation; native authoring slice tested locally, current-head full CI required
 Frozen contract: m1-contract-authoring-contract.md, preceding implementation
 
 | File or task | State | Evidence or remaining acceptance |
@@ -13,11 +13,15 @@ Frozen contract: m1-contract-authoring-contract.md, preceding implementation
 | `phenix-contract/src/descriptor/static_metadata.rs` native encoder | TESTED | Const definitions, One/Optional/Many import slots, export slots and properties; canonical bytes match independently authored owned metadata; sorted contributions and duplicate/identity/revision/cardinality/size rejection |
 | `phenix-contract/tests/static_native.rs` | TESTED | Four tests cover independent full-byte metadata, contribution-order invariance, invalid contributions and bounded encoding |
 | `phenix-artifact/src/lib.rs`, `tests/m1-metadata-negative.py` | TESTED | Exact 16/128 KiB M1 sections, M0 exact 16 KiB rule, length/padding/profile/canonical checks; real ELF files have trapping constructors to prove offline inspection |
-| Constant native plugin macro lowering | PENDING | require/provide and field annotations must feed the native encoder through public SDK macros |
-| Plugin macro state profile | PENDING | Generated ABI 3 init/invoke/poll/cancel/stop; instance poisoning and cleanup |
-| Exposed State fields and API property symbols | PENDING | Field-only provider, Cell rewrite and checked publication |
+| `phenix-macros/src/state.rs` native lowering | TESTED | SDK define/require/provide and field annotations emit canonical metadata and the 128 KiB section; named One/Optional/Many typed slot helpers; sealed contract membership; const handler coverage/schema validation |
+| Plugin macro state profile | TESTED | Generated ABI 3 create/initialize/invoke/poll/cancel/stop; initialization binds fields once before start; v2 panic boundaries; poisoned invocation rejects before work, poll/cancel remain available; pending handlers require a native ticket |
+| `phenix-macros/src/property.rs`, exposed State fields | TESTED | Authored portable fields rewrite to Cell<T>; stable IDs and declared get/set/watch produce typed property modules; API-only aliases match independently authored synthetic schemas; plain fields remain local |
+| `phenix-sdk/tests/native_authoring.rs`, SDK native compile failures | TESTED | Real generated ABI callbacks, single-use binding, typed imports, domain/pending/cancel/poll, panic/drain/stop; eight new compile-fail cases include undeclared/wrong-contract imports, missing/duplicate exports, invalid fields and mismatched handlers |
+| `phenix-artifact/src/lib.rs`, `phenix-kernel/src/resolve.rs`, `runtime.rs` | TESTED | Native definitions contribute only a maximum delegation ceiling; explicit grants, selections and resources still authorize effects; ABI 3 quiescent failures propagate as typed failures |
 | ABI 3 pending import SDK and host envelopes | PENDING | Existing ticket manager, child authentication, domain recovery and cancellation |
-| External definition/provider/decorator/caller fixtures | PENDING | SDK-only builds and independent canonical metadata/behavior gate |
+| `examples/authoring-api/`, `authoring-provider/`, `authoring-client/`, `authoring-field/` | TESTED | SDK-only annotated API package, mixed synchronous/pending provider, typed intermediary and field-only provider; no build scripts or handwritten native descriptors/table glue |
+| `phenix-conformance/src/bin/phenix-m1-authoring.rs`, `flake.nix`, workflow evidence | TESTED locally | Existing kernel loads independent native packages; named slots, Optional/Many, synthetic property read, pending/cancel, ceiling and resource/import/operation denial with zero committed effects; new m1-native-authoring full-CI gate and artifact |
+| External pending caller and complete import security fixtures | PENDING | ABI 3 parent/child calls, child ticket slot authentication, scoped requests, domain recovery, cancellation and abandonment |
 | Full S3b acceptance | NOT PROVEN | Exact-commit CI, downloaded artifact and all predecessor gates |
 
-The triggered Basic roadmap in `m1-roadmap.md` now owns follow-on work. G1 follows complete S3b acceptance. Native macro lowering, ABI 3 hooks, fields and pending imports still block that acceptance.
+The triggered Basic roadmap in `m1-roadmap.md` now owns follow-on work. G1 follows complete S3b acceptance. Authenticated pending imports, native resource context, property control during a physical pending call, and the complete external security suite still block acceptance. The metadata implementation commit `fef00f549ec3fc944e9520307fa13f6509fc34d8` passed full CI 38178581812. The native authoring slice requires its own exact-head full-CI evidence.

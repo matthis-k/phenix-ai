@@ -296,6 +296,82 @@ pub const fn definitions<const N: usize>(
     )
 }
 
+/// Check exported handler coverage without calling plugin code.
+pub const fn validate_handlers<const P: usize, const H: usize>(
+    contracts: [StaticContract; P],
+    handlers: [StaticOperation; H],
+) {
+    let mut handler = 0;
+    while handler < H {
+        let mut other = 0;
+        while other < handler {
+            assert!(
+                crate::static_schema::compare(handlers[other].key, handlers[handler].key) != 0,
+                "duplicate exported handler"
+            );
+            other += 1;
+        }
+        let mut found = false;
+        let mut contract = 0;
+        while contract < P {
+            let mut operation = 0;
+            while operation < contracts[contract].operations.len() {
+                let expected = contracts[contract].operations[operation];
+                if crate::static_schema::compare(expected.key, handlers[handler].key) == 0 {
+                    assert!(
+                        same_schema(expected.request, handlers[handler].request)
+                            && same_schema(expected.response, handlers[handler].response)
+                            && same_schema(expected.error, handlers[handler].error),
+                        "exported handler schema mismatch"
+                    );
+                    found = true;
+                }
+                operation += 1;
+            }
+            contract += 1;
+        }
+        assert!(found, "handler has no provided contract");
+        handler += 1;
+    }
+    let mut contract = 0;
+    while contract < P {
+        let mut operation = 0;
+        while operation < contracts[contract].operations.len() {
+            let mut found = false;
+            handler = 0;
+            while handler < H {
+                if crate::static_schema::compare(
+                    contracts[contract].operations[operation].key,
+                    handlers[handler].key,
+                ) == 0
+                {
+                    found = true;
+                }
+                handler += 1;
+            }
+            assert!(found, "provided operation has no handler");
+            operation += 1;
+        }
+        contract += 1;
+    }
+}
+
+const fn same_schema(left: StaticSchema, right: StaticSchema) -> bool {
+    let left = left.encode();
+    let right = right.encode();
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left.at(index) != right.at(index) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// Compile-time lowering into the same canonical protocol as owned metadata.
 pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: usize>(
     plugin: &str,

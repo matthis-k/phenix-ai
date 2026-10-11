@@ -410,7 +410,7 @@ impl Prepared {
                     && !packages.get(&g.caller).is_some_and(|p| {
                         p.descriptor().imports.iter().any(|x| x.operation == key)
                             || (p.descriptor().abi_major == 3
-                                && p.descriptor().exports.iter().any(|x| x.operation == key))
+                                && p.descriptor().authority_ceiling.contains(&key))
                     }))
                 || grants.insert((g.caller, key), g.resources).is_some()
             {

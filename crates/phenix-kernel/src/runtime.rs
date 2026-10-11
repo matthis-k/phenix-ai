@@ -463,6 +463,7 @@ impl Kernel {
                 Ok(super::pending::Call::Ready(Outcome::Domain(value)))
             }
             2 => Err(Failure::from_value(value)?),
+            5 if package.descriptor().abi_major == 3 => Err(Failure::from_value(value)?),
             _ => self.fail(
                 Code::SchemaRejected,
                 "provider returned an undeclared result",

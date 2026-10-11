@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 mod contract;
 mod definitions;
+mod property;
+mod state;
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, spanned::Spanned, Data, DeriveInput, Expr, Fields, ItemMod, ItemType, Meta,
@@ -38,6 +40,12 @@ fn args(
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::ItemTrait);
     contract::expand(attr.into(), item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+#[proc_macro_attribute]
+pub fn property(attr: TokenStream, item: TokenStream) -> TokenStream {
+    property::expand(attr.into(), parse_macro_input!(item as ItemType))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -153,6 +161,15 @@ pub fn operation(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut module = parse_macro_input!(item as ItemMod);
     let attr: proc_macro2::TokenStream = attr.into();
+    match state::selected(attr.clone()) {
+        Ok(true) => {
+            return state::expand(attr, module)
+                .unwrap_or_else(syn::Error::into_compile_error)
+                .into()
+        }
+        Ok(false) => {}
+        Err(error) => return error.into_compile_error().into(),
+    }
     match definitions::selected(attr.clone()) {
         Ok(true) => {
             return definitions::expand(attr, module)

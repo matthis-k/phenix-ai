@@ -630,6 +630,179 @@ pub fn reply<T: Portable, E: Portable>(result: CallResult<T, E>) -> crate::abi::
     }
 }
 
+/// A native provider retains its own physical work until poll or cancellation drains it.
+pub enum PendingResult<T, E> {
+    Ready(CallResult<T, E>),
+    Pending,
+    QuiescentFailure(Failure),
+}
+#[doc(hidden)]
+pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> crate::abi::Reply {
+    match result {
+        PendingResult::Ready(result) => reply(result),
+        PendingResult::Pending => crate::abi::Reply::state_value(3, WireValue::Null),
+        PendingResult::QuiescentFailure(error) => {
+            crate::abi::Reply::state_value(5, error.to_value())
+        }
+    }
+}
+#[doc(hidden)]
+pub fn boundary(f: impl FnOnce() -> crate::abi::Reply) -> crate::abi::Reply {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        crate::abi::Reply::state_value(
+            2,
+            Failure::new(Code::PluginFailed, "caught state plugin panic").to_value(),
+        )
+    })
+}
+
+/// Native declarations reject incomplete exports and unsupported field access.
+/// ```compile_fail
+/// use phenix_sdk::contract;
+/// #[contract(id="test.native@1")] pub trait Api { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.missing",version="1.0.0",profile="state",define(Api),provide(Api,slot="service"))]
+/// mod plugin { use super::*; #[derive(Default)] struct State {} }
+/// ```
+/// ```compile_fail
+/// use phenix_sdk::contract;
+/// #[contract(id="test.native@1")] pub trait Api { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.duplicate",version="1.0.0",profile="state",define(Api),provide(Api,slot="service"))]
+/// mod plugin {
+/// use super::*; #[derive(Default)] struct State {}
+/// #[provide(Api::run)] fn a(_: &mut State,_: &phenix_sdk::live::Host<'_>,_:())->phenix_sdk::CallResult<u64,String>{Ok(1)}
+/// #[provide(Api::run)] fn b(_: &mut State,_: &phenix_sdk::live::Host<'_>,_:())->phenix_sdk::CallResult<u64,String>{Ok(2)}
+/// }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::plugin(id="test.fields",version="1.0.0",profile="state")]
+/// mod plugin { #[derive(Default)] struct State { #[get(id="same")] a:u64, #[get(id="same")] b:u64 } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::plugin(id="test.pointer",version="1.0.0",profile="state")]
+/// mod plugin { #[derive(Default)] struct State { #[get] pointer:*const u8 } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::property(owner="test.readonly",id="value",get)] type Value=u64;
+/// fn change() { let _ = Value::set::KEY; }
+/// ```
+/// ```compile_fail
+/// use phenix_sdk::contract;
+/// #[contract(id="test.a@1")] pub trait A { fn run(&self)->Result<u64,String>; }
+/// #[contract(id="test.b@1")] pub trait B { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.import",version="1.0.0",profile="state",require(A,slot="selected"))]
+/// mod plugin {
+/// use super::*; #[derive(Default)] struct State { #[get] value:u64 }
+/// fn wrong(host:&phenix_sdk::live::Host<'_>) { let _ = imports::selected::invoke::<B::run>(host,&()); }
+/// }
+/// ```
+/// ```compile_fail
+/// use phenix_sdk::contract;
+/// #[contract(id="test.a@1")] pub trait A { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.import",version="1.0.0",profile="state",require(A,slot="selected"))]
+/// mod plugin {
+/// use super::*; #[derive(Default)] struct State { #[get] value:u64 }
+/// fn wrong(host:&phenix_sdk::live::Host<'_>) { let _ = imports::undeclared::invoke::<A::run>(host,&()); }
+/// }
+/// ```
+/// ```compile_fail
+/// use phenix_sdk::contract;
+/// #[contract(id="test.native@1")] pub trait Api { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.mismatch",version="1.0.0",profile="state",define(Api),provide(Api,slot="service"))]
+/// mod plugin {
+/// use super::*; #[derive(Default)] struct State {}
+/// #[provide(Api::run)] fn wrong(_: &mut State,_: &phenix_sdk::live::Host<'_>,_:())->phenix_sdk::CallResult<String,String>{Ok("wrong".into())}
+/// }
+/// ```
+#[doc(hidden)]
+pub struct UnsupportedNativeAuthoring;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PropertyError {
+    Conflict,
+    Denied,
+    OwnerGone,
+    SchemaMismatch,
+    StaleReference,
+}
+impl Portable for PropertyError {
+    const SCHEMA: StaticSchema = StaticSchema::Variants(&[
+        "Conflict",
+        "Denied",
+        "OwnerGone",
+        "SchemaMismatch",
+        "StaleReference",
+    ]);
+    fn to_value(&self) -> WireValue {
+        WireValue::String(
+            match self {
+                Self::Conflict => "Conflict",
+                Self::Denied => "Denied",
+                Self::OwnerGone => "OwnerGone",
+                Self::SchemaMismatch => "SchemaMismatch",
+                Self::StaleReference => "StaleReference",
+            }
+            .into(),
+        )
+    }
+    fn from_value(value: WireValue) -> Result<Self, Failure> {
+        let WireValue::String(value) = value else {
+            return Err(invalid());
+        };
+        match value.as_str() {
+            "Conflict" => Ok(Self::Conflict),
+            "Denied" => Ok(Self::Denied),
+            "OwnerGone" => Ok(Self::OwnerGone),
+            "SchemaMismatch" => Ok(Self::SchemaMismatch),
+            "StaleReference" => Ok(Self::StaleReference),
+            _ => Err(invalid()),
+        }
+    }
+}
+pub struct PropertyUpdate<T> {
+    pub expected: Revision,
+    pub location: ValueRef<T>,
+    pub value: T,
+}
+impl<T: Portable> Portable for PropertyUpdate<T> {
+    const SCHEMA: StaticSchema = StaticSchema::Struct(&[
+        crate::StaticField {
+            name: "expected",
+            schema: StaticSchema::U64,
+        },
+        crate::StaticField {
+            name: "location",
+            schema: ValueRef::<T>::SCHEMA,
+        },
+        crate::StaticField {
+            name: "value",
+            schema: T::SCHEMA,
+        },
+    ]);
+    fn to_value(&self) -> WireValue {
+        WireValue::map([
+            ("expected", WireValue::U64(self.expected.0)),
+            ("location", self.location.to_value()),
+            ("value", self.value.to_value()),
+        ])
+    }
+    fn from_value(value: WireValue) -> Result<Self, Failure> {
+        let WireValue::Map(mut fields) = value else {
+            return Err(invalid());
+        };
+        let result = Self {
+            expected: Revision(u64::from_value(
+                fields.remove("expected").ok_or_else(invalid)?,
+            )?),
+            location: ValueRef::from_value(fields.remove("location").ok_or_else(invalid)?)?,
+            value: T::from_value(fields.remove("value").ok_or_else(invalid)?)?,
+        };
+        if !fields.is_empty() {
+            return Err(invalid());
+        }
+        Ok(result)
+    }
+}
+
 /// Unsupported source representations cannot become live contracts.
 /// ```compile_fail
 /// #[derive(phenix_sdk::LivePortable)] struct Pointer { address:*const u8 }
