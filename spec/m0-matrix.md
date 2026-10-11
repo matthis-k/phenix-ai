@@ -33,14 +33,15 @@ On 2026-10-11, the operator made #771 ready for review and the sole open PR. Sup
 | Nix deployment closure | flake.nix | Separate kernel, SDK, tooling and plugin products; no Nix resolver | Tested | m0-contract, m0-descriptor, m0-native, m0-product |
 | Exact-head CI | .github/workflows/minimal-kernel.yml | All canonical checks, commit stamp, paths, digests and CI run | Local passed; CI tracked in PR | Live status and exact run are recorded in the PR body |
 
-## Remaining acceptance work
+## Acceptance evidence
 
 The full local gate passed at `b7dc0fc3f1a24a5c90f00951c1e34ba0bb517cba`, including loaded-ABI, cycle and panic-poison cases. [Persistent local evidence](evidence/m0-local.json) records exact artifacts and Nix outputs. The initial follow-up evidence commit changes documentation only. The later ABI review closes null-release rejection, failed-create rollback, repeated host stop and failure phase/context inspection. [Follow-up local evidence](evidence/m0-abi-local.json) records realized outputs, final artifact hashes, rollback events and CLI failure fixtures. All four Nix gates passed again on that follow-up working tree; exact commit and run are recorded by CI and linked in the PR body.
 
 The current inspection follow-up replaces separate failure/context fields with one observation record. Its external consumer handles an undeclared import and replaces a provider error; neither behavior needs a new kernel intrinsic. Descriptor validation also rejects signed representations of unsigned metadata fields before JSON conversion. All four Nix checks passed on the final follow-up tree. [Observation follow-up evidence](evidence/m0-observation-local.json) records realized outputs, descriptor/artifact hashes, handled and replaced failures, root admission recovery and CLI inspection. The final exact-head CI run remains tracked in the PR body.
 
-1. Record GitHub CI for the final PR head. Its generated commit stamp and run identify that head without a self-referential document hash.
-2. The [ABI/trust review](m0-abi-review.md) now records completed boundary review and executable rollback/ownership evidence. Remaining acceptance is the exact-head gate for the follow-up, not an unimplemented later milestone. Raw pointer validity and process-fatal cleanup remain outside the trusted-native profile.
+M0.0 is accepted by the [RFC review](m0-acceptance.md) on head `799d74d9c4beec0965a7044f62319c0f4838f90d`, full CI run 38097076854. Each later head must still pass these regression gates.
+
+ The [ABI/trust review](m0-abi-review.md) now records completed boundary review and executable rollback/ownership evidence. The exact-head gate passed for this follow-up. Raw pointer validity and process-fatal cleanup remain outside the trusted-native profile.
 
 ## Mechanism ownership
 

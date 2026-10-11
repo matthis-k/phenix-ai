@@ -1,6 +1,6 @@
 # Minimal kernel implementation
 
-`spec/clean-start-rfc.md` is normative. `spec/m0-contracts.md` fixes the implemented Linux profile. This branch covers P0 and M0.0. Gate later milestones before adding their mechanisms.
+`spec/clean-start-rfc.md` is normative. `spec/m0-contracts.md` fixes the implemented Linux profile. M0.0 is accepted in `spec/m0-acceptance.md`. Continue M0.1–M0.4 in dependency order. Freeze each addendum before implementing its mechanisms. Keep one active PR and update its milestone matrix.
 
 Use `nix flake check -L` for acceptance. `nix run .#phenix-m0-demo` exercises the packaged CLI. The public SDK and external examples build without private kernel sources.
 
