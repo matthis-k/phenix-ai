@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 mod contract;
+mod definitions;
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, spanned::Spanned, Data, DeriveInput, Expr, Fields, ItemMod, ItemType, Meta,
@@ -151,8 +152,18 @@ pub fn operation(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut module = parse_macro_input!(item as ItemMod);
+    let attr: proc_macro2::TokenStream = attr.into();
+    match definitions::selected(attr.clone()) {
+        Ok(true) => {
+            return definitions::expand(attr, module)
+                .unwrap_or_else(syn::Error::into_compile_error)
+                .into();
+        }
+        Ok(false) => {}
+        Err(error) => return error.into_compile_error().into(),
+    }
     let result = (|| {
-        let mut attrs = args(attr.into())?;
+        let mut attrs = args(attr)?;
         let id = required(&mut attrs, "id")?;
         let version = required(&mut attrs, "version")?;
         no_extra(&attrs)?;

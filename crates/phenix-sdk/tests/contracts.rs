@@ -31,6 +31,28 @@ pub trait Search {
     fn r#type(&self, request: Request) -> std::result::Result<Vec<String>, Error>;
 }
 
+#[phenix_sdk::plugin(
+    id = "example.contracts",
+    version = "1.0.0",
+    profile = "definitions",
+    define(Search),
+    define(Counter)
+)]
+pub mod definitions {
+    use super::*;
+}
+
+#[phenix_sdk::plugin(
+    id = "example.contracts",
+    version = "1.0.0",
+    profile = "definitions",
+    define(Counter),
+    define(Search)
+)]
+pub mod reversed_definitions {
+    use super::*;
+}
+
 fn metadata(definition: ContractDefinition) -> ContractMetadata {
     ContractMetadata {
         plugin: "example.contracts".into(),
@@ -118,4 +140,19 @@ fn external_types_and_raw_identifiers_have_portable_identity() {
         cardinality: Cardinality::Optional,
     });
     assert!(ContractMetadata::decode(&native.encode().unwrap()).is_ok());
+}
+
+#[test]
+fn definition_only_plugin_emits_independent_canonical_bytes() {
+    let mut expected = metadata(Counter::CONTRACT.owned().unwrap());
+    expected.definitions.push(Search::CONTRACT.owned().unwrap());
+    let bytes = definitions::METADATA.bytes();
+    assert_eq!(bytes, expected.encode().unwrap());
+    assert_eq!(bytes, reversed_definitions::METADATA.bytes());
+    let decoded = ContractMetadata::decode(bytes).unwrap();
+    assert_eq!(decoded.execution, MetadataExecution::None);
+    assert!(decoded.requires.is_empty());
+    assert!(decoded.provides.is_empty());
+    assert!(decoded.properties.is_empty());
+    assert_eq!(decoded.encode().unwrap(), bytes);
 }

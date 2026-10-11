@@ -481,6 +481,25 @@ impl<'call> Host<'call> {
 /// An M1 operation declaration. The current host scope supplies authority.
 ///
 /// ```compile_fail
+/// #[phenix_sdk::contract(id="example.counter@1")]
+/// trait Counter { fn read(&self) -> Result<u64, String>; }
+/// #[phenix_sdk::plugin(id="example.bad",version="1.0.0",profile="definitions",define(Counter),define(Counter))]
+/// mod bad { use super::*; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.counter@1")]
+/// trait Counter { fn read(&self) -> Result<u64, String>; }
+/// #[phenix_sdk::plugin(id="example.bad",version="1.0.0",profile="definitions",require(Counter))]
+/// mod bad { use super::*; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.counter@1")]
+/// trait Counter { fn read(&self) -> Result<u64, String>; }
+/// #[phenix_sdk::plugin(id="example.bad",version="1.0.0",profile="definitions",define(Counter))]
+/// mod bad { use super::*; struct State; }
+/// ```
+///
+/// ```compile_fail
 /// #[phenix_sdk::contract(id="example.bad@1")]
 /// trait Bad { fn call(&self, input: &str) -> Result<String, String>; }
 /// ```
