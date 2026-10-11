@@ -21,3 +21,8 @@ S3a adds no kernel mechanism. S3b owns `#[contract]`, define/require/provide,
 generated exposed-field storage/initialization and native ABI glue. The current
 SDK fixtures deliberately retain handwritten ABI glue until that independent
 generated-authoring gate. Graph hooks remain S4/S5. Basic group parity is pending.
+
+CI 38170416751 passed the SDK native and independent schema gates, then found
+an incorrect product-test lookup of `after_stop`. The CLI has always returned
+its post-stop inspection at the top level. The corrected test reads that
+existing shape; no runtime change is needed. Full acceptance remains pending.
