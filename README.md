@@ -1,17 +1,21 @@
 # Phenix minimal kernel
 
-This branch replaces the previous implementation with a domain-neutral native plugin kernel. It starts at root commit `11cdf0eca7e80965d0dfca3762d1fd65bb19e10f` and follows [the normative RFC](spec/clean-start-rfc.md). P0, M0.0 and M0.1 are accepted. M0.2 adds synchronous lifecycle and native pending roots. Its full gate remains open until pending imports and their cancellation tree are proven.
+This branch replaces the previous implementation with a domain-neutral native plugin kernel. It starts at root commit `11cdf0eca7e80965d0dfca3762d1fd65bb19e10f` and follows [the normative RFC](spec/clean-start-rfc.md). P0 and M0.0 through M0.4 are accepted for trusted native code on x86_64 Linux.
 
-The public contract crate owns values, schemas and ABI types. The SDK generates contributions and C entry glue. The kernel verifies packages offline, freezes explicit bindings, and mediates typed synchronous and pending calls. External example plugins transform text through a typed import.
+The public contract crate owns values, schemas and ABI types. The SDK generates contributions and C entry glue. The kernel verifies packages offline, freezes explicit bindings and mediates typed synchronous and pending calls through one dispatcher. External example plugins exercise these contracts without private kernel dependencies.
 
-[Implementation contracts](spec/m0-contracts.md) fix this milestone's wire formats and ownership. [M0.0 acceptance](spec/m0-acceptance.md) records the foundation review. [M0.1 contracts](spec/m0.1-contracts.md) and its [acceptance matrix](spec/m0.1-matrix.md) record composition behavior, evidence and remaining work.
+Pending imports retain their parent, root, operation and frozen authority. Cancellation revokes effects before cleanup. Physical executable leases keep native images resident until work drains. Immutable generations support offline candidate preparation, explicit trial, promotion, rollback and safe retirement. Existing roots remain pinned to their admitted generation.
 
-[M0.1 acceptance](spec/m0.1-acceptance.md) records all six exact-head CI gates. [M0.2 lifecycle contracts](spec/m0.2-lifecycle-contracts.md) and [its matrix](spec/m0.2-matrix.md) track native start/stop, rollback, inspection and remaining work. [Pending contracts](spec/m0.2-pending-contracts.md) define generated ABI 2 hooks, wake permits, exactly-once results, cancellation and executable leases. The external pending plugin proves native worker ownership without private kernel dependencies. Two independent SDK plugins prove dependency order and typed failure propagation through native loading.
+| Milestone | Accepted behavior | Evidence |
+| --- | --- | --- |
+| P0 / M0.0 | Offline descriptors, generated ABI, typed native imports, explicit grants and inspection | [Foundation acceptance](spec/m0-acceptance.md) |
+| M0.1 | Deterministic composition, provider selection, optional imports and resource attenuation | [Composition acceptance](spec/m0.1-acceptance.md) |
+| M0.2 | Pending roots and imports, cancellation trees, physical leases and ordered lifecycle | [Pending and lifecycle acceptance](spec/m0.2-acceptance.md) |
+| M0.3 | Immutable generation identities, pinned roots, promotion, rollback and retirement | [Generation acceptance](spec/m0.3-acceptance.md) |
+| M0.4 | Standalone public SDK, integrated conformance and production closure | [Product acceptance](spec/m0.4-acceptance.md) |
 
-Use `nix flake check -L` for canonical validation. The flake builds kernel and example plugins separately. Later milestones require their own contract gates.
+Use `nix flake check -L` for canonical validation. All fourteen gates passed on implementation commit `f4fbe2ffd14a6ef7c71dcfc8694e5f073392b23d`. [CI run 38110344943](https://github.com/matthis-k/phenix-ai/actions/runs/38110344943) uploaded the complete release evidence. [PR #771](https://github.com/matthis-k/phenix-ai/pull/771) records validation for the current branch head and remains ready, open and unmerged.
 
-The default package is the kernel. SDK and descriptor tools are separate packages. Example plugins belong to conformance and demo outputs. Agent API and other domain plugins can be added after M0.4 accepts the kernel contracts.
+The default Nix package contains the kernel and its runtime dependencies. SDK, descriptor tools, fixtures, demos and conformance evidence are separate products. `nix run .#phenix-m0-demo` exercises the packaged CLI. `nix build .#phenix-m0-release` materializes every gate, standalone SDK evidence and the production closure.
 
-The minimal implementation includes typed pending imports, cancellation trees, physical executable leases and selectable immutable generations. The public `Generations` control API installs offline candidates, trials them explicitly, promotes or rolls back admission defaults and reports retirement blockers. Roots retain the existing Kernel/Root dispatcher and their original generation.
-
-`nix build .#phenix-m0-release` materializes every conformance gate, standalone SDK tests, shipping evidence and production closure. See spec/m0.2-matrix.md, spec/m0.3-matrix.md and spec/m0.4-matrix.md for acceptance evidence. PR #771 remains open and unmerged.
+M0.0 through M0.4 have no remaining implementation tasks. Agent API and other domain plugins follow this accepted kernel. Process-fatal native faults remain outside the in-process guarantee. Noncooperative native work may keep executable images resident until process exit.
