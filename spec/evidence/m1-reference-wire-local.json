@@ -26,10 +26,19 @@
     },
     "wire_value_memory_bytes": 32,
     "reference_location_memory_bytes": 112,
-    "isolated_sdk": "passed before final representation adjustment; exact-head Nix gate revalidates",
-    "native_regression": "all six real-artifact suites passed before final representation adjustment; exact-head Nix gates revalidate"
+    "isolated_sdk": "passed after final representation adjustment, with private kernel crates absent",
+    "native_regression": "all six real-artifact suites passed before final representation adjustment; exact-head Nix gates revalidate",
+    "optimized_independent_wire": {
+      "accepted": 52,
+      "rejected": 148,
+      "total": 200
+    }
   },
-  "full_nix_acceptance": "pending exact-head CI",
+  "full_nix_acceptance": {
+    "commit": "2682be5f1b7293a8a3305d5b09186821b4167305",
+    "run": 38125329024,
+    "result": "all fifteen checks pass, including all fourteen M0 gates"
+  },
   "live_authority_proven": false,
   "ci_attempts": [
     {

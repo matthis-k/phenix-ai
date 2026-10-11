@@ -1,6 +1,6 @@
 # M1 portable reference wire contract
 
-Status: frozen for S1a implementation; acceptance pending
+Status: S1a accepted at `2682be5f`; CI 38125329024
 Date: 2026-10-11
 Scope: portable schema and location bytes, independent of state-host admission
 Parent semantics: [value RFC](m1-values-reactive-dag-rfc.md)

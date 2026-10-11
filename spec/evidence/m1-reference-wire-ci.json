@@ -1,0 +1,99 @@
+{
+  "archive_sha256": "62a939f561c45c02bebf8254324487120534138c4e0adb7a3ebe26c7dc722642",
+  "artifact_id": 11697276960,
+  "conclusion": "success",
+  "format": "phenix.m1.reference-wire.ci.v1",
+  "implementation_commit": "2682be5f1b7293a8a3305d5b09186821b4167305",
+  "m0_nix_output": {
+    "/nix/store/yk144h660c56myvx68l7ps42nw7pcqrv-phenix-m0-release": {
+      "ca": null,
+      "deriver": "/nix/store/27jrnsc16x45a2bvyijjpw7c92yry6q5-phenix-m0-release.drv",
+      "narHash": "sha256-/CAsnioxOTxe8tJuOlEUgaKZUbvRyI+wN3DSC09juPM=",
+      "narSize": 4136,
+      "references": [
+        "/nix/store/1wdg76hh8cmyy5a9fa34k40a74d8pwhc-closure-info",
+        "/nix/store/3d2b9i7hzdzfcy92dynqpcbq0haa1gxk-phenix-m0-conformance",
+        "/nix/store/lll6fc9dr11gsr31cf1hbk1f5dc27a6w-phenix-public-sdk-check-0.1.0",
+        "/nix/store/sawfw0pbjhalhdqnq6jl99ljwscbhg0c-phenix-m04-shipping"
+      ],
+      "registrationTime": 1791708488,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "m0_shipping_gates": [
+    "composition",
+    "composition-product",
+    "contract",
+    "descriptor",
+    "generations",
+    "imports",
+    "lifecycle",
+    "lifecycle-product",
+    "native",
+    "pending",
+    "pending-product",
+    "product",
+    "public-sdk"
+  ],
+  "m1_nix_output": {
+    "/nix/store/z1d8846ch40wj744wvb67qlnfdd8lbm0-phenix-contract-0.1.0": {
+      "ca": null,
+      "deriver": "/nix/store/22y23nf2lbdl9jn4fryyv2fzspyfrk2i-phenix-contract-0.1.0.drv",
+      "narHash": "sha256-ZRcGb67JsLEDKn20g7fWw3fot5Q0mqRfhVsINGjft5k=",
+      "narSize": 560,
+      "references": [],
+      "registrationTime": 1791707833,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "report_sha256": {
+    "composition-product/blue.json": "bc3191c32e572ec3d59042210daf24dde6878ee33dc33d2f49169ac10ed62dee",
+    "composition-product/product.json": "fb3a077dfee5cb3d611ae430d17f4f1ebb79f5e41f58703cfcd026c767009b5e",
+    "composition-product/switch.json": "a775fcff0a69748571cd2e80bd3a7a919f1a1a6b564a28ce17a3afb27faf1067",
+    "composition/composition-policy.json": "6b3eac14b4c47269d627533f881c39e5d19178c72258f0581844ffd4a3161a47",
+    "composition/composition.json": "b032e591dc3edcd849d3a17bc2aa998d0aa8d3928d6320e1985c5e427623d3a9",
+    "composition/scoped-policy.json": "5f4e53b056f155c06235a436b40b0efe7b84ffcf8cb1949932f1b8ed697748f0",
+    "descriptor/evidence.json": "2b2f6b310ce0e8ae163dd8e5649f34440ee727b25c151cc59de6bb3e8898853c",
+    "generations/concurrent.json": "1d4884991314c294c746653642cd626c4ef8a29510499791a4ece4ebbc104c98",
+    "generations/evidence.json": "c9cd119a6feb3de70f2f1d9d1a7bd288cd6477429e2f35940ba5dbbf12a86a48",
+    "generations/identity-vector.json": "64768a975b066e90bb56673d80d79e3b47eb434cb0fe1c4a284cf087fd35c888",
+    "imports/composition.json": "b0c208cebb994fb21d2f96b9fc260b75fd3d9acd22ef25ee6d409e9c7c901546",
+    "imports/evidence.json": "00e6b405fe3b683a9084bd466401baea89e4d0fa1b3a54a7948ca825dae62ea6",
+    "lifecycle-product/product.json": "aff5cebd1f46402db2041d4e7aaaf3e365f80b502c91e21dce3704c3a5a800c1",
+    "lifecycle/lifecycle-policy.json": "bafd1d56a162f160bf1f669c90af282f7f053e6cf25ad521b7296dbbc11308d7",
+    "lifecycle/lifecycle.json": "15719ba5c4a89907970f190ce43875a2e24f2f64a3a2676f2ff7742b7442da35",
+    "m1-nix-output.json": "1fa8ad77eb3226e787136103873735b06d4685f3918859ebf97c24f8e03e3520",
+    "m1-reference-wire/evidence.json": "e3ebc4afde006eeca870bf203ed386ac46e1ed6ffe5f43a4ee9d445686ac5324",
+    "native/native.json": "d93d91fa3bc5bd4a8d518a4d851d47133e3db06dc1af9f0665590ab59365fdc1",
+    "nix-output.json": "ee9d8c8a487f7b38e21a20c556abcfc2757c44241ddb468f2a6aca8680814bbb",
+    "pending-product/evidence.json": "0dd591b5497ae36eb33febcfb2c96bbf07f1469066ef95def1c4129b299e041a",
+    "pending/composition.json": "e89ea723b0a3b559df909f47d0243ed79ddb97a77e1c51290bd587e0ac32c4ba",
+    "pending/descriptor-evidence.json": "6db49d10f753a0d1e8f5991e086734b0d7048cf48b136c522c4f740ebf0b19a2",
+    "pending/evidence.json": "63ddd986b9a9c345eaa72aef2ed95870a804812faefda57359c3fa8eae0387e8",
+    "pending/retained-on-drop.json": "ec6c8cb1a7f4310dd9eee83c2f8b3aeaefcb3d2da237ff6e98d3c1c6abe9068d",
+    "product/failures.json": "f1fcd8bfbee432fdf718a4e9932d057d43016bb9cc0763bf4077e3024b548b91",
+    "product/product.json": "5a5a86ccd5e388f3c10d491588c1fa25052d8edde555486ca93bb454cf833045",
+    "shipping/evidence.json": "26d7c4f707d4329dde83377949523b8cbf9e5f2b417f3487c1c53a61c81ffab9"
+  },
+  "run_id": 38125329024,
+  "scope": "S1a portable identities and wire only; live state not admitted",
+  "tested_check_count": 15,
+  "wire": {
+    "accepted": 52,
+    "cases": 200,
+    "format": "phenix.m1.reference-wire.evidence.v1",
+    "live_authority_proven": false,
+    "profiles": [
+      "phenix.value.v1",
+      "phenix.value.v2"
+    ],
+    "rejected": 148,
+    "vectors_sha256": "3314c2d75c26daff8aba58395d466ca463268600c32c24f2e5726661b62ce6b9"
+  }
+}
