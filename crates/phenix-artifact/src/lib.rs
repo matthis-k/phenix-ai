@@ -1,6 +1,7 @@
 use object::{Object, ObjectSection};
 use phenix_contract::{
-    Code, ContractMetadata, Descriptor, Failure, MetadataExecution, SECTION_BYTES,
+    Code, ContractMetadata, Descriptor, Failure, MetadataExecution, NATIVE_SECTION_BYTES,
+    SECTION_BYTES,
 };
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
@@ -29,31 +30,37 @@ pub fn extract(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
         return Err(invalid("duplicate descriptor section".into()));
     }
     let data = section.data().map_err(|e| invalid(e.to_string()))?;
-    if data.len() != SECTION_BYTES {
-        return Err(invalid("invalid descriptor section size".into()));
+    extract_section(data)
+}
+
+fn extract_section(data: &[u8]) -> Result<Vec<u8>, Failure> {
+    let invalid = |m: &str| Failure::new(Code::DescriptorInvalid, m);
+    if data.len() != SECTION_BYTES && data.len() != NATIVE_SECTION_BYTES {
+        return Err(invalid("invalid descriptor section size"));
     }
     let size = u32::from_be_bytes(
         data[..4]
             .try_into()
-            .map_err(|_| invalid("descriptor length".into()))?,
+            .map_err(|_| invalid("descriptor length"))?,
     ) as usize;
     let end = 4usize
         .checked_add(size)
-        .ok_or_else(|| invalid("descriptor overflow".into()))?;
+        .ok_or_else(|| invalid("descriptor overflow"))?;
     let payload = data
         .get(4..end)
-        .ok_or_else(|| invalid("descriptor outside section".into()))?;
+        .ok_or_else(|| invalid("descriptor outside section"))?;
     if data[end..].iter().any(|&b| b != 0) {
-        return Err(invalid("nonzero descriptor padding".into()));
+        return Err(invalid("nonzero descriptor padding"));
     }
     if payload.starts_with(&[0x50, 0x56, 2, 0]) {
         let metadata = ContractMetadata::decode(payload)?;
         if metadata.execution != MetadataExecution::StatePending {
-            return Err(invalid(
-                "native metadata requires executable state profile".into(),
-            ));
+            return Err(invalid("native metadata requires executable state profile"));
         }
     } else {
+        if data.len() != SECTION_BYTES {
+            return Err(invalid("M0 requires its exact 16 KiB section"));
+        }
         Descriptor::decode(payload)?;
     }
     Ok(payload.to_vec())

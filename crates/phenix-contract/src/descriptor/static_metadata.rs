@@ -1,5 +1,5 @@
 //! Constant declarations projected into the accepted owned metadata protocol.
-use super::{ContractDefinition, OperationSchema};
+use super::{Cardinality, ContractDefinition, MetadataExecution, OperationSchema};
 use crate::{Failure, StaticSchema};
 
 #[derive(Clone, Copy, Debug)]
@@ -16,6 +16,31 @@ pub struct StaticContract {
     pub contract: &'static str,
     pub revision: u64,
     pub operations: &'static [StaticOperation],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StaticImport {
+    pub slot: &'static str,
+    pub contract: &'static str,
+    pub revision_min: u64,
+    pub revision_max: u64,
+    pub cardinality: Cardinality,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StaticExport {
+    pub slot: &'static str,
+    pub contract: &'static str,
+    pub revision: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StaticProperty {
+    pub id: &'static str,
+    pub schema: StaticSchema,
+    pub get: bool,
+    pub set: bool,
+    pub watch: bool,
 }
 
 impl StaticContract {
@@ -40,6 +65,8 @@ impl StaticContract {
 }
 
 pub const METADATA_BYTES: usize = 128 * 1024;
+/// Exact ELF section size for the M1 native metadata profile, including its prefix.
+pub const NATIVE_SECTION_BYTES: usize = 128 * 1024;
 
 /// Canonical metadata bytes for an offline definition package.
 pub struct MetadataBytes {
@@ -50,6 +77,27 @@ pub struct MetadataBytes {
 impl MetadataBytes {
     pub fn bytes(&self) -> &[u8] {
         &self.data[..self.len]
+    }
+
+    /// Embed a length-prefixed canonical payload with zero padding.
+    pub const fn native_section(&self) -> [u8; NATIVE_SECTION_BYTES] {
+        assert!(
+            self.len <= NATIVE_SECTION_BYTES - 4,
+            "native metadata exceeds section"
+        );
+        let mut section = [0; NATIVE_SECTION_BYTES];
+        let prefix = (self.len as u32).to_be_bytes();
+        let mut index = 0;
+        while index < 4 {
+            section[index] = prefix[index];
+            index += 1;
+        }
+        index = 0;
+        while index < self.len {
+            section[index + 4] = self.data[index];
+            index += 1;
+        }
+        section
     }
 
     const fn byte(&mut self, value: u8) {
@@ -96,6 +144,10 @@ impl MetadataBytes {
         self.raw(&value.to_be_bytes());
     }
 
+    const fn boolean(&mut self, value: bool) {
+        self.byte(if value { 2 } else { 1 });
+    }
+
     const fn schema(&mut self, schema: StaticSchema) {
         let encoded = schema.encode();
         self.byte(6);
@@ -108,6 +160,7 @@ impl MetadataBytes {
     }
 
     const fn contract(&mut self, contract: StaticContract) {
+        assert!(contract_id(contract.contract), "invalid contract identity");
         assert!(contract.revision > 0, "reserved contract revision");
         assert!(!contract.operations.is_empty(), "empty contract");
         self.map(3);
@@ -118,6 +171,11 @@ impl MetadataBytes {
         let mut index = 0;
         while index < contract.operations.len() {
             let operation = contract.operations[index];
+            assert!(identity(operation.name), "invalid operation name");
+            assert!(
+                operation_identity(contract.contract, operation),
+                "operation key differs from contract"
+            );
             if index > 0 {
                 assert!(
                     crate::static_schema::compare(
@@ -143,11 +201,122 @@ impl MetadataBytes {
     }
 }
 
+const fn identity(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes.len() > 256 {
+        return false;
+    }
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !byte.is_ascii_alphanumeric() && byte != b'.' && byte != b'_' && byte != b'-' {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+const fn contract_id(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut split = 0;
+    while split < bytes.len() && bytes[split] != b'@' {
+        split += 1;
+    }
+    if split == 0 || split > 256 || split + 1 >= bytes.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < split {
+        let byte = bytes[index];
+        if !byte.is_ascii_alphanumeric() && byte != b'.' && byte != b'_' && byte != b'-' {
+            return false;
+        }
+        index += 1;
+    }
+    index = split + 1;
+    if bytes[index] == b'0' {
+        return false;
+    }
+    let mut major = 0u64;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !byte.is_ascii_digit() {
+            return false;
+        }
+        major = major * 10 + (byte - b'0') as u64;
+        if major > u32::MAX as u64 {
+            return false;
+        }
+        index += 1;
+    }
+    major > 0
+}
+
+const fn operation_identity(contract: &str, operation: StaticOperation) -> bool {
+    let key = operation.key.as_bytes();
+    let contract = contract.as_bytes();
+    let name = operation.name.as_bytes();
+    if key.len() != contract.len() + 1 + name.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < contract.len() {
+        if key[index] != contract[index] {
+            return false;
+        }
+        index += 1;
+    }
+    if key[index] != b'/' {
+        return false;
+    }
+    index = 0;
+    while index < name.len() {
+        if key[contract.len() + 1 + index] != name[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 pub const fn definitions<const N: usize>(
     plugin: &str,
     version: &str,
-    mut contracts: [StaticContract; N],
+    contracts: [StaticContract; N],
 ) -> MetadataBytes {
+    metadata(
+        plugin,
+        version,
+        MetadataExecution::None,
+        contracts,
+        [],
+        [],
+        [],
+    )
+}
+
+/// Compile-time lowering into the same canonical protocol as owned metadata.
+pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: usize>(
+    plugin: &str,
+    version: &str,
+    execution: MetadataExecution,
+    mut contracts: [StaticContract; N],
+    mut requires: [StaticImport; I],
+    mut provides: [StaticExport; E],
+    mut properties: [StaticProperty; P],
+) -> MetadataBytes {
+    assert!(
+        identity(plugin) && crate::static_schema::compare(plugin, "root") != 0,
+        "invalid plugin identity"
+    );
+    assert!(identity(version), "invalid plugin version");
+    if let MetadataExecution::None = execution {
+        assert!(
+            I == 0 && E == 0 && P == 0,
+            "definitions cannot contain executable contributions"
+        );
+    }
     let mut index = 1;
     while index < N {
         let mut at = index;
@@ -155,6 +324,36 @@ pub const fn definitions<const N: usize>(
             && crate::static_schema::compare(contracts[at - 1].contract, contracts[at].contract) > 0
         {
             contracts.swap(at - 1, at);
+            at -= 1;
+        }
+        index += 1;
+    }
+    index = 1;
+    while index < I {
+        let mut at = index;
+        while at > 0 && crate::static_schema::compare(requires[at - 1].slot, requires[at].slot) > 0
+        {
+            requires.swap(at - 1, at);
+            at -= 1;
+        }
+        index += 1;
+    }
+    index = 1;
+    while index < E {
+        let mut at = index;
+        while at > 0 && crate::static_schema::compare(provides[at - 1].slot, provides[at].slot) > 0
+        {
+            provides.swap(at - 1, at);
+            at -= 1;
+        }
+        index += 1;
+    }
+    index = 1;
+    while index < P {
+        let mut at = index;
+        while at > 0 && crate::static_schema::compare(properties[at - 1].id, properties[at].id) > 0
+        {
+            properties.swap(at - 1, at);
             at -= 1;
         }
         index += 1;
@@ -182,17 +381,111 @@ pub const fn definitions<const N: usize>(
         index += 1;
     }
     output.key("execution");
-    output.text("none");
+    output.text(match execution {
+        MetadataExecution::None => "none",
+        MetadataExecution::StatePending => "state-pending",
+    });
     output.key("format");
     output.text("phenix.contract-metadata.v2");
     output.key("plugin");
     output.text(plugin);
     output.key("properties");
-    output.list(0);
+    output.list(P);
+    index = 0;
+    while index < P {
+        let property = properties[index];
+        assert!(identity(property.id), "invalid property identity");
+        assert!(
+            property.get || property.set || property.watch,
+            "property needs an operation"
+        );
+        if index > 0 {
+            assert!(
+                crate::static_schema::compare(properties[index - 1].id, property.id) < 0,
+                "duplicate property identity"
+            );
+        }
+        output.map(5);
+        output.key("get");
+        output.boolean(property.get);
+        output.key("id");
+        output.text(property.id);
+        output.key("schema");
+        output.schema(property.schema);
+        output.key("set");
+        output.boolean(property.set);
+        output.key("watch");
+        output.boolean(property.watch);
+        index += 1;
+    }
     output.key("provides");
-    output.list(0);
+    output.list(E);
+    index = 0;
+    while index < E {
+        let export = provides[index];
+        assert!(
+            identity(export.slot) && contract_id(export.contract),
+            "invalid export identity"
+        );
+        assert!(export.revision > 0, "reserved export revision");
+        if index > 0 {
+            assert!(
+                crate::static_schema::compare(provides[index - 1].slot, export.slot) < 0,
+                "duplicate export slot"
+            );
+        }
+        output.map(3);
+        output.key("contract");
+        output.text(export.contract);
+        output.key("revision");
+        output.number(export.revision);
+        output.key("slot");
+        output.text(export.slot);
+        index += 1;
+    }
     output.key("requires");
-    output.list(0);
+    output.list(I);
+    index = 0;
+    while index < I {
+        let import = requires[index];
+        assert!(
+            identity(import.slot) && contract_id(import.contract),
+            "invalid import identity"
+        );
+        assert!(
+            import.revision_min > 0 && import.revision_max >= import.revision_min,
+            "invalid import revisions"
+        );
+        if index > 0 {
+            assert!(
+                crate::static_schema::compare(requires[index - 1].slot, import.slot) < 0,
+                "duplicate import slot"
+            );
+        }
+        let (kind, minimum) = match import.cardinality {
+            Cardinality::One => ("one", 1),
+            Cardinality::Optional => ("optional", 0),
+            Cardinality::Many { minimum } => ("many", minimum),
+        };
+        assert!(
+            minimum <= crate::MAX_COUNT as u64,
+            "import cardinality limit"
+        );
+        output.map(6);
+        output.key("cardinality");
+        output.text(kind);
+        output.key("contract");
+        output.text(import.contract);
+        output.key("minimum");
+        output.number(minimum);
+        output.key("revision_max");
+        output.number(import.revision_max);
+        output.key("revision_min");
+        output.number(import.revision_min);
+        output.key("slot");
+        output.text(import.slot);
+        index += 1;
+    }
     output.key("version");
     output.text(version);
     output

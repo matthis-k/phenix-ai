@@ -3,7 +3,10 @@ pub mod static_metadata;
 use crate::{Code, Failure, Value};
 pub use metadata::*;
 use serde::{Deserialize, Serialize};
-pub use static_metadata::{MetadataBytes, StaticContract, StaticOperation};
+pub use static_metadata::{
+    MetadataBytes, StaticContract, StaticExport, StaticImport, StaticOperation, StaticProperty,
+    NATIVE_SECTION_BYTES,
+};
 use std::collections::BTreeMap;
 #[derive(Clone, Copy)]
 pub enum Schema {

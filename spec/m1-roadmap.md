@@ -19,13 +19,12 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | PROVEN at `6ce818c4`, CI 38170397949; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
-| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Partial contract declarations; `m1-contract-authoring-matrix.md` |
-| S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
-| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Contracts and native metadata encoder tested; generated native authoring remains |
+| S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1 and G2 below; not started |
+| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3 and G4 below; not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
 | A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
-| A1a | Original Basic service contracts, providers and loop behavior | S3b; no graph dependency | Original Basic behavior and real provider fixture | Planned; ordinary plugin scope |
-| A1b | Reactive agent integration | S5; S6 only if parallel execution required | Live exposed state and graph contributions | Deferred; separate from original Basic parity |
+| Basic | Triggered agent, providers, durable sessions and frontends | G4 and Basic providers | Terminal, JSONL and ACP run the same agent | B1-B5, F1-F2 and P1 below; not started |
 
 S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST maintain the semantic boundaries in the M1 RFC. S6 is a distinct optimization/capability gate: S5 must implement the correct partial order without relying on parallelism.
 
@@ -212,18 +211,73 @@ Owner: one S6 implementation PR. Do not fold the runtime ownership refactor into
 
 Gate: independent A and B execute concurrently when both providers advertise safe concurrency; C waits for both; unrelated `A->C` and `B->D` branches do not serialize due to a global root lock. Stateful serial-only providers remain serialized, with explicit diagnostics. Concurrency never bypasses root-scope authentication, cancellation, resource grants, or physical leases. Noncooperative trusted native work still has no forced-termination guarantee.
 
-## 8. Agent follow-on, not kernel scope
+## 8. Working Basic agent roadmap
 
-A0 exercises the accepted synchronous service boundary before S5. [Its frozen contract](a0-agent-contract.md) and [file/evidence matrix](a0-agent-matrix.md) own this independent preflight. It adds no kernel mechanisms and does not satisfy A1. The user authorized this basic loop test before reactive integration.
+The 11 October Basic roadmap replaces A1a/A1b's direct-call product plan.
+A0 remains an accepted synchronous model-tool-model fixture. It does not prove
+triggered execution, full history, durable sessions or frontend parity.
 
-A1 is split to prioritize the user's original Basic feature parity goal. A1a
-owns definition/API, session, model, tools, skills, context, ordinary storage
-and loop plugins plus their external suite/product gates after S3b. None needs
-graph execution: the original Basic services are ordinary calls and state.
-A1b retains graph-driven integration after S5. Memory, compaction, planning and
-ACP/MCP are separate Full/follow-on plugins and are not A1a dependencies.
+Frontends submit typed events. Nodes declare triggers. The kernel admits events,
+resolves the selected graph and invokes nodes through its existing dispatcher.
+Frontends observe ordered output events. Product startup never calls a special
+`Agent::run()` entry. The kernel owns authority, generation selection, readiness,
+cancellation and native lifetimes. Plugins own agent and frontend semantics.
 
-After S5, define `Model`, `ToolSource`, `ToolCatalog`, `Skills`, `Memory`, `Compaction`, and `Agent` in definition-only plugin contracts. Build provider, tools/skills/memory/compaction, CLI/ACP/MCP, and agent-loop plugins as ordinary selected implementations. Use `ValueRef` for exposed state and graph hooks only where it adds value. Agent plugin work MUST NOT become a dependency of any M1 kernel gate.
+| Stage | Depends on | Concrete ownership | Acceptance | State |
+| --- | --- | --- | --- | --- |
+| S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | **CURRENTLY HERE**, partial |
+| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | NOT STARTED |
+| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | NOT STARTED |
+| G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | NOT STARTED |
+| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | NOT STARTED |
+| B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | NOT STARTED |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | NOT STARTED |
+| B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | NOT STARTED |
+| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | NOT STARTED |
+| B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | NOT STARTED |
+| F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | NOT STARTED |
+| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | NOT STARTED |
+| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | NOT STARTED |
+
+G1-G4 refine the existing S4/S5 work, using one resolver and dispatcher.
+S6 parallel scheduling remains outside the Basic critical path. B1 can proceed
+after G1 and F1 after G3; the shipped Basic agent still requires G4.
+
+### Event admission and graph rules
+
+The typed envelope identifies the event, contract/schema, payload, resource,
+causation/correlation and admitted generation. Authority derives from the
+host/root admission, never from an event's self-claimed origin. Discovery exposes
+the prepared graph's action IDs, schemas, descriptions and authorization needs.
+Freeze this contract before adding G1 code or changing the native wire format.
+
+An `after` edge constrains ordering; it does not trigger its successor.
+If A and B activate, C waits for both active predecessors. If only A activates,
+inactive B cannot block C. Disconnected roots remain valid. Follow-up events
+advance model turns in new epochs, so the static graph stays acyclic.
+
+The journal retains every accepted semantic event in order. Value watches can
+coalesce and cannot replace journal cursors. During pending I/O, one same-root,
+non-reentrant control pump admits cancellation and publishes progress.
+
+### Basic product boundaries
+
+The agent imports prepared selected providers. Model requests contain previous
+assistant calls and every tool result. Session/storage plugins retain history,
+checkpoints and run status. A crash during an external tool effect preserves an
+indeterminate result rather than blindly repeating the call.
+
+A native shell plugin needs a selected workspace execution provider. Kernel
+import mediation alone does not implement an OS sandbox. The product reports
+only the isolation its selected provider actually supplies. Model endpoint,
+model identity and credentials are configured outside CI. Deterministic scripted
+and local HTTP fixtures exercise the same contracts used by a live provider.
+
+The final product gate covers start, progress, finish, failure and cancellation;
+multi-turn history; multiple tools; typed tool-error recovery; loaded skills and
+context; replaceable providers; usage; streaming; durable session continuation;
+caller-selected limits; and denied imports with zero tool effects. Planning,
+compaction and MCP remain later plugin work.
 
 ## 9. Evidence, closure, and PR discipline
 

@@ -2,8 +2,10 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -39,6 +41,52 @@ def native():
                 requires=[dict(slot=slot, contract="example.counter@1", revision_min=1, revision_max=3, cardinality=kind, minimum=n) for slot, kind, n in [("all", "many", 0), ("fallback", "optional", 0), ("primary", "one", 1)]],
                 provides=[dict(slot="service", contract="example.counter@1", revision=1)],
                 properties=[dict(id="counter", schema=schema("U64"), get=True, set=True, watch=True), dict(id="history", schema=schema(["List", "String"]), get=True, set=False, watch=False)])
+
+def native_sections(describe):
+    """Inspect real ELF files without executing their trapping constructors."""
+    cases = []
+    def section(payload, size, length=None, padding=False):
+        length = len(payload) if length is None else length
+        data = bytearray(struct.pack(">I", length) + payload)
+        data.extend(bytes(max(0, size-len(data))))
+        if padding: data[-1] = 1
+        return bytes(data[:size])
+    small = encode(native())
+    large = native()
+    large["properties"] = [dict(id=f"property.{n:04}", schema=schema(["List", "String"]), get=True, set=True, watch=True) for n in range(256)]
+    large = encode(large)
+    assert 16*1024 < len(large) < 128*1024-4
+    cases.extend([
+        ("m1-16k", section(small, 16*1024), True, small),
+        ("m1-128k", section(small, 128*1024), True, small),
+        ("m1-large-payload", section(large, 128*1024), True, large),
+        ("length-outside-section", section(small, 128*1024, 128*1024), False, None),
+        ("length-overflow", section(small, 128*1024, 0xffffffff), False, None),
+        ("zero-length", section(small, 128*1024, 0), False, None),
+        ("nonzero-padding", section(small, 128*1024, padding=True), False, None),
+        ("definitions-in-native", section(encode(definition()), 128*1024), False, None),
+        ("m0-in-large-section", section(encode(None, False), 128*1024), False, None),
+        ("truncated-payload", section(small[:-1], 128*1024), False, None),
+    ])
+    for size in [0, 4, 16383, 65536, 131073]:
+        cases.append((f"wrong-section-size-{size}", section(small, size), False, None))
+    bad = native(); bad["properties"].reverse()
+    cases.append(("noncanonical-native", section(encode(bad), 128*1024), False, None))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name, data, accepted, expected in cases:
+            source = root / "fixture.c"
+            source.write_text('__attribute__((constructor)) static void trap(void) { __builtin_trap(); }\n'
+                              '__attribute__((used,section(".phenix"))) const unsigned char descriptor[] = {'
+                              + ",".join(map(str, data)) + '};\n')
+            library = root / "fixture.so"
+            subprocess.run(shlex.split(os.environ.get("CC", "cc")) + ["-shared", "-fPIC", str(source), "-o", str(library)], check=True, capture_output=True)
+            output = root / "descriptor.bin"
+            output.unlink(missing_ok=True)
+            process = subprocess.run([describe, str(library), str(output)], capture_output=True, text=True)
+            assert (process.returncode == 0) == accepted, (name, process.stderr)
+            if accepted: assert output.read_bytes() == expected, name
+    return dict(cases=len(cases), accepted=sum(c[2] for c in cases), constructor_executed=False)
 
 def run(probe, describe, fixture, vectors):
     positive = [definition(), native()]
@@ -132,7 +180,7 @@ def run(probe, describe, fixture, vectors):
         (root/"descriptor.bin").write_bytes(encode(native())); verify(dict(record, descriptor_sha256=hashlib.sha256(encode(native())).hexdigest()), False)
         (root/"descriptor.bin").write_bytes(data+b"\0"); verify(record, False)
         assert not (root/"lib").exists()
-    print(json.dumps(dict(gate="m1-metadata-state", vectors_sha256=hashlib.sha256(Path(vectors).read_bytes()).hexdigest(), cases=len(cases), accepted=sum(c[1] for c in cases), rejected=sum(not c[1] for c in cases), package_cases=package_cases, descriptor_sha256=digest, package_sha256=expected_id, private_kernel_dependency=False, live_state_proven=False), sort_keys=True))
+    print(json.dumps(dict(gate="m1-metadata-state", vectors_sha256=hashlib.sha256(Path(vectors).read_bytes()).hexdigest(), cases=len(cases), accepted=sum(c[1] for c in cases), rejected=sum(not c[1] for c in cases), package_cases=package_cases, native_sections=native_sections(describe), descriptor_sha256=digest, package_sha256=expected_id, private_kernel_dependency=False, live_state_proven=False), sort_keys=True))
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--freeze-vectors":
