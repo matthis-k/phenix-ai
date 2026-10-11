@@ -81,3 +81,11 @@ pending children/domain recovery/cancel/abandonment, property control while
 native work is pending, and compile failures for duplicate exports, invalid
 fields, mismatched handlers, missing hooks and undeclared generated imports.
 All twenty-two predecessor checks must continue to pass.
+
+ABI 3 also exposes the existing read-only resource context through
+phenix.host.resource.v2, empty slot, v2 Null request and success String or Null.
+It returns the current admitted resource identity, never a scope token or grant.
+Scope/thread authentication occurs before bytes are read. Native scoped pending
+imports narrow the same inherited authority and cannot switch the active
+resource. This gives ordinary storage/session implementations the reusable M0
+resource context without embedding session semantics in the kernel.
