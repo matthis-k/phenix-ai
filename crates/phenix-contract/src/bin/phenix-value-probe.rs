@@ -89,12 +89,12 @@ impl Input {
                     .map(|(k, v)| Ok((k, v.portable()?)))
                     .collect::<Result<_, Failure>>()?,
             ),
-            Self::Ref(v) => Value::Ref(ValueLocation {
+            Self::Ref(v) => Value::Ref(Box::new(ValueLocation {
                 generation: GenerationDigest::from_bytes(&unhex(&v.generation)?)?,
                 owner: OwnerId::from_bytes(&unhex(&v.owner)?)?,
                 cell: ValueId::from_bytes(&unhex(&v.cell)?)?,
                 schema: SchemaId::from_bytes(&unhex(&v.schema)?)?,
-            }),
+            })),
         })
     }
 }

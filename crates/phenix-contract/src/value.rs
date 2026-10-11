@@ -27,7 +27,7 @@ pub const V2_PREFIX: [u8; 4] = [0x50, 0x56, 2, 0];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Null,
-    Ref(ValueLocation),
+    Ref(Box<ValueLocation>),
     Bool(bool),
     I64(i64),
     U64(u64),
@@ -229,12 +229,12 @@ impl Value {
                         }
                         Value::Map(x)
                     }
-                    9 if profile == WireProfile::V2 => Value::Ref(ValueLocation {
+                    9 if profile == WireProfile::V2 => Value::Ref(Box::new(ValueLocation {
                         generation: GenerationDigest::from_bytes(self.take(32)?)?,
                         owner: OwnerId::from_bytes(self.take(32)?)?,
                         cell: ValueId::from_bytes(self.take(16)?)?,
                         schema: SchemaId::from_bytes(self.take(32)?)?,
-                    }),
+                    })),
                     _ => return Err(invalid("unknown tag")),
                 })
             }

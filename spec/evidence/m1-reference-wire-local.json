@@ -3,9 +3,9 @@
   "baseline": "c2365e1199b8bf15184f8e7246f15d853f2fe366",
   "rustc": "1.91.1",
   "source_sha256": {
-    "crates/phenix-contract/src/reference.rs": "a72f71cbd7e0b454143574593c6b0b7d198151dcf261795dcd174c14c36fab2b",
-    "crates/phenix-contract/src/value.rs": "5c7db39e177a7bc97c5218a9d3e9e8fc0ab557c105283f4cb4c34ce833028571",
-    "crates/phenix-contract/src/bin/phenix-value-probe.rs": "ec1c24781ecc503b02a22638d1ddc7d0756f9158143b5570891f9fb4626bc1fa",
+    "crates/phenix-contract/src/reference.rs": "471fe5e1cd24a7761c3a89b6afb63d6ae9b8281ba790ae0cf9c77567fc366d4f",
+    "crates/phenix-contract/src/value.rs": "0877152b9f4aa483fc24f18d0b010552af5b928c7b8955c0e3e8ebb8869aa6d7",
+    "crates/phenix-contract/src/bin/phenix-value-probe.rs": "d80c227f0a1ede47dbdef6d46f377c4455130875badd8b109816b43f56a073db",
     "tests/m1-contract-vectors.json": "3314c2d75c26daff8aba58395d466ca463268600c32c24f2e5726661b62ce6b9",
     "tests/m1-wire-negative.py": "40c25993340cf36efe4f3d63dae610b1287f978c8257ae932ffd64107802d243",
     "Cargo.lock": "029b16403c9aff960482bb88dc45a4b77c4461513a9bf7aa47757bf23e27aadc",
@@ -23,8 +23,19 @@
       "accepted": 52,
       "rejected": 148,
       "total": 200
-    }
+    },
+    "wire_value_memory_bytes": 32,
+    "reference_location_memory_bytes": 112,
+    "isolated_sdk": "passed before final representation adjustment; exact-head Nix gate revalidates",
+    "native_regression": "all six real-artifact suites passed before final representation adjustment; exact-head Nix gates revalidate"
   },
   "full_nix_acceptance": "pending exact-head CI",
-  "live_authority_proven": false
+  "live_authority_proven": false,
+  "ci_attempts": [
+    {
+      "commit": "c0a0f34e4ca3f59874df4dc555b5fd6b18fd28a2",
+      "run": 38124712301,
+      "result": "failed: clippy 1.96 collapsible_match; expression fixed"
+    }
+  ]
 }

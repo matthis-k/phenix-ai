@@ -48,7 +48,7 @@ Gate: independent decoder/encoder agrees on reference/descriptor vectors; a meta
 
 ### S1a implementation evidence
 
-The frozen contract commit is `c2365e1199b8bf15184f8e7246f15d853f2fe366`. The implementation branch is `impl/m1-reference-wire`, stacked on `spec/m1-values-reactive-dag`. The portable gate passes 200 independent Python/Rust cases, including 148 rejections. Local workspace tests, clippy, external fixture compilation and C layouts pass. [Local evidence](evidence/m1-reference-wire-local.json) records source hashes and test scope. Full M0 Nix conformance and exact-head CI remain required before acceptance.
+The frozen contract commit is `c2365e1199b8bf15184f8e7246f15d853f2fe366`. The implementation branch is `impl/m1-reference-wire`, stacked on `spec/m1-values-reactive-dag`. The portable gate passes 200 independent Python/Rust cases, including 148 rejections. Local workspace tests, clippy, external fixture compilation and C layouts pass. [Local evidence](evidence/m1-reference-wire-local.json) records source hashes and test scope. Full M0 Nix conformance and exact-head CI remain required before acceptance. The first CI attempt, run 38124712301, stopped on Clippy 1.96 `collapsible_match`; the match guard now satisfies that rule. Reference payloads use a Box so portable scalar storage stays 32 bytes on the frozen target, while location data takes 112 bytes. This changes no wire bytes.
 
 | File or task | State | Evidence or remaining gate |
 | --- | --- | --- |

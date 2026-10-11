@@ -90,13 +90,12 @@ impl ValueSchema {
                     schema.validate(depth + 1)?;
                 }
             }
-            Self::Variants(names) => {
+            Self::Variants(names)
                 if names.is_empty()
                     || names.iter().any(|name| !identifier(name))
-                    || names.windows(2).any(|pair| pair[0] >= pair[1])
-                {
-                    return Err(invalid("invalid schema variants"));
-                }
+                    || names.windows(2).any(|pair| pair[0] >= pair[1]) =>
+            {
+                return Err(invalid("invalid schema variants"));
             }
             _ => {}
         }
