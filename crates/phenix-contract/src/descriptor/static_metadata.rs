@@ -154,9 +154,7 @@ pub const fn definitions<const N: usize>(
         while at > 0
             && crate::static_schema::compare(contracts[at - 1].contract, contracts[at].contract) > 0
         {
-            let previous = contracts[at - 1];
-            contracts[at - 1] = contracts[at];
-            contracts[at] = previous;
+            contracts.swap(at - 1, at);
             at -= 1;
         }
         index += 1;

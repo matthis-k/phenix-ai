@@ -3,10 +3,12 @@ use quote::quote;
 use syn::{parse::Parser, spanned::Spanned, Expr, ItemMod, Meta};
 
 fn declarations(tokens: proc_macro2::TokenStream) -> syn::Result<Vec<Meta>> {
-    Ok(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated
-        .parse2(tokens)?
-        .into_iter()
-        .collect())
+    Ok(
+        syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated
+            .parse2(tokens)?
+            .into_iter()
+            .collect(),
+    )
 }
 
 pub fn selected(tokens: proc_macro2::TokenStream) -> syn::Result<bool> {
@@ -49,10 +51,7 @@ pub fn expand(
         } else {
             for (key, value) in args(quote!(#meta))? {
                 if attributes.insert(key, value).is_some() {
-                    return Err(syn::Error::new(
-                        meta.span(),
-                        "duplicate plugin attribute",
-                    ));
+                    return Err(syn::Error::new(meta.span(), "duplicate plugin attribute"));
                 }
             }
         }
@@ -61,7 +60,11 @@ pub fn expand(
     let version = required(&mut attributes, "version")?;
     let profile = required(&mut attributes, "profile")?;
     no_extra(&attributes)?;
-    if profile != "definitions" || id == "root" || !phenix_contract::identifier(&id) {
+    if profile != "definitions"
+        || id == "root"
+        || !phenix_contract::identifier(&id)
+        || !phenix_contract::identifier(&version)
+    {
         return Err(syn::Error::new(
             module.span(),
             "invalid definition plugin identity or profile",
