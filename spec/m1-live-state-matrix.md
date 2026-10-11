@@ -1,6 +1,6 @@
 # S2 live state implementation and evidence
 
-Status: TESTED locally; real Nix CI pending
+Status: PROVEN at 6ce818c483571c015ec59eb1e41dcba533d2fd91; all 20 Nix gates passed in CI 38170397949
 Baseline: accepted S1b, stacked on A0 PR #775 to retain the agent smoke gates
 Frozen profiles: `m1-live-state-contract.md` and `m1-epoch-snapshot-contract.md`
 
@@ -19,7 +19,7 @@ Frozen profiles: `m1-live-state-contract.md` and `m1-epoch-snapshot-contract.md`
 | `tests/m1-live-state-product.py` | TESTED vectors; CLI CI pending | Independent canonical metadata/schema hashes and v2 CLI producer; no fake Nix store paths |
 | `flake.nix`, conformance workflow | IMPLEMENTED | Two new gates plus all eighteen existing gates; realized outputs and exact checkout uploaded in CI |
 | `spec/evidence/m1-live-state-local.json` | TESTED | Source hashes, debug/release reports, package digests and SDK isolation |
-| CI acceptance | NOT YET PROVEN | Requires the exact implementation commit, downloaded archive digest, twenty gates and report hashes |
+| CI acceptance | PROVEN | Exact implementation commit 6ce818c483571c015ec59eb1e41dcba533d2fd91, verified archive SHA-256 and 38 parsed JSON report hashes in `spec/evidence/m1-live-state-ci.json` |
 
 S2 adds no agent semantics or graph executor. S3 owns generated property storage,
 typed snapshots/edits and contract authoring. S4/S5 own graph preparation and
@@ -31,5 +31,11 @@ skills, context or Basic service parity is claimed by this kernel stage.
 Initial CI 38168891184 passed the native and real CLI state gates, then failed
 M0.4 shipping because its all-example authoring scan included S2's independent
 ABI producers. The corrected scan excludes only those protocol fixture folders
-while retaining the original assertions for all M0/A0 authored plugins. Full
-CI acceptance is still pending; the failed run is not accepted evidence.
+while retaining the original assertions for all M0/A0 authored plugins. The successful run below supersedes this failed attempt.
+
+
+CI 38170397949 passed all 20 gates on `6ce818c483571c015ec59eb1e41dcba533d2fd91`.
+The downloaded artifact 11713678427 records that exact checkout.
+Its ZIP SHA-256 matches GitHub's artifact digest. Saved evidence hashes all
+38 JSON reports and records realized Nix outputs. Earlier failed runs
+remain diagnostic history; this successful run supplies acceptance.
