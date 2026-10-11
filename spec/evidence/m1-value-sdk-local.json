@@ -1,0 +1,671 @@
+{
+  "format": "phenix.m1-value-sdk-local.v1",
+  "status": "TESTED locally; Nix CI pending",
+  "frozen_contract_commit": "6a038731936e08fb9e66cc1f4d10c5c95cadba36",
+  "source_sha256": {
+    "crates/phenix-conformance/src/bin/phenix-m1-sdk.rs": "29b48f98003b7ce53d84cf84a7cebc5c26462e141de2f2c2d5ab12dab0ffeb68",
+    "crates/phenix-contract/src/bin/phenix-static-schema-probe.rs": "11612cc3e6574bebbc1b6b2ca95c2b20f26d376940f9fc126a06568eec5ee5ec",
+    "crates/phenix-contract/src/static_schema.rs": "69a2532df84a6b391db181850748b0c292d5ba4f863cc4720d81877cc008892e",
+    "crates/phenix-sdk/src/live.rs": "9e8d3e97f7de7f6675d9267d8788007877e5121caed8f59759f49aeadb67a6ec",
+    "crates/phenix-sdk/tests/live-values.rs": "813392d7c97c17c7bd415be0a7df89b9d94fa348384245ff5d6fe77301e6c67b",
+    "examples/value-client/Cargo.toml": "a6496f488e314c68f36e23d62c07f4be710299c8fb9eb9d48d0e083d3f12438e",
+    "examples/value-client/build.rs": "313975705d1f862832b9eeffda380628c7270590c01f3282d06d1650da6afe76",
+    "examples/value-client/src/lib.rs": "d3c115d7825171a70f5d4208997da16f258a25dd57621322bc40436346a27b8b",
+    "examples/value-provider/Cargo.toml": "8ef73149e8966d589df583afa0deb505fdd1e02688904bc360c305b218b6f53e",
+    "examples/value-provider/build.rs": "4ffc832ead15aa2e460ecc9c55f7ce4d30452f9e5834450896c8be5c5fa38a98",
+    "examples/value-provider/src/lib.rs": "158eadea6f00b0ce5189796d30dd694f2a1a8d1d2c4302c41c37c7d35506a635",
+    "spec/m1-value-sdk-matrix.md": "fb2ff9f69ba1f657760bb196844267802e09651e1adbef996d623b0a869ba349",
+    "tests/m1-value-sdk-product.py": "96a4c6ae343ceaaa7ae0687b6af5d8efb560f2c96ef11d068841aeebfe6015a3",
+    "tests/m1-value-sdk-vectors.py": "d7681dee3c4940a2e02d41046b78ce24a08e05a44d56d4781f206714d49233f1",
+    ".github/workflows/minimal-kernel.yml": "045ab293727c6f70ea95c443075d96d3a3858fe2b8b7a41c5397078c2acdaa9a",
+    "crates/phenix-contract/src/lib.rs": "5d6c30f44b58bf5b0b2bce38e8d1e4feaa08100d4ea3709a0cfa158a8baca06b",
+    "crates/phenix-macros/src/lib.rs": "0196eb02479aca58d381556c4230fbf36ca08ddcdc945e051f85097a3c912233",
+    "crates/phenix-sdk/src/lib.rs": "0d49b98d0cff97701ffc2f79677361417027ff8201c77a430a18d18ffd86757e",
+    "examples/Cargo.lock": "b46f947d360a3c697dfc0ea344ab6b70b13c5572023e6d73fa33a5b9f6a1076a",
+    "examples/Cargo.toml": "e6c8cae970feac6aa9d50639b483fddd35c9855f9063d29a89ed44f743c9a7b1",
+    "flake.nix": "ba51faec4cb99b805c00e29577e98eaddfaee4ac4af6733e5b0770a76c3b65c9",
+    "spec/m1-roadmap.md": "5e63d25b63b1632b31929e4b27ad1baef2c15535c970069700b6c904a03d27bd"
+  },
+  "checks": {
+    "workspace_unit_and_doc_tests": "passed; sixteen unit/integration and twenty-one compile failures",
+    "clippy": "all workspace targets and external fixtures passed; local existing Atomic deprecation allowed",
+    "independent_schemas": "15 compile-time vectors passed debug and ThinLTO release",
+    "native_sdk": "14 behaviors passed debug and ThinLTO release",
+    "public_sdk_isolation": "only contract/sdk/macros sources; no private kernel/artifact; tests and release fixture build passed",
+    "real_cli": "pending genuine Nix CI"
+  },
+  "reports": {
+    "debug": {
+      "static-schemas.json": {
+        "all_passed": true,
+        "cases": [
+          {
+            "hex": "0500000004426f6f6c",
+            "id": "0fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5",
+            "name": "bool"
+          },
+          {
+            "hex": "0500000003553634",
+            "id": "d103dc7b1626e8502744a592274716ab89883e06e2076301a9d15557fc19591c",
+            "name": "u64"
+          },
+          {
+            "hex": "0500000006537472696e67",
+            "id": "41d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c",
+            "name": "string"
+          },
+          {
+            "hex": "070000000205000000044c6973740500000006537472696e67",
+            "id": "ed0c0104f483e18178f715bc390fa0e44277e391f5bc8c805e5b132d3a9c2a6b",
+            "name": "list-string"
+          },
+          {
+            "hex": "070000000205000000064f7074696f6e070000000205000000064f7074696f6e0500000004426f6f6c",
+            "id": "1dac01f974676cf20e888bafdb4a51b381faac5b8c44d7b59871fbad9f6b1541",
+            "name": "option-option-bool"
+          },
+          {
+            "hex": "07000000020500000006537472756374080000000200000007656e61626c65640500000004426f6f6c000000056e616d6573070000000205000000044c6973740500000006537472696e67",
+            "id": "e9d53697253e34098b490c4ee92d819d2fa164815163bf32fe49360789d94f37",
+            "name": "record"
+          },
+          {
+            "hex": "0700000002050000000856617269616e747307000000020500000005456d70747905000000055265616479",
+            "id": "c412585d9f5549bb87362738253868c07e57d3fed07a02dc3d6961a7c1c2b7f6",
+            "name": "variants"
+          },
+          {
+            "hex": "07000000020500000003526566060000002041d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c",
+            "id": "b84b120614c1c6501c591667a47e86f40be2d26eb0c173d9984021806a3f957e",
+            "name": "ref-string"
+          },
+          {
+            "hex": "0700000002050000000352656606000000200fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5",
+            "id": "0d1f51eb4bb534a29e14fb3543ea1435df920b34582c5f1303e2331403d423c6",
+            "name": "ref-bool"
+          },
+          {
+            "hex": "0500000003493634",
+            "id": "ada397347047864418fd75eb8ed80d5b5793255b64c9c28b3194d20d5a813706",
+            "name": "i64"
+          },
+          {
+            "hex": "05000000054279746573",
+            "id": "2b654af0b194243388ed8d1f54652716747ddcd4d9dd54b6a2c39487b4adc60e",
+            "name": "bytes"
+          },
+          {
+            "hex": "070000000205000000065374727563740800000000",
+            "id": "a029272887c75909b6723e9df107b1b4c821d766b8f89144442292df8245385b",
+            "name": "empty-record"
+          },
+          {
+            "hex": "070000000205000000035265660600000020345ce4ff50811e1d3049b5ef9b0873b4183f4005bccf6d6d6f977b8f900444d3",
+            "id": "00543e8f94a0716060f154532fc3caa70932f7c302535d28d909c1d685042abe",
+            "name": "nested-ref"
+          },
+          {
+            "hex": "0700000002050000000653747275637408000000020000001c615f6162636465666768696a6b6c6d6e6f707172737475767778797a070000000205000000044c6973740500000006537472696e670000001c7a5f6162636465666768696a6b6c6d6e6f707172737475767778797a070000000205000000064f7074696f6e0500000003553634",
+            "id": "013654e962f7c2823d3af17030d1aa697b2afa2b478b2a7bf932eede8b1f0f75",
+            "name": "long-record"
+          },
+          {
+            "hex": "070000000205000000035265660600000020013654e962f7c2823d3af17030d1aa697b2afa2b478b2a7bf932eede8b1f0f75",
+            "id": "d483dff765ee5e98903eed77bfc327a91ff62a7c653c45f507f7096877427507",
+            "name": "ref-long-record"
+          }
+        ]
+      },
+      "sdk.json": {
+        "all_passed": true,
+        "before_stop": {
+          "authority": {
+            "operations": [
+              "test.provider@1/run",
+              "test.refs@1/get",
+              "test.refs@1/notes",
+              "test.state-provider.property.counter@1/get",
+              "test.state-provider.property.counter@1/set",
+              "test.state-provider.property.counter@1/watch",
+              "test.state-provider.property.notes@1/get",
+              "test.state-provider.property.notes@1/set",
+              "test.state-provider.property.notes@1/watch",
+              "test.state@1/read",
+              "test.state@1/run"
+            ],
+            "resources": [
+              "test.state-provider.property.counter",
+              "test.state-provider.property.notes"
+            ]
+          },
+          "bindings": [
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/set",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/watch",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#0:test.refs@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#0:test.refs@1/notes",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#1:test.refs@1/get",
+              "provider": "test.state-alternative"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#1:test.refs@1/notes",
+              "provider": "test.state-alternative"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/set",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/watch",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "refs:test.refs@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "refs:test.refs@1/notes",
+              "provider": "test.state-provider"
+            }
+          ],
+          "calls": 7,
+          "denied_operations": 1,
+          "entry": {
+            "interface": "test.state@1",
+            "operation": "run",
+            "provider": "test.state-client"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": null,
+          "lifecycle": {
+            "startup_order": [
+              "test.state-alternative",
+              "test.state-provider",
+              "test.state-client"
+            ],
+            "stop_failures": [],
+            "stopped": false
+          },
+          "live_state": {
+            "cells": 4,
+            "epoch": 2,
+            "revisions": [
+              {
+                "epoch": 2,
+                "owner": "test.state-provider",
+                "property": "notes",
+                "revision": 2
+              },
+              {
+                "epoch": 0,
+                "owner": "test.state-alternative",
+                "property": "notes",
+                "revision": 0
+              },
+              {
+                "epoch": 2,
+                "owner": "test.state-provider",
+                "property": "counter",
+                "revision": 1
+              },
+              {
+                "epoch": 0,
+                "owner": "test.state-alternative",
+                "property": "counter",
+                "revision": 0
+              }
+            ],
+            "subscriptions": 0
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "74cba234d04ff036322549d6b23959751f82029c1b2d8df4936dd7c16ffad963",
+              "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+              "id": "test.state-alternative",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "0c53eb0e95ff0d6ed6fdde3af3e80707681f8a5e356d55a71a6f93c71c8adbb2",
+              "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+              "id": "test.state-client",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "3ceff6225c3ea14c7dcb8a4701963b4df9e8baa2deb2c703c4e1e852504b95a2",
+              "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+              "id": "test.state-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          },
+          "state": {
+            "definition_inputs": [
+              "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+              "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+              "test.state-client:counter:0:test.state-provider:property.counter:1",
+              "test.state-client:many:0:test.state-provider:refs:1",
+              "test.state-client:many:1:test.state-alternative:refs:1",
+              "test.state-client:notes:0:test.state-provider:property.notes:1",
+              "test.state-client:refs:0:test.state-provider:refs:1",
+              "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+            ],
+            "slots": [
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "counter"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 2,
+                "slot": "many"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "notes"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "refs"
+              }
+            ]
+          }
+        },
+        "cases": [
+          "typed-property-binding",
+          "selected-slot-calls",
+          "typed-ref-schema-mismatch",
+          "immutable-snapshot-clones",
+          "explicit-vec-edit",
+          "cas-domain-conflict-details",
+          "draft-drop-zero-effects",
+          "heterogeneous-batch-one-epoch",
+          "watch-bootstrap-and-coalescing",
+          "explicit-idempotent-watch-close",
+          "consistent-epoch-snapshot",
+          "selected-many-ref-grants-no-authority",
+          "denied-write-zero-effects",
+          "root-stop-cell-cleanup"
+        ],
+        "format": "phenix.m1-value-sdk-evidence.v1"
+      }
+    },
+    "release": {
+      "static-schemas.json": {
+        "all_passed": true,
+        "cases": [
+          {
+            "hex": "0500000004426f6f6c",
+            "id": "0fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5",
+            "name": "bool"
+          },
+          {
+            "hex": "0500000003553634",
+            "id": "d103dc7b1626e8502744a592274716ab89883e06e2076301a9d15557fc19591c",
+            "name": "u64"
+          },
+          {
+            "hex": "0500000006537472696e67",
+            "id": "41d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c",
+            "name": "string"
+          },
+          {
+            "hex": "070000000205000000044c6973740500000006537472696e67",
+            "id": "ed0c0104f483e18178f715bc390fa0e44277e391f5bc8c805e5b132d3a9c2a6b",
+            "name": "list-string"
+          },
+          {
+            "hex": "070000000205000000064f7074696f6e070000000205000000064f7074696f6e0500000004426f6f6c",
+            "id": "1dac01f974676cf20e888bafdb4a51b381faac5b8c44d7b59871fbad9f6b1541",
+            "name": "option-option-bool"
+          },
+          {
+            "hex": "07000000020500000006537472756374080000000200000007656e61626c65640500000004426f6f6c000000056e616d6573070000000205000000044c6973740500000006537472696e67",
+            "id": "e9d53697253e34098b490c4ee92d819d2fa164815163bf32fe49360789d94f37",
+            "name": "record"
+          },
+          {
+            "hex": "0700000002050000000856617269616e747307000000020500000005456d70747905000000055265616479",
+            "id": "c412585d9f5549bb87362738253868c07e57d3fed07a02dc3d6961a7c1c2b7f6",
+            "name": "variants"
+          },
+          {
+            "hex": "07000000020500000003526566060000002041d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c",
+            "id": "b84b120614c1c6501c591667a47e86f40be2d26eb0c173d9984021806a3f957e",
+            "name": "ref-string"
+          },
+          {
+            "hex": "0700000002050000000352656606000000200fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5",
+            "id": "0d1f51eb4bb534a29e14fb3543ea1435df920b34582c5f1303e2331403d423c6",
+            "name": "ref-bool"
+          },
+          {
+            "hex": "0500000003493634",
+            "id": "ada397347047864418fd75eb8ed80d5b5793255b64c9c28b3194d20d5a813706",
+            "name": "i64"
+          },
+          {
+            "hex": "05000000054279746573",
+            "id": "2b654af0b194243388ed8d1f54652716747ddcd4d9dd54b6a2c39487b4adc60e",
+            "name": "bytes"
+          },
+          {
+            "hex": "070000000205000000065374727563740800000000",
+            "id": "a029272887c75909b6723e9df107b1b4c821d766b8f89144442292df8245385b",
+            "name": "empty-record"
+          },
+          {
+            "hex": "070000000205000000035265660600000020345ce4ff50811e1d3049b5ef9b0873b4183f4005bccf6d6d6f977b8f900444d3",
+            "id": "00543e8f94a0716060f154532fc3caa70932f7c302535d28d909c1d685042abe",
+            "name": "nested-ref"
+          },
+          {
+            "hex": "0700000002050000000653747275637408000000020000001c615f6162636465666768696a6b6c6d6e6f707172737475767778797a070000000205000000044c6973740500000006537472696e670000001c7a5f6162636465666768696a6b6c6d6e6f707172737475767778797a070000000205000000064f7074696f6e0500000003553634",
+            "id": "013654e962f7c2823d3af17030d1aa697b2afa2b478b2a7bf932eede8b1f0f75",
+            "name": "long-record"
+          },
+          {
+            "hex": "070000000205000000035265660600000020013654e962f7c2823d3af17030d1aa697b2afa2b478b2a7bf932eede8b1f0f75",
+            "id": "d483dff765ee5e98903eed77bfc327a91ff62a7c653c45f507f7096877427507",
+            "name": "ref-long-record"
+          }
+        ]
+      },
+      "sdk.json": {
+        "all_passed": true,
+        "before_stop": {
+          "authority": {
+            "operations": [
+              "test.provider@1/run",
+              "test.refs@1/get",
+              "test.refs@1/notes",
+              "test.state-provider.property.counter@1/get",
+              "test.state-provider.property.counter@1/set",
+              "test.state-provider.property.counter@1/watch",
+              "test.state-provider.property.notes@1/get",
+              "test.state-provider.property.notes@1/set",
+              "test.state-provider.property.notes@1/watch",
+              "test.state@1/read",
+              "test.state@1/run"
+            ],
+            "resources": [
+              "test.state-provider.property.counter",
+              "test.state-provider.property.notes"
+            ]
+          },
+          "bindings": [
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/set",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "counter:test.state-provider.property.counter@1/watch",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#0:test.refs@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#0:test.refs@1/notes",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#1:test.refs@1/get",
+              "provider": "test.state-alternative"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "many#1:test.refs@1/notes",
+              "provider": "test.state-alternative"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/set",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "notes:test.state-provider.property.notes@1/watch",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "refs:test.refs@1/get",
+              "provider": "test.state-provider"
+            },
+            {
+              "caller": "test.state-client",
+              "operation": "refs:test.refs@1/notes",
+              "provider": "test.state-provider"
+            }
+          ],
+          "calls": 7,
+          "denied_operations": 1,
+          "entry": {
+            "interface": "test.state@1",
+            "operation": "run",
+            "provider": "test.state-client"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": null,
+          "lifecycle": {
+            "startup_order": [
+              "test.state-alternative",
+              "test.state-provider",
+              "test.state-client"
+            ],
+            "stop_failures": [],
+            "stopped": false
+          },
+          "live_state": {
+            "cells": 4,
+            "epoch": 2,
+            "revisions": [
+              {
+                "epoch": 0,
+                "owner": "test.state-alternative",
+                "property": "notes",
+                "revision": 0
+              },
+              {
+                "epoch": 2,
+                "owner": "test.state-provider",
+                "property": "notes",
+                "revision": 2
+              },
+              {
+                "epoch": 0,
+                "owner": "test.state-alternative",
+                "property": "counter",
+                "revision": 0
+              },
+              {
+                "epoch": 2,
+                "owner": "test.state-provider",
+                "property": "counter",
+                "revision": 1
+              }
+            ],
+            "subscriptions": 0
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "455a1704322dca51a4ae2470b1d2523dc4cd0163854163568a69140ace9a528a",
+              "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+              "id": "test.state-alternative",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6a176b744e6b08019449da18122119f33d4048f316f1a698f0f4ffee3c970385",
+              "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+              "id": "test.state-client",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "efd5fce56e613bdb8f9ced38f63a80b39fdcd19b96283a81ce239a4553ae8490",
+              "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+              "id": "test.state-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          },
+          "state": {
+            "definition_inputs": [
+              "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+              "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+              "test.state-client:counter:0:test.state-provider:property.counter:1",
+              "test.state-client:many:0:test.state-provider:refs:1",
+              "test.state-client:many:1:test.state-alternative:refs:1",
+              "test.state-client:notes:0:test.state-provider:property.notes:1",
+              "test.state-client:refs:0:test.state-provider:refs:1",
+              "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+            ],
+            "slots": [
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "counter"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 2,
+                "slot": "many"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "notes"
+              },
+              {
+                "caller": "test.state-client",
+                "count": 1,
+                "slot": "refs"
+              }
+            ]
+          }
+        },
+        "cases": [
+          "typed-property-binding",
+          "selected-slot-calls",
+          "typed-ref-schema-mismatch",
+          "immutable-snapshot-clones",
+          "explicit-vec-edit",
+          "cas-domain-conflict-details",
+          "draft-drop-zero-effects",
+          "heterogeneous-batch-one-epoch",
+          "watch-bootstrap-and-coalescing",
+          "explicit-idempotent-watch-close",
+          "consistent-epoch-snapshot",
+          "selected-many-ref-grants-no-authority",
+          "denied-write-zero-effects",
+          "root-stop-cell-cleanup"
+        ],
+        "format": "phenix.m1-value-sdk-evidence.v1"
+      }
+    }
+  },
+  "package_digests": {
+    "debug": {
+      "provider": {
+        "artifact_sha256": "3ceff6225c3ea14c7dcb8a4701963b4df9e8baa2deb2c703c4e1e852504b95a2",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      "client": {
+        "artifact_sha256": "0c53eb0e95ff0d6ed6fdde3af3e80707681f8a5e356d55a71a6f93c71c8adbb2",
+        "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu"
+      }
+    },
+    "release": {
+      "provider": {
+        "artifact_sha256": "efd5fce56e613bdb8f9ced38f63a80b39fdcd19b96283a81ce239a4553ae8490",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      "client": {
+        "artifact_sha256": "6a176b744e6b08019449da18122119f33d4048f316f1a698f0f4ffee3c970385",
+        "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu"
+      }
+    }
+  }
+}

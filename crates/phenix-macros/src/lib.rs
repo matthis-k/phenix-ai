@@ -437,3 +437,64 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
     })();
     result.unwrap_or_else(syn::Error::into_compile_error).into()
 }
+
+/// Derive the explicitly versioned M1 portable trait; M0 stays unchanged.
+#[proc_macro_derive(LivePortable)]
+pub fn live_portable(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let result = (|| {
+        if !input.generics.params.is_empty() {
+            return Err(syn::Error::new(
+                input.span(),
+                "live portable generics require an explicit implementation",
+            ));
+        }
+        let name = &input.ident;
+        let (schema, to, from) = match &input.data {
+            Data::Struct(s) => {
+                let Fields::Named(fields) = &s.fields else {
+                    return Err(syn::Error::new(
+                        s.fields.span(),
+                        "use named live portable fields",
+                    ));
+                };
+                let mut fields: Vec<_> = fields.named.iter().collect();
+                fields.sort_by_key(|f| f.ident.as_ref().unwrap().to_string());
+                let names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+                let keys: Vec<_> = names.iter().map(|n| n.to_string()).collect();
+                let types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+                (
+                    quote!(::phenix_sdk::StaticSchema::Struct(&[#(::phenix_sdk::StaticField{name:#keys,schema:<#types as ::phenix_sdk::live::Portable>::SCHEMA}),*])),
+                    quote!(::phenix_sdk::Value::map([#((#keys,::phenix_sdk::live::Portable::to_value(&self.#names))),*])),
+                    quote! {let ::phenix_sdk::Value::Map(mut fields)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected live struct"));};let result=Self{#(#names:<#types as ::phenix_sdk::live::Portable>::from_value(fields.remove(#keys).ok_or_else(||::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,concat!("missing field ",#keys)))?)?),*};if !fields.is_empty(){return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown live field"));}Ok(result)},
+                )
+            }
+            Data::Enum(e) => {
+                if e.variants.iter().any(|v| !matches!(v.fields, Fields::Unit)) {
+                    return Err(syn::Error::new(
+                        e.enum_token.span,
+                        "live portable variants must be unit variants",
+                    ));
+                }
+                let mut names: Vec<_> = e.variants.iter().map(|v| &v.ident).collect();
+                names.sort_by_key(|v| v.to_string());
+                let keys: Vec<_> = names.iter().map(|v| v.to_string()).collect();
+                (
+                    quote!(::phenix_sdk::StaticSchema::Variants(&[#(#keys),*])),
+                    quote!(::phenix_sdk::Value::String(match self{#(Self::#names=>#keys),*}.into())),
+                    quote! {let ::phenix_sdk::Value::String(name)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected live variant"));};match name.as_str(){#(#keys=>Ok(Self::#names),)*_=>Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown live variant"))}},
+                )
+            }
+            _ => {
+                return Err(syn::Error::new(
+                    input.span(),
+                    "unsupported live portable type",
+                ))
+            }
+        };
+        Ok(
+            quote! {impl ::phenix_sdk::live::Portable for #name{const SCHEMA: ::phenix_sdk::StaticSchema=#schema;fn to_value(&self)->::phenix_sdk::Value{#to}fn from_value(value: ::phenix_sdk::Value)->Result<Self,::phenix_sdk::Failure>{#from}}},
+        )
+    })();
+    result.unwrap_or_else(syn::Error::into_compile_error).into()
+}

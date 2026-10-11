@@ -126,6 +126,21 @@
       restricted = plugin "example-scoped-client";
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
+      valueProvider = plugin "example-value-provider";
+      valueClient = plugin "example-value-client";
+      staticSchemaProbe = (build "phenix-contract" publicSource).overrideAttrs (old: {
+        cargoBuildFlags = [ "-p" "phenix-contract" "--bin" "phenix-static-schema-probe" ];
+      });
+      valueSdkCheck = pkgs.runCommand "phenix-m1-value-sdk" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-m1-sdk ${valueProvider} ${valueClient} ${stateNegative "alternative"} $out
+        python ${./tests/m1-value-sdk-vectors.py} ${staticSchemaProbe}/bin/phenix-static-schema-probe ${./tests/m1-contract-vectors.json} $out
+        python ${./tests/m1-live-state-product.py} ${kernel}/bin/phenix-kernel $out "$TMPDIR/metadata" --metadata-only
+        cp "$TMPDIR/metadata/metadata.json" $out/metadata.json
+      '';
+      valueSdkProduct = pkgs.runCommand "phenix-m1-value-sdk-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python ${./tests/m1-value-sdk-product.py} ${kernel}/bin/phenix-kernel ${valueSdkCheck} $out
+      '';
       stateProvider = plugin "example-reactive-provider";
       stateClient = plugin "example-reactive-client";
       stateNegative = feature: (plugin "example-reactive-provider").overrideAttrs (old: {
@@ -438,6 +453,8 @@
         phenix-m0-release = release;
         phenix-m0-deployment = deployment;
         phenix-sdk = sdk;
+        phenix-m1-value-sdk-evidence = valueSdkCheck;
+        phenix-m1-value-sdk-product = valueSdkProduct;
         phenix-m1-live-state-evidence = stateCheck;
         phenix-m1-live-state-product = stateProduct;
         phenix-a0-agent-evidence = agentCheck;
@@ -457,6 +474,8 @@
         };
       };
       checks.${system} = {
+        m1-value-sdk = valueSdkCheck;
+        m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
         m1-live-state-product = stateProduct;
         a0-agent = agentCheck;

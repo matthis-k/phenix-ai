@@ -23,6 +23,9 @@ jobs:
           if [[ "${{ github.head_ref }}" == impl/m1-live-state ]]; then
             nix build .#checks.x86_64-linux.m1-live-state-product -L
           fi
+          if [[ "${{ github.head_ref }}" == impl/m1-value-sdk ]]; then
+            nix build .#checks.x86_64-linux.m1-value-sdk-product -L
+          fi
           nix build .#checks.x86_64-linux.m1-metadata-state -L
           nix flake check -L
       - name: Record realized conformance outputs and commit
@@ -50,6 +53,13 @@ jobs:
             cp -RL result-m1-live ci-evidence/m1-live-state
             cp -RL result-m1-live-product ci-evidence/m1-live-state-product
             nix path-info --json ./result-m1-live ./result-m1-live-product > ci-evidence/m1-live-nix-output.json
+          fi
+          if [[ "${{ github.head_ref }}" == impl/m1-value-sdk ]]; then
+            nix build .#checks.x86_64-linux.m1-value-sdk --out-link result-m1-sdk
+            nix build .#checks.x86_64-linux.m1-value-sdk-product --out-link result-m1-sdk-product
+            cp -RL result-m1-sdk ci-evidence/m1-value-sdk
+            cp -RL result-m1-sdk-product ci-evidence/m1-value-sdk-product
+            nix path-info --json ./result-m1-sdk ./result-m1-sdk-product > ci-evidence/m1-sdk-nix-output.json
           fi
           cp -RL result-conformance/* ci-evidence/
           git rev-parse HEAD > ci-evidence/kernel-commit.txt

@@ -18,7 +18,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | PROVEN at `2682be5f` in CI 38125329024 |
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | TESTED locally; full CI pending; `m1-live-state-matrix.md` |
-| S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | Freeze authored; implementation pending |
+| S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | TESTED locally; full CI pending; `m1-value-sdk-matrix.md` |
 | S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Not started |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
