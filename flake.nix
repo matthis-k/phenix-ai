@@ -256,7 +256,7 @@
           contract=$(find target -path '*/release/deps/libphenix_contract-*.rlib' | head -1)
           test -n "$contract"
           $CC -std=c11 -Wall -Wextra -Werror -I${./include} -c ${./tests/m1-state-abi.c} -o "$TMPDIR/state.o"
-          rustc --edition=2021 ${./tests/m1-state-abi.rs} --extern phenix_contract="$contract" -L dependency="$(dirname "$contract")" -C link-arg="$TMPDIR/state.o" -o "$TMPDIR/state-abi"
+          rustc --edition=2021 -C lto=thin -C opt-level=3 ${./tests/m1-state-abi.rs} --extern phenix_contract="$contract" -L dependency="$(dirname "$contract")" -C link-arg="$TMPDIR/state.o" -o "$TMPDIR/state-abi"
           "$TMPDIR/state-abi" > $out/native.json
           python -m json.tool $out/metadata.json > /dev/null
           python -m json.tool $out/native.json > /dev/null

@@ -5,7 +5,8 @@
     "14 workspace unit tests and 13 compile-fail doctests",
     "isolated public SDK unit/doctests",
     "isolated SDK-only metadata fixture",
-    "S1a 200 independent cases unchanged"
+    "S1a 200 independent cases unchanged",
+    "optimized release probe and C/Rust fixture with ThinLTO enabled"
   ],
   "format": "phenix.m1.metadata-state.local.v1",
   "freeze_commit": "295067bbcc2ea78f13cb26c68351080cacc1d0a5",
@@ -40,7 +41,7 @@
     "crates/phenix-contract/src/descriptor/metadata.rs": "9af5b95bc8de16da93f6543ca145e3dfd336f969a7ad79f40ba6505e048e8003",
     "crates/phenix-contract/src/state.rs": "1e39c7fa2927e422448695dee4e42778314ac3f58f87e33a1bca8889ebe566b5",
     "examples/reactive-contracts/src/main.rs": "ce97dad8bc8ed3e2c70e851298e2323e40f669e93af0fa3ab87aa5521bf11f1b",
-    "flake.nix": "0743452e580bf5fc51be4a7ce310d139df1069c69837d72afd4030ddce0756a5",
+    "flake.nix": "2f0b32e5ebfe7ddf387eb908550c0cccd75079baab34ad2a2eb528b51d682d68",
     "include/phenix.h": "b726543f6e914f24b180494328d56fea575a742b6af2dfc8189755bfb0e5ecba",
     "tests/m1-metadata-negative.py": "a27738f7ae8d0b89e6884cb661db0caadf8a92294cb91535b45cd86c6f3cfa52",
     "tests/m1-metadata-vectors.json": "43e6722b10fe7f66aff490f52083709698ad984e7b5f7f287c291f6d3128862a",
