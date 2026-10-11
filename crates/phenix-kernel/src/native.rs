@@ -98,7 +98,7 @@ impl Native {
             .consume()
         }
     }
-    fn stop(&mut self) -> Result<(), Failure> {
+    pub(crate) fn stop(&mut self) -> Result<(), Failure> {
         let instance = std::mem::replace(&mut self.instance, std::ptr::null_mut());
         if instance.is_null() {
             return Err(Failure::new(Code::PluginFailed, "instance already stopped"));

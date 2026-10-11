@@ -91,6 +91,7 @@ pub struct Prepared {
     pub(crate) authority: Authority,
     pub(crate) resource: Option<String>,
     composition: bool,
+    pub(crate) startup_order: Vec<String>,
 }
 struct Policy {
     artifacts: Vec<String>,
@@ -333,9 +334,11 @@ impl Prepared {
                 ));
             }
         }
-        if policy.composition {
-            check_cycles(&packages, &bindings)?;
-        }
+        let startup_order = if policy.composition {
+            dependency_order(&packages, &bindings)?
+        } else {
+            packages.keys().cloned().collect()
+        };
         let mut grants = BTreeMap::new();
         policy
             .grants
@@ -370,6 +373,7 @@ impl Prepared {
             authority: policy.authority,
             resource: policy.resource,
             composition: policy.composition,
+            startup_order,
         };
         prepared.check_entry(&prepared.entry)?;
         if !prepared
@@ -411,20 +415,22 @@ impl Prepared {
             result["format"] = "phenix.inspect.v2".into();
             result["authority"] = serde_json::json!(self.authority);
             result["resource"] = serde_json::json!(self.resource);
+            result["lifecycle"] = serde_json::json!({"startup_order":self.startup_order,"stopped":false,"stop_failures":[]});
         }
         result
     }
 }
-fn check_cycles(
+fn dependency_order(
     packages: &BTreeMap<String, VerifiedPackage>,
     bindings: &BTreeMap<(String, String), String>,
-) -> Result<(), Failure> {
+) -> Result<Vec<String>, Failure> {
     fn visit(
         id: &str,
         packages: &BTreeMap<String, VerifiedPackage>,
         bindings: &BTreeMap<(String, String), String>,
         done: &mut BTreeSet<String>,
         path: &mut Vec<String>,
+        order: &mut Vec<String>,
     ) -> Result<(), Failure> {
         if let Some(at) = path.iter().position(|x| x == id) {
             let mut cycle = path[at..].to_vec();
@@ -446,16 +452,19 @@ fn check_cycles(
                     bindings,
                     done,
                     path,
+                    order,
                 )?;
             }
         }
         path.pop();
         done.insert(id.into());
+        order.push(id.into());
         Ok(())
     }
     let mut done = BTreeSet::new();
+    let mut order = Vec::new();
     for id in packages.keys() {
-        visit(id, packages, bindings, &mut done, &mut vec![])?;
+        visit(id, packages, bindings, &mut done, &mut vec![], &mut order)?;
     }
-    Ok(())
+    Ok(order)
 }

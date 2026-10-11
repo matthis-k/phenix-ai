@@ -1,0 +1,1177 @@
+{
+  "accepted_m01_ci_run": 38100726798,
+  "accepted_m01_head": "76c874c51cebc8e9affa28288a0f672e29e46e9e",
+  "aggregate_output": "/nix/store/frngp348lciky9cpj22km4laljvd780z-phenix-m0-conformance",
+  "checks": {
+    "m0-contract": {
+      "output": "/nix/store/5dj541aii0ln32ly8hggfn3slkbvwv98-phenix-contract-check-0.1.0",
+      "status": "passed"
+    },
+    "m0-descriptor": {
+      "output": "/nix/store/x32kppcsnm2fcx0dh1a878mjw6s59mwz-phenix-m0-descriptor",
+      "status": "passed"
+    },
+    "m0-native": {
+      "output": "/nix/store/1r6vnr5wky4zjfgsfq5ljwpniax6qhyw-phenix-m0-native",
+      "status": "passed"
+    },
+    "m0-product": {
+      "output": "/nix/store/sp38gnwr8g7w5p98nz1gpbbkq2sm4272-phenix-m0-product",
+      "status": "passed"
+    },
+    "m01-composition": {
+      "output": "/nix/store/bl23d6hiydws8l44ml3w4mbbcywg9p36-phenix-m01-composition",
+      "status": "passed"
+    },
+    "m01-product": {
+      "output": "/nix/store/kpcsks5d7g7snqfq2dzxwkqgxiqwk5k2-phenix-m01-product",
+      "status": "passed"
+    },
+    "m02-lifecycle": {
+      "output": "/nix/store/i886yzhsp8pnsqxn89qfkrzzh8f5kkxz-phenix-m02-lifecycle",
+      "status": "passed"
+    },
+    "m02-lifecycle-product": {
+      "output": "/nix/store/kfhqypz25agyb9q8vq3m7ac1r4ywnk48-phenix-m02-lifecycle-product",
+      "status": "passed"
+    }
+  },
+  "cli": [
+    {
+      "events": [
+        "provider:start",
+        "consumer:start",
+        "provider:invoke",
+        "consumer:stop",
+        "consumer:drop",
+        "provider:stop",
+        "provider:drop"
+      ],
+      "fail_call": false,
+      "faults": "",
+      "report": {
+        "authority": {
+          "operations": [
+            "example.lifecycle-service@1/echo",
+            "example.lifecycle@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.lifecycle.a-consumer",
+            "operation": "example.lifecycle-service@1/echo",
+            "provider": "example.lifecycle.z-provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.lifecycle@1",
+          "operation": "run",
+          "provider": "example.lifecycle.a-consumer"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "example.lifecycle.z-provider",
+            "example.lifecycle.a-consumer"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "outcome": {
+          "kind": "success",
+          "value": {
+            "text": "LIFECYCLE"
+          }
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+            "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+            "id": "example.lifecycle.a-consumer",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+            "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+            "id": "example.lifecycle.z-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        }
+      }
+    },
+    {
+      "events": [
+        "provider:start",
+        "consumer:start",
+        "consumer:stop",
+        "consumer:drop",
+        "provider:stop",
+        "provider:drop"
+      ],
+      "fail_call": false,
+      "faults": "consumer:start",
+      "report": {
+        "format": "phenix.inspect.v1",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": null,
+          "message": "consumer:start",
+          "phase": "executable_abi"
+        },
+        "phase": "executable_abi"
+      }
+    },
+    {
+      "events": [
+        "provider:start",
+        "consumer:start",
+        "provider:invoke",
+        "consumer:stop",
+        "consumer:drop",
+        "provider:stop",
+        "provider:drop"
+      ],
+      "fail_call": false,
+      "faults": "consumer:stop",
+      "report": {
+        "authority": {
+          "operations": [
+            "example.lifecycle-service@1/echo",
+            "example.lifecycle@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.lifecycle.a-consumer",
+            "operation": "example.lifecycle-service@1/echo",
+            "provider": "example.lifecycle.z-provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.lifecycle@1",
+          "operation": "run",
+          "provider": "example.lifecycle.a-consumer"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": {
+            "caller": "control",
+            "operation": null,
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "message": "consumer:stop",
+          "phase": "lifecycle"
+        },
+        "lifecycle": {
+          "startup_order": [
+            "example.lifecycle.z-provider",
+            "example.lifecycle.a-consumer"
+          ],
+          "stop_failures": [
+            {
+              "failure": {
+                "code": "PluginFailed",
+                "message": "consumer:stop"
+              },
+              "provider": "example.lifecycle.a-consumer"
+            }
+          ],
+          "stopped": true
+        },
+        "outcome": {
+          "kind": "success",
+          "value": {
+            "text": "LIFECYCLE"
+          }
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+            "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+            "id": "example.lifecycle.a-consumer",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+            "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+            "id": "example.lifecycle.z-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        },
+        "shutdown_failure": {
+          "code": "PluginFailed",
+          "message": "consumer:stop"
+        }
+      }
+    },
+    {
+      "events": [
+        "provider:start",
+        "consumer:start",
+        "provider:invoke",
+        "consumer:stop",
+        "consumer:drop",
+        "provider:stop",
+        "provider:drop"
+      ],
+      "fail_call": false,
+      "faults": "consumer:stop-panic",
+      "report": {
+        "authority": {
+          "operations": [
+            "example.lifecycle-service@1/echo",
+            "example.lifecycle@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.lifecycle.a-consumer",
+            "operation": "example.lifecycle-service@1/echo",
+            "provider": "example.lifecycle.z-provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.lifecycle@1",
+          "operation": "run",
+          "provider": "example.lifecycle.a-consumer"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": {
+            "caller": "control",
+            "operation": null,
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "message": "caught lifecycle panic",
+          "phase": "lifecycle"
+        },
+        "lifecycle": {
+          "startup_order": [
+            "example.lifecycle.z-provider",
+            "example.lifecycle.a-consumer"
+          ],
+          "stop_failures": [
+            {
+              "failure": {
+                "code": "PluginFailed",
+                "message": "caught lifecycle panic"
+              },
+              "provider": "example.lifecycle.a-consumer"
+            }
+          ],
+          "stopped": true
+        },
+        "outcome": {
+          "kind": "success",
+          "value": {
+            "text": "LIFECYCLE"
+          }
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+            "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+            "id": "example.lifecycle.a-consumer",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+            "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+            "id": "example.lifecycle.z-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        },
+        "shutdown_failure": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        }
+      }
+    },
+    {
+      "events": [
+        "provider:start",
+        "consumer:start",
+        "provider:invoke",
+        "consumer:stop",
+        "consumer:drop",
+        "provider:stop",
+        "provider:drop"
+      ],
+      "fail_call": true,
+      "faults": "consumer:stop",
+      "report": {
+        "authority": {
+          "operations": [
+            "example.lifecycle-service@1/echo",
+            "example.lifecycle@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.lifecycle.a-consumer",
+            "operation": "example.lifecycle-service@1/echo",
+            "provider": "example.lifecycle.z-provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.lifecycle@1",
+          "operation": "run",
+          "provider": "example.lifecycle.a-consumer"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": {
+            "caller": "control",
+            "operation": null,
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "message": "consumer:stop",
+          "phase": "lifecycle"
+        },
+        "lifecycle": {
+          "startup_order": [
+            "example.lifecycle.z-provider",
+            "example.lifecycle.a-consumer"
+          ],
+          "stop_failures": [
+            {
+              "failure": {
+                "code": "PluginFailed",
+                "message": "consumer:stop"
+              },
+              "provider": "example.lifecycle.a-consumer"
+            }
+          ],
+          "stopped": true
+        },
+        "outcome": {
+          "failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            },
+            "message": "provider:invoke",
+            "phase": "invocation"
+          },
+          "kind": "kernel_failure"
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+            "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+            "id": "example.lifecycle.a-consumer",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+            "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+            "id": "example.lifecycle.z-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        },
+        "shutdown_failure": {
+          "code": "PluginFailed",
+          "message": "consumer:stop"
+        }
+      }
+    }
+  ],
+  "contract_version": "0.1.0",
+  "contracts_frozen_at": "3479b9128b6b18db10cce84ae5201eb9f11bbd2e",
+  "format": "phenix.m02-lifecycle-local.v1",
+  "full_m02_accepted": false,
+  "native": {
+    "acquired_resource_count": 2,
+    "cases": [
+      "offline-no-execution",
+      "dependency-start-order",
+      "artifact-order-determinism",
+      "native-typed-call",
+      "active-root-shutdown-rejected",
+      "reverse-explicit-stop",
+      "reverse-drop-stop",
+      "partial-start-cleanup",
+      "startup-panic-cleanup",
+      "rollback-preserves-first-failure",
+      "stop-failure-destroys-state",
+      "stop-panic-destroys-state",
+      "all-stops-attempted",
+      "shutdown-idempotent",
+      "post-shutdown-admission-rejected",
+      "recoverable-native-resource-leaks"
+    ],
+    "contract_version": "0.1.0",
+    "drop_shutdown": [
+      "provider:start",
+      "consumer:start",
+      "consumer:stop",
+      "consumer:drop",
+      "provider:stop",
+      "provider:drop"
+    ],
+    "explicit_shutdown": [
+      "provider:start",
+      "consumer:start",
+      "provider:invoke",
+      "consumer:stop",
+      "consumer:drop",
+      "provider:stop",
+      "provider:drop"
+    ],
+    "fd_baseline": 4,
+    "format": "phenix.m02-lifecycle-evidence.v1",
+    "full_m02_accepted": false,
+    "sdk_version": "0.1.0",
+    "startup_failures": [
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "consumer:start"
+        },
+        "faults": "consumer:start"
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "consumer:start"
+        },
+        "faults": "consumer:start,consumer:stop"
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "consumer:start"
+        },
+        "faults": "consumer:start,consumer:stop-panic"
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "consumer:start"
+        },
+        "faults": "consumer:start,consumer:drop-panic"
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        },
+        "faults": "consumer:start-panic"
+      },
+      {
+        "events": [
+          "provider:start",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "provider:start"
+        },
+        "faults": "provider:start"
+      },
+      {
+        "events": [
+          "provider:start",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "failure": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        },
+        "faults": "provider:start-panic"
+      }
+    ],
+    "stop_failures": [
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "consumer:stop",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.a-consumer"
+            },
+            "message": "consumer:stop",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "consumer:stop"
+                },
+                "provider": "example.lifecycle.a-consumer"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "consumer:stop"
+        }
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "consumer:stop,provider:stop",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.z-provider"
+            },
+            "message": "provider:stop",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "consumer:stop"
+                },
+                "provider": "example.lifecycle.a-consumer"
+              },
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "provider:stop"
+                },
+                "provider": "example.lifecycle.z-provider"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "consumer:stop"
+        }
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "consumer:stop-panic",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.a-consumer"
+            },
+            "message": "caught lifecycle panic",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "caught lifecycle panic"
+                },
+                "provider": "example.lifecycle.a-consumer"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        }
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "provider:stop-panic",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.z-provider"
+            },
+            "message": "caught lifecycle panic",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "caught lifecycle panic"
+                },
+                "provider": "example.lifecycle.z-provider"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        }
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "consumer:drop-panic",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.a-consumer"
+            },
+            "message": "caught lifecycle panic",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "caught lifecycle panic"
+                },
+                "provider": "example.lifecycle.a-consumer"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "caught lifecycle panic"
+        }
+      },
+      {
+        "events": [
+          "provider:start",
+          "consumer:start",
+          "consumer:stop",
+          "consumer:drop",
+          "provider:stop",
+          "provider:drop"
+        ],
+        "faults": "consumer:stop,consumer:drop-panic",
+        "inspection": {
+          "authority": {
+            "operations": [
+              "example.lifecycle-service@1/echo",
+              "example.lifecycle@1/run"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.lifecycle.a-consumer",
+              "operation": "example.lifecycle-service@1/echo",
+              "provider": "example.lifecycle.z-provider"
+            }
+          ],
+          "calls": 0,
+          "denied_operations": 0,
+          "entry": {
+            "interface": "example.lifecycle@1",
+            "operation": "run",
+            "provider": "example.lifecycle.a-consumer"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "control",
+              "operation": null,
+              "provider": "example.lifecycle.a-consumer"
+            },
+            "message": "consumer:stop",
+            "phase": "lifecycle"
+          },
+          "lifecycle": {
+            "startup_order": [
+              "example.lifecycle.z-provider",
+              "example.lifecycle.a-consumer"
+            ],
+            "stop_failures": [
+              {
+                "failure": {
+                  "code": "PluginFailed",
+                  "message": "consumer:stop"
+                },
+                "provider": "example.lifecycle.a-consumer"
+              }
+            ],
+            "stopped": true
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+              "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+              "id": "example.lifecycle.a-consumer",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+              "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+              "id": "example.lifecycle.z-provider",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 0,
+            "last_root_id": null
+          }
+        },
+        "returned": {
+          "code": "PluginFailed",
+          "message": "consumer:stop"
+        }
+      }
+    ]
+  },
+  "packages": [
+    {
+      "artifact": "lib/plugin.so",
+      "artifact_sha256": "4b7783079125406d68e50a0419875ff9457c87873f4f938cb2f75c9e06ca4bcb",
+      "descriptor": "descriptor.bin",
+      "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+      "format": "phenix.package.v1",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact": "lib/plugin.so",
+      "artifact_sha256": "6afd6878632029e9394bfb8123c3078662a8c7ea06354ad8c0f542595658473a",
+      "descriptor": "descriptor.bin",
+      "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+      "format": "phenix.package.v1",
+      "target": "x86_64-unknown-linux-gnu"
+    }
+  ],
+  "sdk_version": "0.1.0",
+  "source_sha256": {
+    "Cargo.lock": "88ee4d128ee7b6400c2b658d829f5630014010d1d2e6a81da2e924ce48bc4618",
+    "Cargo.toml": "3f8ed63826b7df1983cc688f104f6c04fb34d99146d148dd21322a4f4d4d775d",
+    "crates/phenix-artifact/src/bin/phenix-describe.rs": "5062598be843081a0942259f04805c7d20bce9ae45a0c45ce6e835eab41f2968",
+    "crates/phenix-artifact/src/lib.rs": "8cd471e221bb7f4b0f81f7e76d13a28f53150b9c15c69712dcdfe86caf0237ab",
+    "crates/phenix-conformance/src/bin/phenix-m01-conformance.rs": "60627e4d96f65b21d49390dd02e32cdfcfc393e86b746fabfd3aca848d8431a4",
+    "crates/phenix-conformance/src/bin/phenix-m02-lifecycle.rs": "73548ab406fe34ea42a9cc286c733517f9ef5da748c10f06eca5327321283572",
+    "crates/phenix-conformance/src/main.rs": "ea12902d485366a42eac8bcf28b581b30971d5dee4dda1b8a4b88640d7006b0b",
+    "crates/phenix-contract/src/abi.rs": "cc9db737ab5c521ce1b77d27e31097ecdad269e0b5092ab2ee4be7e84d2f4fcf",
+    "crates/phenix-contract/src/descriptor/encode.rs": "edc5d91a17e9483b2b218b603a1f343eb5fa51b62acf4f6168f6f68e011704c3",
+    "crates/phenix-contract/src/descriptor/mod.rs": "435f8ffc90f0d907859e061e36e2f57714eb1f9c760375a9090ecfde71f166a9",
+    "crates/phenix-contract/src/lib.rs": "7d7ab8a4d01e57b496eb4c0692474cbce5b7753904553c81cb4f9e6202fe0e22",
+    "crates/phenix-contract/src/scope.rs": "31236eb4b958c517be714db9d51235208e5640f14f0ef6c05aa6724ac614fc05",
+    "crates/phenix-contract/src/value.rs": "b857551da98845f0cb8417f81ac7df20b07e828c55f0f8855b00f5653cda13d0",
+    "crates/phenix-kernel/src/bin/phenix-kernel.rs": "04218e84e00ea218c777fd32309ff3933aa24d441c27b89f4921d3c99b101b5c",
+    "crates/phenix-kernel/src/lib.rs": "8a51e8525bf42f828cb9e62fb56e9208dedf087e519334ef80135e4eeb2c60a7",
+    "crates/phenix-kernel/src/native.rs": "bb1ccb3f2bb90fc21b6c2d8dcaa3146446347d7289cbbcdd9ab8dc0b992bbd04",
+    "crates/phenix-kernel/src/resolve.rs": "997d9faa336d940c0922ceb4b63e47bf8e83269945f288da98f81f19bc2dd7fb",
+    "crates/phenix-kernel/src/runtime.rs": "2839c677504b97f5a7e8f7f219fe7e80a8dce31fe9bb0926db6158f53b200b24",
+    "crates/phenix-macros/src/lib.rs": "5dc428fb79e58e0a7d3904fe3bddca977db0a533107a56232aa8ba0a28ff5682",
+    "crates/phenix-sdk/src/lib.rs": "3222a497b340a322374a668760541d412844082b35eaca2ed45d69ac3ff4d692",
+    "examples/Cargo.lock": "33ce23fd7bf7c2aa553b399fb9f8f4a8903556a18478dd33786d87d8f97086ce",
+    "examples/Cargo.toml": "42733f177950e2fd564e66033be8d357faad62557a8c31022e6d629f5eafba8a",
+    "examples/alternate/Cargo.toml": "f99eb4dabc634f64055363c59379d319d64d0e8a00c8a6b6b5335d5d64a08e93",
+    "examples/alternate/src/lib.rs": "732ba207e1b6ddda403b0c4ac180b515c518dface2a4ba1f89fae9ef23c6f17e",
+    "examples/choice/Cargo.toml": "a1f2c0d23edcb99496e1e5bd8d427b41eda9ca68e7873c75b6daadc8302c0571",
+    "examples/choice/src/lib.rs": "b8431101b58c32676bbc30d07b247e5a4973a2a7180dfe9da8325ab4b54da642",
+    "examples/consumer/Cargo.toml": "18ce112d385b11dde6201cfc30ca366cc1e33cf381dbbdd1d5f1466833127ee0",
+    "examples/consumer/src/lib.rs": "57c69ea72dd085316745fca784c1b65e70dd3c57de2ddd5123f585972a4eb19b",
+    "examples/contracts/Cargo.toml": "ce4c6e3271abdcbf4f4b45c5cd7088eb797a484750086146b48961c037355512",
+    "examples/contracts/src/lib.rs": "f26c4e325f304f768d7a1124e383965449423724312395ac6f7ff329b674b87c",
+    "examples/cycle/Cargo.toml": "82872fff55a565a9606ca179649c94f9231efa14645e0fa11754c4940e277e37",
+    "examples/cycle/src/lib.rs": "8fd564e3017e9b38a88b1242eee2b300eb2d02daaff0aa9d03797b933c097e25",
+    "examples/lifecycle-consumer/Cargo.toml": "3abbc3367a09c1f30e68e57e07bec16e80fd3391e9c402307cbaa365b3a3fe19",
+    "examples/lifecycle-consumer/src/lib.rs": "1f48d45a999cad8cf44b6b8a3d66a60977fe7f5bb04858bdea5fc51990e73d6d",
+    "examples/lifecycle-provider/Cargo.toml": "ba9cb3ca5ce55a3991e8dad2805767887acd3ea01e1ace988822b1295e58be92",
+    "examples/lifecycle-provider/src/lib.rs": "89705349d667dd2a45727c566d57c10ea2b767cf663fb3d98737616208822948",
+    "examples/other/Cargo.toml": "504115372d44bca0290e923362af2ab81f54c2fb7e695bff7c5f1975a9f23c1e",
+    "examples/other/src/lib.rs": "7f2dcf721f0d3b682a7e8868a40baa8d4ea156fb24d5271210260ee17a5f456a",
+    "examples/provider/Cargo.toml": "316692639b31407f68b7842183db2a3f1b1bc6f25d2473c0e412cbefc257bc31",
+    "examples/provider/src/lib.rs": "a23d8c8033b4672bfc59a7c47b6019cafb1e1a3f2b59709cd111975065f8e513",
+    "examples/relay/Cargo.toml": "54b2d4467f82ce77b811c1fdd8bbb396921a1d5d68ffde27036cc3d1311bde26",
+    "examples/relay/src/lib.rs": "3b2a728758082d7efb772cc39e3136f2c5890f71eaeaa23e85e34b7c1bbd6689",
+    "examples/resource-provider/Cargo.toml": "cdb957f82331732f8f8e81109fc649886e734e2e37e69e5aa269bc3f9ac4d1d3",
+    "examples/resource-provider/src/lib.rs": "ad1d0ed3da2e89c6c29aff220c7908138e30e17cd7f1cf5acccba28cbb30bf89",
+    "examples/scoped-client/Cargo.toml": "9b04f15ee5908bf32d6ff3e6a3ad6b56e5790f2399e6e04832845c5c06e7a126",
+    "examples/scoped-client/src/lib.rs": "d420a74dcbfb93c9cca70ffd4ddcee0bb5ca53f2b166fbacafa70b43e06f92b0",
+    "flake.nix": "ba595d4a264faab5a1875aedcd8e0e2eca2359102a7a054f96d745872a7ca97f",
+    "tests/lifecycle-product.py": "54462caec3f22d16c7601f6d641c58d6ae5fc47cb4aa5d8c57d0a2eb3825b3d7"
+  }
+}

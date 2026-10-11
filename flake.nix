@@ -116,6 +116,8 @@
       restricted = plugin "example-scoped-client";
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
+      lifecycleProvider = plugin "example-lifecycle-provider";
+      lifecycleConsumer = plugin "example-lifecycle-consumer";
       badAbi =
         case:
         pkgs.runCommand "phenix-bad-abi-${toString case}"
@@ -236,6 +238,14 @@
           ''
             python ${./tests/composition-product.py} ${kernel}/bin/phenix-kernel ${compositionCheck} ${./tests/composition-golden.json} $out
           '';
+      lifecycleCheck = pkgs.runCommand "phenix-m02-lifecycle" { } ''
+        ${conformanceBinary}/bin/phenix-m02-lifecycle ${lifecycleProvider} ${lifecycleConsumer} $out
+      '';
+      lifecycleProduct =
+        pkgs.runCommand "phenix-m02-lifecycle-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+          ''
+            python ${./tests/lifecycle-product.py} ${kernel}/bin/phenix-kernel ${lifecycleCheck} $out
+          '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
@@ -244,6 +254,8 @@
         ln -s ${productCheck} $out/product
         ln -s ${compositionCheck} $out/composition
         ln -s ${compositionProduct} $out/composition-product
+        ln -s ${lifecycleCheck} $out/lifecycle
+        ln -s ${lifecycleProduct} $out/lifecycle-product
       '';
     in
     {
@@ -273,6 +285,8 @@
         m0-product = productCheck;
         m01-composition = compositionCheck;
         m01-product = compositionProduct;
+        m02-lifecycle = lifecycleCheck;
+        m02-lifecycle-product = lifecycleProduct;
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [

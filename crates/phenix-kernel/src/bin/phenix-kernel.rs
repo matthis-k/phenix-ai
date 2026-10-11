@@ -78,15 +78,20 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     *phase = Phase::Invocation;
     let outcome = root.invoke_bytes(&input);
     drop(root);
+    let invocation_failure = kernel.inspect()["last_failure"].clone();
+    let shutdown = kernel.shutdown();
     let mut inspection = kernel.inspect();
+    if let Err(failure) = &shutdown {
+        inspection["shutdown_failure"] = serde_json::json!(failure);
+    }
     inspection["outcome"] = match &outcome {
         Ok(Outcome::Success(v)) => serde_json::json!({"kind":"success","value":v.to_json()}),
         Ok(Outcome::Domain(v)) => serde_json::json!({"kind":"domain_error","value":v.to_json()}),
-        Err(_) => serde_json::json!({"kind":"kernel_failure","failure":inspection["last_failure"]}),
+        Err(_) => serde_json::json!({"kind":"kernel_failure","failure":invocation_failure}),
     };
     println!("{inspection}");
     drop(kernel);
-    if outcome.is_err() {
+    if outcome.is_err() || shutdown.is_err() {
         std::process::exit(1);
     }
     Ok(())

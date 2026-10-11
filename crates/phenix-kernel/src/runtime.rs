@@ -42,6 +42,7 @@ pub enum Phase {
     ExecutableAbi,
     Admission,
     Invocation,
+    Lifecycle,
 }
 #[derive(serde::Serialize)]
 struct FailureContext {
@@ -56,6 +57,11 @@ struct ObservedFailure {
     phase: Phase,
     context: FailureContext,
 }
+#[derive(serde::Serialize)]
+struct StopFailure {
+    provider: String,
+    failure: Failure,
+}
 #[derive(Default)]
 struct State {
     active_root: Option<u64>,
@@ -65,6 +71,8 @@ struct State {
     denied: u64,
     last_failure: Option<ObservedFailure>,
     stack: Vec<Frame>,
+    stopped: bool,
+    stop_failures: Vec<StopFailure>,
 }
 #[derive(Clone, Copy)]
 enum Caller<'a> {
@@ -81,7 +89,7 @@ impl Caller<'_> {
 }
 pub struct Kernel {
     prepared: Prepared,
-    images: BTreeMap<String, Native>,
+    images: RefCell<BTreeMap<String, Native>>,
     thread: ThreadId,
     state: RefCell<State>,
     _serial: PhantomData<Rc<()>>,
@@ -105,12 +113,24 @@ impl Prepared {
             p.recheck()?;
         }
         let mut images = BTreeMap::new();
-        for (id, package) in &self.packages {
-            images.insert(id.clone(), Native::load(package)?);
+        for id in &self.startup_order {
+            match Native::load(&self.packages[id]) {
+                Ok(native) => {
+                    images.insert(id.clone(), native);
+                }
+                Err(failure) => {
+                    for acquired in self.startup_order.iter().rev() {
+                        if let Some(native) = images.get_mut(acquired) {
+                            let _ = native.stop();
+                        }
+                    }
+                    return Err(failure);
+                }
+            }
         }
         Ok(Kernel {
             prepared: self,
-            images,
+            images: RefCell::new(images),
             thread: thread::current().id(),
             state: RefCell::new(State::default()),
             _serial: PhantomData,
@@ -165,6 +185,9 @@ impl Kernel {
             ));
         }
         self.prepared.check_entry(entry)?;
+        if self.state.borrow().stopped {
+            return Err(Failure::new(Code::PluginFailed, "kernel is stopped"));
+        }
         if !self
             .prepared
             .grants
@@ -360,7 +383,8 @@ impl Kernel {
             scope: guard.scope,
             invoke: invoke_import,
         };
-        let (status, value) = self.images[&selection.provider].invoke(&api, &key, input)?;
+        let (status, value) =
+            self.images.borrow()[&selection.provider].invoke(&api, &key, input)?;
         match status {
             0 if contract.response.accepts(&value) => Ok(Outcome::Success(value)),
             1 if contract.error.accepts(&value) => Ok(Outcome::Domain(value)),
@@ -381,7 +405,56 @@ impl Kernel {
         report["calls"] = state.calls.into();
         report["denied_operations"] = state.denied.into();
         report["last_failure"] = serde_json::json!(state.last_failure);
+        if report["format"] == "phenix.inspect.v2" {
+            report["lifecycle"] = serde_json::json!({"startup_order":self.prepared.startup_order,"stopped":state.stopped,"stop_failures":state.stop_failures});
+        }
         report
+    }
+    /// Trusted synchronous lifecycle control. No plugin scope exposes this API.
+    pub fn shutdown(&self) -> Result<(), Failure> {
+        self.check_thread()?;
+        if self.state.borrow().active_root.is_some() {
+            return Err(Failure::new(
+                Code::ReentrancyRejected,
+                "shutdown requires all roots released",
+            ));
+        }
+        self.stop_images()
+    }
+    fn stop_images(&self) -> Result<(), Failure> {
+        if self.state.borrow().stopped {
+            return Ok(());
+        }
+        self.state.borrow_mut().stopped = true;
+        let mut first_failure = None;
+        for id in self.prepared.startup_order.iter().rev() {
+            if let Some(mut native) = self.images.borrow_mut().remove(id) {
+                if let Err(failure) = native.stop() {
+                    if first_failure.is_none() {
+                        first_failure = Some(failure.clone());
+                    }
+                    self.state.borrow_mut().stop_failures.push(StopFailure {
+                        provider: id.clone(),
+                        failure: failure.clone(),
+                    });
+                    self.observe_failure(
+                        &failure,
+                        Phase::Lifecycle,
+                        FailureContext {
+                            caller: "control".into(),
+                            provider: Some(id.clone()),
+                            operation: None,
+                        },
+                    );
+                }
+            }
+        }
+        first_failure.map_or(Ok(()), Err)
+    }
+}
+impl Drop for Kernel {
+    fn drop(&mut self) {
+        let _ = self.stop_images();
     }
 }
 impl Root<'_> {

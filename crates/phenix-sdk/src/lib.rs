@@ -44,6 +44,27 @@ use std::{marker::PhantomData, rc::Rc};
 ///     #[export(Transform)] fn second(_:&mut State,_:&phenix_sdk::Host<'_>,r:Text)->phenix_sdk::CallResult<Text,Error>{Ok(r)}
 /// }
 /// ```
+/// ```compile_fail
+/// #[phenix_sdk::plugin(id="example.bad-hooks",version="1.0.0")]
+/// mod plugin {
+///     #[derive(Default)] pub struct State;
+///     #[start] fn first(_: &mut State) -> Result<(), phenix_sdk::Failure> { Ok(()) }
+///     #[start] fn second(_: &mut State) -> Result<(), phenix_sdk::Failure> { Ok(()) }
+///     #[export(Op)] fn call(_: &mut State,_: &phenix_sdk::Host<'_>,r:String)->phenix_sdk::CallResult<String,String>{Ok(r)}
+///     #[phenix_sdk::operation(interface="example.hooks@1",operation="call")]
+///     type Op = (String,String,String);
+/// }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::plugin(id="example.bad-hook-type",version="1.0.0")]
+/// mod plugin {
+///     #[derive(Default)] pub struct State;
+///     #[stop] fn stop(_: &mut State) -> u64 { 0 }
+///     #[export(Op)] fn call(_: &mut State,_: &phenix_sdk::Host<'_>,r:String)->phenix_sdk::CallResult<String,String>{Ok(r)}
+///     #[phenix_sdk::operation(interface="example.hooks@1",operation="call")]
+///     type Op = (String,String,String);
+/// }
+/// ```
 pub struct Host<'call> {
     api: &'call HostApi,
     _serial: PhantomData<Rc<()>>,
@@ -109,4 +130,9 @@ pub fn reply<T: Portable, E: Portable>(result: CallResult<T, E>) -> Reply {
         Err(CallError::Domain(e)) => Reply::value(1, e.to_value()),
         Err(CallError::Kernel(e)) => Reply::failure(e),
     }
+}
+#[doc(hidden)]
+pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
+        .unwrap_or_else(|_| Err(Failure::new(Code::PluginFailed, "caught lifecycle panic")))
 }

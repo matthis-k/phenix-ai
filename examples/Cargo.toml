@@ -1,5 +1,5 @@
 [workspace]
-members = ["contracts", "provider", "consumer", "alternate", "cycle", "choice", "other", "resource-provider", "relay", "scoped-client"]
+members = ["contracts", "provider", "consumer", "alternate", "cycle", "choice", "other", "resource-provider", "relay", "scoped-client", "lifecycle-provider", "lifecycle-consumer"]
 resolver = "2"
 [workspace.dependencies]
 phenix-sdk = { path = "../crates/phenix-sdk", version = "0.1.0" }

@@ -35,3 +35,8 @@ pub type Bump = (Count, Count, TransformError);
 
 #[operation(interface = "example.resource@1", operation = "count")]
 pub type ResourceCount = (Count, Count, TransformError);
+
+#[operation(interface = "example.lifecycle-service@1", operation = "echo")]
+pub type LifecycleService = (Text, Text, TransformError);
+#[operation(interface = "example.lifecycle@1", operation = "run")]
+pub type LifecycleRun = (Text, Text, TransformError);

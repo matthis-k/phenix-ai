@@ -159,6 +159,8 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut exports = Vec::new();
         let mut dispatch = Vec::new();
         let mut state = None;
+        let mut start_hook = None;
+        let mut stop_hook = None;
         for item in items.iter_mut() {
             match item {
                 syn::Item::Struct(s) if s.ident == "State" => {
@@ -208,7 +210,19 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 syn::Item::Fn(f) => {
                     let mut keep = Vec::new();
                     for a in f.attrs.drain(..) {
-                        if a.path().is_ident("export") {
+                        if a.path().is_ident("start") || a.path().is_ident("stop") {
+                            if !matches!(a.meta, Meta::Path(_)) || f.sig.asyncness.is_some() {
+                                return Err(syn::Error::new(a.span(), "lifecycle hook must be synchronous without annotation arguments"));
+                            }
+                            let hook = if a.path().is_ident("start") {
+                                &mut start_hook
+                            } else {
+                                &mut stop_hook
+                            };
+                            if hook.replace(f.sig.ident.clone()).is_some() {
+                                return Err(syn::Error::new(a.span(), "duplicate lifecycle hook"));
+                            }
+                        } else if a.path().is_ident("export") {
                             let op: Type = a.parse_args()?;
                             if f.sig.asyncness.is_some() {
                                 return Err(syn::Error::new(
@@ -244,13 +258,38 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
             ));
         }
         let descriptor = format_ident!("PHENIX_DESCRIPTOR");
+        let mutable_state = if start_hook.is_some() || stop_hook.is_some() {
+            quote!(mut)
+        } else {
+            quote!()
+        };
+        let mutable_instance = if stop_hook.is_some() {
+            quote!(mut)
+        } else {
+            quote!()
+        };
+        let start = match start_hook {
+            Some(name) => quote!(::phenix_sdk::lifecycle(|| #name(&mut state))),
+            None => quote!(Ok::<(), ::phenix_sdk::Failure>(())),
+        };
+        let cleanup = match &stop_hook {
+            Some(name) => quote!(::phenix_sdk::lifecycle(|| #name(&mut state))),
+            None => quote!(Ok::<(), ::phenix_sdk::Failure>(())),
+        };
+        let stop = match stop_hook {
+            Some(name) => quote!(::phenix_sdk::lifecycle(|| #name(&mut instance.state))),
+            None => quote!(Ok::<(), ::phenix_sdk::Failure>(())),
+        };
         let generated = quote! {
             #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=::phenix_sdk::descriptor_with_policy(#id,#version,[#(#imports),*],[#(#import_policies),*],[#(#exports),*]);
             const _:usize=#ni+#ne;
             struct __Instance { state: #state, poisoned: bool }
             unsafe extern "C" fn __create(out:*mut *mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{
                 ::phenix_sdk::abi::boundary(||{if out.is_null(){return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null instance output"));}
-                unsafe{*out=::std::boxed::Box::into_raw(::std::boxed::Box::new(__Instance{state:#state::default(),poisoned:false})).cast();}::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null)})
+                unsafe{*out=::std::ptr::null_mut();}
+                let #mutable_state state=#state::default();
+                if let Err(failure)=#start {let _=#cleanup;let _=::phenix_sdk::lifecycle(||{drop(state);Ok(())});return ::phenix_sdk::abi::Reply::failure(failure);}
+                unsafe{*out=::std::boxed::Box::into_raw(::std::boxed::Box::new(__Instance{state,poisoned:false})).cast();}::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null)})
             }
             unsafe extern "C" fn __invoke(instance:*mut ::std::ffi::c_void,api:*const ::phenix_sdk::abi::HostApi,key: ::phenix_sdk::abi::Bytes,input: ::phenix_sdk::abi::Bytes)->::phenix_sdk::abi::Reply{
                 ::phenix_sdk::abi::boundary(||{
@@ -267,7 +306,9 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 })
             }
             unsafe extern "C" fn __stop(instance:*mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{
-                ::phenix_sdk::abi::boundary(||{if instance.is_null(){return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null stop pointer"));}drop(unsafe{::std::boxed::Box::from_raw(instance.cast::<__Instance>())});::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null)})
+                ::phenix_sdk::abi::boundary(||{if instance.is_null(){return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible,"null stop pointer"));}
+                let #mutable_instance instance=unsafe{::std::boxed::Box::from_raw(instance.cast::<__Instance>())};
+                let result=#stop;let cleanup=::phenix_sdk::lifecycle(||{drop(instance);Ok(())});match result.and(cleanup){Ok(())=>::phenix_sdk::abi::Reply::value(0,::phenix_sdk::Value::Null),Err(failure)=>::phenix_sdk::abi::Reply::failure(failure)}})
             }
             static __TABLE: ::phenix_sdk::abi::PluginTable=::phenix_sdk::abi::PluginTable{
                 header: ::phenix_sdk::abi::Header{major:1,minor:0,table_bytes: ::std::mem::size_of::<::phenix_sdk::abi::PluginTable>()as u32,features:0},create:__create,invoke:__invoke,stop:__stop};

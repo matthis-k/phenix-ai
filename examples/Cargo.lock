@@ -42,6 +42,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-lifecycle-consumer"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-lifecycle-provider"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-other"
 version = "0.1.0"
 dependencies = [
