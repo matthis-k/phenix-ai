@@ -1,6 +1,6 @@
 # M1 S1b: offline metadata and state native profile
 
-Status: frozen before implementation; acceptance pending
+Status: portable metadata/ABI gate accepted at `51017e07067bae786131775e18686044b78eb625` in CI 38128644908; live runtime is S2
 Depends on: accepted S1a reference wire profile in PR #773
 Target: trusted native x86_64 Linux; no live state implementation in this gate
 

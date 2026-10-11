@@ -1,0 +1,169 @@
+{
+  "archive_sha256": "1b55508ecbb85b203a4b5330797ab2e95262833a06019967272187c7ce08b712",
+  "artifact_id": 11698043204,
+  "conclusion": "success",
+  "format": "phenix.m1.metadata-state.ci.v1",
+  "gates": [
+    "m1-reference-wire",
+    "m1-metadata-state",
+    "m0-descriptor",
+    "m0-contract",
+    "m0-native",
+    "m0-product",
+    "m01-composition",
+    "m01-product",
+    "m04-public-sdk",
+    "m04-shipping",
+    "m03-generations",
+    "m02-imports",
+    "m02-pending",
+    "m02-pending-product",
+    "m02-lifecycle",
+    "m02-lifecycle-product"
+  ],
+  "implementation_commit": "51017e07067bae786131775e18686044b78eb625",
+  "initial_attempts": [
+    {
+      "commit": "4bc4662589c08097ab5fb1b6358db2677ecccfa3",
+      "conclusion": "failure",
+      "reason": "standalone fixture could not find host proc-macro dependencies: E0463",
+      "run_id": 38127705678
+    },
+    {
+      "commit": "0da3ba7d98076d06ebba1a2640e1cf5e199f8888",
+      "conclusion": "failure",
+      "reason": "standalone fixture could not find host proc-macro dependencies: E0463",
+      "run_id": 38127875385
+    }
+  ],
+  "m0_nix_output": {
+    "/nix/store/7820vgsfi0lsmh16panknsld6x19p9x9-phenix-m0-release": {
+      "ca": null,
+      "deriver": "/nix/store/y9z78lkxid6yphprmvkp75b5j08fckib-phenix-m0-release.drv",
+      "narHash": "sha256-r2CGv9T/SrAfypzg+dxbsx1GngFdl2P7k8NTz/5ZhdM=",
+      "narSize": 4136,
+      "references": [
+        "/nix/store/ddi80wxcqadas4r6vri39p09lk2y4dwq-phenix-m0-conformance",
+        "/nix/store/iivx5zmqpdlf52622bp5460z9jwgp268-phenix-public-sdk-check-0.1.0",
+        "/nix/store/mi39mvnkv3yvp84qbz5pl5r8vcq8vgrs-phenix-m04-shipping",
+        "/nix/store/nn3zqvzgcixhf5zhzpjc3mfx1jkx7bpr-closure-info"
+      ],
+      "registrationTime": 1791711945,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "m0_shipping_gates": [
+    "composition",
+    "composition-product",
+    "contract",
+    "descriptor",
+    "generations",
+    "imports",
+    "lifecycle",
+    "lifecycle-product",
+    "native",
+    "pending",
+    "pending-product",
+    "product",
+    "public-sdk"
+  ],
+  "m1_state_nix_output": {
+    "/nix/store/x2806wlw67vhr60xm5lfxqrb9l188xlb-phenix-artifact-0.1.0": {
+      "ca": null,
+      "deriver": "/nix/store/18cxhw7ij0xwjq7z2rk3zpadw11jv1vv-phenix-artifact-0.1.0.drv",
+      "narHash": "sha256-BQS4lEB+HSj29/xoCqTqQDNReQHl1tYmpcVcJ6V9EPU=",
+      "narSize": 1080,
+      "references": [],
+      "registrationTime": 1791711159,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "m1_wire_nix_output": {
+    "/nix/store/jwdd3m8z7p8a2vaw25nhzz7xnxhf3bbs-phenix-contract-0.1.0": {
+      "ca": null,
+      "deriver": "/nix/store/dskg2ckygrwkrvs92f77nxhs3jizqb4b-phenix-contract-0.1.0.drv",
+      "narHash": "sha256-ZRcGb67JsLEDKn20g7fWw3fot5Q0mqRfhVsINGjft5k=",
+      "narSize": 560,
+      "references": [],
+      "registrationTime": 1791711253,
+      "signatures": [],
+      "storeDir": "/nix/store",
+      "ultimate": true,
+      "version": 1
+    }
+  },
+  "metadata": {
+    "accepted": 23,
+    "cases": 1544,
+    "descriptor_sha256": "9c4a25dfb0451fa8d705eec2d37e0c91580f9df714293274ad70412671c96e4f",
+    "gate": "m1-metadata-state",
+    "live_state_proven": false,
+    "package_cases": 12,
+    "package_sha256": "15c7e2c85afd0e0bddf261ded6d72911f99cca3e6844abf34fbfe980685cf4d8",
+    "private_kernel_dependency": false,
+    "rejected": 1521,
+    "vectors_sha256": "43e6722b10fe7f66aff490f52083709698ad984e7b5f7f287c291f6d3128862a"
+  },
+  "native": {
+    "abi_major": 3,
+    "c_releases": 10,
+    "host_callbacks": 4,
+    "host_language": "Rust",
+    "live_state_proven": false,
+    "native_language": "C",
+    "rejected_tables": 17,
+    "rust_releases": 3
+  },
+  "native_fixture_correction": "Explicit frozen target, ThinLTO and both target/host dependency directories; reproduced with Cargo --target locally and accepted in pinned Nix CI.",
+  "reference_wire": {
+    "accepted": 52,
+    "cases": 200,
+    "format": "phenix.m1.reference-wire.evidence.v1",
+    "live_authority_proven": false,
+    "profiles": [
+      "phenix.value.v1",
+      "phenix.value.v2"
+    ],
+    "rejected": 148,
+    "vectors_sha256": "3314c2d75c26daff8aba58395d466ca463268600c32c24f2e5726661b62ce6b9"
+  },
+  "report_sha256": {
+    "composition-product/blue.json": "f1f0b8454ffa03c2afbd111f71b6bc79eb69928ee9a270c20d5420da93cdfd38",
+    "composition-product/product.json": "a7cb32fbdb4c9526f2ad3b4a1df5ccb8f30513ba4bce83814754191ac202f117",
+    "composition-product/switch.json": "dc95c1a4c72c191c61f7df2e4fab10971e9b83b464a68e62a1bb14ca720a31b2",
+    "composition/composition-policy.json": "85cafed4629d444df2292cc2faae0a723627d17b614428d75f35980b470ce075",
+    "composition/composition.json": "0b651f699d5ee1aada31d36ee857f3f1b0da5262bfaf1b4ac0b704b1fdd6b91a",
+    "composition/scoped-policy.json": "f5758150ae81e6b596a9dfacc1cbf72290dbb0587201486c50b9a739b673603e",
+    "descriptor/evidence.json": "56d36942d18e33e055ae6a0031e18a59e6f3bf00c6e65d3e9007bdc588e93ee0",
+    "generations/concurrent.json": "cff12d1697df342265573a7bfadecc1041a89d086546c5bd9d76072cd1246f4e",
+    "generations/evidence.json": "6c8e6a6017f825b62c4174c86381176058b96ac45bfbb486ced5e659c68c153a",
+    "generations/identity-vector.json": "64768a975b066e90bb56673d80d79e3b47eb434cb0fe1c4a284cf087fd35c888",
+    "imports/composition.json": "f178f9a10764bcadb98c15f84c99e31e2c360f61436881a40f66cd502601cde1",
+    "imports/evidence.json": "ceea8983dd895353ece908cabe2b3e86c1b3c99151d4cee4468d7f0a29bb9f36",
+    "lifecycle-product/product.json": "5eaa3fca683d9dfc25daa36ef86986635c889fb98cdc9072179872ab339a6dda",
+    "lifecycle/lifecycle-policy.json": "aa3ccb4646fb59eebb6ec75aa83bd5d7376243262faee0973bacda64e98a22cf",
+    "lifecycle/lifecycle.json": "41979c75d15715fc8a08f8034933eb47ef2f9045f8635c9d280d700c9d69392b",
+    "m1-metadata-state/metadata.json": "f636f7d2f2c793c41e9f2f8980df2616391d413b1889f1c6bdcaaf2efdf017b8",
+    "m1-metadata-state/native.json": "8d5f8a9bb964bb388026ca6fe2db9f4d7c64a9677ee7a0d8f1fa2d7fe16a585f",
+    "m1-nix-output.json": "7f8f2203f040508ede04595964076aa1204b8f4a532253fc7d73f7815a9b6514",
+    "m1-reference-wire/evidence.json": "e3ebc4afde006eeca870bf203ed386ac46e1ed6ffe5f43a4ee9d445686ac5324",
+    "m1-state-nix-output.json": "b1a67367cb0cc5c48cd1160bbf210594e8aca1599d876e4f636c4266e30d0224",
+    "native/native.json": "c5ca540b35c6ac3dc387f224c897940a2de3a36cf288a75fca0f13964508c0fb",
+    "nix-output.json": "6842e4dd6fdd66836df2c182c3fd1506e3859c82ab81a0472c6cdfa47eb51d47",
+    "pending-product/evidence.json": "7c1e09f06a9006ad3559bef136b0e0b563fab1c7cef6e583fad037fd5373121a",
+    "pending/composition.json": "b4264f4f0f08172d460a10740bca854d1b36c71bff78b299e88448edb8495ebc",
+    "pending/descriptor-evidence.json": "f38cc50c423b575995a7c3cb57a3135c846becf8842b3e194b0ca5b3abe93b21",
+    "pending/evidence.json": "31b7a4136429b79201eace7e81cc173fd946f11379d15b8b33723d651674cf38",
+    "pending/retained-on-drop.json": "ec6c8cb1a7f4310dd9eee83c2f8b3aeaefcb3d2da237ff6e98d3c1c6abe9068d",
+    "product/failures.json": "cff584572ae5745fccd4adaef8eb03fe86a5aa469a66c7beb13fbdaf8a50eb5b",
+    "product/product.json": "f3983cc214731e5db7d8ae2d5ec1295db72e338cff9e75f7cddeefc8f42bc267",
+    "shipping/evidence.json": "009b59d3baed4a9f5c2b21122aaa05b8b5984641ba9ebdb97c0cf08899aef7e1"
+  },
+  "run_id": 38128644908
+}

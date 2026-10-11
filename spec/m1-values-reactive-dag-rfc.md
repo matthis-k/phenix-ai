@@ -43,7 +43,7 @@ Ordinary `bool`, `String`, `Vec<T>`, `Option<T>`, maps, structs, and enums remai
 
 The portable representation of a ref contains version, namespace/owner incarnation, cell identity, schema identity, and any non-secret versioning fields required to locate it. The kernel authenticates callers and separately validates read, watch, and write grants at each access. It MUST NOT serialize capabilities, raw native pointers, `Arc`, `dyn Any`, `TypeId`, mutex guards, or credentials. The kernel MUST bound payloads, reference nesting, and graph fan-out by explicit validated protocol limits, not arbitrary execution timeouts.
 
-The [S1a wire contract](m1-reference-wire-contract.md) fixes portable identities, schema hashing and the explicitly selected v2 encoding. S1b owns the dependent native state-host profile.
+The [S1a wire contract](m1-reference-wire-contract.md) fixes portable identities, schema hashing and the explicitly selected v2 encoding. The [S1b metadata/state contract](m1-metadata-state-contract.md) fixes offline definition packages, named slots/properties and native ABI 3.0 with explicitly selected v2 replies. Its portable C/Rust gate is accepted in PR #774 at `51017e07`; authenticated live state remains S2.
 
 ## 4. Live value semantics
 
