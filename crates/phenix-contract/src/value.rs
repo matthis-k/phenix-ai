@@ -1,11 +1,33 @@
-use crate::{Code, Failure, Portable, Schema};
+use crate::{
+    Code, Failure, GenerationDigest, OwnerId, Portable, Schema, SchemaId, ValueId, ValueLocation,
+};
 use std::collections::BTreeMap;
 pub const MAX_BYTES: usize = 1 << 20;
 pub const MAX_DEPTH: usize = 32;
 pub const MAX_COUNT: usize = 65_536;
+/// Wire profiles require explicit selection; native M0 always selects V1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireProfile {
+    V1,
+    V2,
+}
+impl WireProfile {
+    pub fn negotiate(name: &str) -> Result<Self, Failure> {
+        match name {
+            "phenix.value.v1" => Ok(Self::V1),
+            "phenix.value.v2" => Ok(Self::V2),
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "unsupported value profile",
+            )),
+        }
+    }
+}
+pub const V2_PREFIX: [u8; 4] = [0x50, 0x56, 2, 0];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Null,
+    Ref(ValueLocation),
     Bool(bool),
     I64(i64),
     U64(u64),
@@ -24,6 +46,14 @@ impl Value {
     pub fn to_json(&self) -> serde_json::Value {
         match self {
             Self::Null => serde_json::Value::Null,
+            Self::Ref(location) => serde_json::json!({
+                "phenix_ref_v2": {
+                    "generation": location.generation.as_bytes().as_slice(),
+                    "owner": location.owner.as_bytes().as_slice(),
+                    "cell": location.cell.as_bytes().as_slice(),
+                    "schema": location.schema.as_bytes().as_slice(),
+                }
+            }),
             Self::Bool(x) => (*x).into(),
             Self::I64(x) => (*x).into(),
             Self::U64(x) => (*x).into(),
@@ -34,6 +64,9 @@ impl Value {
         }
     }
     pub fn encode(&self) -> Result<Vec<u8>, Failure> {
+        self.encode_profile(WireProfile::V1)
+    }
+    pub fn encode_profile(&self, profile: WireProfile) -> Result<Vec<u8>, Failure> {
         fn len(out: &mut Vec<u8>, n: usize) -> Result<(), Failure> {
             out.extend(
                 u32::try_from(n)
@@ -42,12 +75,27 @@ impl Value {
             );
             Ok(())
         }
-        fn put(v: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), Failure> {
+        fn put(
+            v: &Value,
+            out: &mut Vec<u8>,
+            depth: usize,
+            profile: WireProfile,
+        ) -> Result<(), Failure> {
             if depth > MAX_DEPTH {
                 return Err(invalid("depth limit"));
             }
             match v {
                 Value::Null => out.push(0),
+                Value::Ref(location) => {
+                    if profile != WireProfile::V2 {
+                        return Err(invalid("references require value v2"));
+                    }
+                    out.push(9);
+                    out.extend(location.generation.as_bytes());
+                    out.extend(location.owner.as_bytes());
+                    out.extend(location.cell.as_bytes());
+                    out.extend(location.schema.as_bytes());
+                }
                 Value::Bool(false) => out.push(1),
                 Value::Bool(true) => out.push(2),
                 Value::I64(x) => {
@@ -75,7 +123,7 @@ impl Value {
                     out.push(7);
                     len(out, x.len())?;
                     for v in x {
-                        put(v, out, depth + 1)?;
+                        put(v, out, depth + 1, profile)?;
                     }
                 }
                 Value::Map(x) => {
@@ -87,7 +135,7 @@ impl Value {
                     for (k, v) in x {
                         len(out, k.len())?;
                         out.extend(k.as_bytes());
-                        put(v, out, depth + 1)?;
+                        put(v, out, depth + 1, profile)?;
                     }
                 }
             }
@@ -97,10 +145,16 @@ impl Value {
             Ok(())
         }
         let mut out = Vec::new();
-        put(self, &mut out, 0)?;
+        if profile == WireProfile::V2 {
+            out.extend(V2_PREFIX);
+        }
+        put(self, &mut out, 0, profile)?;
         Ok(out)
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
+        Self::decode_profile(bytes, WireProfile::V1)
+    }
+    pub fn decode_profile(bytes: &[u8], profile: WireProfile) -> Result<Self, Failure> {
         struct Reader<'a> {
             bytes: &'a [u8],
             at: usize,
@@ -128,7 +182,7 @@ impl Value {
                 let n = self.n()?;
                 String::from_utf8(self.take(n)?.to_vec()).map_err(|_| invalid("invalid UTF-8"))
             }
-            fn value(&mut self, depth: usize) -> Result<Value, Failure> {
+            fn value(&mut self, depth: usize, profile: WireProfile) -> Result<Value, Failure> {
                 if depth > MAX_DEPTH {
                     return Err(invalid("depth limit"));
                 }
@@ -154,7 +208,7 @@ impl Value {
                         }
                         let mut x = Vec::new();
                         for _ in 0..n {
-                            x.push(self.value(depth + 1)?);
+                            x.push(self.value(depth + 1, profile)?);
                         }
                         Value::List(x)
                     }
@@ -171,10 +225,16 @@ impl Value {
                                 return Err(invalid("unordered or duplicate map key"));
                             }
                             previous = Some(k.clone());
-                            x.insert(k, self.value(depth + 1)?);
+                            x.insert(k, self.value(depth + 1, profile)?);
                         }
                         Value::Map(x)
                     }
+                    9 if profile == WireProfile::V2 => Value::Ref(ValueLocation {
+                        generation: GenerationDigest::from_bytes(self.take(32)?)?,
+                        owner: OwnerId::from_bytes(self.take(32)?)?,
+                        cell: ValueId::from_bytes(self.take(16)?)?,
+                        schema: SchemaId::from_bytes(self.take(32)?)?,
+                    }),
                     _ => return Err(invalid("unknown tag")),
                 })
             }
@@ -183,7 +243,10 @@ impl Value {
             return Err(invalid("payload limit"));
         }
         let mut r = Reader { bytes, at: 0 };
-        let v = r.value(0)?;
+        if profile == WireProfile::V2 && r.take(4)? != V2_PREFIX {
+            return Err(invalid("invalid value v2 prefix"));
+        }
+        let v = r.value(0, profile)?;
         if r.at != bytes.len() {
             return Err(invalid("trailing bytes"));
         }

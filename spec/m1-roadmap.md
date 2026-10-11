@@ -15,7 +15,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | ID | Proposed PR scope | Depends on | Exit gate | Status |
 | --- | --- | --- | --- | --- |
 | S0 | M1 RFC, this roadmap and M0-to-M1 links | #771 head | Consistent contract and file-level scope | Spec authored; review pending |
-| S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | Contract frozen; implementation starting |
+| S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | TESTED locally; full conformance CI pending |
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | Not started |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b | External native state and security fixtures | Not started |
 | S3 | Typed Rust value SDK and property/contract proc macros | S2 | External SDK-only annotated plugin | Not started |
@@ -45,6 +45,22 @@ S1b depends on S1a and owns definition-only metadata, property/import-slot descr
 | `spec/m1-values-reactive-dag-rfc.md` | Record frozen discriminants and compatibility decision when proven |
 
 Gate: independent decoder/encoder agrees on reference/descriptor vectors; a metadata-only contract package verifies without dlopen; malformed references and duplicate/conflicting property declarations reject. The M0 conformance profile still passes. Do not accept a new ABI merely because a Rust unit test round-trips.
+
+### S1a implementation evidence
+
+The frozen contract commit is `c2365e1199b8bf15184f8e7246f15d853f2fe366`. The implementation branch is `impl/m1-reference-wire`, stacked on `spec/m1-values-reactive-dag`. The portable gate passes 200 independent Python/Rust cases, including 148 rejections. Local workspace tests, clippy, external fixture compilation and C layouts pass. [Local evidence](evidence/m1-reference-wire-local.json) records source hashes and test scope. Full M0 Nix conformance and exact-head CI remain required before acceptance.
+
+| File or task | State | Evidence or remaining gate |
+| --- | --- | --- |
+| `crates/phenix-contract/src/reference.rs` | TESTED | Distinct identity types, structural schema hashing, validated `DynValue`; independent schema and mismatch cases |
+| `crates/phenix-contract/src/value.rs` | TESTED | Explicit v2 selection, nested refs, v1 refusal and all reference truncations |
+| Contract manifest and both Cargo lockfiles | TESTED | Pinned SHA-256 dependency; workspace and external examples compile |
+| `crates/phenix-contract/src/bin/phenix-value-probe.rs` | TESTED | Public-contract process, no private kernel dependency |
+| `tests/m1-contract-vectors.json` | TESTED | Fixed wire bytes and schema identities agree with independent Python |
+| `tests/m1-wire-negative.py` | TESTED | 52 accepted and 148 rejected cases |
+| `flake.nix`, `.github/workflows/minimal-kernel.yml` | IMPLEMENTED | New independent gate and M1 branch admission; full CI pending |
+| Owner/cell issuance, live authority and lifecycle | NOT STARTED | S2 owns these; decoded locations grant no access |
+| Definition-only descriptors, slots/properties and state-host ABI | NOT STARTED | S1b gate remains separate |
 
 ## 3. S2: kernel-owned live cells
 

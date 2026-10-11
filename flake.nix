@@ -214,6 +214,17 @@
         '';
         installPhase = "mkdir -p $out; echo passed > $out/contract";
       });
+      referenceWireCheck = (build "phenix-contract" publicSource).overrideAttrs (old: {
+        cargoBuildFlags = [ "-p" "phenix-contract" "--bin" "phenix-value-probe" ];
+        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.python3 ];
+        installPhase = ''
+          mkdir -p $out
+          probe=$(find target -type f -name phenix-value-probe -perm -u+x | head -1)
+          test -n "$probe"
+          python ${./tests/m1-wire-negative.py} "$probe" ${./tests/m1-contract-vectors.json} > $out/evidence.json
+          python -m json.tool $out/evidence.json > /dev/null
+        '';
+      });
       deployment = pkgs.writeText "phenix-m0-deployment.json" (
         builtins.toJSON {
           format = "phenix.deployment.v1";
@@ -366,6 +377,7 @@
         };
       };
       checks.${system} = {
+        m1-reference-wire = referenceWireCheck;
         m0-descriptor = descriptorCheck;
         m0-contract = contractCheck;
         m0-native = nativeCheck;

@@ -1,0 +1,467 @@
+{
+  "format": "phenix.m1.contract-vectors.v1",
+  "values": [
+    {
+      "name": "null/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "null"
+      },
+      "hex": "00"
+    },
+    {
+      "name": "null/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "null"
+      },
+      "hex": "5056020000"
+    },
+    {
+      "name": "false/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "bool",
+        "value": false
+      },
+      "hex": "01"
+    },
+    {
+      "name": "false/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "bool",
+        "value": false
+      },
+      "hex": "5056020001"
+    },
+    {
+      "name": "true/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "bool",
+        "value": true
+      },
+      "hex": "02"
+    },
+    {
+      "name": "true/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "bool",
+        "value": true
+      },
+      "hex": "5056020002"
+    },
+    {
+      "name": "i64-min/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "i64",
+        "value": -9223372036854775808
+      },
+      "hex": "038000000000000000"
+    },
+    {
+      "name": "i64-min/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "i64",
+        "value": -9223372036854775808
+      },
+      "hex": "50560200038000000000000000"
+    },
+    {
+      "name": "u64-max/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "u64",
+        "value": 18446744073709551615
+      },
+      "hex": "04ffffffffffffffff"
+    },
+    {
+      "name": "u64-max/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "u64",
+        "value": 18446744073709551615
+      },
+      "hex": "5056020004ffffffffffffffff"
+    },
+    {
+      "name": "utf8/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "string",
+        "value": "Grüße 🌍"
+      },
+      "hex": "050000000c4772c3bcc39f6520f09f8c8d"
+    },
+    {
+      "name": "utf8/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "string",
+        "value": "Grüße 🌍"
+      },
+      "hex": "50560200050000000c4772c3bcc39f6520f09f8c8d"
+    },
+    {
+      "name": "bytes/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "bytes",
+        "value": [
+          0,
+          255
+        ]
+      },
+      "hex": "060000000200ff"
+    },
+    {
+      "name": "bytes/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "bytes",
+        "value": [
+          0,
+          255
+        ]
+      },
+      "hex": "50560200060000000200ff"
+    },
+    {
+      "name": "map/phenix.value.v1",
+      "profile": "phenix.value.v1",
+      "value": {
+        "kind": "map",
+        "value": {
+          "z": {
+            "kind": "u64",
+            "value": 1
+          },
+          "a": {
+            "kind": "list",
+            "value": [
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "bool",
+                "value": true
+              }
+            ]
+          }
+        }
+      },
+      "hex": "0800000002000000016107000000020002000000017a040000000000000001"
+    },
+    {
+      "name": "map/phenix.value.v2",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "map",
+        "value": {
+          "z": {
+            "kind": "u64",
+            "value": 1
+          },
+          "a": {
+            "kind": "list",
+            "value": [
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "bool",
+                "value": true
+              }
+            ]
+          }
+        }
+      },
+      "hex": "505602000800000002000000016107000000020002000000017a040000000000000001"
+    },
+    {
+      "name": "reference",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "ref",
+        "value": {
+          "generation": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "owner": "5555555555555555555555555555555555555555555555555555555555555555",
+          "cell": "66666666666666666666666666666666",
+          "schema": "41d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c"
+        }
+      },
+      "hex": "50560200090102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2055555555555555555555555555555555555555555555555555555555555555556666666666666666666666666666666641d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c"
+    },
+    {
+      "name": "nested-reference",
+      "profile": "phenix.value.v2",
+      "value": {
+        "kind": "map",
+        "value": {
+          "items": {
+            "kind": "list",
+            "value": [
+              {
+                "kind": "ref",
+                "value": {
+                  "generation": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+                  "owner": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "cell": "66666666666666666666666666666666",
+                  "schema": "41d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c"
+                }
+              },
+              {
+                "kind": "null"
+              }
+            ]
+          }
+        }
+      },
+      "hex": "505602000800000001000000056974656d730700000002090102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2055555555555555555555555555555555555555555555555555555555555555556666666666666666666666666666666641d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c00"
+    }
+  ],
+  "schemas": [
+    {
+      "name": "bool",
+      "descriptor": {
+        "kind": "string",
+        "value": "Bool"
+      },
+      "hex": "0500000004426f6f6c",
+      "id": "0fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5"
+    },
+    {
+      "name": "u64",
+      "descriptor": {
+        "kind": "string",
+        "value": "U64"
+      },
+      "hex": "0500000003553634",
+      "id": "d103dc7b1626e8502744a592274716ab89883e06e2076301a9d15557fc19591c"
+    },
+    {
+      "name": "string",
+      "descriptor": {
+        "kind": "string",
+        "value": "String"
+      },
+      "hex": "0500000006537472696e67",
+      "id": "41d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c"
+    },
+    {
+      "name": "list-string",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "List"
+          },
+          {
+            "kind": "string",
+            "value": "String"
+          }
+        ]
+      },
+      "hex": "070000000205000000044c6973740500000006537472696e67",
+      "id": "ed0c0104f483e18178f715bc390fa0e44277e391f5bc8c805e5b132d3a9c2a6b"
+    },
+    {
+      "name": "option-option-bool",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "Option"
+          },
+          {
+            "kind": "list",
+            "value": [
+              {
+                "kind": "string",
+                "value": "Option"
+              },
+              {
+                "kind": "string",
+                "value": "Bool"
+              }
+            ]
+          }
+        ]
+      },
+      "hex": "070000000205000000064f7074696f6e070000000205000000064f7074696f6e0500000004426f6f6c",
+      "id": "1dac01f974676cf20e888bafdb4a51b381faac5b8c44d7b59871fbad9f6b1541"
+    },
+    {
+      "name": "record",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "Struct"
+          },
+          {
+            "kind": "map",
+            "value": {
+              "enabled": {
+                "kind": "string",
+                "value": "Bool"
+              },
+              "names": {
+                "kind": "list",
+                "value": [
+                  {
+                    "kind": "string",
+                    "value": "List"
+                  },
+                  {
+                    "kind": "string",
+                    "value": "String"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "hex": "07000000020500000006537472756374080000000200000007656e61626c65640500000004426f6f6c000000056e616d6573070000000205000000044c6973740500000006537472696e67",
+      "id": "e9d53697253e34098b490c4ee92d819d2fa164815163bf32fe49360789d94f37"
+    },
+    {
+      "name": "variants",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "Variants"
+          },
+          {
+            "kind": "list",
+            "value": [
+              {
+                "kind": "string",
+                "value": "Empty"
+              },
+              {
+                "kind": "string",
+                "value": "Ready"
+              }
+            ]
+          }
+        ]
+      },
+      "hex": "0700000002050000000856617269616e747307000000020500000005456d70747905000000055265616479",
+      "id": "c412585d9f5549bb87362738253868c07e57d3fed07a02dc3d6961a7c1c2b7f6"
+    },
+    {
+      "name": "ref-string",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "Ref"
+          },
+          {
+            "kind": "bytes",
+            "value": [
+              65,
+              215,
+              105,
+              67,
+              19,
+              237,
+              70,
+              5,
+              102,
+              37,
+              151,
+              120,
+              69,
+              158,
+              58,
+              83,
+              84,
+              91,
+              79,
+              211,
+              67,
+              80,
+              144,
+              129,
+              114,
+              178,
+              201,
+              78,
+              179,
+              255,
+              84,
+              12
+            ]
+          }
+        ]
+      },
+      "hex": "07000000020500000003526566060000002041d7694313ed460566259778459e3a53545b4fd34350908172b2c94eb3ff540c",
+      "id": "b84b120614c1c6501c591667a47e86f40be2d26eb0c173d9984021806a3f957e"
+    },
+    {
+      "name": "ref-bool",
+      "descriptor": {
+        "kind": "list",
+        "value": [
+          {
+            "kind": "string",
+            "value": "Ref"
+          },
+          {
+            "kind": "bytes",
+            "value": [
+              15,
+              173,
+              247,
+              92,
+              75,
+              72,
+              57,
+              199,
+              124,
+              11,
+              18,
+              64,
+              79,
+              147,
+              35,
+              54,
+              48,
+              182,
+              134,
+              196,
+              241,
+              41,
+              75,
+              134,
+              76,
+              66,
+              44,
+              79,
+              70,
+              153,
+              86,
+              165
+            ]
+          }
+        ]
+      },
+      "hex": "0700000002050000000352656606000000200fadf75c4b4839c77c0b12404f93233630b686c4f1294b864c422c4f469956a5",
+      "id": "0d1f51eb4bb534a29e14fb3543ea1435df920b34582c5f1303e2331403d423c6"
+    }
+  ]
+}

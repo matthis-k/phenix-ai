@@ -1,0 +1,30 @@
+{
+  "format": "phenix.m1.reference-wire.local.v1",
+  "baseline": "c2365e1199b8bf15184f8e7246f15d853f2fe366",
+  "rustc": "1.91.1",
+  "source_sha256": {
+    "crates/phenix-contract/src/reference.rs": "a72f71cbd7e0b454143574593c6b0b7d198151dcf261795dcd174c14c36fab2b",
+    "crates/phenix-contract/src/value.rs": "5c7db39e177a7bc97c5218a9d3e9e8fc0ab557c105283f4cb4c34ce833028571",
+    "crates/phenix-contract/src/bin/phenix-value-probe.rs": "ec1c24781ecc503b02a22638d1ddc7d0756f9158143b5570891f9fb4626bc1fa",
+    "tests/m1-contract-vectors.json": "3314c2d75c26daff8aba58395d466ca463268600c32c24f2e5726661b62ce6b9",
+    "tests/m1-wire-negative.py": "40c25993340cf36efe4f3d63dae610b1287f978c8257ae932ffd64107802d243",
+    "Cargo.lock": "029b16403c9aff960482bb88dc45a4b77c4461513a9bf7aa47757bf23e27aadc",
+    "examples/Cargo.lock": "dbf012d2716962b87e2bd4e6fdf93d5d4826789f6d2f3b9281d067aa68d9f571",
+    "flake.nix": "f950a559a8a0954eca892ae22a1e0577f9333dd41a44898f802d8e9068ced4a4",
+    ".github/workflows/minimal-kernel.yml": "85999c900d92449d262f1aa3b4ea5ea21edd24004fdff82b2708c38d0130c1f2"
+  },
+  "tests": {
+    "workspace_tests": "passed, 14 unit and 13 compile-fail tests",
+    "clippy_workspace_all_targets": "passed with warnings denied",
+    "fmt_workspace": "passed",
+    "external_examples": "compiled",
+    "c_abi_layout": "passed",
+    "independent_wire": {
+      "accepted": 52,
+      "rejected": 148,
+      "total": 200
+    }
+  },
+  "full_nix_acceptance": "pending exact-head CI",
+  "live_authority_proven": false
+}

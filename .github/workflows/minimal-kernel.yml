@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   conformance:
-    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel'
+    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel' || startsWith(github.head_ref, 'impl/m1-')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +21,11 @@ jobs:
         run: |
           nix build .#phenix-m0-conformance --out-link result-conformance
           mkdir ci-evidence
+          if [[ "${{ github.head_ref }}" == impl/m1-* ]]; then
+            nix build .#checks.x86_64-linux.m1-reference-wire --out-link result-m1-wire
+            cp -RL result-m1-wire ci-evidence/m1-reference-wire
+            nix path-info --json ./result-m1-wire > ci-evidence/m1-nix-output.json
+          fi
           cp -RL result-conformance/* ci-evidence/
           git rev-parse HEAD > ci-evidence/kernel-commit.txt
           nix path-info --json ./result-conformance > ci-evidence/nix-output.json

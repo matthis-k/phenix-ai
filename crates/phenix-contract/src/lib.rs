@@ -1,6 +1,8 @@
 pub mod abi;
 pub mod descriptor;
+pub mod reference;
 pub mod scope;
+pub use reference::*;
 pub mod value;
 pub use descriptor::*;
 pub use scope::*;
