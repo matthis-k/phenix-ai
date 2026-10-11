@@ -17,6 +17,9 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Canonical checks on the exact branch head
         run: |
+          if [[ "${{ github.head_ref }}" == impl/m1-agent-preflight ]]; then
+            nix build .#checks.x86_64-linux.a0-agent-product -L
+          fi
           nix build .#checks.x86_64-linux.m1-metadata-state -L
           nix flake check -L
       - name: Record realized conformance outputs and commit
@@ -30,6 +33,13 @@ jobs:
             nix path-info --json ./result-m1-state > ci-evidence/m1-state-nix-output.json
             cp -RL result-m1-wire ci-evidence/m1-reference-wire
             nix path-info --json ./result-m1-wire > ci-evidence/m1-nix-output.json
+          fi
+          if [[ "${{ github.head_ref }}" == impl/m1-agent-preflight ]]; then
+            nix build .#checks.x86_64-linux.a0-agent --out-link result-a0-agent
+            nix build .#checks.x86_64-linux.a0-agent-product --out-link result-a0-product
+            cp -RL result-a0-agent ci-evidence/a0-agent
+            cp -RL result-a0-product ci-evidence/a0-agent-product
+            nix path-info --json ./result-a0-agent ./result-a0-product > ci-evidence/a0-nix-output.json
           fi
           cp -RL result-conformance/* ci-evidence/
           git rev-parse HEAD > ci-evidence/kernel-commit.txt

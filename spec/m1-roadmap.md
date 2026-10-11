@@ -22,6 +22,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
+| A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | Implemented; acceptance in `spec/a0-agent-matrix.md` |
 | A1 | Agent contract definitions, default service plugins and agent loop | S5; S6 only if product needs parallel execution | Working replaceable agent profile | Deferred, not kernel scope |
 
 S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST maintain the semantic boundaries in the M1 RFC. S6 is a distinct optimization/capability gate: S5 must implement the correct partial order without relying on parallelism.
@@ -195,6 +196,8 @@ Owner: one S6 implementation PR. Do not fold the runtime ownership refactor into
 Gate: independent A and B execute concurrently when both providers advertise safe concurrency; C waits for both; unrelated `A->C` and `B->D` branches do not serialize due to a global root lock. Stateful serial-only providers remain serialized, with explicit diagnostics. Concurrency never bypasses root-scope authentication, cancellation, resource grants, or physical leases. Noncooperative trusted native work still has no forced-termination guarantee.
 
 ## 8. Agent follow-on, not kernel scope
+
+A0 exercises the accepted synchronous service boundary before S5. [Its frozen contract](a0-agent-contract.md) and [file/evidence matrix](a0-agent-matrix.md) own this independent preflight. It adds no kernel mechanisms and does not satisfy A1. The user authorized this basic loop test before reactive integration.
 
 After S5, define `Model`, `ToolSource`, `ToolCatalog`, `Skills`, `Memory`, `Compaction`, and `Agent` in definition-only plugin contracts. Build provider, tools/skills/memory/compaction, CLI/ACP/MCP, and agent-loop plugins as ordinary selected implementations. Use `ValueRef` for exposed state and graph hooks only where it adds value. Agent plugin work MUST NOT become a dependency of any M1 kernel gate.
 

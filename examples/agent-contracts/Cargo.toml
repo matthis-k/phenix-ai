@@ -1,0 +1,6 @@
+[package]
+name = "example-agent-contracts"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+phenix-sdk.workspace = true

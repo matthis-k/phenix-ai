@@ -22,3 +22,7 @@ M0.0 through M0.4 have no remaining implementation tasks. Agent API and other do
 ## Next architecture milestone: M1 (proposed)
 
 M0.0-M0.4 are accepted for the trusted-native profile. The next work is a distinct staged extension rather than a rewrite of those gates: [plugin contract authoring](spec/m1-plugin-contracts-rfc.md), [kernel-owned Value/ValueRef and contributed reactive DAGs](spec/m1-values-reactive-dag-rfc.md), and the [file-level M1 implementation roadmap](spec/m1-roadmap.md). None of these M1 features are implemented in the accepted M0 kernel. Keep the M0 acceptance artifacts unchanged and use new external non-agent fixtures to prove each M1 gate.
+
+## Basic agent preflight
+
+`nix run .#phenix-a0-demo` runs separate agent, scripted model and uppercase-tool plugins through the kernel. The answer is `mock:PHENIX`. `nix build .#checks.x86_64-linux.a0-agent-product` verifies the native cases and the independent CLI producer. [The A0 contract](spec/a0-agent-contract.md) fixes this synchronous single-tool profile; [its matrix](spec/a0-agent-matrix.md) records acceptance. Live provider I/O and the reactive A1 agent remain subsequent work.

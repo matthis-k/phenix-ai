@@ -47,6 +47,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-agent"
+version = "0.1.0"
+dependencies = [
+ "example-agent-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-agent-alternate"
+version = "0.1.0"
+dependencies = [
+ "example-agent-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-agent-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-agent-model"
+version = "0.1.0"
+dependencies = [
+ "example-agent-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-agent-tool"
+version = "0.1.0"
+dependencies = [
+ "example-agent-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-alternate"
 version = "0.1.0"
 dependencies = [

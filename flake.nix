@@ -125,6 +125,26 @@
       restricted = plugin "example-scoped-client";
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
+      agentPlugin = plugin "example-agent";
+      agentModel = plugin "example-agent-model";
+      agentAlternate = plugin "example-agent-alternate";
+      agentTool = plugin "example-agent-tool";
+      agentCheck = pkgs.runCommand "phenix-a0-agent" { } ''
+        ${conformanceBinary}/bin/phenix-a0-agent ${agentPlugin} ${agentModel} ${agentAlternate} ${agentTool} $out
+      '';
+      agentProduct = pkgs.runCommand "phenix-a0-agent-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python ${./tests/a0-agent-product.py} ${kernel}/bin/phenix-kernel ${agentCheck} $out
+      '';
+      agentRequest = pkgs.runCommand "phenix-a0-request" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python - "$out" <<'PYCODE'
+        import sys
+        def string(s):
+            b = s.encode()
+            return bytes([5]) + len(b).to_bytes(4, "big") + b
+        fields = [("max_turns", bytes([4]) + bytes(8)), ("prompt", string("phenix"))]
+        open(sys.argv[1], "wb").write(bytes([8]) + len(fields).to_bytes(4, "big") + b"".join(len(k).to_bytes(4, "big") + k.encode() + v for k, v in fields))
+        PYCODE
+      '';
       pendingPlugin = plugin "example-pending";
       pendingConsumer = plugin "example-pending-consumer";
       pendingImmediate = plugin "example-pending-immediate";
@@ -403,6 +423,12 @@
         phenix-m0-release = release;
         phenix-m0-deployment = deployment;
         phenix-sdk = sdk;
+        phenix-a0-agent-evidence = agentCheck;
+        phenix-a0-agent-product = agentProduct;
+        phenix-a0-demo = pkgs.writeShellApplication {
+          name = "phenix-a0-demo";
+          text = "exec ${kernel}/bin/phenix-kernel invoke ${agentCheck}/composition.json ${agentRequest}";
+        };
         phenix-m0-plugins = pkgs.runCommand "phenix-m0-plugins" { } ''
           mkdir -p $out
           ln -s ${provider} $out/provider
@@ -414,6 +440,8 @@
         };
       };
       checks.${system} = {
+        a0-agent = agentCheck;
+        a0-agent-product = agentProduct;
         m1-reference-wire = referenceWireCheck;
         m1-metadata-state = metadataStateCheck;
         m0-descriptor = descriptorCheck;
