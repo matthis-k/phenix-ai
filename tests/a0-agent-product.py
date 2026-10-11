@@ -52,7 +52,7 @@ for prompt, answer, turns, tools in [
     assert report["calls"] == 1 + turns + tools
     assert report["roots"]["completed"] == 1
     reports[prompt] = report
-limited = run("phenix", limit=1, expected_exit=1)
+limited = run("phenix", limit=1)
 assert limited["outcome"] == dict(kind="domain_error", value="TurnLimit"), limited
 reports["turn-limit"] = limited
 denied_policy = dict(policy, grants=[g for g in policy["grants"] if not (
