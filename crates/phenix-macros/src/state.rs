@@ -59,6 +59,7 @@ pub fn expand(
             let mut options = std::collections::BTreeMap::new();
             let mut cardinality = quote!(::phenix_sdk::Cardinality::One);
             let mut policy = false;
+            let mut indexed = false;
             for part in parts.iter().skip(1) {
                 match part {
                     Meta::Path(path) if require && path.is_ident("optional") && !policy => {
@@ -82,6 +83,7 @@ pub fn expand(
                         }
                         cardinality = quote!(::phenix_sdk::Cardinality::Many { minimum: #n });
                         policy = true;
+                        indexed = true;
                     }
                     Meta::NameValue(_) => {
                         for (key, value) in args(quote!(#part))? {
@@ -102,11 +104,26 @@ pub fn expand(
                 return Err(syn::Error::new(list.span(), "duplicate slot"));
             }
             if require {
+                let selector = if indexed {
+                    format!("{slot}#0")
+                } else {
+                    slot.clone()
+                };
+                let invoke_at = if indexed {
+                    quote! {
+                        pub fn invoke_at<O: #api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> {
+                            host.invoke::<O>(&format!("{}#{}", #slot, index), request)
+                        }
+                    }
+                } else {
+                    quote!()
+                };
                 requirements.push(quote!(::phenix_sdk::StaticImport { slot: #slot, contract: #api::CONTRACT.contract, revision_min: #api::CONTRACT.revision, revision_max: #api::CONTRACT.revision, cardinality: #cardinality }));
                 imports.push(quote! {
                     #[allow(non_camel_case_types)] pub struct #symbol;
                     impl #symbol {
-                        pub fn invoke<O: #api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> { host.invoke::<O>(#slot, request) }
+                        pub fn invoke<O: #api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> { host.invoke::<O>(#selector, request) }
+                        #invoke_at
                         pub fn count(host: &::phenix_sdk::live::Host<'_>) -> Result<usize, ::phenix_sdk::Failure> { host.slot_count(#slot) }
                     }
                 });
