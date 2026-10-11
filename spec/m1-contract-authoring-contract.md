@@ -89,3 +89,27 @@ Scope/thread authentication occurs before bytes are read. Native scoped pending
 imports narrow the same inherited authority and cannot switch the active
 resource. This gives ordinary storage/session implementations the reusable M0
 resource context without embedding session semantics in the kernel.
+
+## Generated SDK symbols
+
+State modules expose `imports::<slot>::invoke::<Api::operation>` and
+`count` through the declared slot. Generated slot symbols are Rust
+identifiers. Each contract supplies a sealed `Member` trait for its own
+operation markers. Slot helpers accept only that contract's members.
+The kernel independently validates selected bindings and inherited grants.
+
+An API-only property uses
+`#[property(owner="example.provider", id="counter", get, set, watch)]`
+on a nongeneric portable type alias. It lowers to a module with `CONTRACT`
+and only the declared `get`, `set`, `watch` operation markers.
+State fields publish the same modules under `properties::<field>`.
+The stable property ID can differ from the Rust field name. Property
+operations use the existing synthetic schemas and domain errors.
+`set` takes `PropertyUpdate<T>` with location, expected revision and value.
+
+State hooks use `&mut State`, `&live::Host` and the declared request.
+Synchronous providers return `CallResult<Response,Error>`; pending providers
+and polls return `live::PendingResult<Response,Error>`. Cancel hooks return
+`Result<bool,Failure>`. Start runs after cell binding with local state only.
+Stop runs once during native teardown. Every exported contract operation
+requires exactly one matching handler. Field-only providers need no handlers.
