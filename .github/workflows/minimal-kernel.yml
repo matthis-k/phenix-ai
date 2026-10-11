@@ -16,7 +16,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: cachix/install-nix-action@v31
       - name: Canonical checks on the exact branch head
-        run: nix flake check -L
+        run: |
+          nix build .#checks.x86_64-linux.m1-metadata-state -L
+          nix flake check -L
       - name: Record realized conformance outputs and commit
         run: |
           nix build .#phenix-m0-conformance --out-link result-conformance
