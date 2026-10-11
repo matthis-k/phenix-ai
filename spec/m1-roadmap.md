@@ -19,12 +19,13 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | TESTED locally; full CI pending; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | TESTED locally; full CI pending; `m1-value-sdk-matrix.md` |
-| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Not started |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Freeze authored; implementation pending |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
 | A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
-| A1 | Agent contract definitions, default service plugins and agent loop | S5; S6 only if product needs parallel execution | Working replaceable agent profile | Deferred, not kernel scope |
+| A1a | Original Basic service contracts, providers and loop behavior | S3b; no graph dependency | Original Basic behavior and real provider fixture | Planned; ordinary plugin scope |
+| A1b | Reactive agent integration | S5; S6 only if parallel execution required | Live exposed state and graph contributions | Deferred; separate from original Basic parity |
 
 S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST maintain the semantic boundaries in the M1 RFC. S6 is a distinct optimization/capability gate: S5 must implement the correct partial order without relying on parallelism.
 
@@ -215,6 +216,13 @@ Gate: independent A and B execute concurrently when both providers advertise saf
 
 A0 exercises the accepted synchronous service boundary before S5. [Its frozen contract](a0-agent-contract.md) and [file/evidence matrix](a0-agent-matrix.md) own this independent preflight. It adds no kernel mechanisms and does not satisfy A1. The user authorized this basic loop test before reactive integration.
 
+A1 is split to prioritize the user's original Basic feature parity goal. A1a
+owns definition/API, session, model, tools, skills, context, ordinary storage
+and loop plugins plus their external suite/product gates after S3b. None needs
+graph execution: the original Basic services are ordinary calls and state.
+A1b retains graph-driven integration after S5. Memory, compaction, planning and
+ACP/MCP are separate Full/follow-on plugins and are not A1a dependencies.
+
 After S5, define `Model`, `ToolSource`, `ToolCatalog`, `Skills`, `Memory`, `Compaction`, and `Agent` in definition-only plugin contracts. Build provider, tools/skills/memory/compaction, CLI/ACP/MCP, and agent-loop plugins as ordinary selected implementations. Use `ValueRef` for exposed state and graph hooks only where it adds value. Agent plugin work MUST NOT become a dependency of any M1 kernel gate.
 
 ## 9. Evidence, closure, and PR discipline
@@ -225,3 +233,9 @@ Run focused tests while implementing, full `nix flake check -L` and release evid
 
 Rules for restructuring stages: record a concrete dependency and file ownership before creating another PR. Do not reintroduce the old kernel, a second scheduler, temporary compatibility paths, or agent code into the kernel. Remove an obsolete code path only after its replacement has independent executable proof.
 
+
+S3b host support is scoped by `m1-contract-authoring-contract.md`: the existing
+artifact extractor owns the bounded M1 section; normalization owns declared
+maximum delegation; pending owns versioned command envelopes; runtime owns
+cell-only control dispatch. These are generated-authoring prerequisites and
+use existing boundaries, not new managers.
