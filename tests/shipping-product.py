@@ -22,7 +22,11 @@ for path in closure_paths:
 production_files = sorted(str(p.relative_to(kernel)) for p in kernel.rglob("*") if p.is_file())
 assert "bin/phenix-kernel" in production_files
 assert not any(p.endswith("plugin.so") for p in production_files)
-fixture_files = sorted(examples.rglob("*.rs"))
+# Independent ABI 3 producers belong to S2/S3a protocol gates. Keep all authored
+# M0/A0 fixtures under the original no-handwritten-glue assertion.
+independent_state_fixtures = {"reactive-client", "reactive-provider", "value-client", "value-provider"}
+fixture_files = sorted(p for p in examples.rglob("*.rs")
+                       if p.relative_to(examples).parts[0] not in independent_state_fixtures)
 assert fixture_files
 for path in fixture_files:
     source = path.read_text()
