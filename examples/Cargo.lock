@@ -114,6 +114,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-revision-a"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-revision-b"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-scoped-client"
 version = "0.1.0"
 dependencies = [

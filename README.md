@@ -11,3 +11,7 @@ The public contract crate owns values, schemas and ABI types. The SDK generates 
 Use `nix flake check -L` for canonical validation. The flake builds kernel and example plugins separately. Later milestones require their own contract gates.
 
 The default package is the kernel. SDK and descriptor tools are separate packages. Example plugins belong to conformance and demo outputs. Agent API and other domain plugins can be added after M0.4 accepts the kernel contracts.
+
+The minimal implementation includes typed pending imports, cancellation trees, physical executable leases and selectable immutable generations. The public `Generations` control API installs offline candidates, trials them explicitly, promotes or rolls back admission defaults and reports retirement blockers. Roots retain the existing Kernel/Root dispatcher and their original generation.
+
+`nix build .#phenix-m0-release` materializes every conformance gate, standalone SDK tests, shipping evidence and production closure. See spec/m0.2-matrix.md, spec/m0.3-matrix.md and spec/m0.4-matrix.md for acceptance evidence. PR #771 remains open and unmerged.

@@ -1,5 +1,5 @@
 {
-  description = "Phenix P0 and M0.0 native plugin kernel";
+  description = "Phenix minimal typed-service kernel through M0.4";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
   outputs =
     { self, nixpkgs }:
@@ -37,6 +37,7 @@
         ./examples
         ./include
         ./tests/abi.c
+        ./tests/generation-identity-v1.json
       ];
       artifactSource = subset [
         ./Cargo.toml
@@ -50,6 +51,7 @@
         ./crates/phenix-contract
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./tests/generation-identity-v1.json
       ];
       build =
         name: src:
@@ -72,6 +74,7 @@
         ./crates/phenix-artifact
         ./crates/phenix-kernel
         ./crates/phenix-conformance
+        ./tests/generation-identity-v1.json
       ];
       describe = build "phenix-artifact" artifactSource;
       kernel = build "phenix-kernel" kernelSource;
@@ -85,6 +88,12 @@
       '';
       plugin =
         name:
+        let
+          manifest = builtins.fromTOML (
+            builtins.readFile (./examples + "/${pkgs.lib.removePrefix "example-" name}/Cargo.toml")
+          );
+          libraryName = manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] name);
+        in
         rust.buildRustPackage {
           pname = name;
           version = "0.1.0";
@@ -100,7 +109,7 @@
           doCheck = false;
           installPhase = ''
             mkdir -p $out/lib
-            cp target/*/release/lib${builtins.replaceStrings [ "-" ] [ "_" ] name}.so $out/lib/plugin.so
+            cp target/*/release/lib${libraryName}.so $out/lib/plugin.so
           '';
           postFixup = ''
             ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
@@ -119,6 +128,8 @@
       pendingPlugin = plugin "example-pending";
       pendingConsumer = plugin "example-pending-consumer";
       pendingImmediate = plugin "example-pending-immediate";
+      revisionA = plugin "example-revision-a";
+      revisionB = plugin "example-revision-b";
       pendingRepeat = pendingPlugin.overrideAttrs (_: {
         pname = "example-pending-repeat";
       });
@@ -288,6 +299,35 @@
       importsCheck = pkgs.runCommand "phenix-m02-imports" { } ''
         ${conformanceBinary}/bin/phenix-m02-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} $out
       '';
+      generationsCheck =
+        pkgs.runCommand "phenix-m03-generations" { nativeBuildInputs = [ pkgs.python3 ]; }
+          ''
+            mkdir -p $out
+            python ${./tests/generation-identity.py} ${./tests/generation-identity-v1.json} > $out/identity-vector.json
+            ${conformanceBinary}/bin/phenix-m03-generations ${revisionA} ${revisionB} ${importsCheck} $out
+          '';
+      publicSdkCheck = (build "phenix-public-sdk-check" publicSource).overrideAttrs (_: {
+        cargoBuildFlags = [ ];
+        buildPhase = ''
+          export CARGO_HOME=$TMPDIR/cargo-home
+          test ! -e crates/phenix-kernel
+          test ! -e crates/phenix-artifact
+          test ! -e crates/phenix-conformance
+          cargo test --workspace --offline
+        '';
+        installPhase = "mkdir -p $out; echo passed > $out/public-sdk";
+      });
+      productionClosure = pkgs.closureInfo { rootPaths = [ kernel ]; };
+      shippingCheck = pkgs.runCommand "phenix-m04-shipping" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python ${./tests/shipping-product.py} ${kernel} ${publicSdkCheck} ${conformance} ${productionClosure} ${exampleSource}/examples $out
+      '';
+      release = pkgs.runCommand "phenix-m0-release" { } ''
+        mkdir -p $out
+        cp -rs ${conformance}/. $out/
+        ln -s ${publicSdkCheck} $out/public-sdk
+        ln -s ${shippingCheck} $out/shipping
+        ln -s ${productionClosure} $out/production-closure
+      '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
@@ -301,6 +341,7 @@
         ln -s ${pendingCheck} $out/pending
         ln -s ${pendingProduct} $out/pending-product
         ln -s ${importsCheck} $out/imports
+        ln -s ${generationsCheck} $out/generations
       '';
     in
     {
@@ -310,7 +351,8 @@
         phenix-describe = describe;
         example-provider = provider;
         example-consumer = consumer;
-        phenix-m0-conformance = conformance;
+        phenix-m0-conformance = release;
+        phenix-m0-release = release;
         phenix-m0-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m0-plugins = pkgs.runCommand "phenix-m0-plugins" { } ''
@@ -330,6 +372,9 @@
         m0-product = productCheck;
         m01-composition = compositionCheck;
         m01-product = compositionProduct;
+        m04-public-sdk = publicSdkCheck;
+        m04-shipping = shippingCheck;
+        m03-generations = generationsCheck;
         m02-imports = importsCheck;
         m02-pending = pendingCheck;
         m02-pending-product = pendingProduct;

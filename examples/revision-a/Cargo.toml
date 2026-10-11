@@ -1,0 +1,10 @@
+[package]
+name = "example-revision-a"
+version = "0.1.0"
+edition = "2021"
+[lib]
+name = "example_revision"
+crate-type = ["cdylib"]
+[dependencies]
+phenix-sdk.workspace = true
+example-contracts.workspace = true

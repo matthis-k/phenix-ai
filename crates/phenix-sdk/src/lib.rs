@@ -233,6 +233,12 @@ pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> R
 /// #[phenix_sdk::operation(interface="example.import@1",operation="run")]
 /// type Op = (String,String,String);
 /// ```
+/// ```compile_fail
+/// fn portable<T: phenix_sdk::Portable>() {}
+/// portable::<phenix_sdk::PendingImport<Op>>();
+/// #[phenix_sdk::operation(interface="example.import@1",operation="run")]
+/// type Op = (String,String,String);
+/// ```
 pub struct PendingImport<O: Operation> {
     ticket: u64,
     settled: bool,

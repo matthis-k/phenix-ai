@@ -1,0 +1,890 @@
+{
+  "ci": "Exact implementation commit and CI run are recorded in PR #771 and the uploaded CI evidence.",
+  "commands": [
+    "nix flake check --max-jobs 4 --cores 2 -L",
+    "nix build .#phenix-m0-release"
+  ],
+  "format": "phenix.m0.release.local.v1",
+  "gates_passed": 14,
+  "generations": {
+    "cases": [
+      "offline candidate",
+      "equal descriptors different executable identities",
+      "environment identity",
+      "explicit trial",
+      "concurrent revisions",
+      "old root across promotion",
+      "new root uses promoted revision",
+      "rollback",
+      "failed promotion preserves default",
+      "invalid policy",
+      "active root retirement blocker",
+      "abandoned physical lease blocker",
+      "stale wake rejection",
+      "real resource release",
+      "root survives owner drop",
+      "generation retains imported child tree"
+    ],
+    "format": "phenix.m03.generations.v1",
+    "inspection": {
+      "default": "c1d5c65101bcd1c1b45a36a901e4a0e2b40659d30a67b48ae318d861005309cf",
+      "format": "phenix.generations.v1",
+      "generations": [
+        {
+          "canonical": {
+            "artifacts": [
+              [
+                "example.revision",
+                "b9feaa80e5d50b0c0a40198bbca3e7b313240318e1d9a957c0fd7808586ded8b",
+                "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+                "x86_64-unknown-linux-gnu",
+                2,
+                0,
+                1,
+                "pending"
+              ]
+            ],
+            "authority": {
+              "operations": [
+                "example.revision@1/run"
+              ],
+              "resources": []
+            },
+            "bindings": [],
+            "entry": [
+              "example.revision@1",
+              "run",
+              "example.revision"
+            ],
+            "environment": "local.test",
+            "grants": [
+              [
+                "root",
+                "example.revision@1/run",
+                []
+              ]
+            ],
+            "resource": null
+          },
+          "failure": null,
+          "identity": "c1d5c65101bcd1c1b45a36a901e4a0e2b40659d30a67b48ae318d861005309cf",
+          "pins": {
+            "physical_leases": 0,
+            "roots": 0
+          },
+          "retirement_blockers": [
+            "selected default"
+          ],
+          "runtime": {
+            "authority": {
+              "operations": [
+                "example.revision@1/run"
+              ],
+              "resources": []
+            },
+            "bindings": [],
+            "calls": 4,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.revision@1",
+              "operation": "run",
+              "provider": "example.revision"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": null,
+            "lifecycle": {
+              "startup_order": [
+                "example.revision"
+              ],
+              "stop_failures": [],
+              "stopped": false
+            },
+            "pending": {
+              "format": "phenix.pending.v1",
+              "physical_leases": 0,
+              "tickets": []
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "b9feaa80e5d50b0c0a40198bbca3e7b313240318e1d9a957c0fd7808586ded8b",
+                "descriptor_sha256": "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+                "id": "example.revision",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 2,
+              "last_root_id": 2
+            }
+          },
+          "state": "resident"
+        }
+      ]
+    },
+    "revision_a": {
+      "canonical": {
+        "artifacts": [
+          [
+            "example.revision",
+            "55d974ae678918adc716442069cafd369acabab659aac008ec592437b1bbb38b",
+            "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+            "x86_64-unknown-linux-gnu",
+            2,
+            0,
+            1,
+            "pending"
+          ]
+        ],
+        "authority": {
+          "operations": [
+            "example.revision@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [],
+        "entry": [
+          "example.revision@1",
+          "run",
+          "example.revision"
+        ],
+        "environment": "local.test",
+        "grants": [
+          [
+            "root",
+            "example.revision@1/run",
+            []
+          ]
+        ],
+        "resource": null
+      },
+      "failure": null,
+      "identity": "edf14ca68b48a874e746150765717855da1a89b792ae6c53a4b83f602e5360f0",
+      "pins": {
+        "physical_leases": 0,
+        "roots": 0
+      },
+      "retirement_blockers": [],
+      "runtime": {
+        "authority": {
+          "operations": [
+            "example.revision@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [],
+        "calls": 0,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.revision@1",
+          "operation": "run",
+          "provider": "example.revision"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "example.revision"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "plugins": [
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "55d974ae678918adc716442069cafd369acabab659aac008ec592437b1bbb38b",
+            "descriptor_sha256": "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+            "id": "example.revision",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 0,
+          "last_root_id": null
+        }
+      },
+      "state": "candidate"
+    },
+    "revision_b": {
+      "canonical": {
+        "artifacts": [
+          [
+            "example.revision",
+            "b9feaa80e5d50b0c0a40198bbca3e7b313240318e1d9a957c0fd7808586ded8b",
+            "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+            "x86_64-unknown-linux-gnu",
+            2,
+            0,
+            1,
+            "pending"
+          ]
+        ],
+        "authority": {
+          "operations": [
+            "example.revision@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [],
+        "entry": [
+          "example.revision@1",
+          "run",
+          "example.revision"
+        ],
+        "environment": "local.test",
+        "grants": [
+          [
+            "root",
+            "example.revision@1/run",
+            []
+          ]
+        ],
+        "resource": null
+      },
+      "failure": null,
+      "identity": "c1d5c65101bcd1c1b45a36a901e4a0e2b40659d30a67b48ae318d861005309cf",
+      "pins": {
+        "physical_leases": 0,
+        "roots": 0
+      },
+      "retirement_blockers": [],
+      "runtime": {
+        "authority": {
+          "operations": [
+            "example.revision@1/run"
+          ],
+          "resources": []
+        },
+        "bindings": [],
+        "calls": 0,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.revision@1",
+          "operation": "run",
+          "provider": "example.revision"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "example.revision"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "plugins": [
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "b9feaa80e5d50b0c0a40198bbca3e7b313240318e1d9a957c0fd7808586ded8b",
+            "descriptor_sha256": "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+            "id": "example.revision",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 0,
+          "last_root_id": null
+        }
+      },
+      "state": "candidate"
+    }
+  },
+  "implementation_parent": "e8bcbf0da9665675a1bb1c41cee4f2224e6bd15c",
+  "native_packages": [
+    {
+      "artifact_sha256": "3f58f191dbe453064c8fc1c46fa427368d4461b2bf5989a7e04aea82e6502aaa",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/yc8ixxgdcbwaxdla32372lf05ryj761b-example-provider-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "5d5ed043836b016a2fbd7e2db8aee36fcf66e3c86c0af560a4e401e78ee3ded7",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/ikzc88wxbh271m6dqsfq1icfj52znksb-example-provider-fat-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "777ab4023ed5fe8241ba86a34e442f08fa16683e4df47324673ef31ef855a35c",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kcrgx6v0hkpng114kxm3vvddbqlqr9dn-example-provider-no-lto-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "456ca805106b8eaf45a6e7d65aea7981fe9d60072641d2da2901ec0e061aea43",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kxlksaa0di4acjxmq5yan609aq561z42-example-provider-lld-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "b01a56ae01dcbb434466c8ebfddd5ee21a980b9c1ce32df46771636c3d36ad51",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/c0rkm6aqzyi3198wrv64dxv5r1mvp83b-example-provider-repeat-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "3f58f191dbe453064c8fc1c46fa427368d4461b2bf5989a7e04aea82e6502aaa",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/yc8ixxgdcbwaxdla32372lf05ryj761b-example-provider-0.1.0"
+    },
+    {
+      "artifact_sha256": "7aa775aa7f47608db5067d1fe7e4583d86bb6cb5639e1557ccfc24f8d36f5fe6",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/yc8ixxgdcbwaxdla32372lf05ryj761b-example-provider-0.1.0"
+    },
+    {
+      "artifact_sha256": "5d5ed043836b016a2fbd7e2db8aee36fcf66e3c86c0af560a4e401e78ee3ded7",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/ikzc88wxbh271m6dqsfq1icfj52znksb-example-provider-fat-0.1.0"
+    },
+    {
+      "artifact_sha256": "ae86dd09fe2ef447c523a7f544ee4857442d86bc18d5aabf02b808a3a5783e48",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/ikzc88wxbh271m6dqsfq1icfj52znksb-example-provider-fat-0.1.0"
+    },
+    {
+      "artifact_sha256": "777ab4023ed5fe8241ba86a34e442f08fa16683e4df47324673ef31ef855a35c",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kcrgx6v0hkpng114kxm3vvddbqlqr9dn-example-provider-no-lto-0.1.0"
+    },
+    {
+      "artifact_sha256": "f632b5833c68bc8cac697a3b8441b74741610f803caedbae2b191e5aa8edf604",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kcrgx6v0hkpng114kxm3vvddbqlqr9dn-example-provider-no-lto-0.1.0"
+    },
+    {
+      "artifact_sha256": "456ca805106b8eaf45a6e7d65aea7981fe9d60072641d2da2901ec0e061aea43",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kxlksaa0di4acjxmq5yan609aq561z42-example-provider-lld-0.1.0"
+    },
+    {
+      "artifact_sha256": "78cc768e2356cc109f5e9addebd7d71591a1c0f319f78df4bd390c95f29ca81c",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/kxlksaa0di4acjxmq5yan609aq561z42-example-provider-lld-0.1.0"
+    },
+    {
+      "artifact_sha256": "b01a56ae01dcbb434466c8ebfddd5ee21a980b9c1ce32df46771636c3d36ad51",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/c0rkm6aqzyi3198wrv64dxv5r1mvp83b-example-provider-repeat-0.1.0"
+    },
+    {
+      "artifact_sha256": "3036c463173ad823623ae7b1647054a256966a468d036b3d6b6d305304751b26",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "package_path": "/nix/store/c0rkm6aqzyi3198wrv64dxv5r1mvp83b-example-provider-repeat-0.1.0"
+    },
+    {
+      "artifact_sha256": "a15292bfd10722157f9919c1a4edc971446457d9fc6957f1aaf8cf4660de8ddd",
+      "descriptor_sha256": "fad6291d8968f9f9231714489ebeaaa4efd7dd025f60d48e59bcd7ef09b1b4ae",
+      "id": "example.lifecycle.a-consumer"
+    },
+    {
+      "artifact_sha256": "91d49bff5185387a31c8ea8dbe55434dfbebd77e546768a2849387bb7e4a860a",
+      "descriptor_sha256": "e0841797833e87bb009b4c6eba4455a3ad751748d956d85157f895a9aea699c3",
+      "id": "example.lifecycle.z-provider"
+    },
+    {
+      "artifact_sha256": "ddbe62148e4f7d360d35a22daac125190ea898e6ce983aa90ee800927c37752c",
+      "descriptor_sha256": "7c5c5298bf3f9391185d42951a88e103b980b261bb5a237b889ddd798ed28bbd",
+      "id": "example.relay"
+    },
+    {
+      "artifact_sha256": "34be24cdd56140f65b8e6c1b09110ef286238a7409810f1fc3bbf370c761f92f",
+      "descriptor_sha256": "2dc7eb6fd6decdcb6fbd4d9fb16a199000ce2d6776d68e92123ac13175204e24",
+      "id": "example.resources"
+    },
+    {
+      "artifact_sha256": "2284fe4731043801ece1bcea97b3f797c8837024fc15f0049d59ba62af2ced8f",
+      "descriptor_sha256": "522adc5472a081d536fa9008e8dad42b9c077ffbd70f15fea7033c07b917ae25",
+      "id": "example.restricted"
+    },
+    {
+      "artifact_sha256": "926cd9a840c38c88bf731c3a77610e394a792da29729b99ed0b11ce42742794f",
+      "descriptor_sha256": "836382e2615c0a387e1de7242e3b275c6e980dabf06b4a5acf53f30ee9e231e9",
+      "id": "example.choice"
+    },
+    {
+      "artifact_sha256": "afe06f9c9920b810465a666537e482bb197f64df305b5463fb8035cae11242a8",
+      "descriptor_sha256": "2ad8322c5724eb9bd78202cb2edebafe2ae1945776a34fc11dc329c1dc3073c8",
+      "id": "example.other"
+    },
+    {
+      "artifact_sha256": "3f58f191dbe453064c8fc1c46fa427368d4461b2bf5989a7e04aea82e6502aaa",
+      "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+      "id": "example.provider"
+    },
+    {
+      "artifact_sha256": "aba3115f591f536ca427b8c67eb747aa2cf4db52e1a6e19d2922ed12f8007b22",
+      "descriptor_sha256": "85bc0d41c3fa7c7972362324835d19eca6596b74b373b6cf4c704599ec98a88e",
+      "id": "example.consumer"
+    },
+    {
+      "artifact_sha256": "3048771efec936bf3b60ed57d80de7d2207021134baf1bc4b0f3acb1ab2357e5",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "id": "example.pending"
+    },
+    {
+      "artifact_sha256": "7ad00d3ea874ad4a6fba526c9e0170bd12ea3935692e3b9e39154a0dc1509e22",
+      "descriptor_sha256": "ecca6a8d56393665f1e3a54a112bc0ac09e134b99f41f1e8600af463d323c9bc",
+      "id": "example.pending-consumer"
+    },
+    {
+      "artifact_sha256": "3048771efec936bf3b60ed57d80de7d2207021134baf1bc4b0f3acb1ab2357e5",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h25axzd5690ybvhmkbmafshifda52ksx-example-pending-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "1681838583ac64d4e2c4dd3ee4c71162b4c52c7f57019c12492f89ec13244be1",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/6jf7y2l8n6bs9d62g9vnxzcdhyjxhpv4-example-pending-fat-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "28086fd772ece4d79450046ab0c1f8a53155f6a29b5adef9e9d73f27a614223a",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/y6fsmyyiyycg0c8k0sgiaydk3qyg6bn4-example-pending-off-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "085647312bfa32d81b05f817ec992fd95bf1e9cfe2af82e5d89e296a2cfade6c",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/7j85sp108ajzp2457m01if7kx5nwgq2j-example-pending-lld-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "d734df178dd402f2d6273db59cb80c147845d4a8f199de98ce99deaacd878a11",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h6g8fq2bwxgsc076hhbmin2nrhvf7w9x-example-pending-repeat-0.1.0",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "artifact_sha256": "3048771efec936bf3b60ed57d80de7d2207021134baf1bc4b0f3acb1ab2357e5",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h25axzd5690ybvhmkbmafshifda52ksx-example-pending-0.1.0"
+    },
+    {
+      "artifact_sha256": "82fa47d8d98edf7e164985e116623affb500d52f1f1250d5a1de4cc918b64f9b",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h25axzd5690ybvhmkbmafshifda52ksx-example-pending-0.1.0"
+    },
+    {
+      "artifact_sha256": "1681838583ac64d4e2c4dd3ee4c71162b4c52c7f57019c12492f89ec13244be1",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/6jf7y2l8n6bs9d62g9vnxzcdhyjxhpv4-example-pending-fat-0.1.0"
+    },
+    {
+      "artifact_sha256": "46699f997857677abe8096d4bba74503b5f02e4563b9b6f05c687b7d353609fc",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/6jf7y2l8n6bs9d62g9vnxzcdhyjxhpv4-example-pending-fat-0.1.0"
+    },
+    {
+      "artifact_sha256": "28086fd772ece4d79450046ab0c1f8a53155f6a29b5adef9e9d73f27a614223a",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/y6fsmyyiyycg0c8k0sgiaydk3qyg6bn4-example-pending-off-0.1.0"
+    },
+    {
+      "artifact_sha256": "b11bcab087df8e84ff3192b5390a6d1d9bd7e1d02884360af74a87e3266a3ed5",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/y6fsmyyiyycg0c8k0sgiaydk3qyg6bn4-example-pending-off-0.1.0"
+    },
+    {
+      "artifact_sha256": "085647312bfa32d81b05f817ec992fd95bf1e9cfe2af82e5d89e296a2cfade6c",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/7j85sp108ajzp2457m01if7kx5nwgq2j-example-pending-lld-0.1.0"
+    },
+    {
+      "artifact_sha256": "47a358b143e2c8efe0bd6bd98868a56f68ae5e38fdf8fd90fe8578266d6e9c23",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/7j85sp108ajzp2457m01if7kx5nwgq2j-example-pending-lld-0.1.0"
+    },
+    {
+      "artifact_sha256": "d734df178dd402f2d6273db59cb80c147845d4a8f199de98ce99deaacd878a11",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h6g8fq2bwxgsc076hhbmin2nrhvf7w9x-example-pending-repeat-0.1.0"
+    },
+    {
+      "artifact_sha256": "3b6fbfd1375303323f98b4f9447e1bfaf9602aac3e4497a5c32b45ccf986cdf9",
+      "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+      "package_path": "/nix/store/h6g8fq2bwxgsc076hhbmin2nrhvf7w9x-example-pending-repeat-0.1.0"
+    },
+    {
+      "artifact_sha256": "12b550c867ff39693559500ac80b5e5862f7f64b1f175c04de9c14270565c45f",
+      "descriptor_sha256": "2609be0f08806b17dcf5a35dcfdf793425d1a9f2e19f6c4c0deee80515fb69af",
+      "id": "example.alternate"
+    },
+    {
+      "artifact_sha256": "b9feaa80e5d50b0c0a40198bbca3e7b313240318e1d9a957c0fd7808586ded8b",
+      "descriptor_sha256": "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+      "id": "example.revision"
+    },
+    {
+      "artifact_sha256": "55d974ae678918adc716442069cafd369acabab659aac008ec592437b1bbb38b",
+      "descriptor_sha256": "a82057faf297ea40960dece57f64db845b6167e35597f1f3583c54b0579b8273",
+      "id": "example.revision"
+    }
+  ],
+  "pending_imports": {
+    "cases": [
+      "typed completion",
+      "immediate provider",
+      "denial before worker acquisition",
+      "domain error",
+      "child failure",
+      "frozen attenuation",
+      "ancestor wake",
+      "double settlement",
+      "wrong parent without handle consumption",
+      "live-child completion rejected",
+      "native-quiescent parent not reentered",
+      "recursive cancellation",
+      "caller-drop tree draining",
+      "actual resource release"
+    ],
+    "format": "phenix.m02.imports.v1",
+    "inspection": {
+      "authority": {
+        "operations": [
+          "example.pending-consumer@1/run",
+          "example.pending@1/run",
+          "example.transform@1/apply"
+        ],
+        "resources": []
+      },
+      "bindings": [
+        {
+          "caller": "example.pending",
+          "operation": "example.transform@1/apply",
+          "provider": "example.provider"
+        },
+        {
+          "caller": "example.pending-consumer",
+          "operation": "example.pending@1/run",
+          "provider": "example.pending"
+        },
+        {
+          "caller": "example.pending-consumer",
+          "operation": "example.transform@1/apply",
+          "provider": "example.provider"
+        }
+      ],
+      "calls": 33,
+      "denied_operations": 1,
+      "entry": {
+        "interface": "example.pending-consumer@1",
+        "operation": "run",
+        "provider": "example.pending-consumer"
+      },
+      "format": "phenix.inspect.v2",
+      "last_failure": {
+        "code": "PluginFailed",
+        "context": {
+          "caller": "root",
+          "operation": "example.pending-consumer@1/run",
+          "provider": "example.pending-consumer"
+        },
+        "message": "native completion with live imported work",
+        "phase": "invocation"
+      },
+      "lifecycle": {
+        "startup_order": [
+          "example.provider",
+          "example.pending",
+          "example.pending-consumer"
+        ],
+        "stop_failures": [],
+        "stopped": true
+      },
+      "pending": {
+        "format": "phenix.pending.v1",
+        "physical_leases": 0,
+        "tickets": []
+      },
+      "plugins": [
+        {
+          "abi_negotiated": true,
+          "artifact_sha256": "3048771efec936bf3b60ed57d80de7d2207021134baf1bc4b0f3acb1ab2357e5",
+          "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+          "id": "example.pending",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": true,
+          "artifact_sha256": "7ad00d3ea874ad4a6fba526c9e0170bd12ea3935692e3b9e39154a0dc1509e22",
+          "descriptor_sha256": "ecca6a8d56393665f1e3a54a112bc0ac09e134b99f41f1e8600af463d323c9bc",
+          "id": "example.pending-consumer",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": true,
+          "artifact_sha256": "3f58f191dbe453064c8fc1c46fa427368d4461b2bf5989a7e04aea82e6502aaa",
+          "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+          "id": "example.provider",
+          "offline_verified": true
+        }
+      ],
+      "resource": null,
+      "roots": {
+        "active": null,
+        "completed": 1,
+        "last_root_id": 1
+      }
+    }
+  },
+  "realized_release": "/nix/store/22ymhrkh0yah4fy6i93yhqd8bydrblbn-phenix-m0-release",
+  "shipping": {
+    "format": "phenix.m04.shipping.v1",
+    "gates": [
+      "composition",
+      "composition-product",
+      "contract",
+      "descriptor",
+      "generations",
+      "imports",
+      "lifecycle",
+      "lifecycle-product",
+      "native",
+      "pending",
+      "pending-product",
+      "product",
+      "public-sdk"
+    ],
+    "independently_authored_fixture_files": 17,
+    "kernel": "/nix/store/2w5z3rgn8pzbvkqcy6ia16dyhfd98z8g-phenix-kernel-0.1.0",
+    "parsed_reports": [
+      {
+        "bytes": 1460,
+        "file": "composition/composition-policy.json",
+        "gate": "composition"
+      },
+      {
+        "bytes": 7611,
+        "file": "composition/composition.json",
+        "gate": "composition"
+      },
+      {
+        "bytes": 1211,
+        "file": "composition/scoped-policy.json",
+        "gate": "composition"
+      },
+      {
+        "bytes": 2530,
+        "file": "composition-product/blue.json",
+        "gate": "composition-product"
+      },
+      {
+        "bytes": 4262,
+        "file": "composition-product/product.json",
+        "gate": "composition-product"
+      },
+      {
+        "bytes": 2534,
+        "file": "composition-product/switch.json",
+        "gate": "composition-product"
+      },
+      {
+        "bytes": 6737,
+        "file": "descriptor/evidence.json",
+        "gate": "descriptor"
+      },
+      {
+        "bytes": 4915,
+        "file": "generations/concurrent.json",
+        "gate": "generations"
+      },
+      {
+        "bytes": 7467,
+        "file": "generations/evidence.json",
+        "gate": "generations"
+      },
+      {
+        "bytes": 225,
+        "file": "generations/identity-vector.json",
+        "gate": "generations"
+      },
+      {
+        "bytes": 1591,
+        "file": "imports/composition.json",
+        "gate": "imports"
+      },
+      {
+        "bytes": 3062,
+        "file": "imports/evidence.json",
+        "gate": "imports"
+      },
+      {
+        "bytes": 836,
+        "file": "lifecycle/lifecycle-policy.json",
+        "gate": "lifecycle"
+      },
+      {
+        "bytes": 19307,
+        "file": "lifecycle/lifecycle.json",
+        "gate": "lifecycle"
+      },
+      {
+        "bytes": 10685,
+        "file": "lifecycle-product/product.json",
+        "gate": "lifecycle-product"
+      },
+      {
+        "bytes": 5969,
+        "file": "native/native.json",
+        "gate": "native"
+      },
+      {
+        "bytes": 1138,
+        "file": "pending/composition.json",
+        "gate": "pending"
+      },
+      {
+        "bytes": 6705,
+        "file": "pending/descriptor-evidence.json",
+        "gate": "pending"
+      },
+      {
+        "bytes": 2573,
+        "file": "pending/evidence.json",
+        "gate": "pending"
+      },
+      {
+        "bytes": 28,
+        "file": "pending/retained-on-drop.json",
+        "gate": "pending"
+      },
+      {
+        "bytes": 6615,
+        "file": "pending-product/evidence.json",
+        "gate": "pending-product"
+      },
+      {
+        "bytes": 5337,
+        "file": "product/failures.json",
+        "gate": "product"
+      },
+      {
+        "bytes": 1062,
+        "file": "product/product.json",
+        "gate": "product"
+      }
+    ],
+    "production_closure": [
+      "/nix/store/2w5z3rgn8pzbvkqcy6ia16dyhfd98z8g-phenix-kernel-0.1.0",
+      "/nix/store/8lahnh9pn3lrrnhax5nk7ibvjcbjmnkm-gcc-15.2.0-lib",
+      "/nix/store/clqknm3pgln8pxb6n7iamffk313nr91r-libidn2-2.3.8",
+      "/nix/store/dxszpyw0pn7h1cxi1y6l33nmwk7f5knn-libunistring-1.4.2",
+      "/nix/store/hps7pxvcgq32x46yx5a2nx53js5j41vb-xgcc-15.2.0-libgcc",
+      "/nix/store/ias8xacs1h3jy7xgwi2awvim61k2ji6c-glibc-2.42-67",
+      "/nix/store/wlj7fzgbchbxhd6hplwm2dwl15gizcn5-gcc-15.2.0-libgcc"
+    ],
+    "production_files": [
+      "bin/phenix-kernel"
+    ],
+    "realized_gates": {
+      "composition": "/nix/store/qnzb9s424slqbqmaydm1a5a3y8nr0j10-phenix-m01-composition",
+      "composition-product": "/nix/store/hzf4hvwqc55l7y67xk5bzghwf41vkf5p-phenix-m01-product",
+      "contract": "/nix/store/3ir6i6n4m59mgrd1wr0p1jjkq5955071-phenix-contract-check-0.1.0",
+      "descriptor": "/nix/store/1142n9wazz679qjxyhbflvqbvvd14k1v-phenix-m0-descriptor",
+      "generations": "/nix/store/whjjwarr4b97iv1db4vcv53dn33dnb00-phenix-m03-generations",
+      "imports": "/nix/store/6apbivn56wh0spwg95vxy8dwvw918isv-phenix-m02-imports",
+      "lifecycle": "/nix/store/y7w1vfnqrnhfs7r4xkcbb1c7znnh4chy-phenix-m02-lifecycle",
+      "lifecycle-product": "/nix/store/ifsfznapay0k57bkh8lfzjwyjj1viss5-phenix-m02-lifecycle-product",
+      "native": "/nix/store/4k3fg42g6yzpr9r4599g5nnaisfczh7f-phenix-m0-native",
+      "pending": "/nix/store/kphrkbznmhw1bxcs4xkcv5638rws52ly-phenix-m02-pending",
+      "pending-product": "/nix/store/73fz976ip24813c61bc4l9icbfk7ahcl-phenix-m02-pending-product",
+      "product": "/nix/store/4x1ldmav5hzdshicb2i81935h71m09lm-phenix-m0-product"
+    },
+    "sdk_check": "/nix/store/jhx91ai0ldpchlr51sa5dlrlwph21ckn-phenix-public-sdk-check-0.1.0"
+  },
+  "source_sha256": {
+    "Cargo.lock": "88ee4d128ee7b6400c2b658d829f5630014010d1d2e6a81da2e924ce48bc4618",
+    "Cargo.toml": "3f8ed63826b7df1983cc688f104f6c04fb34d99146d148dd21322a4f4d4d775d",
+    "crates/phenix-artifact/Cargo.toml": "09a44fc4b16522327abe4dfc89040dd6dae645030a991ce640a8155d16ff02f3",
+    "crates/phenix-artifact/src/bin/phenix-describe.rs": "5062598be843081a0942259f04805c7d20bce9ae45a0c45ce6e835eab41f2968",
+    "crates/phenix-artifact/src/lib.rs": "8cd471e221bb7f4b0f81f7e76d13a28f53150b9c15c69712dcdfe86caf0237ab",
+    "crates/phenix-conformance/Cargo.toml": "2131c1dc0ecfedd6c1a1ffb24c074712f9211d82be3e41d7e18305ab8afcf4ef",
+    "crates/phenix-conformance/src/bin/phenix-m01-conformance.rs": "60627e4d96f65b21d49390dd02e32cdfcfc393e86b746fabfd3aca848d8431a4",
+    "crates/phenix-conformance/src/bin/phenix-m02-imports.rs": "05ed09e93e1578b02977da35f4755774762fcc5401b572004043c021ccf709d5",
+    "crates/phenix-conformance/src/bin/phenix-m02-lifecycle.rs": "73548ab406fe34ea42a9cc286c733517f9ef5da748c10f06eca5327321283572",
+    "crates/phenix-conformance/src/bin/phenix-m02-pending.rs": "787bf1d3fd93380900fc5958272040cde040b7fd731bd5e483e5e39b8ada5d32",
+    "crates/phenix-conformance/src/bin/phenix-m03-generations.rs": "c31ffb693cdc342958edbc43299cf62d5f0f46da9bb6ef1f25c82fb077eab037",
+    "crates/phenix-conformance/src/main.rs": "ea12902d485366a42eac8bcf28b581b30971d5dee4dda1b8a4b88640d7006b0b",
+    "crates/phenix-contract/Cargo.toml": "510cb7e0de11e00dedfb02245b06415e2eacb7077460b3da421c38a3e91995f4",
+    "crates/phenix-contract/src/abi.rs": "d50c27199abf13eeaf1f8ed560820f4c6a875933c32cfb8c62f09fdff8ef843b",
+    "crates/phenix-contract/src/descriptor/encode.rs": "3b071a269de41f7df0ce2601e1e179af03c6b6c1e8d1d7ae8a191740c03cd3db",
+    "crates/phenix-contract/src/descriptor/mod.rs": "e61eeb133ebe209bf9a80a33d84e2092e58f510dab58e51145927a2a7537d126",
+    "crates/phenix-contract/src/lib.rs": "37b27da03d250fdeca2fe7e777f93cdc35cbd44991632fabb5ea989fdf667740",
+    "crates/phenix-contract/src/scope.rs": "31236eb4b958c517be714db9d51235208e5640f14f0ef6c05aa6724ac614fc05",
+    "crates/phenix-contract/src/value.rs": "b857551da98845f0cb8417f81ac7df20b07e828c55f0f8855b00f5653cda13d0",
+    "crates/phenix-kernel/Cargo.toml": "5df424f8d44ae6ee00ba245a3d347607e82528cc04ea783838302a4b18fb571b",
+    "crates/phenix-kernel/src/bin/phenix-kernel.rs": "c1c9d9e04b7c605c03c76be584b42ee630852af8d9dd634a8c7c7636894689c5",
+    "crates/phenix-kernel/src/generation.rs": "fd67fcdd32e092c8d8ae8c537f9a5cb21f2554ffb334b3e06f75ceae02af3035",
+    "crates/phenix-kernel/src/lib.rs": "5eb0fe531617372bf16b94508ae895c3034e1d72a2a6d81719fda8758bd248e8",
+    "crates/phenix-kernel/src/native.rs": "62cf4f3cd788945e46c4270a015f802e498d11e4fb3ed3fde4ca050b0fa8d08a",
+    "crates/phenix-kernel/src/pending.rs": "9fb471b5660b8d201acb999517fcbcd5ad487d5f2b2085269a281f4e7e61b10b",
+    "crates/phenix-kernel/src/resolve.rs": "997d9faa336d940c0922ceb4b63e47bf8e83269945f288da98f81f19bc2dd7fb",
+    "crates/phenix-kernel/src/runtime.rs": "75899e7dfc5748970c4c47ec41c1c658ec35105a60d3f8ef3b34fe9769c91fce",
+    "crates/phenix-macros/Cargo.toml": "f2bcded10ff5607e11c29479be51b80f4a359c63f4612234cca9921c43f61ef2",
+    "crates/phenix-macros/src/lib.rs": "bc54349db6a9b12a35ae4f2015401167ce686253529a3f2f2765229f6d352e87",
+    "crates/phenix-sdk/Cargo.toml": "fb80630079d75927366872f5d9bb51cc5c4a7fa0f9963c85f6b2fd89ffa230f0",
+    "crates/phenix-sdk/src/lib.rs": "33445e777a4dee30f7ac8fcac6055c47dc6dd17f4952cf4a866317bbb365a12e",
+    "examples/Cargo.lock": "840a0031d0494d721a2b59a9329a4ef63d8c06060e19422a70eca85c6f68fdb4",
+    "examples/Cargo.toml": "d32735106a1071623be58c103e4ad44a622bd9e45dde7bcbe31b360bc940d9f1",
+    "examples/alternate/Cargo.toml": "f99eb4dabc634f64055363c59379d319d64d0e8a00c8a6b6b5335d5d64a08e93",
+    "examples/alternate/src/lib.rs": "732ba207e1b6ddda403b0c4ac180b515c518dface2a4ba1f89fae9ef23c6f17e",
+    "examples/choice/Cargo.toml": "a1f2c0d23edcb99496e1e5bd8d427b41eda9ca68e7873c75b6daadc8302c0571",
+    "examples/choice/src/lib.rs": "b8431101b58c32676bbc30d07b247e5a4973a2a7180dfe9da8325ab4b54da642",
+    "examples/consumer/Cargo.toml": "18ce112d385b11dde6201cfc30ca366cc1e33cf381dbbdd1d5f1466833127ee0",
+    "examples/consumer/src/lib.rs": "57c69ea72dd085316745fca784c1b65e70dd3c57de2ddd5123f585972a4eb19b",
+    "examples/contracts/Cargo.toml": "ce4c6e3271abdcbf4f4b45c5cd7088eb797a484750086146b48961c037355512",
+    "examples/contracts/src/lib.rs": "7ff167e1d98213ced00d1db1636cd3823a93c572bff7cf957b33e8223f9765df",
+    "examples/cycle/Cargo.toml": "82872fff55a565a9606ca179649c94f9231efa14645e0fa11754c4940e277e37",
+    "examples/cycle/src/lib.rs": "8fd564e3017e9b38a88b1242eee2b300eb2d02daaff0aa9d03797b933c097e25",
+    "examples/lifecycle-consumer/Cargo.toml": "3abbc3367a09c1f30e68e57e07bec16e80fd3391e9c402307cbaa365b3a3fe19",
+    "examples/lifecycle-consumer/src/lib.rs": "1f48d45a999cad8cf44b6b8a3d66a60977fe7f5bb04858bdea5fc51990e73d6d",
+    "examples/lifecycle-provider/Cargo.toml": "ba9cb3ca5ce55a3991e8dad2805767887acd3ea01e1ace988822b1295e58be92",
+    "examples/lifecycle-provider/src/lib.rs": "89705349d667dd2a45727c566d57c10ea2b767cf663fb3d98737616208822948",
+    "examples/other/Cargo.toml": "504115372d44bca0290e923362af2ab81f54c2fb7e695bff7c5f1975a9f23c1e",
+    "examples/other/src/lib.rs": "7f2dcf721f0d3b682a7e8868a40baa8d4ea156fb24d5271210260ee17a5f456a",
+    "examples/pending-consumer/Cargo.toml": "cebb84f6c5d1a0a394a35d4e15ab80a985acd26e106df90c24fa135fa405844a",
+    "examples/pending-consumer/src/lib.rs": "6592185f9222532c645aec9624e2b0d65ff7a4e6f6335f426281ffa76b16f673",
+    "examples/pending-immediate/Cargo.toml": "77e362a78bc0bb1172a0552385cbe36e879f52b70306d3c3f8ab86403ad0a544",
+    "examples/pending-immediate/src/lib.rs": "8994995e3616a0f546f8fe602b5a4834e4f4c2b7f17bff0856c7fd46f635d17a",
+    "examples/pending/Cargo.toml": "c1e69cafd36fa9ced4cdc3d6e6ee2e196d875ad8d766630138518aeda71f372d",
+    "examples/pending/src/lib.rs": "5cdc7e374aced570cab2423bdf2d24603fdff49a2795e5beed329bb7357102b1",
+    "examples/provider/Cargo.toml": "316692639b31407f68b7842183db2a3f1b1bc6f25d2473c0e412cbefc257bc31",
+    "examples/provider/src/lib.rs": "a23d8c8033b4672bfc59a7c47b6019cafb1e1a3f2b59709cd111975065f8e513",
+    "examples/relay/Cargo.toml": "54b2d4467f82ce77b811c1fdd8bbb396921a1d5d68ffde27036cc3d1311bde26",
+    "examples/relay/src/lib.rs": "3b2a728758082d7efb772cc39e3136f2c5890f71eaeaa23e85e34b7c1bbd6689",
+    "examples/resource-provider/Cargo.toml": "cdb957f82331732f8f8e81109fc649886e734e2e37e69e5aa269bc3f9ac4d1d3",
+    "examples/resource-provider/src/lib.rs": "ad1d0ed3da2e89c6c29aff220c7908138e30e17cd7f1cf5acccba28cbb30bf89",
+    "examples/revision-a/Cargo.toml": "55c627329c26f0e21ded0a6c0561671a756d54b76aad16a9f02e24f1af03f84f",
+    "examples/revision-a/src/lib.rs": "8783fd23ce3f55a166def226108a8cd22e021b9dfedf05091805ef0261c77071",
+    "examples/revision-b/Cargo.toml": "4844766e836894fe32881d1feddcde6057e39e886bbddc93aad332440432c9e9",
+    "examples/revision-b/src/lib.rs": "aad0cec51c55f7c1e2d62df5e785126c81759e0b63fb1a6e514af4ff51ce409d",
+    "examples/scoped-client/Cargo.toml": "9b04f15ee5908bf32d6ff3e6a3ad6b56e5790f2399e6e04832845c5c06e7a126",
+    "examples/scoped-client/src/lib.rs": "d420a74dcbfb93c9cca70ffd4ddcee0bb5ca53f2b166fbacafa70b43e06f92b0",
+    "flake.lock": "7008e57b19b891970507a1d76d5a3224b39ad09178a5378f04b695cfe320cdca",
+    "flake.nix": "e66cc0b75c7b533ddba99404da476d9898248f96ada23fe32db130afed8b47b8",
+    "spec/clean-start-rfc.md": "46a74d81b6bf767b657cc427cb7678c347f7669786b74e70a07f231d58f8dfe5",
+    "spec/m0.2-import-contracts.md": "21050f49d3c438f78b9091fb73aec9cdec9adf161b20e12bddb6b37635619531",
+    "spec/m0.3-contracts.md": "6b057fa61a84c95e734d55f59f1d59078935089dd574a66717c1956210f86a50",
+    "spec/m0.4-contracts.md": "83a23e0561d21e2a5b3e03e2ca7b27784c4c94ebea03f9464ba75f67ea09bbee",
+    "tests/abi-negative.c": "29110fb95da6e65738645ea5dd9ad7c81e98b69412a8ff6b9e45a6035cb4e5ab",
+    "tests/abi.c": "9e51d7cd8196e355e46a3dfeae0146e90ddce9e12de84dd9a5a3ddd482db31a8",
+    "tests/composition-golden.json": "848628e9dbea248dfabcbfa62de209237f10448d6c3f2fef69a878d68ad9a04a",
+    "tests/composition-product.py": "7c3c985030bc22bd475c750ecb986f941c6756462bae9f4a3f07b27d28011229",
+    "tests/descriptor.py": "294b77a33ddf1750a2db1149fcd81e87205a365baf55cb2baac06da5bbfe388d",
+    "tests/generation-identity-v1.json": "5e85144102d0e9fff8e261983a9c53323da97ff01f2db1515e48d66b4d751b43",
+    "tests/generation-identity.py": "01d515d69ab92ef9edfcbab76e02bbb0acf724e6199a2cf116cd0125bcecede8",
+    "tests/inspection-golden.json": "43e58d65ed66a380038e36a30db1e433f25927d5b6bd9874afe94b411648dc6e",
+    "tests/lifecycle-product.py": "54462caec3f22d16c7601f6d641c58d6ae5fc47cb4aa5d8c57d0a2eb3825b3d7",
+    "tests/pending-product.py": "d3e087411daec6546f8decd13476c231525e812de8ebf0d2f0f1095283c4827a",
+    "tests/product.py": "6588c51a1230a2a0cbe2740f0ead733d2261e63e0af530f8ca9c35c18079255f",
+    "tests/shipping-product.py": "7f5a322cdcbe8ec5de15a4aa78c0c92b689e5f9a7b75117141456b4a5e29e513"
+  }
+}

@@ -3,7 +3,7 @@ use crate::{
     resolve::{Prepared, Selection},
 };
 use phenix_contract::{
-    abi::{boundary, Bytes, HostApi, Reply},
+    abi::{Bytes, HostApi, Reply},
     Authority, Code, Failure, ScopedRequest, Value, RESOURCE_CONTEXT, SCOPED_IMPORT,
 };
 use std::{
@@ -98,8 +98,23 @@ pub struct Kernel {
     pub(super) state: RefCell<State>,
     _serial: PhantomData<Rc<()>>,
 }
+pub(super) enum KernelLease<'a> {
+    Borrowed(&'a Kernel),
+    Pinned(Rc<Kernel>),
+}
+impl std::ops::Deref for KernelLease<'_> {
+    type Target = Kernel;
+    fn deref(&self) -> &Kernel {
+        match self {
+            Self::Borrowed(k) => k,
+            Self::Pinned(k) => k,
+        }
+    }
+}
 pub struct Root<'a> {
-    pub(super) kernel: &'a Kernel,
+    pub(super) kernel: KernelLease<'a>,
+    owns_admission: bool,
+    generation: Option<String>,
     pub(super) id: u64,
     pub(super) entry: Selection,
     pub(super) scope: ScopedRequest,
@@ -214,7 +229,9 @@ impl Kernel {
         state.active_root = Some(id);
         state.root_live = true;
         Ok(Root {
-            kernel: self,
+            kernel: KernelLease::Borrowed(self),
+            owns_admission: true,
+            generation: None,
             id,
             entry: entry.clone(),
             scope,
@@ -538,6 +555,21 @@ impl Drop for Kernel {
     }
 }
 impl Root<'_> {
+    pub(super) fn pin(mut self, kernel: Rc<Kernel>, identity: &str) -> Root<'static> {
+        assert!(std::ptr::eq(&*self.kernel, &*kernel));
+        self.owns_admission = false;
+        Root {
+            kernel: KernelLease::Pinned(kernel),
+            owns_admission: true,
+            generation: Some(identity.into()),
+            id: self.id,
+            entry: self.entry.clone(),
+            scope: self.scope.clone(),
+        }
+    }
+    pub fn generation_identity(&self) -> Option<&str> {
+        self.generation.as_deref()
+    }
     pub fn invoke(&self, request: &Value) -> Result<Outcome, Failure> {
         match request.encode() {
             Ok(bytes) => self.invoke_bytes(&bytes),
@@ -569,6 +601,9 @@ impl Root<'_> {
 }
 impl Drop for Root<'_> {
     fn drop(&mut self) {
+        if !self.owns_admission {
+            return;
+        }
         self.kernel.state.borrow_mut().root_live = false;
         self.kernel.abandon_root(self.id);
     }
@@ -656,7 +691,7 @@ pub(super) unsafe extern "C" fn invoke_pending_import(
     unsafe { import_command(scope, key, input, true) }
 }
 unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) -> Reply {
-    boundary(|| {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let result = (|| -> Result<Reply, Failure> {
             let record = scopes()
                 .lock()
@@ -788,6 +823,14 @@ unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) ->
             Err(e) if pending => Reply::value(5, e.to_value()),
             Err(e) => Reply::failure(e),
         }
+    }))
+    .unwrap_or_else(|_| {
+        let failure = Failure::new(Code::InfrastructureFailure, "caught host command panic");
+        if pending {
+            Reply::value(5, failure.to_value())
+        } else {
+            Reply::failure(failure)
+        }
     })
 }
 #[cfg(test)]
@@ -814,6 +857,21 @@ mod tests {
         .join()
         .unwrap();
         assert_eq!(code, Code::ScopeRejected);
+        thread::spawn(move || {
+            let invalid = Bytes {
+                ptr: std::ptr::null(),
+                len: 1,
+            };
+            let reply = unsafe { invoke_pending_import(scope, invalid, invalid) };
+            let (status, value) = unsafe { reply.consume_pending() }.unwrap();
+            assert_eq!(status, 5);
+            assert_eq!(
+                Failure::from_value(value).unwrap().code,
+                Code::ScopeRejected
+            );
+        })
+        .join()
+        .unwrap();
         scopes().lock().unwrap().remove(&scope);
         let reply = unsafe { invoke_import(scope, Bytes::new(b"not/read"), Bytes::new(&[])) };
         let (_, value) = unsafe { reply.consume() }.unwrap();

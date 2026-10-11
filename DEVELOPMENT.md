@@ -19,3 +19,5 @@ Inspection accepts a deployment document without loading its artifacts. Invocati
 A caught invocation panic poisons that instance. A new process can construct a fresh instance. Abort, signals and process termination provide no cleanup or recovery guarantee. Native code shares the process and its operating-system privileges.
 
 The CI workflow checks out the exact branch head even for PR events. It stores `kernel-commit.txt`, `ci-run.txt`, Nix paths and parsed native/descriptor/product JSON as an artifact. Report that run before claiming milestone acceptance.
+
+The complete suite has fourteen gates. Added gates are m02-imports, m03-generations, m04-public-sdk and m04-shipping. `nix build .#phenix-m0-release` collects all realized outputs. The default package contains the kernel; source distributions and native fixtures remain separate products.
