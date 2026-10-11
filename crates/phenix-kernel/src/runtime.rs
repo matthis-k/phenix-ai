@@ -29,7 +29,8 @@ fn scopes() -> &'static Mutex<BTreeMap<u64, ScopeRecord>> {
     static SCOPES: OnceLock<Mutex<BTreeMap<u64, ScopeRecord>>> = OnceLock::new();
     SCOPES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-struct Frame {
+pub(super) struct Frame {
+    pub(super) ticket: Option<u64>,
     revoked: bool,
     scope: u64,
     provider: String,
@@ -73,7 +74,7 @@ pub(super) struct State {
     calls: u64,
     denied: u64,
     last_failure: Option<ObservedFailure>,
-    stack: Vec<Frame>,
+    pub(super) stack: Vec<Frame>,
     stopped: bool,
     stop_failures: Vec<StopFailure>,
 }
@@ -228,7 +229,7 @@ impl Kernel {
         }
         Ok(())
     }
-    fn fail<T>(&self, code: Code, message: impl Into<String>) -> Result<T, Failure> {
+    pub(super) fn fail<T>(&self, code: Code, message: impl Into<String>) -> Result<T, Failure> {
         let failure = Failure::new(code, message);
         if failure.code == Code::Denied {
             self.state.borrow_mut().denied += 1;
@@ -615,6 +616,7 @@ impl<'a> CallGuard<'a> {
         let mut state = kernel.state.borrow_mut();
         state.calls += 1;
         state.stack.push(Frame {
+            ticket: None,
             revoked,
             scope,
             provider: caller.into(),
@@ -622,6 +624,17 @@ impl<'a> CallGuard<'a> {
             resource,
         });
         Ok(Self { kernel, scope })
+    }
+}
+impl CallGuard<'_> {
+    pub(super) fn attach_ticket(&self, id: u64) {
+        self.kernel
+            .state
+            .borrow_mut()
+            .stack
+            .last_mut()
+            .unwrap()
+            .ticket = Some(id);
     }
 }
 impl Drop for CallGuard<'_> {
@@ -633,6 +646,16 @@ impl Drop for CallGuard<'_> {
     }
 }
 pub(super) unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Reply {
+    unsafe { import_command(scope, key, input, false) }
+}
+pub(super) unsafe extern "C" fn invoke_pending_import(
+    scope: u64,
+    key: Bytes,
+    input: Bytes,
+) -> Reply {
+    unsafe { import_command(scope, key, input, true) }
+}
+unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) -> Reply {
     boundary(|| {
         let result = (|| -> Result<Reply, Failure> {
             let record = scopes()
@@ -674,6 +697,21 @@ pub(super) unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Byt
                 let key = std::str::from_utf8(unsafe { key.read() }?)
                     .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
                 let input = unsafe { input.read() }?;
+                if pending && key.starts_with("phenix.host.pending.") {
+                    let parent = kernel
+                        .state
+                        .borrow()
+                        .stack
+                        .last()
+                        .and_then(|f| f.ticket)
+                        .ok_or_else(|| {
+                            Failure::new(
+                                Code::ScopeRejected,
+                                "pending command needs a native ticket",
+                            )
+                        })?;
+                    return kernel.import_pending(record.root, &record.caller, parent, key, input);
+                }
                 if key == RESOURCE_CONTEXT {
                     if Value::decode(input)? != Value::Null {
                         return Err(Failure::new(
@@ -747,6 +785,7 @@ pub(super) unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Byt
         })();
         match result {
             Ok(reply) => reply,
+            Err(e) if pending => Reply::value(5, e.to_value()),
             Err(e) => Reply::failure(e),
         }
     })

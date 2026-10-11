@@ -21,6 +21,7 @@ struct Notification {
 struct Permit {
     ticket: u64,
     notification: Arc<Notification>,
+    ancestors: Vec<Arc<Notification>>,
 }
 fn permits() -> &'static Mutex<BTreeMap<u64, Permit>> {
     static REGISTRY: OnceLock<Mutex<BTreeMap<u64, Permit>>> = OnceLock::new();
@@ -37,6 +38,9 @@ unsafe extern "C" fn wake(permit: u64, ticket: u64) -> u32 {
         return 1;
     }
     record.notification.requests.fetch_add(1, Ordering::Relaxed);
+    for notification in &record.ancestors {
+        notification.requests.fetch_add(1, Ordering::Relaxed);
+    }
     0
 }
 fn identity(counter: &AtomicU64) -> Result<u64, Failure> {
@@ -72,6 +76,8 @@ pub(super) enum Logical {
 }
 pub(super) struct Record {
     pub root: u64,
+    pub parent: Option<u64>,
+    pub native_quiescent: bool,
     pub selection: Selection,
     pub authority: Authority,
     pub resource: Option<String>,
@@ -101,6 +107,22 @@ impl Kernel {
         authority: Authority,
         resource: Option<String>,
     ) -> Result<Call, Failure> {
+        let parent = self
+            .state
+            .borrow()
+            .stack
+            .iter()
+            .rev()
+            .nth(1)
+            .and_then(|f| f.ticket);
+        let mut ancestors = Vec::new();
+        let mut ancestor = parent;
+        while let Some(id) = ancestor {
+            let state = self.state.borrow();
+            let record = &state.tickets[&id];
+            ancestors.push(record.notification.clone());
+            ancestor = record.parent;
+        }
         let id = identity(&NEXT_TICKET)?;
         let permit = identity(&NEXT_PERMIT)?;
         let notification = Arc::new(Notification::default());
@@ -112,10 +134,13 @@ impl Kernel {
                 Permit {
                     ticket: id,
                     notification: notification.clone(),
+                    ancestors,
                 },
             );
         let record = Record {
             root,
+            parent,
+            native_quiescent: false,
             selection: selection.clone(),
             authority,
             resource,
@@ -129,6 +154,7 @@ impl Kernel {
             notification,
         };
         self.state.borrow_mut().tickets.insert(id, record);
+        guard.attach_ticket(id);
         let api = self.pending_api(id, guard.scope);
         let reply = self.images.borrow()[&selection.provider].pending(
             &api,
@@ -145,7 +171,7 @@ impl Kernel {
         PendingHostApi {
             host: HostApi {
                 scope,
-                invoke: super::runtime::invoke_import,
+                invoke: super::runtime::invoke_pending_import,
             },
             ticket: id,
             permit: record.permit,
@@ -153,17 +179,23 @@ impl Kernel {
         }
     }
     fn accept_reply(&self, id: u64, reply: Result<(u32, Value), Failure>) {
+        let live_children = self
+            .children(id)
+            .iter()
+            .any(|child| !self.state.borrow().tickets[child].quiescent);
         let mut state = self.state.borrow_mut();
         let record = state.tickets.get_mut(&id).unwrap();
         let terminal = record.logical != Logical::Pending;
-        let result = match reply {
+        let mut result = match reply {
             Ok((3, Value::Null)) => return,
             Ok((4, Value::Null)) if record.cancelled => {
-                record.quiescent = true;
+                record.native_quiescent = true;
+                drop(state);
+                self.refresh_quiescence();
                 return;
             }
             Ok((status @ (0 | 1 | 5), value)) => {
-                record.quiescent = true;
+                record.native_quiescent = true;
                 let contract = self.prepared.packages[&record.selection.provider]
                     .descriptor()
                     .contract(&record.selection.key())
@@ -186,6 +218,13 @@ impl Kernel {
             Ok(_) => Err(Failure::new(Code::AbiIncompatible, "invalid pending reply")),
             Err(failure) => Err(failure),
         };
+        if record.native_quiescent && live_children {
+            result = Err(Failure::new(
+                Code::PluginFailed,
+                "native completion with live imported work",
+            ));
+        }
+        let failed = result.is_err();
         if !terminal {
             let failure = result.as_ref().err().cloned();
             let selection = record.selection.clone();
@@ -195,12 +234,56 @@ impl Kernel {
                 Logical::Failed
             };
             record.result = Some(result);
-            drop(state);
             if let Some(failure) = failure {
+                drop(state);
                 self.observe_propagation(
                     &failure,
                     Kernel::context(super::runtime::Caller::Root, &selection),
                 );
+            } else {
+                drop(state);
+            }
+        } else {
+            drop(state);
+        }
+        if failed {
+            self.cancel_children(id);
+        }
+        self.refresh_quiescence();
+    }
+    fn children(&self, id: u64) -> Vec<u64> {
+        self.state
+            .borrow()
+            .tickets
+            .iter()
+            .filter(|(_, r)| r.parent == Some(id))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+    fn refresh_quiescence(&self) {
+        let ids: Vec<_> = self.state.borrow().tickets.keys().rev().copied().collect();
+        for id in ids {
+            let quiet = self.state.borrow().tickets[&id].native_quiescent
+                && self
+                    .children(id)
+                    .iter()
+                    .all(|c| self.state.borrow().tickets[c].quiescent);
+            self.state
+                .borrow_mut()
+                .tickets
+                .get_mut(&id)
+                .unwrap()
+                .quiescent = quiet;
+        }
+    }
+    fn cancel_children(&self, id: u64) {
+        for child in self.children(id) {
+            let state = self.state.borrow();
+            let should_cancel =
+                !state.tickets[&child].cancelled && !state.tickets[&child].quiescent;
+            drop(state);
+            if should_cancel {
+                let _ = self.cancel_ticket(child);
             }
         }
     }
@@ -209,7 +292,10 @@ impl Kernel {
         let state = self.state.borrow();
         if ticket.root != root
             || state.active_root != Some(root)
-            || state.tickets.get(&ticket.id).is_none_or(|r| r.root != root)
+            || state
+                .tickets
+                .get(&ticket.id)
+                .is_none_or(|r| r.root != root || r.parent.is_some())
         {
             return Err(Failure::new(
                 Code::ScopeRejected,
@@ -219,6 +305,11 @@ impl Kernel {
         Ok(())
     }
     fn enter_ticket(&self, id: u64, cancel: bool) -> Result<(), Failure> {
+        if self.state.borrow().tickets[&id].native_quiescent {
+            self.drain_children(id)?;
+            self.refresh_quiescence();
+            return Ok(());
+        }
         let (root, selection, authority, resource, revoked) = {
             let state = self.state.borrow();
             let r = &state.tickets[&id];
@@ -227,7 +318,7 @@ impl Kernel {
                 r.selection.clone(),
                 r.authority.clone(),
                 r.resource.clone(),
-                r.cancelled,
+                r.cancelled || r.logical == Logical::Failed,
             )
         };
         let guard = CallGuard::new(
@@ -238,10 +329,20 @@ impl Kernel {
             resource,
             revoked,
         )?;
+        guard.attach_ticket(id);
         let api = self.pending_api(id, guard.scope);
         let reply =
             self.images.borrow()[&selection.provider].pending(&api, &selection.key(), None, cancel);
         self.accept_reply(id, reply);
+        let revoked = {
+            let state = self.state.borrow();
+            let r = &state.tickets[&id];
+            r.cancelled || r.logical == Logical::Failed
+        };
+        if revoked {
+            self.drain_children(id)?;
+        }
+        self.refresh_quiescence();
         Ok(())
     }
     fn cancel_ticket(&self, id: u64) -> Result<bool, Failure> {
@@ -259,8 +360,23 @@ impl Kernel {
                 record.logical = Logical::Cancelled;
             }
         }
+        self.cancel_children(id);
         self.enter_ticket(id, true)?;
         Ok(self.state.borrow().tickets[&id].quiescent)
+    }
+    fn drain_children(&self, id: u64) -> Result<(), Failure> {
+        for child in self.children(id) {
+            if !self.state.borrow().tickets[&child].quiescent {
+                self.enter_ticket(child, false)?;
+            }
+        }
+        Ok(())
+    }
+    fn release_tree(&self, id: u64) {
+        for child in self.children(id) {
+            self.release_tree(child);
+        }
+        self.state.borrow_mut().tickets.remove(&id);
     }
     pub(super) fn abandon_root(&self, root: u64) {
         let ids: Vec<_> = self
@@ -301,7 +417,7 @@ impl Kernel {
             .borrow()
             .tickets
             .iter()
-            .filter(|(_, r)| r.abandoned && !r.quiescent)
+            .filter(|(_, r)| r.abandoned && !r.quiescent && r.parent.is_none())
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
@@ -318,7 +434,7 @@ impl Kernel {
     }
     pub(super) fn pending_inspection(&self) -> serde_json::Value {
         let state = self.state.borrow();
-        let tickets: Vec<_> = state.tickets.iter().map(|(id,r)| serde_json::json!({"ticket":id,"root":r.root,"provider":r.selection.provider,"operation":r.selection.key(),"logical":r.logical,"quiescent":r.quiescent,"delivered":r.delivered,"cancellation_requested":r.cancelled,"caller_released":r.abandoned,"wake_requests":r.notification.requests.load(Ordering::Relaxed)})).collect();
+        let tickets: Vec<_> = state.tickets.iter().map(|(id,r)| serde_json::json!({"ticket":id,"root":r.root,"parent":r.parent,"native_quiescent":r.native_quiescent,"provider":r.selection.provider,"operation":r.selection.key(),"logical":r.logical,"quiescent":r.quiescent,"delivered":r.delivered,"cancellation_requested":r.cancelled,"caller_released":r.abandoned,"wake_requests":r.notification.requests.load(Ordering::Relaxed)})).collect();
         serde_json::json!({"format":"phenix.pending.v1","tickets":tickets,"physical_leases":state.tickets.values().filter(|r| !r.quiescent).count()})
     }
     pub(super) fn invalidate_permits(&self) {
@@ -392,10 +508,147 @@ impl Root<'_> {
                 "physical lease is still live",
             ));
         }
-        self.kernel.state.borrow_mut().tickets.remove(&ticket.id);
+        self.kernel.release_tree(ticket.id);
         Ok(())
     }
 }
+
+impl Kernel {
+    pub(super) fn import_pending(
+        &self,
+        root: u64,
+        caller: &str,
+        parent: u64,
+        command: &str,
+        bytes: &[u8],
+    ) -> Result<phenix_contract::abi::Reply, Failure> {
+        use phenix_contract::abi::Reply;
+        let malformed = || Failure::new(Code::SchemaRejected, "invalid pending host command");
+        match command {
+            "phenix.host.pending.begin.v1" | "phenix.host.pending.scoped.v1" => {
+                let (key, input, scope) = if command == "phenix.host.pending.scoped.v1" {
+                    let (key, input, scope) = phenix_contract::ScopedRequest::decode(bytes)?;
+                    (key, input, Some(scope))
+                } else {
+                    let Value::Map(mut fields) = Value::decode(bytes)? else {
+                        return Err(malformed());
+                    };
+                    if fields.len() != 2 {
+                        return Err(malformed());
+                    }
+                    let Some(Value::String(key)) = fields.remove("operation") else {
+                        return Err(malformed());
+                    };
+                    let Some(Value::Bytes(input)) = fields.remove("request") else {
+                        return Err(malformed());
+                    };
+                    (key, input, None)
+                };
+                let Some(provider) = self.prepared.bindings.get(&(caller.into(), key.clone()))
+                else {
+                    let optional = self.prepared.packages[caller]
+                        .descriptor()
+                        .imports
+                        .iter()
+                        .any(|i| i.operation == key && i.optional);
+                    return self.fail(
+                        if optional {
+                            Code::MissingBinding
+                        } else {
+                            Code::Denied
+                        },
+                        "pending import is not selected",
+                    );
+                };
+                let (interface, operation) = key.split_once('/').ok_or_else(malformed)?;
+                let selection = Selection {
+                    interface: interface.into(),
+                    operation: operation.into(),
+                    provider: provider.clone(),
+                };
+                Ok(
+                    match self.dispatch_call(
+                        root,
+                        super::runtime::Caller::Plugin(caller),
+                        &selection,
+                        &input,
+                        scope.as_ref(),
+                        true,
+                    )? {
+                        Call::Ready(super::runtime::Outcome::Success(value)) => {
+                            Reply::value(0, value)
+                        }
+                        Call::Ready(super::runtime::Outcome::Domain(value)) => {
+                            Reply::value(1, value)
+                        }
+                        Call::Pending(ticket) => Reply::value(3, Value::U64(ticket.id)),
+                    },
+                )
+            }
+            "phenix.host.pending.poll.v1" | "phenix.host.pending.cancel.v1" => {
+                let Value::Map(mut fields) = Value::decode(bytes)? else {
+                    return Err(malformed());
+                };
+                if fields.len() != 2 {
+                    return Err(malformed());
+                }
+                let Some(Value::String(operation)) = fields.remove("operation") else {
+                    return Err(malformed());
+                };
+                let Some(Value::U64(id)) = fields.remove("ticket") else {
+                    return Err(malformed());
+                };
+                let authenticated = {
+                    let state = self.state.borrow();
+                    state.tickets.get(&id).is_some_and(|r| {
+                        r.root == root && r.parent == Some(parent) && r.selection.key() == operation
+                    }) && state
+                        .tickets
+                        .get(&parent)
+                        .is_some_and(|r| r.root == root && r.selection.provider == caller)
+                };
+                if !authenticated {
+                    return Err(Failure::new(
+                        Code::ScopeRejected,
+                        "wrong imported ticket owner or operation",
+                    ));
+                }
+                if command == "phenix.host.pending.cancel.v1" {
+                    return Ok(Reply::value(0, Value::Bool(self.cancel_ticket(id)?)));
+                }
+                if !self.state.borrow().tickets[&id].quiescent {
+                    self.enter_ticket(id, false)?;
+                }
+                let mut state = self.state.borrow_mut();
+                let r = state.tickets.get_mut(&id).unwrap();
+                if !r.quiescent {
+                    return Ok(Reply::value(
+                        if r.logical == Logical::Pending { 3 } else { 5 },
+                        Value::Null,
+                    ));
+                }
+                let reply = match r.result.take() {
+                    Some(Ok(super::runtime::Outcome::Success(value))) => Reply::value(0, value),
+                    Some(Ok(super::runtime::Outcome::Domain(value))) => Reply::value(1, value),
+                    Some(Err(failure)) => Reply::value(2, failure.to_value()),
+                    None if r.logical == Logical::Cancelled => Reply::value(4, Value::Null),
+                    None => {
+                        return Err(Failure::new(
+                            Code::ScopeRejected,
+                            "imported result already delivered",
+                        ))
+                    }
+                };
+                drop(state);
+                self.release_tree(id);
+                self.refresh_quiescence();
+                Ok(reply)
+            }
+            _ => Err(malformed()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +662,7 @@ mod tests {
             Permit {
                 ticket,
                 notification: notification.clone(),
+                ancestors: vec![],
             },
         );
         assert_eq!(unsafe { wake(permit, ticket + 1) }, 1);

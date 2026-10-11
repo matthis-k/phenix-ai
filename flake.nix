@@ -117,6 +117,8 @@
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
       pendingPlugin = plugin "example-pending";
+      pendingConsumer = plugin "example-pending-consumer";
+      pendingImmediate = plugin "example-pending-immediate";
       pendingRepeat = pendingPlugin.overrideAttrs (_: {
         pname = "example-pending-repeat";
       });
@@ -283,6 +285,9 @@
           ''
             python ${./tests/pending-product.py} ${kernel}/bin/phenix-kernel ${pendingCheck} $out
           '';
+      importsCheck = pkgs.runCommand "phenix-m02-imports" { } ''
+        ${conformanceBinary}/bin/phenix-m02-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} $out
+      '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
@@ -295,6 +300,7 @@
         ln -s ${lifecycleProduct} $out/lifecycle-product
         ln -s ${pendingCheck} $out/pending
         ln -s ${pendingProduct} $out/pending-product
+        ln -s ${importsCheck} $out/imports
       '';
     in
     {
@@ -324,6 +330,7 @@
         m0-product = productCheck;
         m01-composition = compositionCheck;
         m01-product = compositionProduct;
+        m02-imports = importsCheck;
         m02-pending = pendingCheck;
         m02-pending-product = pendingProduct;
         m02-lifecycle = lifecycleCheck;

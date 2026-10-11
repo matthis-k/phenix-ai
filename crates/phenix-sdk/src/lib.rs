@@ -67,6 +67,7 @@ use std::{marker::PhantomData, rc::Rc};
 /// ```
 pub struct Host<'call> {
     api: &'call HostApi,
+    pending: bool,
     _serial: PhantomData<Rc<()>>,
 }
 impl<'call> Host<'call> {
@@ -75,6 +76,7 @@ impl<'call> Host<'call> {
     pub unsafe fn from_api(api: &'call HostApi) -> Self {
         Self {
             api,
+            pending: false,
             _serial: PhantomData,
         }
     }
@@ -112,7 +114,12 @@ impl<'call> Host<'call> {
                 Bytes::new(bytes),
             )
         };
-        unsafe { reply.consume() }
+        if self.pending {
+            let (status, value) = unsafe { reply.consume_pending() }?;
+            Ok((if status == 5 { 2 } else { status }, value))
+        } else {
+            unsafe { reply.consume() }
+        }
     }
     fn call<O: Operation>(&self, key: &str, bytes: Vec<u8>) -> CallResult<O::Response, O::Error> {
         let (status, value) = self.raw(key, &bytes)?;
@@ -191,7 +198,11 @@ impl<'call> PendingHost<'call> {
     /// The API must be issued by the kernel for this native entry.
     pub unsafe fn from_api(api: &'call abi::PendingHostApi) -> Self {
         Self {
-            host: unsafe { Host::from_api(&api.host) },
+            host: Host {
+                api: &api.host,
+                pending: true,
+                _serial: PhantomData,
+            },
             wake: WakePermit {
                 ticket: api.ticket,
                 permit: api.permit,
@@ -212,5 +223,140 @@ pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> R
         PendingResult::Pending => Reply::value(3, Value::Null),
         PendingResult::Ready(Err(CallError::Kernel(e))) => Reply::value(5, e.to_value()),
         PendingResult::Ready(result) => reply(result),
+    }
+}
+
+/// An imported child is owned by its parent ticket. Drop does not prove quiescence.
+/// ```compile_fail
+/// fn send<T: Send>() {}
+/// send::<phenix_sdk::PendingImport<Op>>();
+/// #[phenix_sdk::operation(interface="example.import@1",operation="run")]
+/// type Op = (String,String,String);
+/// ```
+pub struct PendingImport<O: Operation> {
+    ticket: u64,
+    settled: bool,
+    _operation: PhantomData<O>,
+    _serial: PhantomData<Rc<()>>,
+}
+pub enum ImportCall<O: Operation> {
+    Ready(CallResult<O::Response, O::Error>),
+    Pending(PendingImport<O>),
+}
+pub enum ImportPoll<T, E> {
+    Pending,
+    Ready(CallResult<T, E>),
+    Cancelled,
+    Draining,
+}
+impl PendingHost<'_> {
+    fn command(&self, key: &str, value: Value) -> Result<(u32, Value), Failure> {
+        let bytes = value.encode()?;
+        let reply = unsafe {
+            (self.host.api.invoke)(
+                self.host.api.scope,
+                Bytes::new(key.as_bytes()),
+                Bytes::new(&bytes),
+            )
+        };
+        let (status, value) = unsafe { reply.consume_pending() }?;
+        if status == 5 && value != Value::Null {
+            return Err(Failure::from_value(value)?);
+        }
+        Ok((status, value))
+    }
+    pub fn begin<O: Operation>(&self, request: &O::Request) -> Result<ImportCall<O>, Failure> {
+        self.begin_command::<O>(
+            "phenix.host.pending.begin.v1",
+            Value::map([
+                ("operation", Value::String(O::DEFINITION.key.into())),
+                ("request", Value::Bytes(request.to_value().encode()?)),
+            ]),
+        )
+    }
+    pub fn begin_scoped<O: Operation>(
+        &self,
+        scope: &ScopedRequest,
+        request: &O::Request,
+    ) -> Result<ImportCall<O>, Failure> {
+        let bytes = scope.encode(O::DEFINITION.key, request.to_value().encode()?)?;
+        self.begin_command::<O>("phenix.host.pending.scoped.v1", Value::decode(&bytes)?)
+    }
+    fn begin_command<O: Operation>(
+        &self,
+        command: &str,
+        value: Value,
+    ) -> Result<ImportCall<O>, Failure> {
+        let (status, value) = self.command(command, value)?;
+        if let (3, Value::U64(ticket)) = (status, &value) {
+            return Ok(ImportCall::Pending(PendingImport {
+                ticket: *ticket,
+                settled: false,
+                _operation: PhantomData,
+                _serial: PhantomData,
+            }));
+        }
+        Ok(ImportCall::Ready(import_result::<O>(status, value)?))
+    }
+}
+fn import_result<O: Operation>(
+    status: u32,
+    value: Value,
+) -> Result<CallResult<O::Response, O::Error>, Failure> {
+    Ok(match status {
+        0 => Ok(O::Response::from_value(value)?),
+        1 => Err(CallError::Domain(O::Error::from_value(value)?)),
+        2 => Err(CallError::Kernel(Failure::from_value(value)?)),
+        _ => {
+            return Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported result",
+            ))
+        }
+    })
+}
+impl<O: Operation> PendingImport<O> {
+    fn value(&self) -> Result<Value, Failure> {
+        if self.settled {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "imported result already settled",
+            ));
+        }
+        Ok(Value::map([
+            ("operation", Value::String(O::DEFINITION.key.into())),
+            ("ticket", Value::U64(self.ticket)),
+        ]))
+    }
+    pub fn poll(
+        &mut self,
+        host: &PendingHost<'_>,
+    ) -> Result<ImportPoll<O::Response, O::Error>, Failure> {
+        let (status, value) = host.command("phenix.host.pending.poll.v1", self.value()?)?;
+        match (status, value) {
+            (3, Value::Null) => Ok(ImportPoll::Pending),
+            (5, Value::Null) => Ok(ImportPoll::Draining),
+            (4, Value::Null) => {
+                self.settled = true;
+                Ok(ImportPoll::Cancelled)
+            }
+            (status @ 0..=2, value) => {
+                self.settled = true;
+                Ok(ImportPoll::Ready(import_result::<O>(status, value)?))
+            }
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported poll reply",
+            )),
+        }
+    }
+    pub fn cancel(&self, host: &PendingHost<'_>) -> Result<bool, Failure> {
+        match host.command("phenix.host.pending.cancel.v1", self.value()?)? {
+            (0, Value::Bool(quiet)) => Ok(quiet),
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported cancel reply",
+            )),
+        }
     }
 }

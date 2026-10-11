@@ -43,3 +43,6 @@ pub type LifecycleRun = (Text, Text, TransformError);
 
 #[operation(interface = "example.pending@1", operation = "run")]
 pub type PendingRun = (Text, Text, TransformError);
+
+#[operation(interface = "example.pending-consumer@1", operation = "run")]
+pub type PendingConsumer = (Text, Text, TransformError);

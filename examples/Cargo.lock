@@ -74,6 +74,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-pending-consumer"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-pending-immediate"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-provider"
 version = "0.1.0"
 dependencies = [
