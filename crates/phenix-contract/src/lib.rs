@@ -1,7 +1,9 @@
 pub mod abi;
 pub mod descriptor;
+pub mod scope;
 pub mod value;
 pub use descriptor::*;
+pub use scope::*;
 use serde::{Deserialize, Serialize};
 pub use value::*;
 

@@ -4,7 +4,7 @@ use crate::{
 };
 use phenix_contract::{
     abi::{boundary, Bytes, HostApi, Reply},
-    Code, Failure, Value,
+    Authority, Code, Failure, ScopedRequest, Value, RESOURCE_CONTEXT, SCOPED_IMPORT,
 };
 use std::{
     cell::RefCell,
@@ -32,6 +32,8 @@ fn scopes() -> &'static Mutex<BTreeMap<u64, ScopeRecord>> {
 struct Frame {
     scope: u64,
     provider: String,
+    authority: Authority,
+    resource: Option<String>,
 }
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +90,7 @@ pub struct Root<'a> {
     kernel: &'a Kernel,
     id: u64,
     entry: Selection,
+    scope: ScopedRequest,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -120,8 +123,22 @@ impl Kernel {
     }
     /// Trusted control-plane admission. This API is absent from the plugin SDK.
     pub fn admit_root(&self, entry: Selection) -> Result<Root<'_>, Failure> {
+        self.admit_scoped_root(
+            entry,
+            ScopedRequest {
+                authority: self.prepared.authority.clone(),
+                resource: self.prepared.resource.clone(),
+            },
+        )
+    }
+    /// Trusted admission with an explicitly narrowed authority and resource.
+    pub fn admit_scoped_root(
+        &self,
+        entry: Selection,
+        scope: ScopedRequest,
+    ) -> Result<Root<'_>, Failure> {
         self.check_thread()?;
-        let result = self.admit_root_inner(&entry);
+        let result = self.admit_root_inner(&entry, scope);
         if let Err(failure) = &result {
             self.observe_failure(
                 failure,
@@ -131,9 +148,28 @@ impl Kernel {
         }
         result
     }
-    fn admit_root_inner(&self, entry: &Selection) -> Result<Root<'_>, Failure> {
+    fn admit_root_inner(
+        &self,
+        entry: &Selection,
+        scope: ScopedRequest,
+    ) -> Result<Root<'_>, Failure> {
+        if !scope.authority.valid()
+            || scope
+                .resource
+                .as_ref()
+                .is_some_and(|id| !phenix_contract::identifier(id))
+        {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "invalid admission scope",
+            ));
+        }
         self.prepared.check_entry(entry)?;
-        if !self.prepared.grants.contains(&("root".into(), entry.key())) {
+        if !self
+            .prepared
+            .grants
+            .contains_key(&("root".into(), entry.key()))
+        {
             return self.fail(Code::Denied, "root admission lacks explicit grant");
         }
         let mut state = self.state.borrow_mut();
@@ -153,6 +189,7 @@ impl Kernel {
             kernel: self,
             id,
             entry: entry.clone(),
+            scope,
         })
     }
     fn check_thread(&self) -> Result<(), Failure> {
@@ -207,8 +244,9 @@ impl Kernel {
         caller: Caller<'_>,
         selection: &Selection,
         input: &[u8],
+        restriction: Option<&ScopedRequest>,
     ) -> Result<Outcome, Failure> {
-        let result = self.dispatch_inner(root, caller, selection, input);
+        let result = self.dispatch_inner(root, caller, selection, input, restriction);
         if let Err(failure) = &result {
             self.observe_propagation(failure, Self::context(caller, selection));
         }
@@ -220,6 +258,7 @@ impl Kernel {
         caller: Caller<'_>,
         selection: &Selection,
         input: &[u8],
+        restriction: Option<&ScopedRequest>,
     ) -> Result<Outcome, Failure> {
         self.check_thread()?;
         if self.state.borrow().active_root != Some(root) {
@@ -239,7 +278,10 @@ impl Kernel {
                 .packages
                 .get(plugin)
                 .is_some_and(|p| p.descriptor().imports.iter().any(|i| i.operation == key));
-            if !declared || self.prepared.bindings.get(&key) != Some(&selection.provider) {
+            if !declared
+                || self.prepared.bindings.get(&(plugin.into(), key.clone()))
+                    != Some(&selection.provider)
+            {
                 return self.fail(Code::Denied, "undeclared import or unselected provider");
             }
         }
@@ -254,22 +296,51 @@ impl Kernel {
                 "request does not match declared schema",
             );
         }
-        let authority = self
+        let state = self.state.borrow();
+        let mut authority = state
+            .stack
+            .last()
+            .map_or_else(|| self.prepared.authority.clone(), |f| f.authority.clone());
+        let inherited_resource = state
+            .stack
+            .last()
+            .map_or_else(|| self.prepared.resource.clone(), |f| f.resource.clone());
+        let resource = restriction
+            .and_then(|r| r.resource.clone())
+            .or_else(|| inherited_resource.clone());
+        let switched = inherited_resource
+            .as_ref()
+            .is_some_and(|id| resource.as_ref() != Some(id));
+        if let Some(restriction) = restriction {
+            authority = authority.intersect(&restriction.authority);
+        }
+        let grant = self
             .prepared
             .grants
-            .contains(&(caller.name().to_owned(), key.clone()))
-            && self
-                .prepared
-                .grants
-                .iter()
-                .any(|(_, operation)| operation == &key)
+            .get(&(caller.name().to_owned(), key.clone()));
+        let operation_allowed = grant.is_some()
+            && authority.operations.contains(&key)
             && package.descriptor().permits(&key)
-            && self.state.borrow().stack.iter().all(|f| {
+            && state.stack.iter().all(|f| {
                 self.prepared.packages[&f.provider]
                     .descriptor()
                     .permits(&key)
             });
-        if !authority {
+        authority
+            .operations
+            .retain(|op| package.descriptor().permits(op));
+        if let Some(resources) = grant {
+            authority.resources = authority
+                .resources
+                .intersection(resources)
+                .cloned()
+                .collect();
+        }
+        let resource_allowed = resource
+            .as_ref()
+            .is_none_or(|id| authority.resources.contains(id));
+        drop(state);
+        if !operation_allowed || !resource_allowed || switched {
             return self.fail(
                 Code::Denied,
                 format!("{} has no effective grant for {key}", caller.name()),
@@ -284,7 +355,7 @@ impl Kernel {
         {
             return self.fail(Code::ReentrancyRejected, "synchronous instance cycle");
         }
-        let guard = CallGuard::new(self, root, &selection.provider)?;
+        let guard = CallGuard::new(self, root, &selection.provider, authority, resource)?;
         let api = HostApi {
             scope: guard.scope,
             invoke: invoke_import,
@@ -329,9 +400,13 @@ impl Root<'_> {
     }
     pub fn invoke_bytes(&self, request: &[u8]) -> Result<Outcome, Failure> {
         let previous_failure = self.kernel.state.borrow_mut().last_failure.take();
-        let result = self
-            .kernel
-            .dispatch(self.id, Caller::Root, &self.entry, request);
+        let result = self.kernel.dispatch(
+            self.id,
+            Caller::Root,
+            &self.entry,
+            request,
+            Some(&self.scope),
+        );
         let mut state = self.kernel.state.borrow_mut();
         if state.last_failure.is_none() {
             state.last_failure = previous_failure;
@@ -351,7 +426,13 @@ struct CallGuard<'a> {
     scope: u64,
 }
 impl<'a> CallGuard<'a> {
-    fn new(kernel: &'a Kernel, root: u64, caller: &str) -> Result<Self, Failure> {
+    fn new(
+        kernel: &'a Kernel,
+        root: u64,
+        caller: &str,
+        authority: Authority,
+        resource: Option<String>,
+    ) -> Result<Self, Failure> {
         let mut scope = NEXT_SCOPE.load(Ordering::Relaxed);
         loop {
             let next = scope.checked_add(1).ok_or_else(|| {
@@ -384,6 +465,8 @@ impl<'a> CallGuard<'a> {
         state.stack.push(Frame {
             scope,
             provider: caller.into(),
+            authority,
+            resource,
         });
         Ok(Self { kernel, scope })
     }
@@ -428,10 +511,50 @@ unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Repl
             let result = (|| -> Result<Reply, Failure> {
                 let key = std::str::from_utf8(unsafe { key.read() }?)
                     .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
+                let input = unsafe { input.read() }?;
+                if key == RESOURCE_CONTEXT {
+                    if Value::decode(input)? != Value::Null {
+                        return Err(Failure::new(
+                            Code::SchemaRejected,
+                            "resource context expects Null",
+                        ));
+                    }
+                    let resource = kernel
+                        .state
+                        .borrow()
+                        .stack
+                        .last()
+                        .and_then(|f| f.resource.clone());
+                    return Ok(Reply::value(0, resource.map_or(Value::Null, Value::String)));
+                }
+                let scoped = if key == SCOPED_IMPORT {
+                    Some(ScopedRequest::decode(input)?)
+                } else {
+                    None
+                };
+                let (key, input, restriction) = match &scoped {
+                    Some((key, input, scope)) => (key.as_str(), input.as_slice(), Some(scope)),
+                    None => (key, input, None),
+                };
                 context.operation = phenix_contract::operation_key(key).then(|| key.into());
-                let Some(provider) = kernel.prepared.bindings.get(key) else {
-                    return kernel
-                        .fail(Code::Denied, "operation is not a selected declared import");
+                let Some(provider) = kernel
+                    .prepared
+                    .bindings
+                    .get(&(record.caller.clone(), key.into()))
+                else {
+                    let optional = kernel.prepared.packages[&record.caller]
+                        .descriptor()
+                        .imports
+                        .iter()
+                        .any(|i| i.operation == key && i.optional);
+                    return kernel.fail(
+                        if optional {
+                            Code::MissingBinding
+                        } else {
+                            Code::Denied
+                        },
+                        "operation is not a selected declared import",
+                    );
                 };
                 context.provider = Some(provider.clone());
                 let (interface, operation) = key
@@ -447,7 +570,8 @@ unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Repl
                         record.root,
                         Caller::Plugin(&record.caller),
                         &selection,
-                        unsafe { input.read() }?,
+                        input,
+                        restriction,
                     )? {
                         Outcome::Success(v) => Reply::value(0, v),
                         Outcome::Domain(v) => Reply::value(1, v),

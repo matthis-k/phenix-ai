@@ -55,4 +55,4 @@ M0.0 is accepted by the [RFC review](m0-acceptance.md) on head `799d74d9c4beec09
 | Native image owner | Instance and reply callbacks need resident code | Create through stop and release | Unowned dlopen handles permit early unloading |
 | Failure context | A handled or replaced nested failure needs accurate JSON context | Last coherent observation | Separate mutable failure/context fields can pair unrelated observations |
 
-Later work starts with M0.1 contract addenda after M0.0 evidence is accepted. Optional imports, substitutions, richer attenuation, asynchronous lifecycle, generations and product conformance expansion remain deferred. This PR does not implement those milestones.
+M0.1 composition work is tracked in [its matrix](m0.1-matrix.md) and [frozen contracts](m0.1-contracts.md). M0.2–M0.4 remain ordered gates. Async lifecycle and generations require their own contract freezes and executable fixtures. AI behavior, workflows and graph patches remain deferred beyond this release.

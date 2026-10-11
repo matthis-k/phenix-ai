@@ -111,6 +111,11 @@
       consumer = plugin "example-consumer";
       alternate = plugin "example-alternate";
       cycle = plugin "example-cycle";
+      choice = plugin "example-choice";
+      other = plugin "example-other";
+      restricted = plugin "example-scoped-client";
+      relay = plugin "example-relay";
+      resources = plugin "example-resource-provider";
       badAbi =
         case:
         pkgs.runCommand "phenix-bad-abi-${toString case}"
@@ -223,12 +228,22 @@
       productCheck = pkgs.runCommand "phenix-m0-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         python ${./tests/product.py} ${kernel}/bin/phenix-kernel ${deployment} ${request} ${./tests/inspection-golden.json} $out
       '';
+      compositionCheck = pkgs.runCommand "phenix-m01-composition" { } ''
+        ${conformanceBinary}/bin/phenix-m01-conformance ${provider} ${alternate} ${choice} ${other} ${restricted} ${relay} ${resources} ${cycle} $out
+      '';
+      compositionProduct =
+        pkgs.runCommand "phenix-m01-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+          ''
+            python ${./tests/composition-product.py} ${kernel}/bin/phenix-kernel ${compositionCheck} ${./tests/composition-golden.json} $out
+          '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
         ln -s ${contractCheck} $out/contract
         ln -s ${nativeCheck} $out/native
         ln -s ${productCheck} $out/product
+        ln -s ${compositionCheck} $out/composition
+        ln -s ${compositionProduct} $out/composition-product
       '';
     in
     {
@@ -256,6 +271,8 @@
         m0-contract = contractCheck;
         m0-native = nativeCheck;
         m0-product = productCheck;
+        m01-composition = compositionCheck;
+        m01-product = compositionProduct;
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [

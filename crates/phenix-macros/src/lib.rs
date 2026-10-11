@@ -155,6 +155,7 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
             syn::Error::new(module.ident.span(), "plugin requires an inline module")
         })?;
         let mut imports = Vec::new();
+        let mut import_policies = Vec::new();
         let mut exports = Vec::new();
         let mut dispatch = Vec::new();
         let mut state = None;
@@ -167,6 +168,34 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let mut keep = Vec::new();
                     for a in t.attrs.drain(..) {
                         if a.path().is_ident("import") {
+                            let mut policy = match &a.meta {
+                                Meta::Path(_) => std::collections::BTreeMap::new(),
+                                Meta::List(list) => args(list.tokens.clone())?,
+                                _ => {
+                                    return Err(syn::Error::new(a.span(), "expected import policy"))
+                                }
+                            };
+                            let optional = match policy.remove("optional").as_deref() {
+                                None | Some("false") => false,
+                                Some("true") => true,
+                                _ => {
+                                    return Err(syn::Error::new(
+                                        a.span(),
+                                        "optional must be true or false",
+                                    ))
+                                }
+                            };
+                            let implementation = match policy.remove("implementation") {
+                                Some(id) if phenix_contract::identifier(&id) && id != "root" => {
+                                    quote!(Some(#id))
+                                }
+                                Some(_) => {
+                                    return Err(syn::Error::new(a.span(), "invalid implementation"))
+                                }
+                                None => quote!(None),
+                            };
+                            no_extra(&policy)?;
+                            import_policies.push(quote!(::phenix_sdk::ImportPolicy { optional:#optional, implementation:#implementation }));
                             let op = t.ty.as_ref();
                             let name = &t.ident;
                             imports.push(quote!(::phenix_sdk::Declaration{operation:<#op as ::phenix_sdk::Operation>::DEFINITION,provenance:concat!(module_path!(),"::",stringify!(#name))}));
@@ -216,7 +245,7 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         let descriptor = format_ident!("PHENIX_DESCRIPTOR");
         let generated = quote! {
-            #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=::phenix_sdk::descriptor(#id,#version,[#(#imports),*],[#(#exports),*]);
+            #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=::phenix_sdk::descriptor_with_policy(#id,#version,[#(#imports),*],[#(#import_policies),*],[#(#exports),*]);
             const _:usize=#ni+#ne;
             struct __Instance { state: #state, poisoned: bool }
             unsafe extern "C" fn __create(out:*mut *mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{

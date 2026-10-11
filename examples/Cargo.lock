@@ -11,6 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-choice"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-consumer"
 version = "0.1.0"
 dependencies = [
@@ -34,7 +42,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-other"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-provider"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-relay"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-resource-provider"
+version = "0.1.0"
+dependencies = [
+ "example-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-scoped-client"
 version = "0.1.0"
 dependencies = [
  "example-contracts",

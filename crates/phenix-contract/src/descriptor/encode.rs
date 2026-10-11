@@ -1,4 +1,4 @@
-use super::{Declaration, Schema};
+use super::{Declaration, ImportPolicy, Schema};
 
 // Constant evaluation is the shared lowering mechanism. The macro supplies typed
 // declarations; it never reads source files or maintains a metadata registry.
@@ -101,8 +101,15 @@ impl Writer {
             }
         }
     }
-    const fn contribution(&mut self, owner: &str, d: Declaration, role: &str) {
-        self.map(6);
+    const fn contribution(
+        &mut self,
+        owner: &str,
+        d: Declaration,
+        role: &str,
+        policy: ImportPolicy,
+    ) {
+        let enhanced = policy.optional || policy.implementation.is_some();
+        self.map(if enhanced { 8 } else { 6 });
         self.key("id");
         self.byte(5);
         self.n(owner.len() + d.operation.key.len() + role.len() + 2);
@@ -111,10 +118,25 @@ impl Writer {
         self.raw(d.operation.key);
         self.raw("/");
         self.raw(role);
+        if enhanced {
+            self.key("implementation");
+            match policy.implementation {
+                Some(id) => self.text(id),
+                None => self.byte(0),
+            }
+        }
         self.key("kind");
-        self.text("phenix.operation.v1");
+        self.text(if enhanced {
+            "phenix.import.v1"
+        } else {
+            "phenix.operation.v1"
+        });
         self.key("operation");
         self.text(d.operation.key);
+        if enhanced {
+            self.key("optional");
+            self.byte(if policy.optional { 2 } else { 1 });
+        }
         self.key("owner");
         self.text(owner);
         self.key("provenance");
@@ -179,28 +201,46 @@ const fn equal_schema(a: Schema, b: Schema) -> bool {
         _ => false,
     }
 }
-const fn sort<const N: usize>(mut items: [Declaration; N]) -> [Declaration; N] {
-    let mut i = 1;
-    while i < N {
-        let mut j = i;
-        while j > 0 && compare(items[j - 1].operation.key, items[j].operation.key) > 0 {
-            let x = items[j];
-            items[j] = items[j - 1];
-            items[j - 1] = x;
-            j -= 1;
-        }
-        i += 1;
-    }
-    items
-}
 pub const fn descriptor<const I: usize, const E: usize>(
     id: &str,
     version: &str,
     imports: [Declaration; I],
     exports: [Declaration; E],
 ) -> [u8; SECTION_BYTES] {
-    let imports = sort(imports);
-    let exports = sort(exports);
+    descriptor_with_policy(id, version, imports, [ImportPolicy::REQUIRED; I], exports)
+}
+pub const fn descriptor_with_policy<const I: usize, const E: usize>(
+    id: &str,
+    version: &str,
+    mut imports: [Declaration; I],
+    mut policies: [ImportPolicy; I],
+    mut exports: [Declaration; E],
+) -> [u8; SECTION_BYTES] {
+    let mut i = 1;
+    while i < I {
+        let mut j = i;
+        while j > 0 && compare(imports[j - 1].operation.key, imports[j].operation.key) > 0 {
+            let d = imports[j];
+            imports[j] = imports[j - 1];
+            imports[j - 1] = d;
+            let p = policies[j];
+            policies[j] = policies[j - 1];
+            policies[j - 1] = p;
+            j -= 1;
+        }
+        i += 1;
+    }
+    let mut i = 1;
+    while i < E {
+        let mut j = i;
+        while j > 0 && compare(exports[j - 1].operation.key, exports[j].operation.key) > 0 {
+            let d = exports[j];
+            exports[j] = exports[j - 1];
+            exports[j - 1] = d;
+            j -= 1;
+        }
+        i += 1;
+    }
     let mut i = 1;
     while i < I {
         assert!(
@@ -317,7 +357,7 @@ pub const fn descriptor<const I: usize, const E: usize>(
     w.list(E);
     let mut i = 0;
     while i < E {
-        w.contribution(id, exports[i], "Provide");
+        w.contribution(id, exports[i], "Provide", ImportPolicy::REQUIRED);
         i += 1;
     }
     w.key("features");
@@ -328,7 +368,7 @@ pub const fn descriptor<const I: usize, const E: usize>(
     w.list(I);
     let mut i = 0;
     while i < I {
-        w.contribution(id, imports[i], "Require");
+        w.contribution(id, imports[i], "Require", policies[i]);
         i += 1;
     }
     w.key("plugin_id");

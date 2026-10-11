@@ -1,6 +1,6 @@
 use phenix_contract::{Code, Failure, Value};
 use phenix_kernel::{
-    resolve::{Deployment, Prepared},
+    resolve::{Composition, Deployment, Prepared},
     Outcome, Phase,
 };
 use std::path::Path;
@@ -22,12 +22,18 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
             "usage: phenix-kernel inspect DEPLOYMENT | invoke DEPLOYMENT REQUEST.bin",
         ));
     }
-    let deployment: Deployment = serde_json::from_slice(
+    let document: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&args[2])
             .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?,
     )
     .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
-    for artifact in &deployment.artifacts {
+    let artifacts = document["artifacts"]
+        .as_array()
+        .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "artifacts must be a list"))?;
+    for artifact in artifacts {
+        let artifact = artifact.as_str().ok_or_else(|| {
+            Failure::new(Code::DescriptorInvalid, "artifact path must be a string")
+        })?;
         let p = Path::new(artifact)
             .canonicalize()
             .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
@@ -38,7 +44,22 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
             ));
         }
     }
-    let prepared = Prepared::prepare(deployment)?;
+    let prepared = match document["format"].as_str() {
+        Some("phenix.deployment.v1") => Prepared::prepare(
+            serde_json::from_value::<Deployment>(document)
+                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
+        )?,
+        Some("phenix.composition.v1") => Prepared::prepare_composition(
+            serde_json::from_value::<Composition>(document)
+                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
+        )?,
+        _ => {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "unsupported deployment profile",
+            ))
+        }
+    };
     if args[1] == "inspect" {
         println!("{}", prepared.inspect());
         return Ok(());

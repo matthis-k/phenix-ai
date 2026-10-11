@@ -58,15 +58,43 @@ impl<'call> Host<'call> {
         }
     }
     pub fn invoke<O: Operation>(&self, request: &O::Request) -> CallResult<O::Response, O::Error> {
-        let bytes = request.to_value().encode()?;
+        self.call::<O>(O::DEFINITION.key, request.to_value().encode()?)
+    }
+    pub fn invoke_scoped<O: Operation>(
+        &self,
+        scope: &ScopedRequest,
+        request: &O::Request,
+    ) -> CallResult<O::Response, O::Error> {
+        self.call::<O>(
+            SCOPED_IMPORT,
+            scope.encode(O::DEFINITION.key, request.to_value().encode()?)?,
+        )
+    }
+    /// Current admitted resource identity, never a scope token or capability.
+    pub fn resource(&self) -> Result<Option<String>, Failure> {
+        let (status, value) = self.raw(RESOURCE_CONTEXT, &Value::Null.encode()?)?;
+        match (status, value) {
+            (0, Value::Null) => Ok(None),
+            (0, Value::String(id)) if identifier(&id) => Ok(Some(id)),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid resource context reply",
+            )),
+        }
+    }
+    fn raw(&self, key: &str, bytes: &[u8]) -> Result<(u32, Value), Failure> {
         let reply = unsafe {
             (self.api.invoke)(
                 self.api.scope,
-                Bytes::new(O::DEFINITION.key.as_bytes()),
-                Bytes::new(&bytes),
+                Bytes::new(key.as_bytes()),
+                Bytes::new(bytes),
             )
         };
-        let (status, value) = unsafe { reply.consume() }?;
+        unsafe { reply.consume() }
+    }
+    fn call<O: Operation>(&self, key: &str, bytes: Vec<u8>) -> CallResult<O::Response, O::Error> {
+        let (status, value) = self.raw(key, &bytes)?;
         match status {
             0 => Ok(O::Response::from_value(value)?),
             1 => Err(CallError::Domain(O::Error::from_value(value)?)),

@@ -1,0 +1,746 @@
+{
+  "checks": {
+    "composition": {
+      "evidence": {
+        "composition-policy.json": {
+          "artifacts": [
+            "/nix/store/rnkp9658mdf0c32caq0jbqf35na9m56p-example-provider-0.1.0",
+            "/nix/store/35g1syd4l51mf050qy1gs7z6pxzkzmjg-example-alternate-0.1.0",
+            "/nix/store/v8gach6f23brkn1xkl8bvnj5n5avkivh-example-choice-0.1.0",
+            "/nix/store/5qky76pv2ap1vaxsll05jgz7sm9ywlkn-example-other-0.1.0"
+          ],
+          "authority": {
+            "operations": [
+              "example.choice@1/run",
+              "example.other@1/run",
+              "example.transform@1/apply",
+              "example.transform@1/count"
+            ],
+            "resources": []
+          },
+          "bindings": [
+            {
+              "caller": "example.choice",
+              "interface": "example.transform@1",
+              "operation": "apply",
+              "provider": "example.alternate"
+            },
+            {
+              "caller": "example.other",
+              "interface": "example.transform@1",
+              "operation": "apply",
+              "provider": "example.provider"
+            }
+          ],
+          "entry": {
+            "interface": "example.choice@1",
+            "operation": "run",
+            "provider": "example.choice"
+          },
+          "excluded": [
+            "example.alternate"
+          ],
+          "format": "phenix.composition.v1",
+          "grants": [
+            {
+              "caller": "root",
+              "interface": "example.choice@1",
+              "operation": "run",
+              "resources": []
+            },
+            {
+              "caller": "root",
+              "interface": "example.other@1",
+              "operation": "run",
+              "resources": []
+            },
+            {
+              "caller": "root",
+              "interface": "example.transform@1",
+              "operation": "count",
+              "resources": []
+            },
+            {
+              "caller": "example.choice",
+              "interface": "example.transform@1",
+              "operation": "apply",
+              "resources": []
+            },
+            {
+              "caller": "example.choice",
+              "interface": "example.transform@1",
+              "operation": "count",
+              "resources": []
+            },
+            {
+              "caller": "example.other",
+              "interface": "example.transform@1",
+              "operation": "apply",
+              "resources": []
+            }
+          ],
+          "resource": null,
+          "substitutions": [
+            {
+              "from": "example.alternate",
+              "to": "example.provider"
+            }
+          ]
+        },
+        "composition.json": {
+          "cases": [
+            "per-caller-selection",
+            "optional-unbound",
+            "optional-selected",
+            "optional-provider-absent",
+            "exact-implementation",
+            "substitution",
+            "excluded-no-fallback",
+            "excluded-explicit-substitution",
+            "invalid-substitution",
+            "order-independent-binding-and-error",
+            "required-cycle-path",
+            "named-resource-forwarding",
+            "attenuated-grandchild",
+            "denied-sibling-resource",
+            "pinned-root-resource"
+          ],
+          "choices": {
+            "authority": {
+              "operations": [
+                "example.choice@1/run",
+                "example.other@1/run",
+                "example.transform@1/apply",
+                "example.transform@1/count"
+              ],
+              "resources": []
+            },
+            "bindings": [
+              {
+                "caller": "example.choice",
+                "operation": "example.transform@1/apply",
+                "provider": "example.alternate"
+              },
+              {
+                "caller": "example.other",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              }
+            ],
+            "calls": 6,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.choice@1",
+              "operation": "run",
+              "provider": "example.choice"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": {
+              "code": "MissingBinding",
+              "context": {
+                "caller": "example.choice",
+                "operation": "example.transform@1/count",
+                "provider": null
+              },
+              "message": "operation is not a selected declared import",
+              "phase": "invocation"
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "b59a06bc631c4417ebdb9808b14b02dff3918f7d6904ab5e3d78e4d4b438d49c",
+                "descriptor_sha256": "2609be0f08806b17dcf5a35dcfdf793425d1a9f2e19f6c4c0deee80515fb69af",
+                "id": "example.alternate",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "b323bebea68f4b1889f956f3b421bc37031a93e556e39132d255242f4cbfd99a",
+                "descriptor_sha256": "836382e2615c0a387e1de7242e3b275c6e980dabf06b4a5acf53f30ee9e231e9",
+                "id": "example.choice",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "9a9a9dfc6f9d0745e8926dc1a573e6b95bf64eabfc399c4f7a44de6dc4c81ff0",
+                "descriptor_sha256": "2ad8322c5724eb9bd78202cb2edebafe2ae1945776a34fc11dc329c1dc3073c8",
+                "id": "example.other",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "831c11b99c5280eb23827da053903f197bfc20bbaea220f357618084c92fda0a",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 3,
+              "last_root_id": 3
+            }
+          },
+          "contract_version": "0.1.0",
+          "cycle": "required dependency cycle: example.cycle -> example.cycle",
+          "excluded": {
+            "authority": {
+              "operations": [
+                "example.choice@1/run",
+                "example.other@1/run",
+                "example.transform@1/apply",
+                "example.transform@1/count"
+              ],
+              "resources": []
+            },
+            "bindings": [
+              {
+                "caller": "example.choice",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              },
+              {
+                "caller": "example.other",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              }
+            ],
+            "calls": 0,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.choice@1",
+              "operation": "run",
+              "provider": "example.choice"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": null,
+            "plugins": [
+              {
+                "abi_negotiated": false,
+                "artifact_sha256": "b323bebea68f4b1889f956f3b421bc37031a93e556e39132d255242f4cbfd99a",
+                "descriptor_sha256": "836382e2615c0a387e1de7242e3b275c6e980dabf06b4a5acf53f30ee9e231e9",
+                "id": "example.choice",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": false,
+                "artifact_sha256": "9a9a9dfc6f9d0745e8926dc1a573e6b95bf64eabfc399c4f7a44de6dc4c81ff0",
+                "descriptor_sha256": "2ad8322c5724eb9bd78202cb2edebafe2ae1945776a34fc11dc329c1dc3073c8",
+                "id": "example.other",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": false,
+                "artifact_sha256": "831c11b99c5280eb23827da053903f197bfc20bbaea220f357618084c92fda0a",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 0,
+              "last_root_id": null
+            }
+          },
+          "format": "phenix.m01-evidence.v1",
+          "scoped": {
+            "authority": {
+              "operations": [
+                "example.relay@1/run",
+                "example.resource@1/bump",
+                "example.resource@1/count",
+                "example.restricted@1/run"
+              ],
+              "resources": [
+                "blue",
+                "red"
+              ]
+            },
+            "bindings": [
+              {
+                "caller": "example.relay",
+                "operation": "example.resource@1/bump",
+                "provider": "example.resources"
+              },
+              {
+                "caller": "example.restricted",
+                "operation": "example.relay@1/run",
+                "provider": "example.relay"
+              }
+            ],
+            "calls": 13,
+            "denied_operations": 3,
+            "entry": {
+              "interface": "example.restricted@1",
+              "operation": "run",
+              "provider": "example.restricted"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": {
+              "code": "Denied",
+              "context": {
+                "caller": "example.relay",
+                "operation": "example.resource@1/bump",
+                "provider": "example.resources"
+              },
+              "message": "example.relay has no effective grant for example.resource@1/bump",
+              "phase": "invocation"
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "f695f9fea78ec10104ee0d86689ea81f2aca95f906bbfe42fc39f7205a74ff1a",
+                "descriptor_sha256": "7c5c5298bf3f9391185d42951a88e103b980b261bb5a237b889ddd798ed28bbd",
+                "id": "example.relay",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "fe6db16b48ec36d239f22bb7f929896d43b9b52d5f8ff7ab33c7dc7b377c2acb",
+                "descriptor_sha256": "2dc7eb6fd6decdcb6fbd4d9fb16a199000ce2d6776d68e92123ac13175204e24",
+                "id": "example.resources",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "07b18c4c627dc45bfb2529a826659701af6679778e5ca911800797b85d9297c1",
+                "descriptor_sha256": "522adc5472a081d536fa9008e8dad42b9c077ffbd70f15fea7033c07b917ae25",
+                "id": "example.restricted",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 3,
+              "last_root_id": 3
+            }
+          },
+          "sdk_version": "0.1.0"
+        },
+        "scoped-policy.json": {
+          "artifacts": [
+            "/nix/store/ja44g50bcr98dg85jmb61k37kq792r0n-example-scoped-client-0.1.0",
+            "/nix/store/lwqkcj95w05h3lwzznpjx9h6sgxmfqy1-example-relay-0.1.0",
+            "/nix/store/aa0anahfgi7drjahyx1nvhzzw0fi9nim-example-resource-provider-0.1.0"
+          ],
+          "authority": {
+            "operations": [
+              "example.relay@1/run",
+              "example.resource@1/bump",
+              "example.resource@1/count",
+              "example.restricted@1/run"
+            ],
+            "resources": [
+              "blue",
+              "red"
+            ]
+          },
+          "bindings": [
+            {
+              "caller": "example.restricted",
+              "interface": "example.relay@1",
+              "operation": "run",
+              "provider": "example.relay"
+            },
+            {
+              "caller": "example.relay",
+              "interface": "example.resource@1",
+              "operation": "bump",
+              "provider": "example.resources"
+            }
+          ],
+          "entry": {
+            "interface": "example.restricted@1",
+            "operation": "run",
+            "provider": "example.restricted"
+          },
+          "excluded": [],
+          "format": "phenix.composition.v1",
+          "grants": [
+            {
+              "caller": "root",
+              "interface": "example.restricted@1",
+              "operation": "run",
+              "resources": [
+                "blue",
+                "red"
+              ]
+            },
+            {
+              "caller": "root",
+              "interface": "example.resource@1",
+              "operation": "count",
+              "resources": [
+                "blue",
+                "red"
+              ]
+            },
+            {
+              "caller": "example.restricted",
+              "interface": "example.relay@1",
+              "operation": "run",
+              "resources": [
+                "red"
+              ]
+            },
+            {
+              "caller": "example.relay",
+              "interface": "example.resource@1",
+              "operation": "bump",
+              "resources": [
+                "blue",
+                "red"
+              ]
+            }
+          ],
+          "resource": null,
+          "substitutions": []
+        }
+      },
+      "nix_output": "/nix/store/8h72i0rc1p7zgqyz2xv9w1xrw72nnmd7-phenix-m01-composition",
+      "result": "passed"
+    },
+    "composition-product": {
+      "evidence": {
+        "blue.json": {
+          "authority": {
+            "operations": [
+              "example.relay@1/run",
+              "example.resource@1/bump",
+              "example.resource@1/count",
+              "example.restricted@1/run"
+            ],
+            "resources": [
+              "blue",
+              "red"
+            ]
+          },
+          "bindings": [
+            {
+              "caller": "example.relay",
+              "operation": "example.resource@1/bump",
+              "provider": "example.resources"
+            },
+            {
+              "caller": "example.restricted",
+              "operation": "example.relay@1/run",
+              "provider": "example.relay"
+            }
+          ],
+          "calls": 1,
+          "denied_operations": 1,
+          "entry": {
+            "interface": "example.restricted@1",
+            "operation": "run",
+            "provider": "example.restricted"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "Denied",
+            "context": {
+              "caller": "example.restricted",
+              "operation": "example.relay@1/run",
+              "provider": "example.relay"
+            },
+            "message": "example.restricted has no effective grant for example.relay@1/run",
+            "phase": "invocation"
+          },
+          "outcome": {
+            "failure": {
+              "code": "Denied",
+              "context": {
+                "caller": "example.restricted",
+                "operation": "example.relay@1/run",
+                "provider": "example.relay"
+              },
+              "message": "example.restricted has no effective grant for example.relay@1/run",
+              "phase": "invocation"
+            },
+            "kind": "kernel_failure"
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "f695f9fea78ec10104ee0d86689ea81f2aca95f906bbfe42fc39f7205a74ff1a",
+              "descriptor_sha256": "7c5c5298bf3f9391185d42951a88e103b980b261bb5a237b889ddd798ed28bbd",
+              "id": "example.relay",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "fe6db16b48ec36d239f22bb7f929896d43b9b52d5f8ff7ab33c7dc7b377c2acb",
+              "descriptor_sha256": "2dc7eb6fd6decdcb6fbd4d9fb16a199000ce2d6776d68e92123ac13175204e24",
+              "id": "example.resources",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "07b18c4c627dc45bfb2529a826659701af6679778e5ca911800797b85d9297c1",
+              "descriptor_sha256": "522adc5472a081d536fa9008e8dad42b9c077ffbd70f15fea7033c07b917ae25",
+              "id": "example.restricted",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          }
+        },
+        "product.json": {
+          "choices": {
+            "authority": {
+              "operations": [
+                "example.choice@1/run",
+                "example.other@1/run",
+                "example.transform@1/apply",
+                "example.transform@1/count"
+              ],
+              "resources": []
+            },
+            "bindings": [
+              {
+                "caller": "example.choice",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              },
+              {
+                "caller": "example.other",
+                "operation": "example.transform@1/apply",
+                "provider": "example.provider"
+              }
+            ],
+            "calls": 2,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.choice@1",
+              "operation": "run",
+              "provider": "example.choice"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": null,
+            "outcome": {
+              "kind": "success",
+              "value": {
+                "text": "PRODUCT"
+              }
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "b323bebea68f4b1889f956f3b421bc37031a93e556e39132d255242f4cbfd99a",
+                "descriptor_sha256": "836382e2615c0a387e1de7242e3b275c6e980dabf06b4a5acf53f30ee9e231e9",
+                "id": "example.choice",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "9a9a9dfc6f9d0745e8926dc1a573e6b95bf64eabfc399c4f7a44de6dc4c81ff0",
+                "descriptor_sha256": "2ad8322c5724eb9bd78202cb2edebafe2ae1945776a34fc11dc329c1dc3073c8",
+                "id": "example.other",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "831c11b99c5280eb23827da053903f197bfc20bbaea220f357618084c92fda0a",
+                "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+                "id": "example.provider",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 1,
+              "last_root_id": 1
+            }
+          },
+          "scoped": {
+            "authority": {
+              "operations": [
+                "example.relay@1/run",
+                "example.resource@1/bump",
+                "example.resource@1/count",
+                "example.restricted@1/run"
+              ],
+              "resources": [
+                "blue",
+                "red"
+              ]
+            },
+            "bindings": [
+              {
+                "caller": "example.relay",
+                "operation": "example.resource@1/bump",
+                "provider": "example.resources"
+              },
+              {
+                "caller": "example.restricted",
+                "operation": "example.relay@1/run",
+                "provider": "example.relay"
+              }
+            ],
+            "calls": 3,
+            "denied_operations": 0,
+            "entry": {
+              "interface": "example.restricted@1",
+              "operation": "run",
+              "provider": "example.restricted"
+            },
+            "format": "phenix.inspect.v2",
+            "last_failure": null,
+            "outcome": {
+              "kind": "success",
+              "value": {
+                "count": 1
+              }
+            },
+            "plugins": [
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "f695f9fea78ec10104ee0d86689ea81f2aca95f906bbfe42fc39f7205a74ff1a",
+                "descriptor_sha256": "7c5c5298bf3f9391185d42951a88e103b980b261bb5a237b889ddd798ed28bbd",
+                "id": "example.relay",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "fe6db16b48ec36d239f22bb7f929896d43b9b52d5f8ff7ab33c7dc7b377c2acb",
+                "descriptor_sha256": "2dc7eb6fd6decdcb6fbd4d9fb16a199000ce2d6776d68e92123ac13175204e24",
+                "id": "example.resources",
+                "offline_verified": true
+              },
+              {
+                "abi_negotiated": true,
+                "artifact_sha256": "07b18c4c627dc45bfb2529a826659701af6679778e5ca911800797b85d9297c1",
+                "descriptor_sha256": "522adc5472a081d536fa9008e8dad42b9c077ffbd70f15fea7033c07b917ae25",
+                "id": "example.restricted",
+                "offline_verified": true
+              }
+            ],
+            "resource": null,
+            "roots": {
+              "active": null,
+              "completed": 1,
+              "last_root_id": 1
+            }
+          }
+        },
+        "switch.json": {
+          "authority": {
+            "operations": [
+              "example.relay@1/run",
+              "example.resource@1/bump",
+              "example.resource@1/count",
+              "example.restricted@1/run"
+            ],
+            "resources": [
+              "blue",
+              "red"
+            ]
+          },
+          "bindings": [
+            {
+              "caller": "example.relay",
+              "operation": "example.resource@1/bump",
+              "provider": "example.resources"
+            },
+            {
+              "caller": "example.restricted",
+              "operation": "example.relay@1/run",
+              "provider": "example.relay"
+            }
+          ],
+          "calls": 2,
+          "denied_operations": 1,
+          "entry": {
+            "interface": "example.restricted@1",
+            "operation": "run",
+            "provider": "example.restricted"
+          },
+          "format": "phenix.inspect.v2",
+          "last_failure": {
+            "code": "Denied",
+            "context": {
+              "caller": "example.relay",
+              "operation": "example.resource@1/bump",
+              "provider": "example.resources"
+            },
+            "message": "example.relay has no effective grant for example.resource@1/bump",
+            "phase": "invocation"
+          },
+          "outcome": {
+            "failure": {
+              "code": "Denied",
+              "context": {
+                "caller": "example.relay",
+                "operation": "example.resource@1/bump",
+                "provider": "example.resources"
+              },
+              "message": "example.relay has no effective grant for example.resource@1/bump",
+              "phase": "invocation"
+            },
+            "kind": "kernel_failure"
+          },
+          "plugins": [
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "f695f9fea78ec10104ee0d86689ea81f2aca95f906bbfe42fc39f7205a74ff1a",
+              "descriptor_sha256": "7c5c5298bf3f9391185d42951a88e103b980b261bb5a237b889ddd798ed28bbd",
+              "id": "example.relay",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "fe6db16b48ec36d239f22bb7f929896d43b9b52d5f8ff7ab33c7dc7b377c2acb",
+              "descriptor_sha256": "2dc7eb6fd6decdcb6fbd4d9fb16a199000ce2d6776d68e92123ac13175204e24",
+              "id": "example.resources",
+              "offline_verified": true
+            },
+            {
+              "abi_negotiated": true,
+              "artifact_sha256": "07b18c4c627dc45bfb2529a826659701af6679778e5ca911800797b85d9297c1",
+              "descriptor_sha256": "522adc5472a081d536fa9008e8dad42b9c077ffbd70f15fea7033c07b917ae25",
+              "id": "example.restricted",
+              "offline_verified": true
+            }
+          ],
+          "resource": null,
+          "roots": {
+            "active": null,
+            "completed": 1,
+            "last_root_id": 1
+          }
+        }
+      },
+      "nix_output": "/nix/store/ajgx18flr2c9p03i727saqpvj6s11sla-phenix-m01-product",
+      "result": "passed"
+    },
+    "contract": {
+      "nix_output": "/nix/store/mg1vgz8cdsr9v0cyz33589iw8lprqd70-phenix-contract-check-0.1.0",
+      "result": "passed"
+    },
+    "descriptor": {
+      "nix_output": "/nix/store/18m40i845dqdc56jsrdyhkhp5994xq6w-phenix-m0-descriptor",
+      "result": "passed"
+    },
+    "native": {
+      "nix_output": "/nix/store/hvpamyxxy1vn18lpqm0y2p65l3h6a2nr-phenix-m0-native",
+      "result": "passed"
+    },
+    "product": {
+      "nix_output": "/nix/store/67027fjyx5zs23jr760rkhdp0c2wymrw-phenix-m0-product",
+      "result": "passed"
+    }
+  },
+  "conformance_output": "/nix/store/x5ik6sp5mr0a9484dgzaxcmrmgi81r74-phenix-m0-conformance",
+  "contract_freeze_commit": "9dc8d08da711e6538e268c24e786b6273f1c7959",
+  "exact_head": "Recorded by GitHub CI in the PR body",
+  "format": "phenix.m01-local-evidence.v1",
+  "validation": "nix flake check -L --max-jobs 3 --cores 2"
+}

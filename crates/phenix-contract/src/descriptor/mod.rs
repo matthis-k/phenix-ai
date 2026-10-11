@@ -28,6 +28,17 @@ pub struct Declaration {
     pub operation: OperationDef,
     pub provenance: &'static str,
 }
+#[derive(Clone, Copy)]
+pub struct ImportPolicy {
+    pub optional: bool,
+    pub implementation: Option<&'static str>,
+}
+impl ImportPolicy {
+    pub const REQUIRED: Self = Self {
+        optional: false,
+        implementation: None,
+    };
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum SchemaSpec {
@@ -91,6 +102,10 @@ pub struct Contract {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Contribution {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation: Option<String>,
     pub id: String,
     pub kind: String,
     pub operation: String,
@@ -151,6 +166,34 @@ impl Descriptor {
                 return Err(fail(format!("{key} must use the U64 wire type")));
             }
         }
+        // The original contribution shape stays exact. Enhanced imports carry
+        // an explicitly versioned fixed kind with both policy fields present.
+        for field in ["imports", "exports"] {
+            if let Some(Value::List(items)) = fields.get(field) {
+                for item in items {
+                    let Value::Map(item) = item else {
+                        return Err(fail("contribution must be a map".into()));
+                    };
+                    let enhanced =
+                        item.get("kind") == Some(&Value::String("phenix.import.v1".into()));
+                    if enhanced {
+                        if field != "imports"
+                            || !matches!(item.get("optional"), Some(Value::Bool(_)))
+                            || !matches!(
+                                item.get("implementation"),
+                                Some(Value::Null | Value::String(_))
+                            )
+                        {
+                            return Err(fail("invalid enhanced import fields".into()));
+                        }
+                    } else if item.contains_key("optional") || item.contains_key("implementation") {
+                        return Err(fail(
+                            "policy fields require the enhanced import kind".into(),
+                        ));
+                    }
+                }
+            }
+        }
         let d: Self = serde_json::from_value(v.to_json()).map_err(|e| fail(e.to_string()))?;
         if d.format != "phenix.descriptor.v1"
             || d.schema_version != 1
@@ -199,7 +242,11 @@ impl Descriptor {
                     || c.id.as_str() <= previous
                     || c.owner != d.plugin_id
                     || c.role != role
-                    || c.kind != "phenix.operation.v1"
+                    || !(c.kind == "phenix.operation.v1"
+                        || (role == "Require" && c.kind == "phenix.import.v1"))
+                    || c.implementation
+                        .as_ref()
+                        .is_some_and(|id| !identifier(id) || id == "root")
                     || c.provenance.is_empty()
                     || !d.contracts.iter().any(|op| op.key == c.operation)
                 {
@@ -230,7 +277,7 @@ impl Descriptor {
     }
 }
 mod encode;
-pub use encode::{descriptor, SECTION_BYTES};
+pub use encode::{descriptor, descriptor_with_policy, SECTION_BYTES};
 
 #[cfg(test)]
 mod tests {

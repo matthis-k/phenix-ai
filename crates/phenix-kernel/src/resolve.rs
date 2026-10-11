@@ -1,5 +1,5 @@
 use phenix_artifact::VerifiedPackage;
-use phenix_contract::{operation_key, Code, Contract, Failure};
+use phenix_contract::{identifier, operation_key, Authority, Code, Contract, Failure};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -38,44 +38,148 @@ pub struct Deployment {
     pub bindings: Vec<Selection>,
     pub grants: Vec<Grant>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportBinding {
+    pub caller: String,
+    pub interface: String,
+    pub operation: String,
+    pub provider: String,
+}
+impl ImportBinding {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.interface, self.operation)
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedGrant {
+    pub caller: String,
+    pub interface: String,
+    pub operation: String,
+    pub resources: BTreeSet<String>,
+}
+impl ScopedGrant {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.interface, self.operation)
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Substitution {
+    pub from: String,
+    pub to: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Composition {
+    pub format: String,
+    pub artifacts: Vec<String>,
+    pub entry: Selection,
+    pub bindings: Vec<ImportBinding>,
+    pub grants: Vec<ScopedGrant>,
+    pub excluded: BTreeSet<String>,
+    pub substitutions: Vec<Substitution>,
+    pub authority: Authority,
+    pub resource: Option<String>,
+}
 pub struct Prepared {
     pub(crate) packages: BTreeMap<String, VerifiedPackage>,
     pub(crate) entry: Selection,
-    pub(crate) bindings: BTreeMap<String, String>,
-    pub(crate) grants: BTreeSet<(String, String)>,
+    pub(crate) bindings: BTreeMap<(String, String), String>,
+    pub(crate) grants: BTreeMap<(String, String), BTreeSet<String>>,
+    pub(crate) authority: Authority,
+    pub(crate) resource: Option<String>,
+    composition: bool,
+}
+struct Policy {
+    artifacts: Vec<String>,
+    entry: Selection,
+    bindings: Vec<ImportBinding>,
+    global: Vec<Selection>,
+    grants: Vec<ScopedGrant>,
+    excluded: BTreeSet<String>,
+    substitutions: Vec<Substitution>,
+    authority: Authority,
+    resource: Option<String>,
+    composition: bool,
+}
+fn error(code: Code, message: impl Into<String>) -> Failure {
+    Failure::new(code, message)
+}
+fn invalid(message: &str) -> Failure {
+    error(Code::DescriptorInvalid, message)
 }
 fn schema_matches(a: &Contract, b: &Contract) -> bool {
     a.key == b.key && a.request == b.request && a.response == b.response && a.error == b.error
 }
 impl Prepared {
-    pub fn prepare(deployment: Deployment) -> Result<Self, Failure> {
-        if deployment.format != "phenix.deployment.v1" {
-            return Err(Failure::new(
-                Code::DescriptorInvalid,
-                "unsupported deployment profile",
-            ));
+    pub fn prepare(d: Deployment) -> Result<Self, Failure> {
+        if d.format != "phenix.deployment.v1" {
+            return Err(invalid("unsupported deployment profile"));
         }
+        let authority = Authority {
+            operations: d.grants.iter().map(Grant::key).collect(),
+            resources: BTreeSet::new(),
+        };
+        Self::resolve(Policy {
+            artifacts: d.artifacts,
+            entry: d.entry,
+            global: d.bindings,
+            bindings: vec![],
+            grants: d
+                .grants
+                .into_iter()
+                .map(|g| ScopedGrant {
+                    caller: g.caller,
+                    interface: g.interface,
+                    operation: g.operation,
+                    resources: BTreeSet::new(),
+                })
+                .collect(),
+            excluded: BTreeSet::new(),
+            substitutions: vec![],
+            authority,
+            resource: None,
+            composition: false,
+        })
+    }
+    pub fn prepare_composition(c: Composition) -> Result<Self, Failure> {
+        if c.format != "phenix.composition.v1" {
+            return Err(invalid("unsupported composition profile"));
+        }
+        Self::resolve(Policy {
+            artifacts: c.artifacts,
+            entry: c.entry,
+            bindings: c.bindings,
+            global: vec![],
+            grants: c.grants,
+            excluded: c.excluded,
+            substitutions: c.substitutions,
+            authority: c.authority,
+            resource: c.resource,
+            composition: true,
+        })
+    }
+    // One preparation/resolution implementation for both published profiles.
+    fn resolve(mut policy: Policy) -> Result<Self, Failure> {
+        if !policy.authority.valid() || policy.resource.as_ref().is_some_and(|id| !identifier(id)) {
+            return Err(invalid("invalid root authority"));
+        }
+        policy.artifacts.sort();
         let mut packages = BTreeMap::new();
-        // Complete offline verification of every installed package precedes loading.
-        for path in &deployment.artifacts {
+        for path in &policy.artifacts {
             let p = VerifiedPackage::verify_trusted_read_only(Path::new(path))?;
             if packages
                 .insert(p.descriptor().plugin_id.clone(), p)
                 .is_some()
             {
-                return Err(Failure::new(
-                    Code::DescriptorInvalid,
-                    "duplicate selected plugin identity",
-                ));
+                return Err(invalid("duplicate selected plugin identity"));
             }
         }
-        let mut bindings = BTreeMap::new();
-        for b in deployment.bindings {
-            if !operation_key(&b.key()) || bindings.insert(b.key(), b.provider).is_some() {
-                return Err(Failure::new(
-                    Code::DescriptorInvalid,
-                    "invalid or duplicate explicit binding",
-                ));
+        for id in &policy.excluded {
+            if !identifier(id) || packages.remove(id).is_none() {
+                return Err(invalid("excluded plugin absent"));
             }
         }
         let exports = |key: &str| {
@@ -85,14 +189,83 @@ impl Prepared {
                 .map(|(id, _)| id.clone())
                 .collect::<Vec<_>>()
         };
-        for p in packages.values() {
+        let mut substitutions = BTreeMap::new();
+        policy
+            .substitutions
+            .sort_by(|a, b| a.from.cmp(&b.from).then(a.to.cmp(&b.to)));
+        for s in policy.substitutions {
+            if !identifier(&s.from)
+                || s.from == s.to
+                || !packages.contains_key(&s.to)
+                || substitutions.insert(s.from, s.to).is_some()
+            {
+                return Err(invalid("invalid or duplicate substitution"));
+            }
+        }
+        if substitutions
+            .values()
+            .any(|to| substitutions.contains_key(to))
+        {
+            return Err(invalid("chained or cyclic substitution"));
+        }
+        let substitute = |id: &str| substitutions.get(id).cloned().unwrap_or_else(|| id.into());
+        policy.entry.provider = substitute(&policy.entry.provider);
+        let mut global = BTreeMap::new();
+        policy.global.sort_by_key(Selection::key);
+        for b in policy.global {
+            if !operation_key(&b.key()) || global.insert(b.key(), b.provider).is_some() {
+                return Err(invalid("invalid or duplicate explicit binding"));
+            }
+        }
+        // Expand the minimal global selections once. Dispatch never resolves.
+        for (key, provider) in &global {
+            let mut used = false;
+            for (caller, p) in &packages {
+                if p.descriptor().imports.iter().any(|x| &x.operation == key) {
+                    let (interface, operation) = key.split_once('/').unwrap();
+                    policy.bindings.push(ImportBinding {
+                        caller: caller.clone(),
+                        interface: interface.into(),
+                        operation: operation.into(),
+                        provider: provider.clone(),
+                    });
+                    used = true;
+                }
+            }
+            if !used {
+                return Err(error(
+                    Code::MissingBinding,
+                    "binding is not an installed import/export pair",
+                ));
+            }
+        }
+        let mut bindings = BTreeMap::new();
+        policy.bindings.sort_by(|a, b| {
+            (&a.caller, a.key(), &a.provider).cmp(&(&b.caller, b.key(), &b.provider))
+        });
+        for b in policy.bindings {
+            let key = b.key();
+            let provider = substitute(&b.provider);
+            if !operation_key(&key)
+                || !identifier(&b.caller)
+                || !identifier(&provider)
+                || bindings.insert((b.caller, key), provider).is_some()
+            {
+                return Err(invalid("invalid or duplicate explicit binding"));
+            }
+        }
+        for (caller, p) in &packages {
             for import in &p.descriptor().imports {
                 let expected = p
                     .descriptor()
                     .contract(&import.operation)
-                    .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "import schema absent"))?;
+                    .ok_or_else(|| invalid("import schema absent"))?;
                 let available = exports(&import.operation);
-                let Some(selected) = bindings.get(&import.operation) else {
+                let Some(selected) = bindings.get(&(caller.clone(), import.operation.clone()))
+                else {
+                    if import.optional {
+                        continue;
+                    }
                     let eligible = available
                         .iter()
                         .filter(|id| {
@@ -102,22 +275,20 @@ impl Prepared {
                                 .is_some_and(|actual| schema_matches(expected, actual))
                         })
                         .count();
-                    let code = if eligible > 1 {
-                        Code::AmbiguousBinding
-                    } else {
-                        Code::MissingBinding
-                    };
-                    return Err(Failure::new(
-                        code,
+                    return Err(error(
+                        if eligible > 1 {
+                            Code::AmbiguousBinding
+                        } else {
+                            Code::MissingBinding
+                        },
                         format!(
-                            "{} requires explicit selection for {}",
-                            p.descriptor().plugin_id,
+                            "{caller} requires explicit selection for {}",
                             import.operation
                         ),
                     ));
                 };
                 if !available.contains(selected) {
-                    return Err(Failure::new(
+                    return Err(error(
                         Code::MissingBinding,
                         format!(
                             "selected provider {selected} does not export {}",
@@ -125,61 +296,87 @@ impl Prepared {
                         ),
                     ));
                 }
+                if import
+                    .implementation
+                    .as_ref()
+                    .is_some_and(|id| id != selected)
+                {
+                    return Err(error(
+                        Code::MissingBinding,
+                        format!(
+                            "{caller} requires exact implementation for {}",
+                            import.operation
+                        ),
+                    ));
+                }
                 let actual = packages[selected]
                     .descriptor()
                     .contract(&import.operation)
-                    .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "export schema absent"))?;
+                    .ok_or_else(|| invalid("export schema absent"))?;
                 if !schema_matches(expected, actual) {
-                    return Err(Failure::new(
+                    return Err(error(
                         Code::SchemaRejected,
                         format!("incompatible import {}", import.operation),
                     ));
                 }
             }
         }
-        for (key, provider) in &bindings {
+        for ((caller, key), provider) in &bindings {
             if !exports(key).contains(provider)
                 || !packages
-                    .values()
-                    .any(|p| p.descriptor().imports.iter().any(|x| &x.operation == key))
+                    .get(caller)
+                    .is_some_and(|p| p.descriptor().imports.iter().any(|x| &x.operation == key))
             {
-                return Err(Failure::new(
+                return Err(error(
                     Code::MissingBinding,
                     "binding is not an installed import/export pair",
                 ));
             }
         }
-        let mut grants = BTreeSet::new();
-        for g in deployment.grants {
+        if policy.composition {
+            check_cycles(&packages, &bindings)?;
+        }
+        let mut grants = BTreeMap::new();
+        policy
+            .grants
+            .sort_by(|a, b| (&a.caller, a.key()).cmp(&(&b.caller, b.key())));
+        for g in policy.grants {
             let key = g.key();
             if !operation_key(&key)
-                || !packages
-                    .values()
-                    .any(|p| p.descriptor().exports.iter().any(|x| x.operation == key))
+                || exports(&key).is_empty()
+                || g.resources.iter().any(|id| !identifier(id))
                 || (g.caller != "root"
                     && !packages
                         .get(&g.caller)
                         .is_some_and(|p| p.descriptor().imports.iter().any(|x| x.operation == key)))
-                || !grants.insert((g.caller, key))
+                || grants.insert((g.caller, key), g.resources).is_some()
             {
-                return Err(Failure::new(
-                    Code::DescriptorInvalid,
-                    "invalid or duplicate operation grant",
-                ));
+                return Err(invalid("invalid or duplicate operation grant"));
             }
+        }
+        if policy
+            .authority
+            .operations
+            .iter()
+            .any(|key| exports(key).is_empty())
+        {
+            return Err(invalid("root ceiling operation absent"));
         }
         let prepared = Self {
             packages,
-            entry: deployment.entry,
+            entry: policy.entry,
             bindings,
             grants,
+            authority: policy.authority,
+            resource: policy.resource,
+            composition: policy.composition,
         };
         prepared.check_entry(&prepared.entry)?;
         if !prepared
             .grants
-            .contains(&("root".into(), prepared.entry.key()))
+            .contains_key(&("root".into(), prepared.entry.key()))
         {
-            return Err(Failure::new(
+            return Err(error(
                 Code::Denied,
                 "default root entry lacks admission grant",
             ));
@@ -195,14 +392,70 @@ impl Prepared {
                     .any(|x| x.operation == entry.key())
             })
         {
-            return Err(Failure::new(
-                Code::MissingBinding,
-                "explicit root entry absent",
-            ));
+            return Err(error(Code::MissingBinding, "explicit root entry absent"));
         }
         Ok(())
     }
     pub fn inspect(&self) -> serde_json::Value {
-        serde_json::json!({"format":"phenix.inspect.v1","plugins":self.packages.iter().map(|(id,p)|serde_json::json!({"id":id,"artifact_sha256":p.record().artifact_sha256,"descriptor_sha256":p.record().descriptor_sha256,"offline_verified":true,"abi_negotiated":false})).collect::<Vec<_>>(),"entry":self.entry,"bindings":self.bindings,"roots":{"active":null,"completed":0,"last_root_id":null},"calls":0,"denied_operations":0,"last_failure":null})
+        let bindings = if self.composition {
+            serde_json::json!(self.bindings.iter().map(|((caller,key),provider)|serde_json::json!({"caller":caller,"operation":key,"provider":provider})).collect::<Vec<_>>())
+        } else {
+            serde_json::json!(self
+                .bindings
+                .iter()
+                .map(|((_, key), provider)| (key, provider))
+                .collect::<BTreeMap<_, _>>())
+        };
+        let mut result = serde_json::json!({"format":"phenix.inspect.v1","plugins":self.packages.iter().map(|(id,p)|serde_json::json!({"id":id,"artifact_sha256":p.record().artifact_sha256,"descriptor_sha256":p.record().descriptor_sha256,"offline_verified":true,"abi_negotiated":false})).collect::<Vec<_>>(),"entry":self.entry,"bindings":bindings,"roots":{"active":null,"completed":0,"last_root_id":null},"calls":0,"denied_operations":0,"last_failure":null});
+        if self.composition {
+            result["format"] = "phenix.inspect.v2".into();
+            result["authority"] = serde_json::json!(self.authority);
+            result["resource"] = serde_json::json!(self.resource);
+        }
+        result
     }
+}
+fn check_cycles(
+    packages: &BTreeMap<String, VerifiedPackage>,
+    bindings: &BTreeMap<(String, String), String>,
+) -> Result<(), Failure> {
+    fn visit(
+        id: &str,
+        packages: &BTreeMap<String, VerifiedPackage>,
+        bindings: &BTreeMap<(String, String), String>,
+        done: &mut BTreeSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<(), Failure> {
+        if let Some(at) = path.iter().position(|x| x == id) {
+            let mut cycle = path[at..].to_vec();
+            cycle.push(id.into());
+            return Err(error(
+                Code::MissingBinding,
+                format!("required dependency cycle: {}", cycle.join(" -> ")),
+            ));
+        }
+        if done.contains(id) {
+            return Ok(());
+        }
+        path.push(id.into());
+        for import in &packages[id].descriptor().imports {
+            if !import.optional {
+                visit(
+                    &bindings[&(id.into(), import.operation.clone())],
+                    packages,
+                    bindings,
+                    done,
+                    path,
+                )?;
+            }
+        }
+        path.pop();
+        done.insert(id.into());
+        Ok(())
+    }
+    let mut done = BTreeSet::new();
+    for id in packages.keys() {
+        visit(id, packages, bindings, &mut done, &mut vec![])?;
+    }
+    Ok(())
 }
