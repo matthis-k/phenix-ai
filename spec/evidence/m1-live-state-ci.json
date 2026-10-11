@@ -1,0 +1,133 @@
+{
+  "stage": "s2",
+  "implementation_commit": "6ce818c483571c015ec59eb1e41dcba533d2fd91",
+  "run_id": 38170397949,
+  "artifact_id": 11713678427,
+  "archive_sha256": "16d69ac356acb0c03f325c9c030739655139e69ec1d26ccea50adb251056b67d",
+  "checks_passed": 20,
+  "report_sha256": {
+    "composition/composition-policy.json": "fcf169a041fe093e5af1cb1a5891e596fef37568b94c95a0c53868fe491208d3",
+    "composition/composition.json": "9c21cf0a5f521381a7775cbe01573ce6a216acc458873ae2039f047527783869",
+    "composition/scoped-policy.json": "062d957966abe16465aafbff8c9dfb910b99104ba374daa477b9e4fadd7ff365",
+    "composition-product/blue.json": "58d3c2087addd7a3e43f4cced30aa1f2b9f2e92f65578b0e38748d657a30bf67",
+    "composition-product/product.json": "23754bf9e8417225f7083acde6e4fe69b24e192d6cc1801a3a76824701d81624",
+    "composition-product/switch.json": "5b4a9cecc4a061cdb4809e6e79a8eb0aad4a79d20a4a4e06ff7caf781ad87870",
+    "descriptor/evidence.json": "d32550d31e3aa6a6aa9e5be14aed9bcf95203a599319d4ffc50c8d241d543d48",
+    "generations/concurrent.json": "460c74d5ca23b880f78bc5e421c019725d7b54b7dc1b1a47ed90c4ff8dfeaa60",
+    "generations/evidence.json": "aac486dd61c4810b96a8a1d58e860a09a33078e4ef4bae237af7f2eecc92d362",
+    "generations/identity-vector.json": "64768a975b066e90bb56673d80d79e3b47eb434cb0fe1c4a284cf087fd35c888",
+    "imports/composition.json": "b3b99e3c6bb16e1bfc5e8e543bddaceab75e6f2db352bf5b3b0a6ea5c0e581df",
+    "imports/evidence.json": "179777024d4056e903faa6a87a087ea9902ae90867b6c8e76ec70fa2cf3a0575",
+    "lifecycle/lifecycle-policy.json": "6d2a49b5d86603a9ee6698fa45c8ca0aec90802f30ef0ad7f5d1b4f2b9175930",
+    "lifecycle/lifecycle.json": "2e048dd6684551be020ef135cc3f007412caa86c3251c489ed4bcefb6fdfbbf6",
+    "lifecycle-product/product.json": "1d325bfd8a8dd81da3feff6a2f7a18bb50dad48927b5aa1315deb655c0fca4e4",
+    "m1-live-nix-output.json": "35b62392fd523337b29f06e7fd4af33365b99fa0de9cbdaca08324d9aa63f125",
+    "m1-live-state/composition.json": "81a217731d8afa5d3c308a7e9c2a5f463eee72eefddb7ef08dc3e128a85bf85a",
+    "m1-live-state/conflicting-definitions/package.json": "cb24ea110dee65c7bc8f4bdbe10203b533efec0155d62cb1cb49f21232063421",
+    "m1-live-state/definitions/package.json": "2750b3460d9b52275adba5ef38bde354e8517106ddebde188b8d9c0af5e76075",
+    "m1-live-state/metadata.json": "34cf20bdf758d370d54a465503f0040a7236c2ff8b56462a1bd6e6c883afc42d",
+    "m1-live-state/state.json": "23dc09bf5efdd0157940da1550622eb3f494ab4fd48de9cdb4962e8ac90a96fc",
+    "m1-live-state-product/deployment.json": "50e3eadbbd333ebb06b2f3c69dc8aa8e0754899903aa0806de3ba67cc0ab2b85",
+    "m1-live-state-product/product.json": "737bb0c487831517f604051ab7e277b7df8cfeca04e167aaa67cdd3943a8fda1",
+    "m1-metadata-state/metadata.json": "f636f7d2f2c793c41e9f2f8980df2616391d413b1889f1c6bdcaaf2efdf017b8",
+    "m1-metadata-state/native.json": "8d5f8a9bb964bb388026ca6fe2db9f4d7c64a9677ee7a0d8f1fa2d7fe16a585f",
+    "m1-nix-output.json": "1107b67ad250ee5c4402144e3ba938ec3bc9e800c0cb9d3331b4af2f71cd0acb",
+    "m1-reference-wire/evidence.json": "e3ebc4afde006eeca870bf203ed386ac46e1ed6ffe5f43a4ee9d445686ac5324",
+    "m1-state-nix-output.json": "b38150fc9391e99f5f5236d01f1673eef935d81e2a213957031d4a592fa87357",
+    "native/native.json": "2c1b0249dd5773ab38b7fbf35b9a7b5d0b9df3c8834effde361da790cb434622",
+    "nix-output.json": "40423bf6ae5ad8592bf34937e4d00112fc5c37330a42960b4bb4ab0efea5e7dc",
+    "pending/composition.json": "e4f6016108c15051540811de471c93595e4c46b597d08844956c72b0b2618dde",
+    "pending/descriptor-evidence.json": "e8833c9a7cf1b3d959866b535b0165c20ec51b79258247b8aba07d7fde51cbea",
+    "pending/evidence.json": "1b7873572569dea1c7fdfc7533b8dd34ec7f6167652fd91456b4ca4491725816",
+    "pending/retained-on-drop.json": "ec6c8cb1a7f4310dd9eee83c2f8b3aeaefcb3d2da237ff6e98d3c1c6abe9068d",
+    "pending-product/evidence.json": "fc9b64f1d38a4c1d324374fe54e34a5118bbbda7047c10f2819d463b9525c5a1",
+    "product/failures.json": "8c677d171cf6495fed50a6540e0a1d549a9a798019cda01770ca915be8178a6d",
+    "product/product.json": "ebac7bba0405b8caeb1aec7d325e3cc5b81b6ddf97bdb5bdd9de5425cd60479c",
+    "shipping/evidence.json": "3b3c7ac060c6e370f2acfc3344b43b7bc245548f4a860f10d1c42b385d1c6336"
+  },
+  "nix_outputs": {
+    "m1-state-nix-output.json": {
+      "/nix/store/jhz88g2n2zz7dd9dp85vjg8fz0134i7j-phenix-artifact-0.1.0": {
+        "ca": null,
+        "deriver": "/nix/store/ngrg5cknk4grw7a9kgpzizvm3ib2lkm8-phenix-artifact-0.1.0.drv",
+        "narHash": "sha256-BQS4lEB+HSj29/xoCqTqQDNReQHl1tYmpcVcJ6V9EPU=",
+        "narSize": 1080,
+        "references": [],
+        "registrationTime": 1791749238,
+        "signatures": [],
+        "storeDir": "/nix/store",
+        "ultimate": true,
+        "version": 1
+      }
+    },
+    "nix-output.json": {
+      "/nix/store/zd9xb8ph4fk20jy67rjqp6vik0ixphvr-phenix-m0-release": {
+        "ca": null,
+        "deriver": "/nix/store/p037kd1814gsdzv2yfsk5wahnbszcjns-phenix-m0-release.drv",
+        "narHash": "sha256-Me9C07ECdx88WsXCAP/uer0jPsg5EOQVSCRmnWEgF5s=",
+        "narSize": 4136,
+        "references": [
+          "/nix/store/3533dcdgpx3ylr914jhayxaf3087db0j-phenix-m0-conformance",
+          "/nix/store/a1fzcz61mv93sjdx0z3fw6grhsk83p81-closure-info",
+          "/nix/store/gr8nhqsv9dhpfzwgkj8ixyil8v2wfnzv-phenix-m04-shipping",
+          "/nix/store/ks7va31qnnnhm0ba6h9mqw3ghibr1krx-phenix-public-sdk-check-0.1.0"
+        ],
+        "registrationTime": 1791749952,
+        "signatures": [],
+        "storeDir": "/nix/store",
+        "ultimate": true,
+        "version": 1
+      }
+    },
+    "m1-live-nix-output.json": {
+      "/nix/store/ma6202y8p3lx4qm15z34080xgyg2xqv4-phenix-m1-live-state": {
+        "ca": null,
+        "deriver": "/nix/store/ba3l67fy7msynk2m4lc6dj8wjqlgdaqm-phenix-m1-live-state.drv",
+        "narHash": "sha256-2jM1oSwMeL42bObByPznSiRnuKlScQelMu/GGkM7Bug=",
+        "narSize": 28624,
+        "references": [
+          "/nix/store/5xwmvwmq4gx3qa78yg627hvcqa21q332-example-reactive-client-0.1.0",
+          "/nix/store/csca0didnfnmgl07wb148d48nhrg23ra-example-reactive-provider-0.1.0",
+          "/nix/store/ma6202y8p3lx4qm15z34080xgyg2xqv4-phenix-m1-live-state",
+          "/nix/store/wc1mva0jqgh6941063k7dnjxac6lvgdh-example-reactive-provider-alternative-0.1.0"
+        ],
+        "registrationTime": 1791749176,
+        "signatures": [],
+        "storeDir": "/nix/store",
+        "ultimate": true,
+        "version": 1
+      },
+      "/nix/store/sprp7gpls7iqdqi00d1gh6kvhsys75fc-phenix-m1-live-state-product": {
+        "ca": null,
+        "deriver": "/nix/store/ap3jzwqd0apr2qppwyvc1ki718aghxgh-phenix-m1-live-state-product.drv",
+        "narHash": "sha256-mpA32jNitX9ek5FwgH6G06uGNAGcgVbKLNIhAdG7nTE=",
+        "narSize": 69952,
+        "references": [
+          "/nix/store/5xwmvwmq4gx3qa78yg627hvcqa21q332-example-reactive-client-0.1.0",
+          "/nix/store/csca0didnfnmgl07wb148d48nhrg23ra-example-reactive-provider-0.1.0",
+          "/nix/store/ma6202y8p3lx4qm15z34080xgyg2xqv4-phenix-m1-live-state",
+          "/nix/store/wc1mva0jqgh6941063k7dnjxac6lvgdh-example-reactive-provider-alternative-0.1.0"
+        ],
+        "registrationTime": 1791749177,
+        "signatures": [],
+        "storeDir": "/nix/store",
+        "ultimate": true,
+        "version": 1
+      }
+    },
+    "m1-nix-output.json": {
+      "/nix/store/hqz102yljnjx0d5w8cprdli8z453p6bn-phenix-contract-0.1.0": {
+        "ca": null,
+        "deriver": "/nix/store/4258nqy0bdcp5f84vr5qlj4qq9sr8xf1-phenix-contract-0.1.0.drv",
+        "narHash": "sha256-ZRcGb67JsLEDKn20g7fWw3fot5Q0mqRfhVsINGjft5k=",
+        "narSize": 560,
+        "references": [],
+        "registrationTime": 1791749938,
+        "signatures": [],
+        "storeDir": "/nix/store",
+        "ultimate": true,
+        "version": 1
+      }
+    }
+  }
+}
