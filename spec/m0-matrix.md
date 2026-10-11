@@ -4,6 +4,8 @@ PR [#771](https://github.com/matthis-k/phenix-ai/pull/771) owns this matrix. Bra
 
 Implemented means code exists. Tested means the named semantic check has passed locally. CI evidence is authoritative for the exact PR head; the PR body links that run. M0.0 acceptance requires all four Nix checks on the same head. An earlier green run does not certify a changed head.
 
+On 2026-10-11, the operator made #771 ready for review and the sole open PR. Superseded PRs #598, #725, #726, #728, #729, #730, #731, #758, #760, #763, #764, #765, #766, #767, #768 and #769 were closed. Their branches and PR histories remain references. The active task matrix is this document. Full clean-start CI runs all four Nix gates and uploads exact-head evidence. Ready status permits CI and review; it does not authorize merging.
+
 | Task | Concrete files | Acceptance criterion | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | Root-based branch | Git ancestry, PR #771 | Parentless root is ancestor of main | Tested | Local rev-list and GitHub compare agree |

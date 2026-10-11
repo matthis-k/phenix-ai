@@ -8,4 +8,4 @@ Update `spec/m0-matrix.md` with the files, semantic acceptance test, evidence an
 
 Keep one provider resolver, one dispatcher and one effect authority boundary. Typed annotations own contributions and ABI glue. A new kernel mechanism needs an executable non-AI fixture and a reason an ordinary plugin cannot supply it.
 
-The branch starts at the original root commit. Preserve reference branches and PRs. Keep this replacement PR in draft and unmerged.
+The branch starts at the original root commit. Preserve reference branches and closed PR histories. PR #771 is the sole open implementation PR and stays ready for review so full conformance CI runs. Keep it unmerged.
