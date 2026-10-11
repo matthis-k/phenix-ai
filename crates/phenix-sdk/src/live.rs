@@ -16,6 +16,46 @@ pub trait Portable: Sized {
     fn to_value(&self) -> WireValue;
     fn from_value(value: WireValue) -> Result<Self, Failure>;
 }
+/// An M1 operation declaration. The current host scope supplies authority.
+///
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self, input: &str) -> Result<String, String>; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self) -> Result<*const u8, String>; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { async fn call(&self) -> Result<String, String>; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad<T> { fn call(&self, input: T) -> Result<String, String>; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self, a: String, b: String) -> Result<String, String>; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self) -> Result<String, String> { Ok(String::new()) } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self) -> String; }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="example.bad@1")]
+/// trait Bad { fn call(&self) -> Result<String, String>; fn call(&self) -> Result<String, String>; }
+/// ```
+pub trait Operation {
+    type Request: Portable;
+    type Response: Portable;
+    type Error: Portable;
+    const DEFINITION: crate::StaticOperation;
+}
 fn invalid() -> Failure {
     Failure::new(Code::SchemaRejected, "invalid typed live value")
 }

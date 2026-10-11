@@ -1,6 +1,8 @@
 pub mod metadata;
+pub mod static_metadata;
 use crate::{Code, Failure, Value};
 pub use metadata::*;
+pub use static_metadata::{StaticContract, StaticOperation};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[derive(Clone, Copy)]

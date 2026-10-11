@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+mod contract;
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, spanned::Spanned, Data, DeriveInput, Expr, Fields, ItemMod, ItemType, Meta,
@@ -31,6 +32,13 @@ fn args(
         }
     }
     Ok(result)
+}
+#[proc_macro_attribute]
+pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::ItemTrait);
+    contract::expand(attr.into(), item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 fn required(
     map: &mut std::collections::BTreeMap<String, String>,
