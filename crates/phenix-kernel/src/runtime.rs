@@ -120,7 +120,7 @@ impl Prepared {
                 }
                 Err(failure) => {
                     for acquired in self.startup_order.iter().rev() {
-                        if let Some(native) = images.get_mut(acquired) {
+                        if let Some(mut native) = images.remove(acquired) {
                             let _ = native.stop();
                         }
                     }

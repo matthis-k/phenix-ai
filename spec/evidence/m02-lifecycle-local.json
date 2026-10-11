@@ -1,10 +1,10 @@
 {
   "accepted_m01_ci_run": 38100726798,
   "accepted_m01_head": "76c874c51cebc8e9affa28288a0f672e29e46e9e",
-  "aggregate_output": "/nix/store/frngp348lciky9cpj22km4laljvd780z-phenix-m0-conformance",
+  "aggregate_output": "/nix/store/n217p7x6yiglds4lpdd5pgsdwkfg9nsd-phenix-m0-conformance",
   "checks": {
     "m0-contract": {
-      "output": "/nix/store/5dj541aii0ln32ly8hggfn3slkbvwv98-phenix-contract-check-0.1.0",
+      "output": "/nix/store/gd05b6b33ilp8gjwy6bxxm49n7a62ill-phenix-contract-check-0.1.0",
       "status": "passed"
     },
     "m0-descriptor": {
@@ -12,27 +12,27 @@
       "status": "passed"
     },
     "m0-native": {
-      "output": "/nix/store/1r6vnr5wky4zjfgsfq5ljwpniax6qhyw-phenix-m0-native",
+      "output": "/nix/store/a4a6jbrrs46nhdbf70h77lxj6zb8dpm3-phenix-m0-native",
       "status": "passed"
     },
     "m0-product": {
-      "output": "/nix/store/sp38gnwr8g7w5p98nz1gpbbkq2sm4272-phenix-m0-product",
+      "output": "/nix/store/rw9vp5p4jyzqc1q9n74k831wcjl86hw8-phenix-m0-product",
       "status": "passed"
     },
     "m01-composition": {
-      "output": "/nix/store/bl23d6hiydws8l44ml3w4mbbcywg9p36-phenix-m01-composition",
+      "output": "/nix/store/qsajfvykj9jrxjq32r26hyxjw392m737-phenix-m01-composition",
       "status": "passed"
     },
     "m01-product": {
-      "output": "/nix/store/kpcsks5d7g7snqfq2dzxwkqgxiqwk5k2-phenix-m01-product",
+      "output": "/nix/store/rrp6hlck748kb0wkik5nldbaf5v2a8ic-phenix-m01-product",
       "status": "passed"
     },
     "m02-lifecycle": {
-      "output": "/nix/store/i886yzhsp8pnsqxn89qfkrzzh8f5kkxz-phenix-m02-lifecycle",
+      "output": "/nix/store/62jnaxx5wzzmsm45ldc43p11v3kxd95p-phenix-m02-lifecycle",
       "status": "passed"
     },
     "m02-lifecycle-product": {
-      "output": "/nix/store/kfhqypz25agyb9q8vq3m7ac1r4ywnk48-phenix-m02-lifecycle-product",
+      "output": "/nix/store/jgnswy0dybzm8sfi863xg9ijf79lrras-phenix-m02-lifecycle-product",
       "status": "passed"
     }
   },
@@ -1142,7 +1142,7 @@
     "crates/phenix-kernel/src/lib.rs": "8a51e8525bf42f828cb9e62fb56e9208dedf087e519334ef80135e4eeb2c60a7",
     "crates/phenix-kernel/src/native.rs": "bb1ccb3f2bb90fc21b6c2d8dcaa3146446347d7289cbbcdd9ab8dc0b992bbd04",
     "crates/phenix-kernel/src/resolve.rs": "997d9faa336d940c0922ceb4b63e47bf8e83269945f288da98f81f19bc2dd7fb",
-    "crates/phenix-kernel/src/runtime.rs": "2839c677504b97f5a7e8f7f219fe7e80a8dce31fe9bb0926db6158f53b200b24",
+    "crates/phenix-kernel/src/runtime.rs": "9ff9f45f7483653ee3f02f1ee09c5d87dadf1f4bb9a8de57fa4c1d80626d289e",
     "crates/phenix-macros/src/lib.rs": "5dc428fb79e58e0a7d3904fe3bddca977db0a533107a56232aa8ba0a28ff5682",
     "crates/phenix-sdk/src/lib.rs": "3222a497b340a322374a668760541d412844082b35eaca2ed45d69ac3ff4d692",
     "examples/Cargo.lock": "33ce23fd7bf7c2aa553b399fb9f8f4a8903556a18478dd33786d87d8f97086ce",
