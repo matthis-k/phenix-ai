@@ -225,6 +225,43 @@
           python -m json.tool $out/evidence.json > /dev/null
         '';
       });
+      reactiveContracts = rust.buildRustPackage {
+        pname = "example-reactive-contracts";
+        version = "0.1.0";
+        src = pluginSource;
+        buildAndTestSubdir = "examples";
+        cargoRoot = "examples";
+        cargoLock.lockFile = ./examples/Cargo.lock;
+        cargoBuildFlags = [ "-p" "example-reactive-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = false;
+        installPhase = ''
+          test ! -e crates/phenix-kernel
+          test ! -e crates/phenix-artifact
+          test ! -e ../crates/phenix-kernel
+          test ! -e ../crates/phenix-artifact
+          mkdir -p $out/bin
+          cp target/*/release/example-reactive-contracts $out/bin/
+        '';
+      };
+      metadataStateCheck = (build "phenix-artifact" artifactSource).overrideAttrs (old: {
+        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.python3 ];
+        installPhase = ''
+          mkdir -p $out
+          probe=$(find target -type f -name phenix-metadata-probe -perm -u+x | head -1)
+          describe=$(find target -type f -name phenix-describe -perm -u+x | head -1)
+          test -n "$probe"
+          test -n "$describe"
+          python ${./tests/m1-metadata-negative.py} "$probe" "$describe" ${reactiveContracts}/bin/example-reactive-contracts ${./tests/m1-metadata-vectors.json} > $out/metadata.json
+          contract=$(find target -path '*/release/deps/libphenix_contract-*.rlib' | head -1)
+          test -n "$contract"
+          $CC -std=c11 -Wall -Wextra -Werror -I${./include} -c ${./tests/m1-state-abi.c} -o "$TMPDIR/state.o"
+          rustc --edition=2021 ${./tests/m1-state-abi.rs} --extern phenix_contract="$contract" -L dependency="$(dirname "$contract")" -C link-arg="$TMPDIR/state.o" -o "$TMPDIR/state-abi"
+          "$TMPDIR/state-abi" > $out/native.json
+          python -m json.tool $out/metadata.json > /dev/null
+          python -m json.tool $out/native.json > /dev/null
+        '';
+      });
       deployment = pkgs.writeText "phenix-m0-deployment.json" (
         builtins.toJSON {
           format = "phenix.deployment.v1";
@@ -378,6 +415,7 @@
       };
       checks.${system} = {
         m1-reference-wire = referenceWireCheck;
+        m1-metadata-state = metadataStateCheck;
         m0-descriptor = descriptorCheck;
         m0-contract = contractCheck;
         m0-native = nativeCheck;

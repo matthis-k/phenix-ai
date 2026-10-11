@@ -23,6 +23,9 @@ jobs:
           mkdir ci-evidence
           if [[ "${{ github.head_ref }}" == impl/m1-* ]]; then
             nix build .#checks.x86_64-linux.m1-reference-wire --out-link result-m1-wire
+            nix build .#checks.x86_64-linux.m1-metadata-state --out-link result-m1-state
+            cp -RL result-m1-state ci-evidence/m1-metadata-state
+            nix path-info --json ./result-m1-state > ci-evidence/m1-state-nix-output.json
             cp -RL result-m1-wire ci-evidence/m1-reference-wire
             nix path-info --json ./result-m1-wire > ci-evidence/m1-nix-output.json
           fi

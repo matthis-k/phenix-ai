@@ -1,4 +1,6 @@
+pub mod metadata;
 use crate::{Code, Failure, Value};
+pub use metadata::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[derive(Clone, Copy)]

@@ -1,6 +1,6 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a portable gate accepted; remaining M1 gates planned
+Status: S1a accepted; S1b implemented and locally tested; full CI pending
 Updated: 2026-10-11
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
@@ -16,7 +16,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | --- | --- | --- | --- | --- |
 | S0 | M1 RFC, this roadmap and M0-to-M1 links | #771 head | Consistent contract and file-level scope | Spec authored; review pending |
 | S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | PROVEN at `2682be5f` in CI 38125329024 |
-| S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | Not started |
+| S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | TESTED locally; exact-head CI pending |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b | External native state and security fixtures | Not started |
 | S3 | Typed Rust value SDK and property/contract proc macros | S2 | External SDK-only annotated plugin | Not started |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
@@ -68,7 +68,30 @@ This acceptance covers portable shape, identities and compatibility. S1b owns co
 | `tests/m1-wire-negative.py` | PROVEN | 52 accepted and 148 rejected cases |
 | `flake.nix`, `.github/workflows/minimal-kernel.yml` | PROVEN | Exact implementation-head CI passed all fifteen checks and uploaded release evidence |
 | Owner/cell issuance, live authority and lifecycle | NOT STARTED | S2 owns these; decoded locations grant no access |
-| Definition-only descriptors, slots/properties and state-host ABI | NOT STARTED | S1b gate remains separate |
+| Definition-only descriptors, slots/properties and state-host ABI | TESTED | S1b implementation below; full CI pending |
+
+### S1b implementation and acceptance gate
+
+The [frozen S1b profile](m1-metadata-state-contract.md) is commit
+`295067bbcc2ea78f13cb26c68351080cacc1d0a5`, created before implementation.
+Branch `impl/m1-metadata-state` is stacked on PR #773; it owns executable
+metadata and ABI work only. Full exact-head CI is pending. No live cell,
+provider selection, field macro or graph execution is claimed.
+
+| File or task | State | Evidence or remaining gate |
+| --- | --- | --- |
+| `crates/phenix-contract/src/descriptor/metadata.rs`, `descriptor/mod.rs` | TESTED | Typed definitions, named cardinality slots and plugin-owned properties; canonical ordering and duplicate rejection |
+| `crates/phenix-contract/src/state.rs`, `lib.rs` | TESTED | Exact state request opcodes, v2 envelopes, sorted batch identities and domain error shapes |
+| `crates/phenix-contract/src/abi.rs`, `include/phenix.h` | TESTED | ABI 3 header-first negotiation, initialization callback, v2 owned replies and unchanged M0 decoding |
+| `crates/phenix-artifact/src/lib.rs`, `bin/phenix-describe.rs` | TESTED | Offline definition-only verification, independent descriptor/package digests, containment and no native artifact |
+| `crates/phenix-artifact/src/bin/phenix-metadata-probe.rs` | TESTED | Process boundary for independent malformed descriptors and state envelopes |
+| `examples/reactive-contracts/`, examples manifest/lockfile | TESTED | Public SDK only; reversed authored declaration order produces canonical Python bytes |
+| `tests/m1-metadata-vectors.json`, `tests/m1-metadata-negative.py` | TESTED | Frozen independent vectors, metadata/schema/cardinality/property negatives, all truncations, state requests/errors and 12 package cases |
+| `tests/m1-state-abi.c`, `tests/m1-state-abi.rs` | TESTED | C producer/Rust host interoperate; 4 host callbacks, 10 C/3 Rust releases, 17 rejected tables and incompatible reply bodies |
+| `flake.nix`, conformance workflow | IMPLEMENTED | Sixteen required gates and both M1 evidence products; real Actions run pending |
+| `descriptor/encode.rs` | UNCHANGED | Frozen const v1 encoder stays intact; canonical M1 encoding belongs to the owned metadata module; macro lowering is S3 |
+| Native metadata packages and runtime admission | NOT STARTED | S2/S4 integrate ABI 3 with the existing native loader/resolver; this gate accepts offline definition packages only |
+| `spec/evidence/m1-metadata-state-local.json` | TESTED | Source hashes and local reports; CI evidence required before PROVEN |
 
 ## 3. S2: kernel-owned live cells
 

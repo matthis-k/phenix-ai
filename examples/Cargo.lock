@@ -142,6 +142,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-reactive-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-relay"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,51 @@
+{
+  "acceptance": "local only; exact-head pinned Nix CI pending",
+  "checks": [
+    "workspace fmt/clippy -D warnings",
+    "14 workspace unit tests and 13 compile-fail doctests",
+    "isolated public SDK unit/doctests",
+    "isolated SDK-only metadata fixture",
+    "S1a 200 independent cases unchanged"
+  ],
+  "format": "phenix.m1.metadata-state.local.v1",
+  "freeze_commit": "295067bbcc2ea78f13cb26c68351080cacc1d0a5",
+  "metadata": {
+    "accepted": 23,
+    "cases": 1544,
+    "descriptor_sha256": "9c4a25dfb0451fa8d705eec2d37e0c91580f9df714293274ad70412671c96e4f",
+    "gate": "m1-metadata-state",
+    "live_state_proven": false,
+    "package_cases": 12,
+    "package_sha256": "15c7e2c85afd0e0bddf261ded6d72911f99cca3e6844abf34fbfe980685cf4d8",
+    "private_kernel_dependency": false,
+    "rejected": 1521,
+    "vectors_sha256": "43e6722b10fe7f66aff490f52083709698ad984e7b5f7f287c291f6d3128862a"
+  },
+  "native": {
+    "abi_major": 3,
+    "c_releases": 10,
+    "host_callbacks": 4,
+    "host_language": "Rust",
+    "live_state_proven": false,
+    "native_language": "C",
+    "rejected_tables": 17,
+    "rust_releases": 3
+  },
+  "source_sha256": {
+    ".github/workflows/minimal-kernel.yml": "e22d75fd8af03abf70221f6e38c9dff6e06caac3e9b2b81b3ab933c80549f492",
+    "crates/phenix-artifact/src/bin/phenix-describe.rs": "0942fd005aeeeda77be0ca7ddccaa7dc875c1e4cace45ed454d1d181a90f50b5",
+    "crates/phenix-artifact/src/bin/phenix-metadata-probe.rs": "43e09c696e202e0d3d52107b220afa1eb1506d55faa5b2db4a7e7534f1c1c53d",
+    "crates/phenix-artifact/src/lib.rs": "99c4f8b3d1cf57d7c79cb011e1705baa8d51a7b70e8b98613ec9db24710ed225",
+    "crates/phenix-contract/src/abi.rs": "d2bd137dbb26a8df3db6c30fbbe97099ab8320a473803219787fe97b45ce5c7f",
+    "crates/phenix-contract/src/descriptor/metadata.rs": "9af5b95bc8de16da93f6543ca145e3dfd336f969a7ad79f40ba6505e048e8003",
+    "crates/phenix-contract/src/state.rs": "1e39c7fa2927e422448695dee4e42778314ac3f58f87e33a1bca8889ebe566b5",
+    "examples/reactive-contracts/src/main.rs": "ce97dad8bc8ed3e2c70e851298e2323e40f669e93af0fa3ab87aa5521bf11f1b",
+    "flake.nix": "0743452e580bf5fc51be4a7ce310d139df1069c69837d72afd4030ddce0756a5",
+    "include/phenix.h": "b726543f6e914f24b180494328d56fea575a742b6af2dfc8189755bfb0e5ecba",
+    "tests/m1-metadata-negative.py": "a27738f7ae8d0b89e6884cb661db0caadf8a92294cb91535b45cd86c6f3cfa52",
+    "tests/m1-metadata-vectors.json": "43e6722b10fe7f66aff490f52083709698ad984e7b5f7f287c291f6d3128862a",
+    "tests/m1-state-abi.c": "3b0b3ebb2175d41433a7a0428097b74db1ae9a758dee32bbf7cff4bc20330e8e",
+    "tests/m1-state-abi.rs": "2af4f308742ec997fe46d6866d77643e728e6b786d00a265bea3141bb159bf94"
+  },
+  "toolchain": "Rust 1.91.1"
+}

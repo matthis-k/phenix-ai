@@ -154,3 +154,72 @@ impl VerifiedPackage {
         Ok(())
     }
 }
+
+/// Metadata-only packages are a distinct product and cannot be passed to dlopen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractPackageRecord {
+    pub format: String,
+    pub descriptor: String,
+    pub descriptor_sha256: String,
+}
+#[derive(Debug)]
+pub struct VerifiedContractPackage {
+    metadata: phenix_contract::ContractMetadata,
+    descriptor_sha256: String,
+    package_sha256: String,
+}
+impl VerifiedContractPackage {
+    pub fn metadata(&self) -> &phenix_contract::ContractMetadata {
+        &self.metadata
+    }
+    pub fn descriptor_sha256(&self) -> &str {
+        &self.descriptor_sha256
+    }
+    pub fn package_sha256(&self) -> &str {
+        &self.package_sha256
+    }
+    /// The caller attests a trusted read-only source, as for native packages.
+    /// No executable is discovered, extracted or loaded.
+    pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
+        let root = root
+            .canonicalize()
+            .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
+        let record: ContractPackageRecord =
+            serde_json::from_slice(&read(&root.join("package.json"), Code::ArtifactInvalid)?)
+                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
+        if record.format != "phenix.contract-package.v2" {
+            return Err(Failure::new(
+                Code::ArtifactInvalid,
+                "unsupported contract package format",
+            ));
+        }
+        let bytes = read(
+            &relative(&root, &record.descriptor)?,
+            Code::DescriptorInvalid,
+        )?;
+        let descriptor_sha256 = digest(&bytes);
+        if descriptor_sha256 != record.descriptor_sha256 {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "contract descriptor digest mismatch",
+            ));
+        }
+        let metadata = phenix_contract::ContractMetadata::decode(&bytes)?;
+        if metadata.execution != phenix_contract::MetadataExecution::None {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "contract package must contain definitions only",
+            ));
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"phenix.contract-package.v2\0");
+        hash.update(Sha256::digest(&bytes));
+        let package_sha256 = format!("{:x}", hash.finalize());
+        Ok(Self {
+            metadata,
+            descriptor_sha256,
+            package_sha256,
+        })
+    }
+}

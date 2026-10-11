@@ -1,5 +1,5 @@
 //! ABI 1.0. Pointers are borrowed for the synchronous call unless explicitly owned.
-use crate::{Code, Failure, Value};
+use crate::{Code, Failure, Value, WireProfile};
 use std::ffi::c_void;
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -51,6 +51,30 @@ impl Reply {
             Err(e) => Self::failure(e),
         }
     }
+    pub fn state_value(status: u32, value: Value) -> Self {
+        match value.encode_profile(WireProfile::V2) {
+            Ok(bytes) => Self::bytes(status, bytes),
+            Err(error) => Self::bytes(
+                2,
+                error
+                    .to_value()
+                    .encode_profile(WireProfile::V2)
+                    .unwrap_or_else(|_| vec![0x50, 0x56, 2, 0, 0]),
+            ),
+        }
+    }
+    /// # Safety
+    /// Producer buffer and release requirements are the same as consume.
+    pub unsafe fn consume_state(self) -> Result<(u32, Value), Failure> {
+        let (status, value) = unsafe { self.consume_profile(5, WireProfile::V2) }?;
+        if (status == 3 || status == 4) && value != Value::Null {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "pending/cancelled state reply must be Null",
+            ));
+        }
+        Ok((status, value))
+    }
     fn bytes(status: u32, bytes: Vec<u8>) -> Self {
         let mut bytes = bytes.into_boxed_slice();
         let result = Self {
@@ -69,14 +93,18 @@ impl Reply {
     /// Non-null buffers and callbacks must belong to the trusted ABI producer.
     /// A null callback rejects before reading the buffer; it cannot be released.
     pub unsafe fn consume(self) -> Result<(u32, Value), Failure> {
-        unsafe { self.consume_profile(2) }
+        unsafe { self.consume_profile(2, WireProfile::V1) }
     }
     /// # Safety
     /// Same producer-owned pointer and callback requirements as consume.
     pub unsafe fn consume_pending(self) -> Result<(u32, Value), Failure> {
-        unsafe { self.consume_profile(5) }
+        unsafe { self.consume_profile(5, WireProfile::V1) }
     }
-    unsafe fn consume_profile(self, maximum: u32) -> Result<(u32, Value), Failure> {
+    unsafe fn consume_profile(
+        self,
+        maximum: u32,
+        profile: WireProfile,
+    ) -> Result<(u32, Value), Failure> {
         let release = self
             .release
             .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null reply release callback"))?;
@@ -87,7 +115,7 @@ impl Reply {
             }
             .read()
         }
-        .and_then(Value::decode);
+        .and_then(|bytes| Value::decode_profile(bytes, profile));
         unsafe { release(self.ptr, self.len) };
         if self.status > maximum {
             return Err(Failure::new(Code::AbiIncompatible, "unknown reply status"));
@@ -214,4 +242,99 @@ pub struct PendingPluginTable {
     pub stop: unsafe extern "C" fn(*mut c_void) -> Reply,
     pub poll: unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply,
     pub cancel: unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply,
+}
+
+/// ABI 3.0. Owned replies select value v2; no M0 table is extended in place.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StateHostApi {
+    pub header: Header,
+    pub scope: u64,
+    pub ticket: u64,
+    pub permit: u64,
+    pub invoke: Option<unsafe extern "C" fn(u64, Bytes, Bytes, Bytes) -> Reply>,
+    pub state: Option<unsafe extern "C" fn(u64, u32, Bytes) -> Reply>,
+    pub wake: Option<unsafe extern "C" fn(u64, u64) -> u32>,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StatePluginTable {
+    pub header: Header,
+    pub create: Option<unsafe extern "C" fn(*mut *mut c_void) -> Reply>,
+    pub initialize: Option<unsafe extern "C" fn(*mut c_void, *const StateHostApi) -> Reply>,
+    pub invoke:
+        Option<unsafe extern "C" fn(*mut c_void, *const StateHostApi, Bytes, Bytes) -> Reply>,
+    pub stop: Option<unsafe extern "C" fn(*mut c_void) -> Reply>,
+    pub poll: Option<unsafe extern "C" fn(*mut c_void, *const StateHostApi, Bytes) -> Reply>,
+    pub cancel: Option<unsafe extern "C" fn(*mut c_void, *const StateHostApi, Bytes) -> Reply>,
+}
+impl Header {
+    pub fn state(table_bytes: usize) -> Self {
+        Self {
+            major: 3,
+            minor: 0,
+            table_bytes: table_bytes as u32,
+            features: 3,
+        }
+    }
+    fn validate_state(&self, bytes: usize) -> Result<(), Failure> {
+        if self.major != 3
+            || self.minor != 0
+            || self.features != 3
+            || self.table_bytes as usize != bytes
+        {
+            Err(Failure::new(
+                Code::AbiIncompatible,
+                "state table header mismatch",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+impl StatePluginTable {
+    /// # Safety
+    /// Header must point to valid aligned producer memory. A compatible header
+    /// attests the full table is readable. Callbacks belong to trusted code.
+    pub unsafe fn negotiate(header: *const Header) -> Result<Self, Failure> {
+        if header.is_null() {
+            return Err(Failure::new(Code::AbiIncompatible, "null state table"));
+        }
+        let h = unsafe { *header };
+        h.validate_state(std::mem::size_of::<Self>())?;
+        let table = unsafe { *header.cast::<Self>() };
+        if table.create.is_none()
+            || table.initialize.is_none()
+            || table.invoke.is_none()
+            || table.stop.is_none()
+            || table.poll.is_none()
+            || table.cancel.is_none()
+        {
+            return Err(Failure::new(
+                Code::AbiIncompatible,
+                "null state plugin callback",
+            ));
+        }
+        Ok(table)
+    }
+}
+impl StateHostApi {
+    /// # Safety
+    /// Header must be aligned/readable; a compatible header attests a complete
+    /// borrowed host table. Its callbacks and scope expire on native return.
+    pub unsafe fn negotiate(header: *const Header) -> Result<Self, Failure> {
+        if header.is_null() {
+            return Err(Failure::new(Code::AbiIncompatible, "null state host"));
+        }
+        let h = unsafe { *header };
+        h.validate_state(std::mem::size_of::<Self>())?;
+        let host = unsafe { *header.cast::<Self>() };
+        if host.invoke.is_none() || host.state.is_none() || host.wake.is_none() || host.scope == 0 {
+            return Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid state host callback or scope",
+            ));
+        }
+        Ok(host)
+    }
 }
