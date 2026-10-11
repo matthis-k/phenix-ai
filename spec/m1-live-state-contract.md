@@ -26,6 +26,15 @@ ABI 3 host imports name the require slot and canonical operation key. The
 existing binding map stores the slot-qualified import identity. M0 imports use
 an empty slot and retain their original identities.
 
+Many selections carry explicit contiguous zero-based indices. One/Optional use
+index zero and the plain slot name; Many imports use UTF-8 `slot#index` with a
+canonical decimal index. A readonly host import with key
+`phenix.host.slots@1/count` and the plain require slot returns its selected count.
+It requires a declared slot and a live scope, and exposes no effects or grants.
+Selected revisions of a Many slot must have identical operation schemas. The
+indices, selected provide slots and definition-package digests participate in
+generation identity. There is no provider guessing or unstable enumeration.
+
 Property `p` on plugin `owner` contributes contract
 `owner.property.p@1`, resource `owner.property.p`, and only the declared
 `get`, `set`, `watch` operations. These identities must satisfy existing limits.
