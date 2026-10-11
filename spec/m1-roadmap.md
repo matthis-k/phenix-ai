@@ -17,7 +17,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S0 | M1 RFC, this roadmap and M0-to-M1 links | #771 head | Consistent contract and file-level scope | Spec authored; review pending |
 | S1a | Portable schema/ref identities and explicit v2 wire profile | S0 | Independent Python/Rust vectors and M0 regression gates | PROVEN at `2682be5f` in CI 38125329024 |
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
-| S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b | External native state and security fixtures | Not started |
+| S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | TESTED locally; full CI pending; `m1-live-state-matrix.md` |
 | S3 | Typed Rust value SDK and property/contract proc macros | S2 | External SDK-only annotated plugin | Not started |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3 | Independent plugin contributions compile deterministically | Not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Not started |
@@ -132,6 +132,18 @@ owner incarnation issuance and subscription/ticket ownership before mechanisms.
 | `examples/reactive-client/` (new) | Independent authorized/unauthorized accessor and subscriber |
 
 Gate: two refs clone the same identity; old snapshots remain unchanged; racing CAS commits produce one winner; atomic read+subscribe has no lost update; batch publish is all-or-nothing; stale owner and forged ref reject; denying write yields zero provider effects; abandoned subscriptions release leases. Run M0 tests unchanged.
+
+### S2 implementation gate
+
+The frozen live profile is commit `80a40cc86f41d3e3c464685699251e861e4f13e8`.
+The consistent epoch snapshot import was frozen separately at
+`0690c37d578782fe6b865235132f6bb29938e797` before its mechanism.
+`impl/m1-live-state` is based on the accepted A0 head so the basic loop gates stay
+in every regression run; its functional prerequisite remains accepted S1b.
+The [S2 matrix](m1-live-state-matrix.md) owns file-level evidence and remaining
+acceptance. Native ABI 3 callbacks use the same loader, operation/resource
+policy check, resolver, generation manager and pending tickets as M0. The
+[Basic parity checklist](basic-agent-parity.md) records the original group target.
 
 ## 4. S3: Rust SDK, macros and ergonomic plugin state
 

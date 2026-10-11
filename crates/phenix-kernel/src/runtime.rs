@@ -3,7 +3,7 @@ use crate::{
     resolve::{Prepared, Selection},
 };
 use phenix_contract::{
-    abi::{Bytes, HostApi, Reply},
+    abi::{Bytes, Header, HostApi, Reply, StateHostApi},
     Authority, Code, Failure, ScopedRequest, Value, RESOURCE_CONTEXT, SCOPED_IMPORT,
 };
 use std::{
@@ -19,11 +19,11 @@ use std::{
 };
 static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
-struct ScopeRecord {
+pub(super) struct ScopeRecord {
     thread: ThreadId,
-    kernel: usize,
-    root: u64,
-    caller: String,
+    pub(super) kernel: usize,
+    pub(super) root: u64,
+    pub(super) caller: String,
 }
 fn scopes() -> &'static Mutex<BTreeMap<u64, ScopeRecord>> {
     static SCOPES: OnceLock<Mutex<BTreeMap<u64, ScopeRecord>>> = OnceLock::new();
@@ -31,11 +31,11 @@ fn scopes() -> &'static Mutex<BTreeMap<u64, ScopeRecord>> {
 }
 pub(super) struct Frame {
     pub(super) ticket: Option<u64>,
-    revoked: bool,
+    pub(super) revoked: bool,
     scope: u64,
-    provider: String,
-    authority: Authority,
-    resource: Option<String>,
+    pub(super) provider: String,
+    pub(super) authority: Authority,
+    pub(super) resource: Option<String>,
 }
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,13 +81,13 @@ pub(super) struct State {
 #[derive(Clone, Copy)]
 pub(super) enum Caller<'a> {
     Root,
-    Plugin(&'a str),
+    Plugin(&'a str, &'a str),
 }
 impl Caller<'_> {
     fn name(&self) -> &str {
         match self {
             Self::Root => "root",
-            Self::Plugin(id) => id,
+            Self::Plugin(id, _) => id,
         }
     }
 }
@@ -96,6 +96,8 @@ pub struct Kernel {
     pub(super) images: RefCell<BTreeMap<String, Native>>,
     thread: ThreadId,
     pub(super) state: RefCell<State>,
+    pub(super) cells: RefCell<super::value_state::Cells>,
+    pub(super) initializing: RefCell<Option<String>>,
     _serial: PhantomData<Rc<()>>,
 }
 pub(super) enum KernelLease<'a> {
@@ -126,10 +128,21 @@ pub enum Outcome {
 }
 impl Prepared {
     pub fn load(self) -> Result<Kernel, Failure> {
+        let identity = self.generation_identity("standalone")?;
+        self.load_generation(identity.as_str())
+    }
+    pub(crate) fn load_generation(self, identity: &str) -> Result<Kernel, Failure> {
         // Recheck all artifacts before the first constructor can run. Native::load
         // also checks the exact artifact immediately before loading its image.
         for p in self.packages.values() {
             p.recheck()?;
+        }
+        let digest = super::value_state::digest_bytes(identity);
+        let mut cells = super::value_state::Cells::new(&digest)?;
+        for (id, p) in &self.packages {
+            if p.metadata().is_some() {
+                cells.register_owner(id)?;
+            }
         }
         let mut images = BTreeMap::new();
         for id in &self.startup_order {
@@ -147,16 +160,47 @@ impl Prepared {
                 }
             }
         }
-        Ok(Kernel {
+        let kernel = Kernel {
             prepared: self,
             images: RefCell::new(images),
             thread: thread::current().id(),
             state: RefCell::new(State::default()),
+            cells: RefCell::new(cells),
+            initializing: RefCell::new(None),
             _serial: PhantomData,
-        })
+        };
+        for id in &kernel.prepared.startup_order {
+            let Some(metadata) = kernel.prepared.packages[id].metadata() else {
+                continue;
+            };
+            *kernel.initializing.borrow_mut() = Some(id.clone());
+            let guard = CallGuard::new(&kernel, 0, id, Authority::default(), None, false)?;
+            let initialized = kernel.images.borrow()[id].initialize(guard.scope);
+            drop(guard);
+            *kernel.initializing.borrow_mut() = None;
+            initialized?;
+            if !kernel
+                .cells
+                .borrow()
+                .initialized(id, metadata.properties.len())
+            {
+                return Err(Failure::new(
+                    Code::PluginFailed,
+                    "initialization did not create all declared properties",
+                ));
+            }
+        }
+        Ok(kernel)
     }
 }
 impl Kernel {
+    pub(super) fn profile(&self, provider: &str) -> phenix_contract::WireProfile {
+        if self.prepared.packages[provider].descriptor().abi_major == 3 {
+            phenix_contract::WireProfile::V2
+        } else {
+            phenix_contract::WireProfile::V1
+        }
+    }
     pub fn admit_default_root(&self) -> Result<Root<'_>, Failure> {
         self.admit_root(self.prepared.entry.clone())
     }
@@ -331,20 +375,24 @@ impl Kernel {
             .ok_or_else(|| {
                 Failure::new(Code::MissingBinding, "provider absent from frozen snapshot")
             })?;
-        if let Caller::Plugin(plugin) = caller {
-            let declared = self
-                .prepared
-                .packages
-                .get(plugin)
-                .is_some_and(|p| p.descriptor().imports.iter().any(|i| i.operation == key));
+        if let Caller::Plugin(plugin, import_slot) = caller {
+            let declared = self.prepared.packages.get(plugin).is_some_and(|p| {
+                p.descriptor()
+                    .imports
+                    .iter()
+                    .any(|i| i.operation == key && i.slot.as_deref().unwrap_or("") == import_slot)
+            });
             if !declared
-                || self.prepared.bindings.get(&(plugin.into(), key.clone()))
-                    != Some(&selection.provider)
+                || self.prepared.bindings.get(&(
+                    plugin.into(),
+                    phenix_contract::import_identity(import_slot, &key),
+                )) != Some(&selection.provider)
             {
                 return self.fail(Code::Denied, "undeclared import or unselected provider");
             }
         }
-        let pending = package.descriptor().execution == "pending";
+        let pending = package.descriptor().execution == "pending"
+            || (package.descriptor().abi_major == 3 && pending_allowed);
         if pending && !pending_allowed {
             return self.fail(
                 Code::AbiIncompatible,
@@ -367,63 +415,17 @@ impl Kernel {
             .descriptor()
             .contract(&key)
             .ok_or_else(|| Failure::new(Code::SchemaRejected, "operation schema absent"))?;
-        let request = Value::decode(input)?;
+        let request = Value::decode_profile(input, self.profile(&selection.provider))?;
         if !contract.request.accepts(&request) {
             return self.fail(
                 Code::SchemaRejected,
                 "request does not match declared schema",
             );
         }
-        let state = self.state.borrow();
-        let mut authority = state
-            .stack
-            .last()
-            .map_or_else(|| self.prepared.authority.clone(), |f| f.authority.clone());
-        let inherited_resource = state
-            .stack
-            .last()
-            .map_or_else(|| self.prepared.resource.clone(), |f| f.resource.clone());
-        let resource = restriction
-            .and_then(|r| r.resource.clone())
-            .or_else(|| inherited_resource.clone());
-        let switched = inherited_resource
-            .as_ref()
-            .is_some_and(|id| resource.as_ref() != Some(id));
-        if let Some(restriction) = restriction {
-            authority = authority.intersect(&restriction.authority);
-        }
-        let grant = self
-            .prepared
-            .grants
-            .get(&(caller.name().to_owned(), key.clone()));
-        let operation_allowed = grant.is_some()
-            && authority.operations.contains(&key)
-            && package.descriptor().permits(&key)
-            && state.stack.iter().all(|f| {
-                self.prepared.packages[&f.provider]
-                    .descriptor()
-                    .permits(&key)
-            });
-        authority
-            .operations
-            .retain(|op| package.descriptor().permits(op));
-        if let Some(resources) = grant {
-            authority.resources = authority
-                .resources
-                .intersection(resources)
-                .cloned()
-                .collect();
-        }
-        let resource_allowed = resource
-            .as_ref()
-            .is_none_or(|id| authority.resources.contains(id));
-        drop(state);
-        if !operation_allowed || !resource_allowed || switched {
-            return self.fail(
-                Code::Denied,
-                format!("{} has no effective grant for {key}", caller.name()),
-            );
-        }
+        let ScopedRequest {
+            authority,
+            resource,
+        } = self.effect_scope(caller.name(), &selection.provider, &key, restriction)?;
         if self
             .state
             .borrow()
@@ -441,6 +443,9 @@ impl Kernel {
             resource.clone(),
             false,
         )?;
+        if let Some(outcome) = self.property_dispatch(root, caller.name(), selection, &request)? {
+            return Ok(super::pending::Call::Ready(outcome));
+        }
         if pending {
             return self.begin_pending(root, selection, input, &guard, authority, resource);
         }
@@ -464,6 +469,70 @@ impl Kernel {
             ),
         }
     }
+    /// The single operation/resource authority check for all runtime effects.
+    pub(super) fn effect_scope(
+        &self,
+        caller: &str,
+        provider: &str,
+        key: &str,
+        restriction: Option<&ScopedRequest>,
+    ) -> Result<ScopedRequest, Failure> {
+        let package = &self.prepared.packages[provider];
+        let state = self.state.borrow();
+        let mut authority = state
+            .stack
+            .last()
+            .map_or_else(|| self.prepared.authority.clone(), |f| f.authority.clone());
+        let inherited_resource = state
+            .stack
+            .last()
+            .map_or_else(|| self.prepared.resource.clone(), |f| f.resource.clone());
+        let resource = restriction
+            .and_then(|r| r.resource.clone())
+            .or_else(|| inherited_resource.clone());
+        let switched = inherited_resource
+            .as_ref()
+            .is_some_and(|id| resource.as_ref() != Some(id));
+        if let Some(restriction) = restriction {
+            authority = authority.intersect(&restriction.authority);
+        }
+        let grant = self
+            .prepared
+            .grants
+            .get(&(caller.to_owned(), key.to_owned()));
+        let operation_allowed = grant.is_some()
+            && authority.operations.contains(key)
+            && package.descriptor().permits(key)
+            && state.stack.iter().all(|f| {
+                self.prepared.packages[&f.provider]
+                    .descriptor()
+                    .permits(key)
+            });
+        authority
+            .operations
+            .retain(|op| package.descriptor().permits(op));
+        if let Some(resources) = grant {
+            authority.resources = authority
+                .resources
+                .intersection(resources)
+                .cloned()
+                .collect();
+        }
+        let resource_allowed = resource
+            .as_ref()
+            .is_none_or(|id| authority.resources.contains(id));
+        drop(state);
+        if !operation_allowed || !resource_allowed || switched {
+            return self.fail(
+                Code::Denied,
+                format!("{} has no effective grant for {key}", caller),
+            );
+        }
+        Ok(ScopedRequest {
+            authority,
+            resource,
+        })
+    }
     pub fn inspect(&self) -> serde_json::Value {
         let mut report = self.prepared.inspect();
         let state = self.state.borrow();
@@ -478,6 +547,9 @@ impl Kernel {
             report["lifecycle"] = serde_json::json!({"startup_order":self.prepared.startup_order,"stopped":state.stopped,"stop_failures":state.stop_failures});
         }
         drop(state);
+        if !self.prepared.state_identity.is_empty() {
+            report["live_state"] = self.cells.borrow().inspect();
+        }
         if !self.state.borrow().tickets.is_empty()
             || self
                 .prepared
@@ -514,6 +586,7 @@ impl Kernel {
             return Ok(());
         }
         self.state.borrow_mut().stopped = true;
+        self.cells.borrow_mut().clear();
         let mut first_failure = None;
         for id in self.prepared.startup_order.iter().rev() {
             if let Some(mut native) = self.images.borrow_mut().remove(id) {
@@ -571,7 +644,7 @@ impl Root<'_> {
         self.generation.as_deref()
     }
     pub fn invoke(&self, request: &Value) -> Result<Outcome, Failure> {
-        match request.encode() {
+        match request.encode_profile(self.kernel.profile(&self.entry.provider)) {
             Ok(bytes) => self.invoke_bytes(&bytes),
             Err(failure) => {
                 self.kernel.observe_failure(
@@ -803,7 +876,7 @@ unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) ->
                 Ok(
                     match kernel.dispatch(
                         record.root,
-                        Caller::Plugin(&record.caller),
+                        Caller::Plugin(&record.caller, ""),
                         &selection,
                         input,
                         restriction,
@@ -833,6 +906,45 @@ unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) ->
         }
     })
 }
+pub(super) fn authenticate_scope(scope: u64) -> Result<ScopeRecord, Failure> {
+    let record = scopes()
+        .lock()
+        .map_err(|_| Failure::new(Code::InfrastructureFailure, "scope registry poisoned"))?
+        .get(&scope)
+        .cloned()
+        .ok_or_else(|| Failure::new(Code::ScopeRejected, "expired or unknown scope"))?;
+    if record.thread != thread::current().id() {
+        return Err(Failure::new(
+            Code::ScopeRejected,
+            "host callback on an unregistered thread",
+        ));
+    }
+    let kernel = unsafe { &*(record.kernel as *const Kernel) };
+    let state = kernel.state.borrow();
+    if !state
+        .stack
+        .last()
+        .is_some_and(|f| f.scope == scope && !f.revoked)
+    {
+        return Err(Failure::new(
+            Code::ScopeRejected,
+            "scope is not the current live call",
+        ));
+    }
+    Ok(record)
+}
+pub(super) fn state_host(scope: u64, ticket: u64, permit: u64) -> StateHostApi {
+    StateHostApi {
+        header: Header::state(std::mem::size_of::<StateHostApi>()),
+        scope,
+        ticket,
+        permit,
+        invoke: Some(super::state_effects::invoke),
+        state: Some(super::state_effects::state),
+        wake: Some(super::pending::wake),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -27,7 +27,7 @@ fn permits() -> &'static Mutex<BTreeMap<u64, Permit>> {
     static REGISTRY: OnceLock<Mutex<BTreeMap<u64, Permit>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-unsafe extern "C" fn wake(permit: u64, ticket: u64) -> u32 {
+pub(super) unsafe extern "C" fn wake(permit: u64, ticket: u64) -> u32 {
     let Ok(registry) = permits().lock() else {
         return 1;
     };
@@ -247,6 +247,7 @@ impl Kernel {
             drop(state);
         }
         if failed {
+            self.cells.borrow_mut().release_ticket(id);
             self.cancel_children(id);
         }
         self.refresh_quiescence();
@@ -373,12 +374,14 @@ impl Kernel {
         Ok(())
     }
     fn release_tree(&self, id: u64) {
+        self.cells.borrow_mut().release_ticket(id);
         for child in self.children(id) {
             self.release_tree(child);
         }
         self.state.borrow_mut().tickets.remove(&id);
     }
     pub(super) fn abandon_root(&self, root: u64) {
+        self.cells.borrow_mut().release_root(root);
         let ids: Vec<_> = self
             .state
             .borrow()
@@ -451,7 +454,7 @@ impl Root<'_> {
             self.id,
             super::runtime::Caller::Root,
             &self.entry,
-            &request.encode()?,
+            &request.encode_profile(self.kernel.profile(&self.entry.provider))?,
             Some(&self.scope),
             true,
         );
@@ -569,7 +572,7 @@ impl Kernel {
                 Ok(
                     match self.dispatch_call(
                         root,
-                        super::runtime::Caller::Plugin(caller),
+                        super::runtime::Caller::Plugin(caller, ""),
                         &selection,
                         &input,
                         scope.as_ref(),

@@ -1,7 +1,10 @@
 use libloading::Library;
 use phenix_artifact::VerifiedPackage;
 use phenix_contract::{
-    abi::{Bytes, Header, HostApi, PendingHostApi, PendingPluginTable, PluginTable, Reply},
+    abi::{
+        Bytes, Header, HostApi, PendingHostApi, PendingPluginTable, PluginTable, Reply,
+        StatePluginTable,
+    },
     Code, Failure, Value,
 };
 use std::ffi::c_void;
@@ -26,6 +29,7 @@ struct RawPendingTable {
 enum Table {
     Sync(PluginTable),
     Pending(PendingPluginTable),
+    State(StatePluginTable),
 }
 impl Table {
     unsafe fn create(&self, out: *mut *mut c_void) -> Reply {
@@ -33,6 +37,7 @@ impl Table {
             match self {
                 Self::Sync(t) => (t.create)(out),
                 Self::Pending(t) => (t.create)(out),
+                Self::State(t) => (t.create.unwrap())(out),
             }
         }
     }
@@ -41,6 +46,7 @@ impl Table {
             match self {
                 Self::Sync(t) => (t.stop)(instance),
                 Self::Pending(t) => (t.stop)(instance),
+                Self::State(t) => (t.stop.unwrap())(instance),
             }
         }
     }
@@ -59,7 +65,9 @@ impl Native {
             .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
         let entry = unsafe {
             image.get::<unsafe extern "C" fn() -> *const Header>(
-                if package.descriptor().abi_major == 2 {
+                if package.descriptor().abi_major == 3 {
+                    b"phenix_native_v3\0"
+                } else if package.descriptor().abi_major == 2 {
                     b"phenix_native_v2\0"
                 } else {
                     b"phenix_native_v1\0"
@@ -79,7 +87,9 @@ impl Native {
             || header.minor != 0
             || header.features != package.descriptor().features
             || header.table_bytes
-                < (if header.major == 2 {
+                < (if header.major == 3 {
+                    std::mem::size_of::<StatePluginTable>()
+                } else if header.major == 2 {
                     std::mem::size_of::<RawPendingTable>()
                 } else {
                     std::mem::size_of::<RawTable>()
@@ -90,7 +100,9 @@ impl Native {
                 "invalid loaded ABI header",
             ));
         }
-        let table = if header.major == 2 {
+        let table = if header.major == 3 {
+            Table::State(unsafe { StatePluginTable::negotiate(ptr) }?)
+        } else if header.major == 2 {
             let raw = unsafe { &*ptr.cast::<RawPendingTable>() };
             let missing = || Failure::new(Code::AbiIncompatible, "null pending table entry");
             Table::Pending(PendingPluginTable {
@@ -117,11 +129,25 @@ impl Native {
             })
         };
         let mut instance = std::ptr::null_mut();
-        let result = unsafe { table.create(&mut instance).consume() };
+        let result = unsafe {
+            let reply = table.create(&mut instance);
+            if matches!(table, Table::State(_)) {
+                reply.consume_state()
+            } else {
+                reply.consume()
+            }
+        };
         let successful = matches!(&result, Ok((0, Value::Null))) && !instance.is_null();
         if !successful {
             if !instance.is_null() {
-                let _ = unsafe { table.stop(instance).consume() };
+                let _ = unsafe {
+                    let reply = table.stop(instance);
+                    if matches!(table, Table::State(_)) {
+                        reply.consume_state()
+                    } else {
+                        reply.consume()
+                    }
+                };
             }
             return Err(match result {
                 Ok((2, value)) => Failure::from_value(value)?,
@@ -135,6 +161,20 @@ impl Native {
             _image: image,
         })
     }
+    pub(crate) fn initialize(&self, scope: u64) -> Result<(), Failure> {
+        let Table::State(table) = self.table else {
+            return Ok(());
+        };
+        let host = super::runtime::state_host(scope, 0, 0);
+        match unsafe { (table.initialize.unwrap())(self.instance, &host).consume_state() }? {
+            (0, Value::Null) => Ok(()),
+            (2, v) => Err(Failure::from_value(v)?),
+            _ => Err(Failure::new(
+                Code::PluginFailed,
+                "invalid initialization reply",
+            )),
+        }
+    }
     pub(crate) fn invoke(
         &self,
         host: &HostApi,
@@ -143,6 +183,18 @@ impl Native {
     ) -> Result<(u32, Value), Failure> {
         if self.instance.is_null() {
             return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
+        }
+        if let Table::State(table) = self.table {
+            let api = super::runtime::state_host(host.scope, 0, 0);
+            return unsafe {
+                (table.invoke.unwrap())(
+                    self.instance,
+                    &api,
+                    Bytes::new(key.as_bytes()),
+                    Bytes::new(input),
+                )
+                .consume_state()
+            };
         }
         let Table::Sync(table) = self.table else {
             return Err(Failure::new(
@@ -167,6 +219,20 @@ impl Native {
         input: Option<&[u8]>,
         cancel: bool,
     ) -> Result<(u32, Value), Failure> {
+        if let Table::State(table) = self.table {
+            let api = super::runtime::state_host(host.host.scope, host.ticket, host.permit);
+            let key = Bytes::new(key.as_bytes());
+            return unsafe {
+                let reply = match input {
+                    Some(input) => {
+                        (table.invoke.unwrap())(self.instance, &api, key, Bytes::new(input))
+                    }
+                    None if cancel => (table.cancel.unwrap())(self.instance, &api, key),
+                    None => (table.poll.unwrap())(self.instance, &api, key),
+                };
+                reply.consume_state()
+            };
+        }
         let Table::Pending(table) = self.table else {
             return Err(Failure::new(
                 Code::AbiIncompatible,
@@ -191,7 +257,14 @@ impl Native {
         if instance.is_null() {
             return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
         }
-        match unsafe { self.table.stop(instance).consume() }? {
+        match unsafe {
+            let reply = self.table.stop(instance);
+            if matches!(self.table, Table::State(_)) {
+                reply.consume_state()
+            } else {
+                reply.consume()
+            }
+        }? {
             (0, Value::Null) => Ok(()),
             (2, value) => Err(Failure::from_value(value)?),
             _ => Err(Failure::new(Code::AbiIncompatible, "invalid stop result")),

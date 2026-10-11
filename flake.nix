@@ -83,7 +83,8 @@
         import json, sys
         from pathlib import Path
         out = Path(sys.argv[1])
-        record = dict(format="phenix.package.v1", artifact="lib/plugin.so", descriptor="descriptor.bin", target="x86_64-unknown-linux-gnu", **json.load(open("digests.json")))
+        profile = "phenix.native-package.v2" if (out / "descriptor.bin").read_bytes().startswith(b"PV\x02\x00") else "phenix.package.v1"
+        record = dict(format=profile, artifact="lib/plugin.so", descriptor="descriptor.bin", target="x86_64-unknown-linux-gnu", **json.load(open("digests.json")))
         (out / "package.json").write_text(json.dumps(record, sort_keys=True))
       '';
       plugin =
@@ -125,6 +126,20 @@
       restricted = plugin "example-scoped-client";
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
+      stateProvider = plugin "example-reactive-provider";
+      stateClient = plugin "example-reactive-client";
+      stateNegative = feature: (plugin "example-reactive-provider").overrideAttrs (old: {
+        pname = "example-reactive-provider-${feature}";
+        cargoBuildFlags = old.cargoBuildFlags ++ [ "--features" feature ];
+      });
+      stateCheck = pkgs.runCommand "phenix-m1-live-state" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        ${conformanceBinary}/bin/phenix-m1-state ${stateProvider} ${stateClient} ${stateNegative "alternative"} ${stateNegative "bad-init"} ${stateNegative "bad-schema"} ${stateNegative "bad-table"} $out
+        python ${./tests/m1-live-state-product.py} ${kernel}/bin/phenix-kernel $out "$TMPDIR/metadata" --metadata-only
+        cp "$TMPDIR/metadata/metadata.json" $out/metadata.json
+      '';
+      stateProduct = pkgs.runCommand "phenix-m1-live-state-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python ${./tests/m1-live-state-product.py} ${kernel}/bin/phenix-kernel ${stateCheck} $out
+      '';
       agentPlugin = plugin "example-agent";
       agentModel = plugin "example-agent-model";
       agentAlternate = plugin "example-agent-alternate";
@@ -423,6 +438,8 @@
         phenix-m0-release = release;
         phenix-m0-deployment = deployment;
         phenix-sdk = sdk;
+        phenix-m1-live-state-evidence = stateCheck;
+        phenix-m1-live-state-product = stateProduct;
         phenix-a0-agent-evidence = agentCheck;
         phenix-a0-agent-product = agentProduct;
         phenix-a0-demo = pkgs.writeShellApplication {
@@ -440,6 +457,8 @@
         };
       };
       checks.${system} = {
+        m1-live-state = stateCheck;
+        m1-live-state-product = stateProduct;
         a0-agent = agentCheck;
         a0-agent-product = agentProduct;
         m1-reference-wire = referenceWireCheck;

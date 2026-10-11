@@ -181,7 +181,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-reactive-client"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-reactive-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-reactive-provider"
 version = "0.1.0"
 dependencies = [
  "phenix-sdk",

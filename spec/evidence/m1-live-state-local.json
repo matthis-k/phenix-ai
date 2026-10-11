@@ -1,0 +1,1453 @@
+{
+  "format": "phenix.m1-live-state-local.v1",
+  "status": "TESTED locally; exact-commit Nix CI pending",
+  "source_sha256": {
+    "crates/phenix-conformance/src/bin/phenix-m1-state.rs": "050d4d0893aad3ad5c6a19fcfb9caacee5bc017c48bc21f30159b2011e41f7ad",
+    "crates/phenix-kernel/src/state_effects.rs": "43ceb538e86dd2e8dc35b90554cf5386c6e60ed144858d781e4d759e046869f1",
+    "crates/phenix-kernel/src/state_resolve.rs": "4a33e47c4be74ed5e25528fc2ef54bd6c8b01c0a8c85891bece0aac5d2df4355",
+    "crates/phenix-kernel/src/value_state.rs": "ff63e82065f8418c443f7d9a353beeb14a531f65b441c69a7b2eef3ee11242dc",
+    "examples/reactive-client/Cargo.toml": "28bfb50b914311f6889051ac0fd229a46e3efa8db9fa8e3df56f2aa10da2f146",
+    "examples/reactive-client/build.rs": "313975705d1f862832b9eeffda380628c7270590c01f3282d06d1650da6afe76",
+    "examples/reactive-client/src/lib.rs": "b5b603fc89657b74be19ebd62d1094e7e1dbb4746fdc2721821844aca4079716",
+    "examples/reactive-provider/Cargo.toml": "1fa8e8ddac9ad6564b36770b8eb9783ed1f3432e073aacee1f4ba62c03fc6c9d",
+    "examples/reactive-provider/build.rs": "4144845f8b463df07cd79e8fa62ff5dc714eb89538a4765f1f0f55ca9d7d7bb1",
+    "examples/reactive-provider/src/lib.rs": "ed83bb4564cfdf04569de3a630d0886239f82d0bb0f9867cd4a4e19be64b65e0",
+    "spec/m1-epoch-snapshot-contract.md": "cca046798de5a9804ce5e7338cc6b5ebde5d98b9a82545bcddfa8016cfbef182",
+    "spec/m1-live-state-matrix.md": "83ccddc26a221f75ecd874a6645d30e8d15438e2ed3ae2a07c27f1b2af86c01e",
+    "tests/m1-live-state-product.py": "a6df953022731bb3bc01f6cf2d1fa1d803c09a82d5edfc94fc1458a28213e476",
+    ".github/workflows/minimal-kernel.yml": "9e2f23ab854a35386fcb5dc2741072875bb3998aeed60f732085249d442f4057",
+    "crates/phenix-artifact/src/lib.rs": "23dc9e62c32207efa875ab154b5e04155be5da228841f1b3b8f97848dd062df2",
+    "crates/phenix-contract/src/descriptor/mod.rs": "2270c768027f6d2fcb3906e01dc9913d49e76d75fccd735e7186c4e5c5741342",
+    "crates/phenix-kernel/src/bin/phenix-kernel.rs": "251b6b5c4d9c7171b7b74f16a2989541bde31de9545f51046d24d30620017482",
+    "crates/phenix-kernel/src/generation.rs": "14139cff604b2757ca4ef26f868b8df848af6b5827cd14e41b5417bd24d40e8d",
+    "crates/phenix-kernel/src/lib.rs": "0d56baca161fad84887cfc0d8d73c1462ffc78e4a43cdff8c714fafe4b4793ab",
+    "crates/phenix-kernel/src/native.rs": "4a5c18cbdde5889f3f111f641d0d0e1769247b2c910d0f6ac90aeeee53590c5c",
+    "crates/phenix-kernel/src/pending.rs": "fdff9b9fa4451ef0c872050b32462052d769bbca4d8d35747f79b3437b7d9c9c",
+    "crates/phenix-kernel/src/resolve.rs": "3c0c262c654450e0fd576189591633cd0600bab9b7e3e796c15b8352f27ebbe4",
+    "crates/phenix-kernel/src/runtime.rs": "39f47da67afb4ae141b33a6198cb60115f4c1a5b7598f3000f52ebabbd90b4de",
+    "examples/Cargo.lock": "0fc400a9def65e0a2ec0210db03e619dc076d38be0b8d0a4e27a1a649f9b7b1c",
+    "examples/Cargo.toml": "41bd40abfff92fd22edc1eacdedac9276949410a49c0eed87caf2098d547b1d2",
+    "flake.nix": "fca315195260537191783afb3ac409074e788a5be85678da823f54997d7d4b03",
+    "spec/m1-live-state-contract.md": "6ae7849f10210a0f5cb539fab13890d77b27c0a4d26aff12c17ebd5905b9506b",
+    "spec/m1-roadmap.md": "8aa7a8a91e93abfc0227b64ff6603983a48bbc01c9289fb30ecb545a98165f53"
+  },
+  "reports": {
+    "debug": {
+      "after_stop": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 50,
+        "denied_operations": 2,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "live_state": {
+          "cells": 0,
+          "epoch": 4,
+          "revisions": [],
+          "subscriptions": 0
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "74cba234d04ff036322549d6b23959751f82029c1b2d8df4936dd7c16ffad963",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "38c7289a3df82133653f1c0258991ca181c6fed76bba4e3bf14b548c64363b5d",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "74e26287628f7ccc7a05ac655e4652ba6dd127a0b9c26aaf68003e3e165fd8af",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 24,
+          "last_root_id": 24
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      },
+      "before_stop": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 50,
+        "denied_operations": 2,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "live_state": {
+          "cells": 4,
+          "epoch": 4,
+          "revisions": [
+            {
+              "epoch": 0,
+              "owner": "test.state-alternative",
+              "property": "notes",
+              "revision": 0
+            },
+            {
+              "epoch": 4,
+              "owner": "test.state-provider",
+              "property": "counter",
+              "revision": 4
+            },
+            {
+              "epoch": 4,
+              "owner": "test.state-provider",
+              "property": "notes",
+              "revision": 1
+            },
+            {
+              "epoch": 0,
+              "owner": "test.state-alternative",
+              "property": "counter",
+              "revision": 0
+            }
+          ],
+          "subscriptions": 0
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "74cba234d04ff036322549d6b23959751f82029c1b2d8df4936dd7c16ffad963",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "38c7289a3df82133653f1c0258991ca181c6fed76bba4e3bf14b548c64363b5d",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "74e26287628f7ccc7a05ac655e4652ba6dd127a0b9c26aaf68003e3e165fd8af",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 24,
+          "last_root_id": 24
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      },
+      "cases": [
+        {
+          "case": "identity-snapshots-cas",
+          "passed": true
+        },
+        {
+          "case": "watch-bootstrap-coalescing",
+          "passed": true
+        },
+        {
+          "case": "batch-one-epoch",
+          "passed": true
+        },
+        {
+          "case": "consistent-epoch-snapshot",
+          "passed": true
+        },
+        {
+          "case": "read-subscribe-gap",
+          "passed": true
+        },
+        {
+          "case": "batch-conflict",
+          "passed": true
+        },
+        {
+          "case": "value-schema",
+          "passed": true
+        },
+        {
+          "case": "owner",
+          "passed": true
+        },
+        {
+          "case": "cell",
+          "passed": true
+        },
+        {
+          "case": "generation",
+          "passed": true
+        },
+        {
+          "case": "ref-schema",
+          "passed": true
+        },
+        {
+          "case": "indexed-many-slot",
+          "passed": true
+        },
+        {
+          "case": "selected-ref-grants-no-authority",
+          "passed": true
+        },
+        {
+          "case": "root-cursor-cleanup",
+          "passed": true
+        },
+        {
+          "case": "thread",
+          "passed": true
+        },
+        {
+          "case": "expired",
+          "passed": true
+        },
+        {
+          "case": "abi3-pending",
+          "passed": true
+        },
+        {
+          "case": "cross-process-incarnation-ref-rejection",
+          "passed": true
+        },
+        {
+          "case": "abi3-cancel",
+          "passed": true
+        },
+        {
+          "case": "denied-write-zero-effects",
+          "passed": true
+        },
+        {
+          "case": "root-intersection-zero-effects",
+          "passed": true
+        },
+        {
+          "case": "resource-grant-required",
+          "passed": true
+        },
+        {
+          "case": "incarnation-ref-rejection",
+          "passed": true
+        },
+        {
+          "case": "resource-context-retained-across-batch",
+          "passed": true
+        },
+        {
+          "case": "snapshot-all-get-grants",
+          "passed": true
+        },
+        {
+          "case": "generation-pin-and-retirement",
+          "passed": true
+        }
+      ],
+      "format": "phenix.m1-state-evidence.v1",
+      "identity": "95ef946de4a2023759c7183be1994e5a6a03a2cf0044c4878672d98078072cb0",
+      "negative_cases": [
+        "missing-slot",
+        "wrong-export",
+        "noncontiguous-index",
+        "duplicate-slot",
+        "missing-property-init",
+        "invalid-property-init",
+        "short-state-table",
+        "conflicting-definitions",
+        "duplicate-provider-selection",
+        "snapshot-order"
+      ],
+      "offline": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 0,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "plugins": [
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "74cba234d04ff036322549d6b23959751f82029c1b2d8df4936dd7c16ffad963",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "38c7289a3df82133653f1c0258991ca181c6fed76bba4e3bf14b548c64363b5d",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "74e26287628f7ccc7a05ac655e4652ba6dd127a0b9c26aaf68003e3e165fd8af",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 0,
+          "last_root_id": null
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      }
+    },
+    "release": {
+      "after_stop": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 50,
+        "denied_operations": 2,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "live_state": {
+          "cells": 0,
+          "epoch": 4,
+          "revisions": [],
+          "subscriptions": 0
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "455a1704322dca51a4ae2470b1d2523dc4cd0163854163568a69140ace9a528a",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "ff5793dbdd9b3f59ccafecd7e406cd02989b3bd0bd6279b97d829910806b462b",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "eead2ca45015ef420a4d2a10b4dd5cbaa8631716d863fb0cb31193fa796a54aa",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 24,
+          "last_root_id": 24
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      },
+      "before_stop": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 50,
+        "denied_operations": 2,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "live_state": {
+          "cells": 4,
+          "epoch": 4,
+          "revisions": [
+            {
+              "epoch": 0,
+              "owner": "test.state-alternative",
+              "property": "counter",
+              "revision": 0
+            },
+            {
+              "epoch": 4,
+              "owner": "test.state-provider",
+              "property": "notes",
+              "revision": 1
+            },
+            {
+              "epoch": 0,
+              "owner": "test.state-alternative",
+              "property": "notes",
+              "revision": 0
+            },
+            {
+              "epoch": 4,
+              "owner": "test.state-provider",
+              "property": "counter",
+              "revision": 4
+            }
+          ],
+          "subscriptions": 0
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "455a1704322dca51a4ae2470b1d2523dc4cd0163854163568a69140ace9a528a",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "ff5793dbdd9b3f59ccafecd7e406cd02989b3bd0bd6279b97d829910806b462b",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "eead2ca45015ef420a4d2a10b4dd5cbaa8631716d863fb0cb31193fa796a54aa",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 24,
+          "last_root_id": 24
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      },
+      "cases": [
+        {
+          "case": "identity-snapshots-cas",
+          "passed": true
+        },
+        {
+          "case": "watch-bootstrap-coalescing",
+          "passed": true
+        },
+        {
+          "case": "batch-one-epoch",
+          "passed": true
+        },
+        {
+          "case": "consistent-epoch-snapshot",
+          "passed": true
+        },
+        {
+          "case": "read-subscribe-gap",
+          "passed": true
+        },
+        {
+          "case": "batch-conflict",
+          "passed": true
+        },
+        {
+          "case": "value-schema",
+          "passed": true
+        },
+        {
+          "case": "owner",
+          "passed": true
+        },
+        {
+          "case": "cell",
+          "passed": true
+        },
+        {
+          "case": "generation",
+          "passed": true
+        },
+        {
+          "case": "ref-schema",
+          "passed": true
+        },
+        {
+          "case": "indexed-many-slot",
+          "passed": true
+        },
+        {
+          "case": "selected-ref-grants-no-authority",
+          "passed": true
+        },
+        {
+          "case": "root-cursor-cleanup",
+          "passed": true
+        },
+        {
+          "case": "thread",
+          "passed": true
+        },
+        {
+          "case": "expired",
+          "passed": true
+        },
+        {
+          "case": "abi3-pending",
+          "passed": true
+        },
+        {
+          "case": "cross-process-incarnation-ref-rejection",
+          "passed": true
+        },
+        {
+          "case": "abi3-cancel",
+          "passed": true
+        },
+        {
+          "case": "denied-write-zero-effects",
+          "passed": true
+        },
+        {
+          "case": "root-intersection-zero-effects",
+          "passed": true
+        },
+        {
+          "case": "resource-grant-required",
+          "passed": true
+        },
+        {
+          "case": "incarnation-ref-rejection",
+          "passed": true
+        },
+        {
+          "case": "resource-context-retained-across-batch",
+          "passed": true
+        },
+        {
+          "case": "snapshot-all-get-grants",
+          "passed": true
+        },
+        {
+          "case": "generation-pin-and-retirement",
+          "passed": true
+        }
+      ],
+      "format": "phenix.m1-state-evidence.v1",
+      "identity": "588d638d8f2b30567794ba3b674c5d03e10ae06820158fb95cad0581b399ad6f",
+      "negative_cases": [
+        "missing-slot",
+        "wrong-export",
+        "noncontiguous-index",
+        "duplicate-slot",
+        "missing-property-init",
+        "invalid-property-init",
+        "short-state-table",
+        "conflicting-definitions",
+        "duplicate-provider-selection",
+        "snapshot-order"
+      ],
+      "offline": {
+        "authority": {
+          "operations": [
+            "test.provider@1/run",
+            "test.refs@1/get",
+            "test.refs@1/notes",
+            "test.state-provider.property.counter@1/get",
+            "test.state-provider.property.counter@1/set",
+            "test.state-provider.property.counter@1/watch",
+            "test.state-provider.property.notes@1/get",
+            "test.state-provider.property.notes@1/set",
+            "test.state-provider.property.notes@1/watch",
+            "test.state@1/read",
+            "test.state@1/run"
+          ],
+          "resources": [
+            "test.state-provider.property.counter",
+            "test.state-provider.property.notes"
+          ]
+        },
+        "bindings": [
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "counter:test.state-provider.property.counter@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#0:test.refs@1/notes",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/get",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "many#1:test.refs@1/notes",
+            "provider": "test.state-alternative"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/set",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "notes:test.state-provider.property.notes@1/watch",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/get",
+            "provider": "test.state-provider"
+          },
+          {
+            "caller": "test.state-client",
+            "operation": "refs:test.refs@1/notes",
+            "provider": "test.state-provider"
+          }
+        ],
+        "calls": 0,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "test.state@1",
+          "operation": "run",
+          "provider": "test.state-client"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "test.state-alternative",
+            "test.state-provider",
+            "test.state-client"
+          ],
+          "stop_failures": [],
+          "stopped": false
+        },
+        "plugins": [
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "455a1704322dca51a4ae2470b1d2523dc4cd0163854163568a69140ace9a528a",
+            "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "id": "test.state-alternative",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "ff5793dbdd9b3f59ccafecd7e406cd02989b3bd0bd6279b97d829910806b462b",
+            "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "id": "test.state-client",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": false,
+            "artifact_sha256": "eead2ca45015ef420a4d2a10b4dd5cbaa8631716d863fb0cb31193fa796a54aa",
+            "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62",
+            "id": "test.state-provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 0,
+          "last_root_id": null
+        },
+        "state": {
+          "definition_inputs": [
+            "test.state-alternative:57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063",
+            "test.state-client:aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+            "test.state-client:counter:0:test.state-provider:property.counter:1",
+            "test.state-client:many:0:test.state-provider:refs:1",
+            "test.state-client:many:1:test.state-alternative:refs:1",
+            "test.state-client:notes:0:test.state-provider:property.notes:1",
+            "test.state-client:refs:0:test.state-provider:refs:1",
+            "test.state-definitions:29b443673a7000bab00ce142def6c751e6bb57b39012b01c573bf83c815aad18",
+            "test.state-provider:f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+          ],
+          "slots": [
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "counter"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 2,
+              "slot": "many"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "notes"
+            },
+            {
+              "caller": "test.state-client",
+              "count": 1,
+              "slot": "refs"
+            }
+          ]
+        }
+      }
+    },
+    "debug_packages": {
+      "alternative": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "74cba234d04ff036322549d6b23959751f82029c1b2d8df4936dd7c16ffad963",
+        "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063"
+      },
+      "bad-init": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "5b5bd992cb7609da1b8039b210865cb2dfb3e8f47ec3512889367d2daeb8c03e",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "bad-schema": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "1a8f7a008c9f0e6fd6c445541e3bd1f335991b7460ed0658dab8859b12656fbf",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "bad-table": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "237d132fc55b9f35d383cb5e63f3d7e0403c2446c34a046eaf7eeda28992b770",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "client": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "38c7289a3df82133653f1c0258991ca181c6fed76bba4e3bf14b548c64363b5d",
+        "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d"
+      },
+      "provider": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "74e26287628f7ccc7a05ac655e4652ba6dd127a0b9c26aaf68003e3e165fd8af",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      }
+    },
+    "release_packages": {
+      "alternative": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "455a1704322dca51a4ae2470b1d2523dc4cd0163854163568a69140ace9a528a",
+        "descriptor_sha256": "57469c6514ba0202a2717f6cd3a59771904ab4b88afb2e5754237cca960c3063"
+      },
+      "bad-init": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "9a3d9153aa113c173f7d2f6aa0cb9b523882c3710f7ccf755911cc189e030638",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "bad-schema": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "cbb4985370dbba0455ad124088d72eb1152d28bd9ba191c12274b815f8dcd3f6",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "bad-table": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "c59ad38460d8a91af7111cf9fc46bf7ffb16801cb162f5ce3dea78c8d1fd1d32",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      },
+      "client": {
+        "artifact_sha256": "ff5793dbdd9b3f59ccafecd7e406cd02989b3bd0bd6279b97d829910806b462b",
+        "descriptor_sha256": "aca97b0dc0de25ef67589c3516134c1fe09e71aa04f9d03a382777b8ae36cd6d",
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      "provider": {
+        "format": "phenix.native-package.v2",
+        "artifact": "lib/plugin.so",
+        "descriptor": "descriptor.bin",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_sha256": "eead2ca45015ef420a4d2a10b4dd5cbaa8631716d863fb0cb31193fa796a54aa",
+        "descriptor_sha256": "f16c1e03989916d5b4f36ec49284dc71b843df82d3972a36d4905adccd9fdb62"
+      }
+    }
+  },
+  "checks": {
+    "workspace_test": "14 unit tests and 13 compile-fail docs passed",
+    "clippy": "workspace all targets and isolated fixtures passed; local Rust 1.99 allows only deprecated pre-existing Atomic::fetch_update",
+    "fmt": "workspace and examples passed",
+    "independent_metadata": "debug and ThinLTO release passed",
+    "sdk_isolation": "release external fixtures built using only public contract/sdk/macros crates; no private kernel or artifact source",
+    "real_cli": "pending genuine Nix CI; no fabricated store path"
+  },
+  "scope": "S2 cells and native admission; no Basic parity or reactive graph claim"
+}

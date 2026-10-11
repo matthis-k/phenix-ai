@@ -1,0 +1,14 @@
+[package]
+name = "example-reactive-client"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+phenix-sdk.workspace = true
+[build-dependencies]
+phenix-sdk.workspace = true
+[features]
+bad-init = []
+bad-schema = []
+bad-table = []

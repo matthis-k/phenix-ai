@@ -1,6 +1,6 @@
 use phenix_contract::{Code, Failure, Value};
 use phenix_kernel::{
-    resolve::{Composition, Deployment, Prepared},
+    resolve::{Composition, Deployment, Prepared, StateComposition},
     Call, Outcome, Phase, Poll,
 };
 use std::path::Path;
@@ -27,10 +27,24 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
             .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?,
     )
     .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
-    let artifacts = document["artifacts"]
+    let state_profile = document["format"] == "phenix.state-composition.v2";
+    let artifact_document = if state_profile {
+        &document["composition"]
+    } else {
+        &document
+    };
+    let artifacts = artifact_document["artifacts"]
         .as_array()
         .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "artifacts must be a list"))?;
-    for artifact in artifacts {
+    let mut inputs: Vec<_> = artifacts.iter().collect();
+    if state_profile {
+        inputs.extend(
+            document["definitions"].as_array().ok_or_else(|| {
+                Failure::new(Code::DescriptorInvalid, "definitions must be a list")
+            })?,
+        );
+    }
+    for artifact in inputs {
         let artifact = artifact.as_str().ok_or_else(|| {
             Failure::new(Code::DescriptorInvalid, "artifact path must be a string")
         })?;
@@ -45,6 +59,10 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
         }
     }
     let prepared = match document["format"].as_str() {
+        Some("phenix.state-composition.v2") => Prepared::prepare_state(
+            serde_json::from_value::<StateComposition>(document)
+                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
+        )?,
         Some("phenix.deployment.v1") => Prepared::prepare(
             serde_json::from_value::<Deployment>(document)
                 .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
@@ -70,14 +88,19 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     let input = std::fs::read(path)
         .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?;
     // Reject malformed portable input before loading any trusted constructors.
-    Value::decode(&input)?;
+    let profile = if state_profile {
+        phenix_contract::WireProfile::V2
+    } else {
+        phenix_contract::WireProfile::V1
+    };
+    Value::decode_profile(&input, profile)?;
     *phase = Phase::ExecutableAbi;
     let kernel = prepared.load()?;
     *phase = Phase::Admission;
     let root = kernel.admit_default_root()?;
     *phase = Phase::Invocation;
     let outcome = (|| {
-        match root.begin(&Value::decode(&input)?)? {
+        match root.begin(&Value::decode_profile(&input, profile)?)? {
             Call::Ready(outcome) => Ok(outcome),
             Call::Pending(ticket) => {
                 // One bounded trusted polling client uses the kernel's same path.

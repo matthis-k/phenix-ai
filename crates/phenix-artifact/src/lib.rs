@@ -1,5 +1,7 @@
 use object::{Object, ObjectSection};
-use phenix_contract::{Code, Descriptor, Failure, SECTION_BYTES};
+use phenix_contract::{
+    Code, ContractMetadata, Descriptor, Failure, MetadataExecution, SECTION_BYTES,
+};
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -44,7 +46,16 @@ pub fn extract(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
     if data[end..].iter().any(|&b| b != 0) {
         return Err(invalid("nonzero descriptor padding".into()));
     }
-    Descriptor::decode(payload)?;
+    if payload.starts_with(&[0x50, 0x56, 2, 0]) {
+        let metadata = ContractMetadata::decode(payload)?;
+        if metadata.execution != MetadataExecution::StatePending {
+            return Err(invalid(
+                "native metadata requires executable state profile".into(),
+            ));
+        }
+    } else {
+        Descriptor::decode(payload)?;
+    }
     Ok(payload.to_vec())
 }
 
@@ -65,6 +76,7 @@ pub struct VerifiedPackage {
     artifact: PathBuf,
     record: PackageRecord,
     descriptor: Descriptor,
+    metadata: Option<ContractMetadata>,
 }
 fn read(path: &Path, code: Code) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| Failure::new(code, e.to_string()))
@@ -99,6 +111,27 @@ impl VerifiedPackage {
     pub fn descriptor(&self) -> &Descriptor {
         &self.descriptor
     }
+    pub fn metadata(&self) -> Option<&ContractMetadata> {
+        self.metadata.as_ref()
+    }
+    /// Only the preparation resolver calls this after collecting every frozen
+    /// contract. No selection or executable callback occurs here.
+    pub fn normalize(
+        &mut self,
+        imports: Vec<phenix_contract::ImportSlot>,
+        definitions: &std::collections::BTreeMap<
+            (String, u64),
+            phenix_contract::ContractDefinition,
+        >,
+    ) -> Result<(), Failure> {
+        let Some(metadata) = &self.metadata else {
+            return Ok(());
+        };
+        let mut normalized = metadata.clone();
+        normalized.requires = imports;
+        self.descriptor = normalize_metadata(&normalized, definitions)?;
+        Ok(())
+    }
     /// Trusted control-plane caller attests a read-only package source. The CLI
     /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
     pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
@@ -108,7 +141,11 @@ impl VerifiedPackage {
         let record: PackageRecord =
             serde_json::from_slice(&read(&root.join("package.json"), Code::ArtifactInvalid)?)
                 .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
-        if record.format != "phenix.package.v1" || record.target != "x86_64-unknown-linux-gnu" {
+        if !matches!(
+            record.format.as_str(),
+            "phenix.package.v1" | "phenix.native-package.v2"
+        ) || record.target != "x86_64-unknown-linux-gnu"
+        {
             return Err(Failure::new(
                 Code::ArtifactInvalid,
                 "unsupported package format or target",
@@ -137,11 +174,23 @@ impl VerifiedPackage {
                 "packaged metadata differs from embedded metadata",
             ));
         }
-        let descriptor = Descriptor::decode(&metadata)?;
+        let (descriptor, metadata) = if record.format == "phenix.native-package.v2" {
+            let metadata = ContractMetadata::decode(&metadata)?;
+            if metadata.execution != MetadataExecution::StatePending {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "native metadata execution profile",
+                ));
+            }
+            (empty_descriptor(&metadata), Some(metadata))
+        } else {
+            (Descriptor::decode(&metadata)?, None)
+        };
         Ok(Self {
             artifact,
             record,
             descriptor,
+            metadata,
         })
     }
     pub fn recheck(&self) -> Result<(), Failure> {
@@ -222,4 +271,173 @@ impl VerifiedContractPackage {
             package_sha256,
         })
     }
+}
+
+fn empty_descriptor(metadata: &ContractMetadata) -> Descriptor {
+    Descriptor {
+        abi_major: 3,
+        abi_minor: 0,
+        features: 3,
+        execution: "state-pending".into(),
+        format: "phenix.normalized.v2".into(),
+        schema_version: 2,
+        plugin_id: metadata.plugin.clone(),
+        plugin_version: metadata.version.clone(),
+        authority_ceiling: vec![],
+        contracts: vec![],
+        imports: vec![],
+        exports: vec![],
+    }
+}
+/// Stable synthetic property contract identities. No access is granted here.
+pub fn property_contract(owner: &str, property: &str) -> Result<String, Failure> {
+    let name = format!("{owner}.property.{property}");
+    if !phenix_contract::identifier(&name) {
+        return Err(Failure::new(
+            Code::DescriptorInvalid,
+            "property identity exceeds protocol limits",
+        ));
+    }
+    Ok(format!("{name}@1"))
+}
+pub fn property_definitions(
+    metadata: &ContractMetadata,
+) -> Result<Vec<phenix_contract::ContractDefinition>, Failure> {
+    use phenix_contract::{ContractDefinition, OperationSchema, ValueSchema as S};
+    metadata
+        .properties
+        .iter()
+        .map(|p| {
+            let reference = S::Ref(p.schema.id()?);
+            let error = S::Variants(vec![
+                "Conflict".into(),
+                "Denied".into(),
+                "OwnerGone".into(),
+                "SchemaMismatch".into(),
+                "StaleReference".into(),
+            ]);
+            let mut operations = vec![];
+            if p.get {
+                operations.push(OperationSchema {
+                    name: "get".into(),
+                    request: reference.clone(),
+                    response: p.schema.clone(),
+                    error: error.clone(),
+                });
+            }
+            if p.set {
+                operations.push(OperationSchema {
+                    name: "set".into(),
+                    request: S::Struct(std::collections::BTreeMap::from([
+                        ("expected".into(), S::U64),
+                        ("location".into(), reference.clone()),
+                        ("value".into(), p.schema.clone()),
+                    ])),
+                    response: S::U64,
+                    error: error.clone(),
+                });
+            }
+            if p.watch {
+                operations.push(OperationSchema {
+                    name: "watch".into(),
+                    request: reference,
+                    response: S::U64,
+                    error,
+                });
+            }
+            Ok(ContractDefinition {
+                contract: property_contract(&metadata.plugin, &p.id)?,
+                revision: 1,
+                operations,
+            })
+        })
+        .collect()
+}
+fn normalize_metadata(
+    metadata: &ContractMetadata,
+    definitions: &std::collections::BTreeMap<(String, u64), phenix_contract::ContractDefinition>,
+) -> Result<Descriptor, Failure> {
+    use phenix_contract::{Cardinality, Contract, Contribution, SchemaSpec};
+    let mut descriptor = empty_descriptor(metadata);
+    let mut declarations = std::collections::BTreeMap::new();
+    let mut add = |slot: &str,
+                   name: &str,
+                   revision: u64,
+                   provide: bool,
+                   optional: bool|
+     -> Result<Vec<Contribution>, Failure> {
+        let definition = definitions.get(&(name.into(), revision)).ok_or_else(|| {
+            Failure::new(
+                Code::MissingBinding,
+                format!("missing contract definition {name} revision {revision}"),
+            )
+        })?;
+        let mut contributions = vec![];
+        for op in &definition.operations {
+            let key = format!("{name}/{}", op.name);
+            let schema = |s: &phenix_contract::ValueSchema| -> Result<SchemaSpec, Failure> {
+                Ok(SchemaSpec::Live { bytes: s.encode()? })
+            };
+            let contract = Contract {
+                id: format!("{}/{key}/Declare", metadata.plugin),
+                kind: "phenix.contract.v2".into(),
+                owner: metadata.plugin.clone(),
+                provenance: name.into(),
+                role: "Declare".into(),
+                key: key.clone(),
+                request: schema(&op.request)?,
+                response: schema(&op.response)?,
+                error: schema(&op.error)?,
+            };
+            if let Some(previous) = declarations.insert(key.clone(), contract.clone()) {
+                if previous != contract {
+                    return Err(Failure::new(
+                        Code::SchemaRejected,
+                        "selected revisions have conflicting schemas",
+                    ));
+                }
+            }
+            let role = if provide { "Provide" } else { "Require" };
+            contributions.push(Contribution {
+                slot: Some(slot.into()),
+                optional,
+                implementation: None,
+                id: format!("{}/{slot}/{key}/{role}", metadata.plugin),
+                kind: "phenix.operation.v2".into(),
+                operation: key,
+                owner: metadata.plugin.clone(),
+                provenance: slot.into(),
+                role: role.into(),
+            });
+        }
+        Ok(contributions)
+    };
+    for p in &metadata.provides {
+        descriptor
+            .exports
+            .extend(add(&p.slot, &p.contract, p.revision, true, false)?);
+    }
+    for p in &metadata.properties {
+        descriptor.exports.extend(add(
+            &format!("property.{}", p.id),
+            &property_contract(&metadata.plugin, &p.id)?,
+            1,
+            true,
+            false,
+        )?);
+    }
+    for r in &metadata.requires {
+        descriptor.imports.extend(add(
+            &r.slot,
+            &r.contract,
+            r.revision_min,
+            false,
+            r.cardinality == Cardinality::Optional,
+        )?);
+    }
+    descriptor.contracts = declarations.into_values().collect();
+    descriptor.authority_ceiling = descriptor.contracts.iter().map(|c| c.key.clone()).collect();
+    descriptor.imports.sort_by(|a, b| a.id.cmp(&b.id));
+    descriptor.exports.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(descriptor)
 }

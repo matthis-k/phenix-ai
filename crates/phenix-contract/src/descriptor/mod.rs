@@ -55,10 +55,16 @@ pub enum SchemaSpec {
     Variants {
         variants: Vec<String>,
     },
+    /// Internal normalization of an independently verified M1 schema. This is
+    /// never accepted by the frozen v1 descriptor decoder.
+    Live {
+        bytes: Vec<u8>,
+    },
 }
 impl SchemaSpec {
     fn valid(&self) -> bool {
         match self {
+            Self::Live { .. } => false,
             Self::Struct { fields } => fields
                 .iter()
                 .all(|(name, schema)| identifier(name) && schema.valid()),
@@ -72,6 +78,9 @@ impl SchemaSpec {
     }
     pub fn accepts(&self, value: &Value) -> bool {
         match (self, value) {
+            (Self::Live { bytes }, value) => {
+                crate::ValueSchema::decode(bytes).is_ok_and(|schema| schema.accepts(value))
+            }
             (Self::Bool, Value::Bool(_))
             | (Self::I64, Value::I64(_))
             | (Self::U64, Value::U64(_))
@@ -104,6 +113,8 @@ pub struct Contract {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Contribution {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,6 +125,19 @@ pub struct Contribution {
     pub owner: String,
     pub provenance: String,
     pub role: String,
+}
+impl Contribution {
+    pub fn binding_key(&self) -> String {
+        import_identity(self.slot.as_deref().unwrap_or(""), &self.operation)
+    }
+}
+/// Slot qualification is internal to the frozen binding map, not an operation.
+pub fn import_identity(slot: &str, key: &str) -> String {
+    if slot.is_empty() {
+        key.into()
+    } else {
+        format!("{slot}:{key}")
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -176,6 +200,9 @@ impl Descriptor {
                     let Value::Map(item) = item else {
                         return Err(fail("contribution must be a map".into()));
                     };
+                    if item.contains_key("slot") {
+                        return Err(fail("M1 slots cannot appear in v1 descriptors".into()));
+                    }
                     let enhanced =
                         item.get("kind") == Some(&Value::String("phenix.import.v1".into()));
                     if enhanced {

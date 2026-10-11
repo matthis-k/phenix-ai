@@ -1,3 +1,4 @@
+use crate::state_resolve::normalize_state;
 use phenix_artifact::VerifiedPackage;
 use phenix_contract::{identifier, operation_key, Authority, Code, Contract, Failure};
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,23 @@ pub struct Composition {
     pub authority: Authority,
     pub resource: Option<String>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotBinding {
+    pub caller: String,
+    pub slot: String,
+    pub index: u64,
+    pub provider: String,
+    pub export: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateComposition {
+    pub format: String,
+    pub composition: Composition,
+    pub definitions: Vec<String>,
+    pub slots: Vec<SlotBinding>,
+}
 pub struct Prepared {
     pub(crate) packages: BTreeMap<String, VerifiedPackage>,
     pub(crate) entry: Selection,
@@ -90,6 +108,8 @@ pub struct Prepared {
     pub(crate) grants: BTreeMap<(String, String), BTreeSet<String>>,
     pub(crate) authority: Authority,
     pub(crate) resource: Option<String>,
+    pub(crate) slot_counts: BTreeMap<(String, String), u64>,
+    pub(crate) state_identity: Vec<String>,
     composition: bool,
     pub(crate) startup_order: Vec<String>,
 }
@@ -123,33 +143,50 @@ impl Prepared {
             operations: d.grants.iter().map(Grant::key).collect(),
             resources: BTreeSet::new(),
         };
-        Self::resolve(Policy {
-            artifacts: d.artifacts,
-            entry: d.entry,
-            global: d.bindings,
-            bindings: vec![],
-            grants: d
-                .grants
-                .into_iter()
-                .map(|g| ScopedGrant {
-                    caller: g.caller,
-                    interface: g.interface,
-                    operation: g.operation,
-                    resources: BTreeSet::new(),
-                })
-                .collect(),
-            excluded: BTreeSet::new(),
-            substitutions: vec![],
-            authority,
-            resource: None,
-            composition: false,
-        })
+        Self::resolve(
+            Policy {
+                artifacts: d.artifacts,
+                entry: d.entry,
+                global: d.bindings,
+                bindings: vec![],
+                grants: d
+                    .grants
+                    .into_iter()
+                    .map(|g| ScopedGrant {
+                        caller: g.caller,
+                        interface: g.interface,
+                        operation: g.operation,
+                        resources: BTreeSet::new(),
+                    })
+                    .collect(),
+                excluded: BTreeSet::new(),
+                substitutions: vec![],
+                authority,
+                resource: None,
+                composition: false,
+            },
+            vec![],
+            vec![],
+        )
     }
     pub fn prepare_composition(c: Composition) -> Result<Self, Failure> {
+        Self::resolve(Self::composition_policy(c)?, vec![], vec![])
+    }
+    pub fn prepare_state(c: StateComposition) -> Result<Self, Failure> {
+        if c.format != "phenix.state-composition.v2" {
+            return Err(invalid("unsupported state composition profile"));
+        }
+        Self::resolve(
+            Self::composition_policy(c.composition)?,
+            c.definitions,
+            c.slots,
+        )
+    }
+    fn composition_policy(c: Composition) -> Result<Policy, Failure> {
         if c.format != "phenix.composition.v1" {
             return Err(invalid("unsupported composition profile"));
         }
-        Self::resolve(Policy {
+        Ok(Policy {
             artifacts: c.artifacts,
             entry: c.entry,
             bindings: c.bindings,
@@ -163,7 +200,11 @@ impl Prepared {
         })
     }
     // One preparation/resolution implementation for both published profiles.
-    fn resolve(mut policy: Policy) -> Result<Self, Failure> {
+    fn resolve(
+        mut policy: Policy,
+        definition_paths: Vec<String>,
+        slots: Vec<SlotBinding>,
+    ) -> Result<Self, Failure> {
         if !policy.authority.valid() || policy.resource.as_ref().is_some_and(|id| !identifier(id)) {
             return Err(invalid("invalid root authority"));
         }
@@ -183,13 +224,6 @@ impl Prepared {
                 return Err(invalid("excluded plugin absent"));
             }
         }
-        let exports = |key: &str| {
-            packages
-                .iter()
-                .filter(|(_, p)| p.descriptor().exports.iter().any(|x| x.operation == key))
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>()
-        };
         let mut substitutions = BTreeMap::new();
         policy
             .substitutions
@@ -210,6 +244,24 @@ impl Prepared {
             return Err(invalid("chained or cyclic substitution"));
         }
         let substitute = |id: &str| substitutions.get(id).cloned().unwrap_or_else(|| id.into());
+        let (mut bindings, slot_counts, state_identity) = normalize_state(
+            &mut packages,
+            definition_paths,
+            slots
+                .into_iter()
+                .map(|mut s| {
+                    s.provider = substitute(&s.provider);
+                    s
+                })
+                .collect(),
+        )?;
+        let exports = |key: &str| {
+            packages
+                .iter()
+                .filter(|(_, p)| p.descriptor().exports.iter().any(|x| x.operation == key))
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+        };
         policy.entry.provider = substitute(&policy.entry.provider);
         let mut global = BTreeMap::new();
         policy.global.sort_by_key(Selection::key);
@@ -222,7 +274,11 @@ impl Prepared {
         for (key, provider) in &global {
             let mut used = false;
             for (caller, p) in &packages {
-                if p.descriptor().imports.iter().any(|x| &x.operation == key) {
+                if p.descriptor()
+                    .imports
+                    .iter()
+                    .any(|x| x.binding_key() == *key)
+                {
                     let (interface, operation) = key.split_once('/').unwrap();
                     policy.bindings.push(ImportBinding {
                         caller: caller.clone(),
@@ -240,7 +296,6 @@ impl Prepared {
                 ));
             }
         }
-        let mut bindings = BTreeMap::new();
         policy.bindings.sort_by(|a, b| {
             (&a.caller, a.key(), &a.provider).cmp(&(&b.caller, b.key(), &b.provider))
         });
@@ -262,8 +317,7 @@ impl Prepared {
                     .contract(&import.operation)
                     .ok_or_else(|| invalid("import schema absent"))?;
                 let available = exports(&import.operation);
-                let Some(selected) = bindings.get(&(caller.clone(), import.operation.clone()))
-                else {
+                let Some(selected) = bindings.get(&(caller.clone(), import.binding_key())) else {
                     if import.optional {
                         continue;
                     }
@@ -323,10 +377,14 @@ impl Prepared {
             }
         }
         for ((caller, key), provider) in &bindings {
-            if !exports(key).contains(provider)
-                || !packages
-                    .get(caller)
-                    .is_some_and(|p| p.descriptor().imports.iter().any(|x| &x.operation == key))
+            let actual = key.split_once(':').map_or(key.as_str(), |(_, key)| key);
+            if !exports(actual).contains(provider)
+                || !packages.get(caller).is_some_and(|p| {
+                    p.descriptor()
+                        .imports
+                        .iter()
+                        .any(|x| x.binding_key() == *key)
+                })
             {
                 return Err(error(
                     Code::MissingBinding,
@@ -349,9 +407,11 @@ impl Prepared {
                 || exports(&key).is_empty()
                 || g.resources.iter().any(|id| !identifier(id))
                 || (g.caller != "root"
-                    && !packages
-                        .get(&g.caller)
-                        .is_some_and(|p| p.descriptor().imports.iter().any(|x| x.operation == key)))
+                    && !packages.get(&g.caller).is_some_and(|p| {
+                        p.descriptor().imports.iter().any(|x| x.operation == key)
+                            || (p.descriptor().abi_major == 3
+                                && p.descriptor().exports.iter().any(|x| x.operation == key))
+                    }))
                 || grants.insert((g.caller, key), g.resources).is_some()
             {
                 return Err(invalid("invalid or duplicate operation grant"));
@@ -367,6 +427,8 @@ impl Prepared {
         }
         let prepared = Self {
             packages,
+            slot_counts,
+            state_identity,
             entry: policy.entry,
             bindings,
             grants,
@@ -417,6 +479,9 @@ impl Prepared {
             result["resource"] = serde_json::json!(self.resource);
             result["lifecycle"] = serde_json::json!({"startup_order":self.startup_order,"stopped":false,"stop_failures":[]});
         }
+        if !self.state_identity.is_empty() {
+            result["state"] = serde_json::json!({"definition_inputs":self.state_identity,"slots":self.slot_counts.iter().map(|((caller,slot),count)|serde_json::json!({"caller":caller,"slot":slot,"count":count})).collect::<Vec<_>>()});
+        }
         result
     }
 }
@@ -447,7 +512,7 @@ fn dependency_order(
         for import in &packages[id].descriptor().imports {
             if !import.optional {
                 visit(
-                    &bindings[&(id.into(), import.operation.clone())],
+                    &bindings[&(id.into(), import.binding_key())],
                     packages,
                     bindings,
                     done,

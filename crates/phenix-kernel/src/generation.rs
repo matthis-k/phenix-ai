@@ -59,7 +59,7 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
             ])
         })
         .collect();
-    Ok(Value::map([
+    let mut canonical = Value::map([
         ("artifacts", Value::List(artifacts)),
         ("authority", prepared.authority.to_value()),
         ("bindings", Value::List(bindings)),
@@ -80,7 +80,33 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
             "resource",
             prepared.resource.clone().map_or(Value::Null, Value::String),
         ),
-    ]))
+    ]);
+    if !prepared.state_identity.is_empty() {
+        let Value::Map(fields) = &mut canonical else {
+            unreachable!()
+        };
+        fields.insert(
+            "state_inputs".into(),
+            strings(prepared.state_identity.iter().cloned()),
+        );
+        fields.insert(
+            "slot_counts".into(),
+            Value::List(
+                prepared
+                    .slot_counts
+                    .iter()
+                    .map(|((caller, slot), count)| {
+                        Value::List(vec![
+                            Value::String(caller.clone()),
+                            Value::String(slot.clone()),
+                            Value::U64(*count),
+                        ])
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    Ok(canonical)
 }
 fn identity(tuple: &Value) -> Result<GenerationId, Failure> {
     let mut bytes = b"phenix.generation.v1\0".to_vec();
@@ -147,7 +173,7 @@ impl Generations {
             .prepared
             .take()
             .ok_or_else(|| Failure::new(Code::PluginFailed, "generation cannot activate"))?;
-        match prepared.load() {
+        match prepared.load_generation(id.as_str()) {
             Ok(kernel) => {
                 g.runtime = Some(Rc::new(kernel));
                 Ok(())

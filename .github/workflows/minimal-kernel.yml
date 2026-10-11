@@ -20,6 +20,9 @@ jobs:
           if [[ "${{ github.head_ref }}" == impl/m1-agent-preflight ]]; then
             nix build .#checks.x86_64-linux.a0-agent-product -L
           fi
+          if [[ "${{ github.head_ref }}" == impl/m1-live-state ]]; then
+            nix build .#checks.x86_64-linux.m1-live-state-product -L
+          fi
           nix build .#checks.x86_64-linux.m1-metadata-state -L
           nix flake check -L
       - name: Record realized conformance outputs and commit
@@ -40,6 +43,13 @@ jobs:
             cp -RL result-a0-agent ci-evidence/a0-agent
             cp -RL result-a0-product ci-evidence/a0-agent-product
             nix path-info --json ./result-a0-agent ./result-a0-product > ci-evidence/a0-nix-output.json
+          fi
+          if [[ "${{ github.head_ref }}" == impl/m1-live-state ]]; then
+            nix build .#checks.x86_64-linux.m1-live-state --out-link result-m1-live
+            nix build .#checks.x86_64-linux.m1-live-state-product --out-link result-m1-live-product
+            cp -RL result-m1-live ci-evidence/m1-live-state
+            cp -RL result-m1-live-product ci-evidence/m1-live-state-product
+            nix path-info --json ./result-m1-live ./result-m1-live-product > ci-evidence/m1-live-nix-output.json
           fi
           cp -RL result-conformance/* ci-evidence/
           git rev-parse HEAD > ci-evidence/kernel-commit.txt
