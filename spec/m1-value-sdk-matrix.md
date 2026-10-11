@@ -1,6 +1,6 @@
 # S3a typed value SDK and evidence
 
-Status: TESTED locally; full twenty-two-check Nix CI pending
+Status: PROVEN at b47f7d9543c696c3e5b8bbe16a62fbcaf647707b; all 22 Nix gates passed in CI 38170898637
 Base: S2 PR #776; frozen SDK contract precedes implementation
 
 | File or task | State | Semantic evidence |
@@ -15,7 +15,7 @@ Base: S2 PR #776; frozen SDK contract precedes implementation
 | `tests/m1-value-sdk-product.py` | IMPLEMENTED | Genuine Nix packaged CLI; no fabricated store paths; pending CI |
 | `flake.nix`, workflow | IMPLEMENTED | Two SDK gates plus twenty predecessor gates, independently packaged native fixtures and exact-commit evidence |
 | Local evidence | TESTED | Debug and ThinLTO release reports and source hashes |
-| CI acceptance | NOT YET PROVEN | Exact commit, downloaded archive and all twenty-two checks required |
+| CI acceptance | PROVEN | Exact implementation commit b47f7d9543c696c3e5b8bbe16a62fbcaf647707b, verified archive SHA-256 and 37 parsed JSON report hashes in `spec/evidence/m1-value-sdk-ci.json` |
 
 S3a adds no kernel mechanism. S3b owns `#[contract]`, define/require/provide,
 generated exposed-field storage/initialization and native ABI glue. The current
@@ -26,3 +26,10 @@ CI 38170416751 passed the SDK native and independent schema gates, then found
 an incorrect product-test lookup of `after_stop`. The CLI has always returned
 its post-stop inspection at the top level. The corrected test reads that
 existing shape; no runtime change is needed. Full acceptance remains pending.
+
+
+CI 38170898637 passed all 22 gates on `b47f7d9543c696c3e5b8bbe16a62fbcaf647707b`.
+The downloaded artifact 11713979983 records that exact checkout.
+Its ZIP SHA-256 matches GitHub's artifact digest. Saved evidence hashes all
+37 JSON reports and records realized Nix outputs. Earlier failed runs
+remain diagnostic history; this successful run supplies acceptance.
