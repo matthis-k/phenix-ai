@@ -71,7 +71,11 @@ fn declarations_match_independent_owned_metadata() {
         bytes,
         metadata(Reversed::CONTRACT.owned().unwrap()).encode().unwrap()
     );
-    assert_eq!(ContractMetadata::decode(&bytes).unwrap().encode().unwrap(), bytes);
+    assert_eq!(
+        ContractMetadata::decode(&bytes).unwrap().encode().unwrap(),
+        bytes
+    );
+    assert_eq!(Counter::read::KEY, "example.counter@1/read");
     assert_eq!(Counter::read::DEFINITION.key, "example.counter@1/read");
     assert_eq!(Counter::write::DEFINITION.key, "example.counter@1/write");
 }
@@ -84,13 +88,19 @@ fn external_types_and_raw_identifiers_have_portable_identity() {
     assert_eq!(Search::r#type::DEFINITION.key, "example.search@2/type");
     assert_eq!(
         definition.operations[0].request,
-        ValueSchema::Struct([
-            (
-                "cell".into(),
-                ValueSchema::Ref(ValueSchema::List(Box::new(ValueSchema::String)).id().unwrap()),
-            ),
-            ("query".into(), ValueSchema::Option(Box::new(ValueSchema::String))),
-        ].into())
+        ValueSchema::Struct(
+            [
+                (
+                    "cell".into(),
+                    ValueSchema::Ref(ValueSchema::List(Box::new(ValueSchema::String)).id().unwrap()),
+                ),
+                (
+                    "query".into(),
+                    ValueSchema::Option(Box::new(ValueSchema::String)),
+                ),
+            ]
+            .into()
+        )
     );
     let mut native = metadata(definition);
     native.execution = MetadataExecution::StatePending;

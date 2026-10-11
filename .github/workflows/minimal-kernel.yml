@@ -26,6 +26,9 @@ jobs:
           if [[ "${{ github.head_ref }}" == impl/m1-value-sdk ]]; then
             nix build .#checks.x86_64-linux.m1-value-sdk-product -L
           fi
+          if [[ "${{ github.head_ref }}" == impl/m1-contract-authoring ]]; then
+            nix build .#checks.x86_64-linux.m0-contract -L
+          fi
           nix build .#checks.x86_64-linux.m1-metadata-state -L
           nix flake check -L
       - name: Record realized conformance outputs and commit
