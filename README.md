@@ -19,3 +19,6 @@ Use `nix flake check -L` for canonical validation. All fourteen gates passed on 
 The default Nix package contains the kernel and its runtime dependencies. SDK, descriptor tools, fixtures, demos and conformance evidence are separate products. `nix run .#phenix-m0-demo` exercises the packaged CLI. `nix build .#phenix-m0-release` materializes every gate, standalone SDK evidence and the production closure.
 
 M0.0 through M0.4 have no remaining implementation tasks. Agent API and other domain plugins follow this accepted kernel. Process-fatal native faults remain outside the in-process guarantee. Noncooperative native work may keep executable images resident until process exit.
+## Next architecture milestone: M1 (proposed)
+
+M0.0-M0.4 are accepted for the trusted-native profile. The next work is a distinct staged extension rather than a rewrite of those gates: [plugin contract authoring](spec/m1-plugin-contracts-rfc.md), [kernel-owned Value/ValueRef and contributed reactive DAGs](spec/m1-values-reactive-dag-rfc.md), and the [file-level M1 implementation roadmap](spec/m1-roadmap.md). None of these M1 features are implemented in the accepted M0 kernel. Keep the M0 acceptance artifacts unchanged and use new external non-agent fixtures to prove each M1 gate.
