@@ -447,3 +447,7 @@ Existing Phenix AI is useful for behavioral regression cases and mature algorith
 - [Linux `dlopen(3)` constructor semantics](https://man7.org/linux/man-pages/man3/dlopen.3.html).
 
 **Final acceptance statement:** M0.0 is complete only when two independently built, proc-macro-authored Rust native plugins can be Nix-packaged, verified offline, selected with an explicit single provider binding and scoped operation grant, loaded and invoked through the kernel's one dispatch path—without handwritten registration, AI code, private kernel SDK dependencies or uncontrolled native reentrancy. M0.1–M0.4 extend that proven foundation rather than replace it.
+
+## Post-M0 specification relationship (informative)
+
+The accepted M0.0-M0.4 contract remains frozen. Live value references, reactive state, contract/property macro extensions, contributed execution graphs, and multiple concurrent roots are **not** M0 features. The proposed M1 design is specified separately in [M1 plugin contracts](m1-plugin-contracts-rfc.md), [M1 values and contributed DAGs](m1-values-reactive-dag-rfc.md), and the [ordered M1 roadmap](m1-roadmap.md). Those documents govern future M1 work once accepted; they do not retroactively change M0 acceptance or executable claims.
