@@ -69,6 +69,14 @@ impl Reply {
     /// Non-null buffers and callbacks must belong to the trusted ABI producer.
     /// A null callback rejects before reading the buffer; it cannot be released.
     pub unsafe fn consume(self) -> Result<(u32, Value), Failure> {
+        unsafe { self.consume_profile(2) }
+    }
+    /// # Safety
+    /// Same producer-owned pointer and callback requirements as consume.
+    pub unsafe fn consume_pending(self) -> Result<(u32, Value), Failure> {
+        unsafe { self.consume_profile(5) }
+    }
+    unsafe fn consume_profile(self, maximum: u32) -> Result<(u32, Value), Failure> {
         let release = self
             .release
             .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null reply release callback"))?;
@@ -81,7 +89,7 @@ impl Reply {
         }
         .and_then(Value::decode);
         unsafe { release(self.ptr, self.len) };
-        if self.status > 2 {
+        if self.status > maximum {
             return Err(Failure::new(Code::AbiIncompatible, "unknown reply status"));
         }
         decoded.map(|v| (self.status, v))
@@ -144,6 +152,21 @@ mod tests {
             Code::AbiIncompatible
         );
         assert_eq!(RELEASES.load(Ordering::SeqCst), 5);
+        for status in 3..=5 {
+            let mut reply = Reply::value(status, Value::Null);
+            reply.release = Some(counted_release);
+            assert_eq!(
+                unsafe { reply.consume_pending() }.unwrap(),
+                (status, Value::Null)
+            );
+        }
+        let mut reply = Reply::value(6, Value::Null);
+        reply.release = Some(counted_release);
+        assert_eq!(
+            unsafe { reply.consume_pending() }.unwrap_err().code,
+            Code::AbiIncompatible
+        );
+        assert_eq!(RELEASES.load(Ordering::SeqCst), 9);
     }
     #[test]
     fn null_release_rejects_before_reading_foreign_buffer() {
@@ -166,5 +189,29 @@ mod tests {
         assert_eq!(std::mem::offset_of!(Reply, ptr), 8);
         assert_eq!(std::mem::size_of::<HostApi>(), 16);
         assert_eq!(std::mem::size_of::<PluginTable>(), 40);
+        assert_eq!(std::mem::size_of::<PendingHostApi>(), 40);
+        assert_eq!(std::mem::size_of::<PendingPluginTable>(), 56);
+        assert_eq!(std::mem::offset_of!(PendingHostApi, ticket), 16);
+        assert_eq!(std::mem::offset_of!(PendingPluginTable, poll), 40);
     }
+}
+
+/// Versioned pending host. Only wake may outlive a synchronous scope.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingHostApi {
+    pub host: HostApi,
+    pub ticket: u64,
+    pub permit: u64,
+    pub wake: unsafe extern "C" fn(u64, u64) -> u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingPluginTable {
+    pub header: Header,
+    pub create: unsafe extern "C" fn(*mut *mut c_void) -> Reply,
+    pub invoke: unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes, Bytes) -> Reply,
+    pub stop: unsafe extern "C" fn(*mut c_void) -> Reply,
+    pub poll: unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply,
+    pub cancel: unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply,
 }

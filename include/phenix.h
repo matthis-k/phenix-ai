@@ -36,3 +36,25 @@ typedef struct {
  * execute constructors; offline verification must precede loading. */
 const PhenixHeader *phenix_native_v1(void);
 #endif
+
+#ifndef PHENIX_NATIVE_V2_H
+#define PHENIX_NATIVE_V2_H
+/* ABI 2.0, pending feature 1. Wake copies only ticket and permit values.
+ * It requests polling from any thread. The HostApi expires on native return.
+ * Replies 0/1/5 prove quiescence; 2 does not; 3 is Pending with Null;
+ * 4 proves quiescence after cancellation. See m0.2-pending-contracts.md. */
+typedef struct {
+  PhenixHostApi host;
+  uint64_t ticket, permit;
+  uint32_t (*wake)(uint64_t, uint64_t);
+} PhenixPendingHostApi;
+typedef struct {
+  PhenixHeader header;
+  PhenixReply (*create)(void **);
+  PhenixReply (*invoke)(void *, const PhenixPendingHostApi *, PhenixBytes, PhenixBytes);
+  PhenixReply (*stop)(void *);
+  PhenixReply (*poll)(void *, const PhenixPendingHostApi *, PhenixBytes);
+  PhenixReply (*cancel)(void *, const PhenixPendingHostApi *, PhenixBytes);
+} PhenixPendingPluginTable;
+const PhenixHeader *phenix_native_v2(void);
+#endif

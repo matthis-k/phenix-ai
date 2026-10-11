@@ -116,6 +116,23 @@
       restricted = plugin "example-scoped-client";
       relay = plugin "example-relay";
       resources = plugin "example-resource-provider";
+      pendingPlugin = plugin "example-pending";
+      pendingRepeat = pendingPlugin.overrideAttrs (_: {
+        pname = "example-pending-repeat";
+      });
+      pendingFat = pendingPlugin.overrideAttrs (_: {
+        pname = "example-pending-fat";
+        CARGO_PROFILE_RELEASE_LTO = "fat";
+      });
+      pendingOff = pendingPlugin.overrideAttrs (_: {
+        pname = "example-pending-off";
+        CARGO_PROFILE_RELEASE_LTO = "off";
+      });
+      pendingLld = pendingPlugin.overrideAttrs (old: {
+        pname = "example-pending-lld";
+        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.lld ];
+        RUSTFLAGS = "-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--gc-sections";
+      });
       lifecycleProvider = plugin "example-lifecycle-provider";
       lifecycleConsumer = plugin "example-lifecycle-consumer";
       badAbi =
@@ -246,6 +263,26 @@
           ''
             python ${./tests/lifecycle-product.py} ${kernel}/bin/phenix-kernel ${lifecycleCheck} $out
           '';
+      pendingCheck =
+        pkgs.runCommand "phenix-m02-pending"
+          {
+            nativeBuildInputs = [
+              pkgs.python3
+              pkgs.binutils
+            ];
+          }
+          ''
+            mkdir -p $out
+            export PHENIX_PENDING_TRACE=$TMPDIR/offline-trace
+            python ${./tests/descriptor.py} ${describe}/bin/phenix-describe ${pendingPlugin} ${pendingFat} ${pendingOff} ${pendingLld} ${pendingRepeat} > $out/descriptor-evidence.json
+            test ! -e "$PHENIX_PENDING_TRACE"
+            ${conformanceBinary}/bin/phenix-m02-pending ${pendingPlugin} ${provider} $out
+          '';
+      pendingProduct =
+        pkgs.runCommand "phenix-m02-pending-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+          ''
+            python ${./tests/pending-product.py} ${kernel}/bin/phenix-kernel ${pendingCheck} $out
+          '';
       conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
@@ -256,6 +293,8 @@
         ln -s ${compositionProduct} $out/composition-product
         ln -s ${lifecycleCheck} $out/lifecycle
         ln -s ${lifecycleProduct} $out/lifecycle-product
+        ln -s ${pendingCheck} $out/pending
+        ln -s ${pendingProduct} $out/pending-product
       '';
     in
     {
@@ -285,6 +324,8 @@
         m0-product = productCheck;
         m01-composition = compositionCheck;
         m01-product = compositionProduct;
+        m02-pending = pendingCheck;
+        m02-pending-product = pendingProduct;
         m02-lifecycle = lifecycleCheck;
         m02-lifecycle-product = lifecycleProduct;
       };

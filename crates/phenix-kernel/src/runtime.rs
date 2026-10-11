@@ -30,6 +30,7 @@ fn scopes() -> &'static Mutex<BTreeMap<u64, ScopeRecord>> {
     SCOPES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 struct Frame {
+    revoked: bool,
     scope: u64,
     provider: String,
     authority: Authority,
@@ -45,7 +46,7 @@ pub enum Phase {
     Lifecycle,
 }
 #[derive(serde::Serialize)]
-struct FailureContext {
+pub(super) struct FailureContext {
     caller: String,
     provider: Option<String>,
     operation: Option<String>,
@@ -63,10 +64,12 @@ struct StopFailure {
     failure: Failure,
 }
 #[derive(Default)]
-struct State {
-    active_root: Option<u64>,
+pub(super) struct State {
+    pub(super) tickets: BTreeMap<u64, super::pending::Record>,
+    pub(super) root_live: bool,
+    pub(super) active_root: Option<u64>,
     next_root: u64,
-    completed_roots: u64,
+    pub(super) completed_roots: u64,
     calls: u64,
     denied: u64,
     last_failure: Option<ObservedFailure>,
@@ -75,7 +78,7 @@ struct State {
     stop_failures: Vec<StopFailure>,
 }
 #[derive(Clone, Copy)]
-enum Caller<'a> {
+pub(super) enum Caller<'a> {
     Root,
     Plugin(&'a str),
 }
@@ -88,17 +91,17 @@ impl Caller<'_> {
     }
 }
 pub struct Kernel {
-    prepared: Prepared,
-    images: RefCell<BTreeMap<String, Native>>,
+    pub(super) prepared: Prepared,
+    pub(super) images: RefCell<BTreeMap<String, Native>>,
     thread: ThreadId,
-    state: RefCell<State>,
+    pub(super) state: RefCell<State>,
     _serial: PhantomData<Rc<()>>,
 }
 pub struct Root<'a> {
-    kernel: &'a Kernel,
-    id: u64,
-    entry: Selection,
-    scope: ScopedRequest,
+    pub(super) kernel: &'a Kernel,
+    pub(super) id: u64,
+    pub(super) entry: Selection,
+    pub(super) scope: ScopedRequest,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -208,6 +211,7 @@ impl Kernel {
             .ok_or_else(|| Failure::new(Code::InfrastructureFailure, "root identity exhausted"))?;
         let id = state.next_root;
         state.active_root = Some(id);
+        state.root_live = true;
         Ok(Root {
             kernel: self,
             id,
@@ -215,7 +219,7 @@ impl Kernel {
             scope,
         })
     }
-    fn check_thread(&self) -> Result<(), Failure> {
+    pub(super) fn check_thread(&self) -> Result<(), Failure> {
         if self.thread != thread::current().id() {
             return Err(Failure::new(
                 Code::ScopeRejected,
@@ -231,7 +235,7 @@ impl Kernel {
         }
         Err(failure)
     }
-    fn context(caller: Caller<'_>, selection: &Selection) -> FailureContext {
+    pub(super) fn context(caller: Caller<'_>, selection: &Selection) -> FailureContext {
         FailureContext {
             caller: caller.name().into(),
             provider: phenix_contract::identifier(&selection.provider)
@@ -246,7 +250,7 @@ impl Kernel {
             context,
         });
     }
-    fn observe_propagation(&self, failure: &Failure, context: FailureContext) {
+    pub(super) fn observe_propagation(&self, failure: &Failure, context: FailureContext) {
         // Preserve a nested observation only while the same failure propagates.
         // A plugin that replaces a handled failure gets its own result context.
         let unchanged = self
@@ -269,25 +273,39 @@ impl Kernel {
         input: &[u8],
         restriction: Option<&ScopedRequest>,
     ) -> Result<Outcome, Failure> {
-        let result = self.dispatch_inner(root, caller, selection, input, restriction);
+        let result = self
+            .dispatch_call(root, caller, selection, input, restriction, false)
+            .map(|call| match call {
+                super::pending::Call::Ready(outcome) => outcome,
+                super::pending::Call::Pending(_) => {
+                    unreachable!("synchronous pending entry rejected")
+                }
+            });
         if let Err(failure) = &result {
             self.observe_propagation(failure, Self::context(caller, selection));
         }
         result
     }
-    fn dispatch_inner(
+    pub(super) fn dispatch_call(
         &self,
         root: u64,
         caller: Caller<'_>,
         selection: &Selection,
         input: &[u8],
         restriction: Option<&ScopedRequest>,
-    ) -> Result<Outcome, Failure> {
+        pending_allowed: bool,
+    ) -> Result<super::pending::Call, Failure> {
         self.check_thread()?;
         if self.state.borrow().active_root != Some(root) {
             return self.fail(Code::ScopeRejected, "root is no longer admitted");
         }
         let key = selection.key();
+        if self.state.borrow().stack.last().is_some_and(|f| f.revoked) {
+            return self.fail(
+                Code::ScopeRejected,
+                "cancelled call has no host effect authority",
+            );
+        }
         let package = self
             .prepared
             .packages
@@ -307,6 +325,25 @@ impl Kernel {
             {
                 return self.fail(Code::Denied, "undeclared import or unselected provider");
             }
+        }
+        let pending = package.descriptor().execution == "pending";
+        if pending && !pending_allowed {
+            return self.fail(
+                Code::AbiIncompatible,
+                "pending import requires a typed ticket",
+            );
+        }
+        if self
+            .state
+            .borrow()
+            .tickets
+            .values()
+            .any(|r| !r.quiescent && r.selection.provider == selection.provider)
+        {
+            return self.fail(
+                Code::ReentrancyRejected,
+                "instance has a physical pending call",
+            );
         }
         let contract = package
             .descriptor()
@@ -378,7 +415,17 @@ impl Kernel {
         {
             return self.fail(Code::ReentrancyRejected, "synchronous instance cycle");
         }
-        let guard = CallGuard::new(self, root, &selection.provider, authority, resource)?;
+        let guard = CallGuard::new(
+            self,
+            root,
+            &selection.provider,
+            authority.clone(),
+            resource.clone(),
+            false,
+        )?;
+        if pending {
+            return self.begin_pending(root, selection, input, &guard, authority, resource);
+        }
         let api = HostApi {
             scope: guard.scope,
             invoke: invoke_import,
@@ -386,8 +433,12 @@ impl Kernel {
         let (status, value) =
             self.images.borrow()[&selection.provider].invoke(&api, &key, input)?;
         match status {
-            0 if contract.response.accepts(&value) => Ok(Outcome::Success(value)),
-            1 if contract.error.accepts(&value) => Ok(Outcome::Domain(value)),
+            0 if contract.response.accepts(&value) => {
+                Ok(super::pending::Call::Ready(Outcome::Success(value)))
+            }
+            1 if contract.error.accepts(&value) => {
+                Ok(super::pending::Call::Ready(Outcome::Domain(value)))
+            }
             2 => Err(Failure::from_value(value)?),
             _ => self.fail(
                 Code::SchemaRejected,
@@ -408,11 +459,30 @@ impl Kernel {
         if report["format"] == "phenix.inspect.v2" {
             report["lifecycle"] = serde_json::json!({"startup_order":self.prepared.startup_order,"stopped":state.stopped,"stop_failures":state.stop_failures});
         }
+        drop(state);
+        if !self.state.borrow().tickets.is_empty()
+            || self
+                .prepared
+                .packages
+                .values()
+                .any(|p| p.descriptor().abi_major == 2)
+        {
+            report["pending"] = self.pending_inspection();
+        }
         report
     }
     /// Trusted synchronous lifecycle control. No plugin scope exposes this API.
     pub fn shutdown(&self) -> Result<(), Failure> {
         self.check_thread()?;
+        if self.state.borrow().tickets.values().any(|r| !r.quiescent) {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                format!(
+                    "physical leases block shutdown: {}",
+                    self.pending_inspection()
+                ),
+            ));
+        }
         if self.state.borrow().active_root.is_some() {
             return Err(Failure::new(
                 Code::ReentrancyRejected,
@@ -454,7 +524,16 @@ impl Kernel {
 }
 impl Drop for Kernel {
     fn drop(&mut self) {
-        let _ = self.stop_images();
+        self.invalidate_permits();
+        if self.state.borrow().tickets.values().any(|r| !r.quiescent) {
+            // Noncooperative native work may still execute. Retain the whole
+            // selected dependency closure; never stop or unload live instances.
+            for (_, native) in std::mem::take(self.images.get_mut()) {
+                std::mem::forget(native);
+            }
+        } else {
+            let _ = self.stop_images();
+        }
     }
 }
 impl Root<'_> {
@@ -489,22 +568,22 @@ impl Root<'_> {
 }
 impl Drop for Root<'_> {
     fn drop(&mut self) {
-        let mut state = self.kernel.state.borrow_mut();
-        state.active_root = None;
-        state.completed_roots += 1;
+        self.kernel.state.borrow_mut().root_live = false;
+        self.kernel.abandon_root(self.id);
     }
 }
-struct CallGuard<'a> {
-    kernel: &'a Kernel,
-    scope: u64,
+pub(super) struct CallGuard<'a> {
+    pub(super) kernel: &'a Kernel,
+    pub(super) scope: u64,
 }
 impl<'a> CallGuard<'a> {
-    fn new(
+    pub(super) fn new(
         kernel: &'a Kernel,
         root: u64,
         caller: &str,
         authority: Authority,
         resource: Option<String>,
+        revoked: bool,
     ) -> Result<Self, Failure> {
         let mut scope = NEXT_SCOPE.load(Ordering::Relaxed);
         loop {
@@ -536,6 +615,7 @@ impl<'a> CallGuard<'a> {
         let mut state = kernel.state.borrow_mut();
         state.calls += 1;
         state.stack.push(Frame {
+            revoked,
             scope,
             provider: caller.into(),
             authority,
@@ -552,7 +632,7 @@ impl Drop for CallGuard<'_> {
         self.kernel.state.borrow_mut().stack.pop();
     }
 }
-unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Reply {
+pub(super) unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Reply {
     boundary(|| {
         let result = (|| -> Result<Reply, Failure> {
             let record = scopes()
@@ -575,6 +655,15 @@ unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Repl
                     Code::ScopeRejected,
                     "scope is not the current call",
                 ));
+            }
+            if kernel
+                .state
+                .borrow()
+                .stack
+                .last()
+                .is_some_and(|f| f.revoked)
+            {
+                return Err(Failure::new(Code::ScopeRejected, "cancelled host scope"));
             }
             let mut context = FailureContext {
                 caller: record.caller.clone(),

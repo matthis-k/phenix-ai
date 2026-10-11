@@ -158,6 +158,9 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut import_policies = Vec::new();
         let mut exports = Vec::new();
         let mut dispatch = Vec::new();
+        let mut pending = Vec::new();
+        let mut polls = Vec::new();
+        let mut cancels = Vec::new();
         let mut state = None;
         let mut start_hook = None;
         let mut stop_hook = None;
@@ -222,6 +225,26 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                             if hook.replace(f.sig.ident.clone()).is_some() {
                                 return Err(syn::Error::new(a.span(), "duplicate lifecycle hook"));
                             }
+                        } else if ["pending", "poll", "cancel"]
+                            .iter()
+                            .any(|name| a.path().is_ident(name))
+                        {
+                            let op: Type = a.parse_args()?;
+                            if f.sig.asyncness.is_some() {
+                                return Err(syn::Error::new(
+                                    f.sig.span(),
+                                    "pending hooks must be synchronous",
+                                ));
+                            }
+                            let name = f.sig.ident.clone();
+                            if a.path().is_ident("pending") {
+                                exports.push(quote!(::phenix_sdk::Declaration{operation:<#op as ::phenix_sdk::Operation>::DEFINITION,provenance:concat!(module_path!(),"::",stringify!(#name))}));
+                                pending.push((op, name));
+                            } else if a.path().is_ident("poll") {
+                                polls.push((op, name));
+                            } else {
+                                cancels.push((op, name));
+                            }
                         } else if a.path().is_ident("export") {
                             let op: Type = a.parse_args()?;
                             if f.sig.asyncness.is_some() {
@@ -257,6 +280,58 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 "plugin must export an operation",
             ));
         }
+        let is_pending = !pending.is_empty();
+        if is_pending && !dispatch.is_empty() {
+            return Err(syn::Error::new(
+                module.ident.span(),
+                "use one native execution profile per plugin",
+            ));
+        }
+        if pending.len() != polls.len() || pending.len() != cancels.len() {
+            return Err(syn::Error::new(
+                module.ident.span(),
+                "each pending export needs one poll and cancel hook",
+            ));
+        }
+        let mut pending_dispatch = Vec::new();
+        let mut poll_dispatch = Vec::new();
+        let mut cancel_dispatch = Vec::new();
+        let type_key = |t: &Type| quote!(#t).to_string();
+        for (op, start) in &pending {
+            let matching = |hooks: &Vec<(Type, syn::Ident)>| -> syn::Result<syn::Ident> {
+                let names: Vec<_> = hooks
+                    .iter()
+                    .filter(|(t, _)| type_key(t) == type_key(op))
+                    .collect();
+                if names.len() != 1 {
+                    return Err(syn::Error::new(
+                        op.span(),
+                        "pending export requires unique matching hook",
+                    ));
+                }
+                Ok(names[0].1.clone())
+            };
+            let poll = matching(&polls)?;
+            let cancel = matching(&cancels)?;
+            pending_dispatch.push(quote! { if key == <#op as ::phenix_sdk::Operation>::DEFINITION.key {
+                let request = <<#op as ::phenix_sdk::Operation>::Request as ::phenix_sdk::Portable>::from_value(value)?;
+                let result: ::phenix_sdk::PendingResult<<#op as ::phenix_sdk::Operation>::Response,<#op as ::phenix_sdk::Operation>::Error> = #start(state, &host, request);
+                return Ok(::phenix_sdk::pending_reply(result));
+            }});
+            poll_dispatch.push(quote! { if key == <#op as ::phenix_sdk::Operation>::DEFINITION.key {
+                let result: ::phenix_sdk::PendingResult<<#op as ::phenix_sdk::Operation>::Response,<#op as ::phenix_sdk::Operation>::Error> = #poll(state, &host);
+                return Ok(::phenix_sdk::pending_reply(result));
+            }});
+            cancel_dispatch.push(quote! { if key == <#op as ::phenix_sdk::Operation>::DEFINITION.key {
+                let result: Result<bool, ::phenix_sdk::Failure> = #cancel(state, &host);
+                return Ok(match result { Ok(true) => ::phenix_sdk::abi::Reply::value(4, ::phenix_sdk::Value::Null), Ok(false) => ::phenix_sdk::abi::Reply::value(3, ::phenix_sdk::Value::Null), Err(failure) => ::phenix_sdk::abi::Reply::failure(failure) });
+            }});
+        }
+        let descriptor_fn = if is_pending {
+            quote!(::phenix_sdk::descriptor_pending)
+        } else {
+            quote!(::phenix_sdk::descriptor_with_policy)
+        };
         let descriptor = format_ident!("PHENIX_DESCRIPTOR");
         let mutable_state = if start_hook.is_some() || stop_hook.is_some() {
             quote!(mut)
@@ -281,7 +356,7 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
             None => quote!(Ok::<(), ::phenix_sdk::Failure>(())),
         };
         let generated = quote! {
-            #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=::phenix_sdk::descriptor_with_policy(#id,#version,[#(#imports),*],[#(#import_policies),*],[#(#exports),*]);
+            #[used] #[no_mangle] #[link_section=".phenix"] pub static #descriptor:[u8;::phenix_sdk::SECTION_BYTES]=#descriptor_fn(#id,#version,[#(#imports),*],[#(#import_policies),*],[#(#exports),*]);
             const _:usize=#ni+#ne;
             struct __Instance { state: #state, poisoned: bool }
             unsafe extern "C" fn __create(out:*mut *mut ::std::ffi::c_void)->::phenix_sdk::abi::Reply{
@@ -314,7 +389,49 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 header: ::phenix_sdk::abi::Header{major:1,minor:0,table_bytes: ::std::mem::size_of::<::phenix_sdk::abi::PluginTable>()as u32,features:0},create:__create,invoke:__invoke,stop:__stop};
             #[no_mangle] pub extern "C" fn phenix_native_v1()->*const ::phenix_sdk::abi::Header{&__TABLE.header}
         };
-        let file: syn::File = syn::parse2(generated)?;
+        let mut file: syn::File = syn::parse2(generated)?;
+        if is_pending {
+            file.items.retain(|item| match item {
+                syn::Item::Fn(f) => f.sig.ident != "__invoke" && f.sig.ident != "phenix_native_v1",
+                syn::Item::Static(s) => s.ident != "__TABLE",
+                _ => true,
+            });
+            let pending_glue = quote! {
+                unsafe fn __pending_entry(instance: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::PendingHostApi, key: ::phenix_sdk::abi::Bytes, input: Option<::phenix_sdk::abi::Bytes>, mode: u8) -> ::phenix_sdk::abi::Reply {
+                    ::phenix_sdk::abi::boundary(|| {
+                        if instance.is_null() || api.is_null() { return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible, "null pending pointer")); }
+                        let instance = unsafe { &mut *instance.cast::<__Instance>() };
+                        // A caught panic may leave worker handles in State. Cancellation
+                        // and drain still need access to them; invoke remains poisoned.
+                        if instance.poisoned && mode == 0 { return ::phenix_sdk::abi::Reply::failure(::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, "pending instance poisoned")); }
+                        let poisoned = instance.poisoned;
+                        instance.poisoned = true;
+                        let result = (|| -> Result<::phenix_sdk::abi::Reply, ::phenix_sdk::Failure> {
+                            let state = &mut instance.state;
+                            let host = unsafe { ::phenix_sdk::PendingHost::from_api(&*api) };
+                            let key = ::std::str::from_utf8(unsafe { key.read() }?).map_err(|_| ::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected, "invalid pending key"))?;
+                            match mode {
+                                0 => { let value = ::phenix_sdk::Value::decode(unsafe { input.unwrap().read() }?)?; #(#pending_dispatch)* }
+                                1 => { #(#poll_dispatch)* }
+                                _ => { #(#cancel_dispatch)* }
+                            }
+                            Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, "operation absent from pending exports"))
+                        })();
+                        instance.poisoned = poisoned;
+                        match result { Ok(reply) => reply, Err(e) => ::phenix_sdk::abi::Reply::failure(e) }
+                    })
+                }
+                unsafe extern "C" fn __invoke(instance: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::PendingHostApi, key: ::phenix_sdk::abi::Bytes, input: ::phenix_sdk::abi::Bytes) -> ::phenix_sdk::abi::Reply { unsafe { __pending_entry(instance, api, key, Some(input), 0) } }
+                unsafe extern "C" fn __poll(instance: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::PendingHostApi, key: ::phenix_sdk::abi::Bytes) -> ::phenix_sdk::abi::Reply { unsafe { __pending_entry(instance, api, key, None, 1) } }
+                unsafe extern "C" fn __cancel(instance: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::PendingHostApi, key: ::phenix_sdk::abi::Bytes) -> ::phenix_sdk::abi::Reply { unsafe { __pending_entry(instance, api, key, None, 2) } }
+                static __TABLE: ::phenix_sdk::abi::PendingPluginTable = ::phenix_sdk::abi::PendingPluginTable {
+                    header: ::phenix_sdk::abi::Header { major: 2, minor: 0, table_bytes: ::std::mem::size_of::<::phenix_sdk::abi::PendingPluginTable>() as u32, features: 1 }, create: __create, invoke: __invoke, stop: __stop, poll: __poll, cancel: __cancel
+                };
+                #[no_mangle] pub extern "C" fn phenix_native_v2() -> *const ::phenix_sdk::abi::Header { &__TABLE.header }
+            };
+            let extra: syn::File = syn::parse2(pending_glue)?;
+            file.items.extend(extra.items);
+        }
         items.extend(file.items);
         Ok(quote!(#module))
     })();

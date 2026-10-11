@@ -197,14 +197,17 @@ impl Descriptor {
         let d: Self = serde_json::from_value(v.to_json()).map_err(|e| fail(e.to_string()))?;
         if d.format != "phenix.descriptor.v1"
             || d.schema_version != 1
-            || d.execution != "sync"
+            || !matches!(d.execution.as_str(), "sync" | "pending")
             || !identifier(&d.plugin_id)
             || d.plugin_id == "root"
             || d.plugin_version.is_empty()
         {
             return Err(fail("invalid descriptor profile or identity".into()));
         }
-        if d.abi_major != 1 || d.abi_minor != 0 || d.features != 0 {
+        if !((d.abi_major == 1 && d.features == 0 && d.execution == "sync")
+            || (d.abi_major == 2 && d.features == 1 && d.execution == "pending"))
+            || d.abi_minor != 0
+        {
             return Err(Failure::new(
                 Code::AbiIncompatible,
                 "unsupported offline ABI requirements",
@@ -242,7 +245,11 @@ impl Descriptor {
                     || c.id.as_str() <= previous
                     || c.owner != d.plugin_id
                     || c.role != role
-                    || !(c.kind == "phenix.operation.v1"
+                    || !((c.kind == "phenix.operation.v1"
+                        && (role == "Require" || d.execution == "sync"))
+                        || (role == "Provide"
+                            && d.execution == "pending"
+                            && c.kind == "phenix.pending-operation.v1")
                         || (role == "Require" && c.kind == "phenix.import.v1"))
                     || c.implementation
                         .as_ref()
@@ -277,7 +284,7 @@ impl Descriptor {
     }
 }
 mod encode;
-pub use encode::{descriptor, descriptor_with_policy, SECTION_BYTES};
+pub use encode::{descriptor, descriptor_pending, descriptor_with_policy, SECTION_BYTES};
 
 #[cfg(test)]
 mod tests {
@@ -312,6 +319,41 @@ mod tests {
             Descriptor::decode(&v.encode().unwrap()).unwrap_err().code,
             Code::AbiIncompatible
         );
+    }
+    #[test]
+    fn pending_profile_is_fixed_and_validated_offline() {
+        let section = descriptor_pending(
+            "test.pending",
+            "1.0.0",
+            [],
+            [],
+            [Declaration {
+                operation: OP,
+                provenance: "test::pending",
+            }],
+        );
+        let n = u32::from_be_bytes(section[..4].try_into().unwrap()) as usize;
+        let original = Value::decode(&section[4..n + 4]).unwrap();
+        let d = Descriptor::decode(&section[4..n + 4]).unwrap();
+        assert_eq!(d.abi_major, 2);
+        assert_eq!(d.exports[0].kind, "phenix.pending-operation.v1");
+        for (key, value) in [
+            ("features", Value::U64(0)),
+            ("abi_minor", Value::U64(1)),
+            ("execution", Value::String("sync".into())),
+        ] {
+            let mut changed = original.clone();
+            let Value::Map(fields) = &mut changed else {
+                unreachable!()
+            };
+            fields.insert(key.into(), value);
+            assert_eq!(
+                Descriptor::decode(&changed.encode().unwrap())
+                    .unwrap_err()
+                    .code,
+                Code::AbiIncompatible
+            );
+        }
     }
     #[test]
     fn descriptor_version_fields_preserve_unsigned_wire_types() {

@@ -1,7 +1,7 @@
 use phenix_contract::{Code, Failure, Value};
 use phenix_kernel::{
     resolve::{Composition, Deployment, Prepared},
-    Outcome, Phase,
+    Call, Outcome, Phase, Poll,
 };
 use std::path::Path;
 fn main() {
@@ -76,9 +76,44 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     *phase = Phase::Admission;
     let root = kernel.admit_default_root()?;
     *phase = Phase::Invocation;
-    let outcome = root.invoke_bytes(&input);
+    let outcome = (|| {
+        match root.begin(&Value::decode(&input)?)? {
+            Call::Ready(outcome) => Ok(outcome),
+            Call::Pending(ticket) => {
+                // One bounded trusted polling client uses the kernel's same path.
+                // Exhaustion requests cancellation; caller drop retains live leases.
+                for _ in 0..64 {
+                    match root.poll(&ticket)? {
+                        Poll::Ready(result) => {
+                            if kernel.inspect()["pending"]["physical_leases"] != 0 {
+                                let _ = root.cancel(&ticket);
+                            }
+                            if kernel.inspect()["pending"]["physical_leases"] == 0 {
+                                root.release(&ticket)?;
+                            }
+                            return result;
+                        }
+                        Poll::Cancelled { .. } => {
+                            return Err(Failure::new(Code::Cancelled, "native call cancelled"))
+                        }
+                        Poll::Pending | Poll::Draining => {}
+                    }
+                }
+                let _ = root.cancel(&ticket);
+                Err(Failure::new(
+                    Code::Cancelled,
+                    "trusted CLI poll budget exhausted",
+                ))
+            }
+        }
+    })();
     drop(root);
-    let invocation_failure = kernel.inspect()["last_failure"].clone();
+    let mut invocation_failure = kernel.inspect()["last_failure"].clone();
+    if let Err(failure) = &outcome {
+        if invocation_failure.is_null() {
+            invocation_failure = serde_json::json!({"code":failure.code,"message":failure.message,"phase":"invocation","context":null});
+        }
+    }
     let shutdown = kernel.shutdown();
     let mut inspection = kernel.inspect();
     if let Err(failure) = &shutdown {
@@ -87,6 +122,9 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     inspection["outcome"] = match &outcome {
         Ok(Outcome::Success(v)) => serde_json::json!({"kind":"success","value":v.to_json()}),
         Ok(Outcome::Domain(v)) => serde_json::json!({"kind":"domain_error","value":v.to_json()}),
+        Err(failure) if failure.code == Code::Cancelled => {
+            serde_json::json!({"kind":"cancelled","failure":invocation_failure})
+        }
         Err(_) => serde_json::json!({"kind":"kernel_failure","failure":invocation_failure}),
     };
     println!("{inspection}");

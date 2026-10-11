@@ -1,0 +1,587 @@
+{
+  "aggregate": "/nix/store/1hhshpzm911xrbb3mxx0xmkfv355n4fg-phenix-m0-conformance",
+  "checks": {
+    "m0-contract": "/nix/store/84m81syfwr8jby8h5szhljh42b97agm4-phenix-contract-check-0.1.0",
+    "m0-descriptor": "/nix/store/0f0gq755ia1ld4s0ngwf3l672qwxj2nx-phenix-m0-descriptor",
+    "m0-native": "/nix/store/k5cmk1vl6n47j5dhpwzc7hhhwxsjks1d-phenix-m0-native",
+    "m0-product": "/nix/store/g417r958c3dshisdj1ny9clbhyg7m764-phenix-m0-product",
+    "m01-composition": "/nix/store/9382j21vi7bm7fdj2wvzk2r8py5a365h-phenix-m01-composition",
+    "m01-product": "/nix/store/pyvqg1rp7qm83i4pp1g12vyznxhx37m8-phenix-m01-product",
+    "m02-lifecycle": "/nix/store/4q48qqiqc2sp4l2i8qk8vas68w0y6a2j-phenix-m02-lifecycle",
+    "m02-lifecycle-product": "/nix/store/idd5gpzd1pks5ngri7kgkn5x0xrjcnyn-phenix-m02-lifecycle-product",
+    "m02-pending": "/nix/store/dr61v4s8ra5717g8d2vkn8xk0m9qwkrq-phenix-m02-pending",
+    "m02-pending-product": "/nix/store/nvkra2lsd9y6n14fadpwmn555yg9977r-phenix-m02-pending-product"
+  },
+  "contract_freeze": "3ede4917327d2bfe5b78d75e0adafdaffb0b9d1d",
+  "descriptors": {
+    "binutils": "GNU ld (GNU Binutils) 2.46",
+    "configurations": [
+      "thin-gnu",
+      "fat-gnu",
+      "off-gnu",
+      "thin-lld-gc",
+      "thin-gnu-repeat"
+    ],
+    "format": "phenix.p0-evidence.v1",
+    "packages": [
+      {
+        "artifact": "lib/plugin.so",
+        "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+        "descriptor": "descriptor.bin",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "format": "phenix.package.v1",
+        "package_path": "/nix/store/s723l426v6ck8xix86srggdss3z8kyl9-example-pending-0.1.0",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "artifact": "lib/plugin.so",
+        "artifact_sha256": "43a3f2b31bafb409f3b3ca22291f32434683909b57f3fd647c03fdb8525093dc",
+        "descriptor": "descriptor.bin",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "format": "phenix.package.v1",
+        "package_path": "/nix/store/nk57090w6vbvdnk12qfpx3d2jmyy585v-example-pending-fat-0.1.0",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "artifact": "lib/plugin.so",
+        "artifact_sha256": "f5f25e600f9d3f01f4dc53d2b580cc0d142ce72cf99a60ebc0afff5ca6e3d7d6",
+        "descriptor": "descriptor.bin",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "format": "phenix.package.v1",
+        "package_path": "/nix/store/f00yg46346f5n678fl6cdg32saby4zj4-example-pending-off-0.1.0",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "artifact": "lib/plugin.so",
+        "artifact_sha256": "8d328246b5b8479b1439b665ea595bb1213a0520b64a851147c083de1c6df2d8",
+        "descriptor": "descriptor.bin",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "format": "phenix.package.v1",
+        "package_path": "/nix/store/f0wpb42ii5s0j7swrdb9njnipxg2al5j-example-pending-lld-0.1.0",
+        "target": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "artifact": "lib/plugin.so",
+        "artifact_sha256": "0e63c6fbcf563654b7d305671e866466662d23afe4cb4db57c7b22b4bdc6c0b1",
+        "descriptor": "descriptor.bin",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "format": "phenix.package.v1",
+        "package_path": "/nix/store/4y99zpy4i8dnv7zs50ja8hy60q35bgm1-example-pending-repeat-0.1.0",
+        "target": "x86_64-unknown-linux-gnu"
+      }
+    ],
+    "strip_modes": [
+      "debug",
+      "unneeded",
+      "all"
+    ],
+    "stripped_artifacts": [
+      {
+        "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/s723l426v6ck8xix86srggdss3z8kyl9-example-pending-0.1.0",
+        "strip_mode": "--strip-debug"
+      },
+      {
+        "artifact_sha256": "e8306d1555d84b2df633516831a595d869a5cd6dd0c8f31828eb88020fd06b5f",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/s723l426v6ck8xix86srggdss3z8kyl9-example-pending-0.1.0",
+        "strip_mode": "--strip-unneeded"
+      },
+      {
+        "artifact_sha256": "e8306d1555d84b2df633516831a595d869a5cd6dd0c8f31828eb88020fd06b5f",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/s723l426v6ck8xix86srggdss3z8kyl9-example-pending-0.1.0",
+        "strip_mode": "--strip-all"
+      },
+      {
+        "artifact_sha256": "43a3f2b31bafb409f3b3ca22291f32434683909b57f3fd647c03fdb8525093dc",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/nk57090w6vbvdnk12qfpx3d2jmyy585v-example-pending-fat-0.1.0",
+        "strip_mode": "--strip-debug"
+      },
+      {
+        "artifact_sha256": "34a29cc2186105f2de10e0be368ec93446eac20d28fec352ab4988844c64b07a",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/nk57090w6vbvdnk12qfpx3d2jmyy585v-example-pending-fat-0.1.0",
+        "strip_mode": "--strip-unneeded"
+      },
+      {
+        "artifact_sha256": "34a29cc2186105f2de10e0be368ec93446eac20d28fec352ab4988844c64b07a",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/nk57090w6vbvdnk12qfpx3d2jmyy585v-example-pending-fat-0.1.0",
+        "strip_mode": "--strip-all"
+      },
+      {
+        "artifact_sha256": "f5f25e600f9d3f01f4dc53d2b580cc0d142ce72cf99a60ebc0afff5ca6e3d7d6",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f00yg46346f5n678fl6cdg32saby4zj4-example-pending-off-0.1.0",
+        "strip_mode": "--strip-debug"
+      },
+      {
+        "artifact_sha256": "5f01b094f9faf90c00e12c08fa31e4718fb969e01a21f46df885d9c59571ac8a",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f00yg46346f5n678fl6cdg32saby4zj4-example-pending-off-0.1.0",
+        "strip_mode": "--strip-unneeded"
+      },
+      {
+        "artifact_sha256": "5f01b094f9faf90c00e12c08fa31e4718fb969e01a21f46df885d9c59571ac8a",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f00yg46346f5n678fl6cdg32saby4zj4-example-pending-off-0.1.0",
+        "strip_mode": "--strip-all"
+      },
+      {
+        "artifact_sha256": "8d328246b5b8479b1439b665ea595bb1213a0520b64a851147c083de1c6df2d8",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f0wpb42ii5s0j7swrdb9njnipxg2al5j-example-pending-lld-0.1.0",
+        "strip_mode": "--strip-debug"
+      },
+      {
+        "artifact_sha256": "a5375839801e1ad2f93900b43c1f30513c144b4958710a0c5d784ce2e5df0df9",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f0wpb42ii5s0j7swrdb9njnipxg2al5j-example-pending-lld-0.1.0",
+        "strip_mode": "--strip-unneeded"
+      },
+      {
+        "artifact_sha256": "a5375839801e1ad2f93900b43c1f30513c144b4958710a0c5d784ce2e5df0df9",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/f0wpb42ii5s0j7swrdb9njnipxg2al5j-example-pending-lld-0.1.0",
+        "strip_mode": "--strip-all"
+      },
+      {
+        "artifact_sha256": "0e63c6fbcf563654b7d305671e866466662d23afe4cb4db57c7b22b4bdc6c0b1",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/4y99zpy4i8dnv7zs50ja8hy60q35bgm1-example-pending-repeat-0.1.0",
+        "strip_mode": "--strip-debug"
+      },
+      {
+        "artifact_sha256": "f030f1fd85a754a6e3dfa4bb2c9a67f3631f3646b032ac49a6969fab547b2087",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/4y99zpy4i8dnv7zs50ja8hy60q35bgm1-example-pending-repeat-0.1.0",
+        "strip_mode": "--strip-unneeded"
+      },
+      {
+        "artifact_sha256": "f030f1fd85a754a6e3dfa4bb2c9a67f3631f3646b032ac49a6969fab547b2087",
+        "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+        "package_path": "/nix/store/4y99zpy4i8dnv7zs50ja8hy60q35bgm1-example-pending-repeat-0.1.0",
+        "strip_mode": "--strip-all"
+      }
+    ]
+  },
+  "format": "phenix.m02.pending.local.v1",
+  "full_m02_accepted": false,
+  "native": {
+    "baseline_fds": 4,
+    "format": "phenix.m02.pending.evidence.v1",
+    "full_m02_accepted": false,
+    "inspection": {
+      "authority": {
+        "operations": [
+          "example.pending@1/run",
+          "example.transform@1/apply",
+          "example.transform@1/count"
+        ],
+        "resources": []
+      },
+      "bindings": [
+        {
+          "caller": "example.pending",
+          "operation": "example.transform@1/apply",
+          "provider": "example.provider"
+        }
+      ],
+      "calls": 4,
+      "denied_operations": 0,
+      "entry": {
+        "interface": "example.pending@1",
+        "operation": "run",
+        "provider": "example.pending"
+      },
+      "format": "phenix.inspect.v2",
+      "last_failure": {
+        "code": "ReentrancyRejected",
+        "context": {
+          "caller": "root",
+          "operation": "example.pending@1/run",
+          "provider": "example.pending"
+        },
+        "message": "one serial root is already admitted",
+        "phase": "admission"
+      },
+      "lifecycle": {
+        "startup_order": [
+          "example.provider",
+          "example.pending"
+        ],
+        "stop_failures": [],
+        "stopped": true
+      },
+      "pending": {
+        "format": "phenix.pending.v1",
+        "physical_leases": 0,
+        "tickets": []
+      },
+      "plugins": [
+        {
+          "abi_negotiated": true,
+          "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+          "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+          "id": "example.pending",
+          "offline_verified": true
+        },
+        {
+          "abi_negotiated": true,
+          "artifact_sha256": "467c1087f023d91ff1da575070704692635ad65ca66378e05244759f8381002b",
+          "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+          "id": "example.provider",
+          "offline_verified": true
+        }
+      ],
+      "resource": null,
+      "roots": {
+        "active": null,
+        "completed": 1,
+        "last_root_id": 1
+      }
+    },
+    "passed": [
+      "sync-rejects-before-effect",
+      "worker-wake",
+      "native-typed-import",
+      "busy-instance",
+      "wrong-owner",
+      "once-only-result",
+      "release-rejects-poll",
+      "late-wake-rejected",
+      "cooperative-cancel",
+      "repeat-cancel-rejected",
+      "typed-worker-error",
+      "declared-domain-error",
+      "denied-effects-counter",
+      "cancel-before-effect",
+      "noncooperative-lease",
+      "drain-after-cancel",
+      "panic-retains-lease",
+      "caller-drop-pins-root",
+      "drain-releases-resources",
+      "poll-authority-denied",
+      "kernel-drop-retains-image"
+    ]
+  },
+  "product": {
+    "format": "phenix.m02.pending.product.v1",
+    "reports": [
+      {
+        "authority": {
+          "operations": [
+            "example.pending@1/run",
+            "example.transform@1/apply",
+            "example.transform@1/count"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.pending",
+            "operation": "example.transform@1/apply",
+            "provider": "example.provider"
+          }
+        ],
+        "calls": 3,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.pending@1",
+          "operation": "run",
+          "provider": "example.pending"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": null,
+        "lifecycle": {
+          "startup_order": [
+            "example.provider",
+            "example.pending"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "outcome": {
+          "kind": "success",
+          "value": {
+            "text": "READY"
+          }
+        },
+        "pending": {
+          "format": "phenix.pending.v1",
+          "physical_leases": 0,
+          "tickets": []
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+            "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+            "id": "example.pending",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "467c1087f023d91ff1da575070704692635ad65ca66378e05244759f8381002b",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "id": "example.provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        }
+      },
+      {
+        "authority": {
+          "operations": [
+            "example.pending@1/run",
+            "example.transform@1/apply",
+            "example.transform@1/count"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.pending",
+            "operation": "example.transform@1/apply",
+            "provider": "example.provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.pending@1",
+          "operation": "run",
+          "provider": "example.pending"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": {
+            "caller": "root",
+            "operation": "example.pending@1/run",
+            "provider": "example.pending"
+          },
+          "message": "explicit worker error",
+          "phase": "invocation"
+        },
+        "lifecycle": {
+          "startup_order": [
+            "example.provider",
+            "example.pending"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "outcome": {
+          "failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "root",
+              "operation": "example.pending@1/run",
+              "provider": "example.pending"
+            },
+            "message": "explicit worker error",
+            "phase": "invocation"
+          },
+          "kind": "kernel_failure"
+        },
+        "pending": {
+          "format": "phenix.pending.v1",
+          "physical_leases": 0,
+          "tickets": []
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+            "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+            "id": "example.pending",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "467c1087f023d91ff1da575070704692635ad65ca66378e05244759f8381002b",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "id": "example.provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        }
+      },
+      {
+        "authority": {
+          "operations": [
+            "example.pending@1/run",
+            "example.transform@1/apply",
+            "example.transform@1/count"
+          ],
+          "resources": []
+        },
+        "bindings": [
+          {
+            "caller": "example.pending",
+            "operation": "example.transform@1/apply",
+            "provider": "example.provider"
+          }
+        ],
+        "calls": 2,
+        "denied_operations": 0,
+        "entry": {
+          "interface": "example.pending@1",
+          "operation": "run",
+          "provider": "example.pending"
+        },
+        "format": "phenix.inspect.v2",
+        "last_failure": {
+          "code": "PluginFailed",
+          "context": {
+            "caller": "root",
+            "operation": "example.pending@1/run",
+            "provider": "example.pending"
+          },
+          "message": "caught plugin panic",
+          "phase": "invocation"
+        },
+        "lifecycle": {
+          "startup_order": [
+            "example.provider",
+            "example.pending"
+          ],
+          "stop_failures": [],
+          "stopped": true
+        },
+        "outcome": {
+          "failure": {
+            "code": "PluginFailed",
+            "context": {
+              "caller": "root",
+              "operation": "example.pending@1/run",
+              "provider": "example.pending"
+            },
+            "message": "caught plugin panic",
+            "phase": "invocation"
+          },
+          "kind": "kernel_failure"
+        },
+        "pending": {
+          "format": "phenix.pending.v1",
+          "physical_leases": 0,
+          "tickets": []
+        },
+        "plugins": [
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "6efe534edebe61431a7d9c5391eb780acbac4e6dfdeef70a8656021184ac76ca",
+            "descriptor_sha256": "1ede245e97fd0469cfba323f9f28bd209d9a626576d218310d6107f7b8c5f0d9",
+            "id": "example.pending",
+            "offline_verified": true
+          },
+          {
+            "abi_negotiated": true,
+            "artifact_sha256": "467c1087f023d91ff1da575070704692635ad65ca66378e05244759f8381002b",
+            "descriptor_sha256": "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261",
+            "id": "example.provider",
+            "offline_verified": true
+          }
+        ],
+        "resource": null,
+        "roots": {
+          "active": null,
+          "completed": 1,
+          "last_root_id": 1
+        }
+      }
+    ]
+  },
+  "remaining": [
+    "typed pending imports",
+    "parent wake propagation",
+    "cancellation tree and child executable lease proof",
+    "M0.3 generations",
+    "M0.4 shipping conformance"
+  ],
+  "source_sha256": {
+    ".github/workflows/minimal-kernel.yml": "4b95ac7d9ed90918e159b9d38c267db9e7ca44c06f3627a8443c18952b39b6c3",
+    "Cargo.lock": "88ee4d128ee7b6400c2b658d829f5630014010d1d2e6a81da2e924ce48bc4618",
+    "Cargo.toml": "3f8ed63826b7df1983cc688f104f6c04fb34d99146d148dd21322a4f4d4d775d",
+    "crates/phenix-artifact/Cargo.toml": "09a44fc4b16522327abe4dfc89040dd6dae645030a991ce640a8155d16ff02f3",
+    "crates/phenix-artifact/src/bin/phenix-describe.rs": "5062598be843081a0942259f04805c7d20bce9ae45a0c45ce6e835eab41f2968",
+    "crates/phenix-artifact/src/lib.rs": "8cd471e221bb7f4b0f81f7e76d13a28f53150b9c15c69712dcdfe86caf0237ab",
+    "crates/phenix-conformance/Cargo.toml": "2131c1dc0ecfedd6c1a1ffb24c074712f9211d82be3e41d7e18305ab8afcf4ef",
+    "crates/phenix-conformance/src/bin/phenix-m01-conformance.rs": "60627e4d96f65b21d49390dd02e32cdfcfc393e86b746fabfd3aca848d8431a4",
+    "crates/phenix-conformance/src/bin/phenix-m02-lifecycle.rs": "73548ab406fe34ea42a9cc286c733517f9ef5da748c10f06eca5327321283572",
+    "crates/phenix-conformance/src/bin/phenix-m02-pending.rs": "787bf1d3fd93380900fc5958272040cde040b7fd731bd5e483e5e39b8ada5d32",
+    "crates/phenix-conformance/src/main.rs": "ea12902d485366a42eac8bcf28b581b30971d5dee4dda1b8a4b88640d7006b0b",
+    "crates/phenix-contract/Cargo.toml": "510cb7e0de11e00dedfb02245b06415e2eacb7077460b3da421c38a3e91995f4",
+    "crates/phenix-contract/src/abi.rs": "d50c27199abf13eeaf1f8ed560820f4c6a875933c32cfb8c62f09fdff8ef843b",
+    "crates/phenix-contract/src/descriptor/encode.rs": "3b071a269de41f7df0ce2601e1e179af03c6b6c1e8d1d7ae8a191740c03cd3db",
+    "crates/phenix-contract/src/descriptor/mod.rs": "e61eeb133ebe209bf9a80a33d84e2092e58f510dab58e51145927a2a7537d126",
+    "crates/phenix-contract/src/lib.rs": "37b27da03d250fdeca2fe7e777f93cdc35cbd44991632fabb5ea989fdf667740",
+    "crates/phenix-contract/src/scope.rs": "31236eb4b958c517be714db9d51235208e5640f14f0ef6c05aa6724ac614fc05",
+    "crates/phenix-contract/src/value.rs": "b857551da98845f0cb8417f81ac7df20b07e828c55f0f8855b00f5653cda13d0",
+    "crates/phenix-kernel/Cargo.toml": "5df424f8d44ae6ee00ba245a3d347607e82528cc04ea783838302a4b18fb571b",
+    "crates/phenix-kernel/src/bin/phenix-kernel.rs": "c1c9d9e04b7c605c03c76be584b42ee630852af8d9dd634a8c7c7636894689c5",
+    "crates/phenix-kernel/src/lib.rs": "202fd05082da85fd91135b8fb1ac867f91d18c1dcac29a2df7a916a3a5d774ca",
+    "crates/phenix-kernel/src/native.rs": "62cf4f3cd788945e46c4270a015f802e498d11e4fb3ed3fde4ca050b0fa8d08a",
+    "crates/phenix-kernel/src/pending.rs": "ffbe1bfdcd4c861d1f1193a8272917ead4dd04cc159bbeafde41731fdac71e24",
+    "crates/phenix-kernel/src/resolve.rs": "997d9faa336d940c0922ceb4b63e47bf8e83269945f288da98f81f19bc2dd7fb",
+    "crates/phenix-kernel/src/runtime.rs": "c1625d63cdabe9809fd8f826ab59640fc0d4c81d646a24dac520791ce15e4a6e",
+    "crates/phenix-macros/Cargo.toml": "f2bcded10ff5607e11c29479be51b80f4a359c63f4612234cca9921c43f61ef2",
+    "crates/phenix-macros/src/lib.rs": "bc54349db6a9b12a35ae4f2015401167ce686253529a3f2f2765229f6d352e87",
+    "crates/phenix-sdk/Cargo.toml": "fb80630079d75927366872f5d9bb51cc5c4a7fa0f9963c85f6b2fd89ffa230f0",
+    "crates/phenix-sdk/src/lib.rs": "b1c0fa257243b410e6b2f8c8dff8884960e500b9e154ad947ce24575adf40c0c",
+    "examples/Cargo.lock": "05e16bbd781ebcd0137153b34968533ccb1be0ca3a360ff9e33d506dc6886165",
+    "examples/Cargo.toml": "a8fea6116bc5c9123e2bf16b8e60c9b5f0e924827dd8a9affa72beed05eaba68",
+    "examples/alternate/Cargo.toml": "f99eb4dabc634f64055363c59379d319d64d0e8a00c8a6b6b5335d5d64a08e93",
+    "examples/alternate/src/lib.rs": "732ba207e1b6ddda403b0c4ac180b515c518dface2a4ba1f89fae9ef23c6f17e",
+    "examples/choice/Cargo.toml": "a1f2c0d23edcb99496e1e5bd8d427b41eda9ca68e7873c75b6daadc8302c0571",
+    "examples/choice/src/lib.rs": "b8431101b58c32676bbc30d07b247e5a4973a2a7180dfe9da8325ab4b54da642",
+    "examples/consumer/Cargo.toml": "18ce112d385b11dde6201cfc30ca366cc1e33cf381dbbdd1d5f1466833127ee0",
+    "examples/consumer/src/lib.rs": "57c69ea72dd085316745fca784c1b65e70dd3c57de2ddd5123f585972a4eb19b",
+    "examples/contracts/Cargo.toml": "ce4c6e3271abdcbf4f4b45c5cd7088eb797a484750086146b48961c037355512",
+    "examples/contracts/src/lib.rs": "e20396b153a6ae61017daca82db18bf75183f9ade8f193d1c327c7041af91341",
+    "examples/cycle/Cargo.toml": "82872fff55a565a9606ca179649c94f9231efa14645e0fa11754c4940e277e37",
+    "examples/cycle/src/lib.rs": "8fd564e3017e9b38a88b1242eee2b300eb2d02daaff0aa9d03797b933c097e25",
+    "examples/lifecycle-consumer/Cargo.toml": "3abbc3367a09c1f30e68e57e07bec16e80fd3391e9c402307cbaa365b3a3fe19",
+    "examples/lifecycle-consumer/src/lib.rs": "1f48d45a999cad8cf44b6b8a3d66a60977fe7f5bb04858bdea5fc51990e73d6d",
+    "examples/lifecycle-provider/Cargo.toml": "ba9cb3ca5ce55a3991e8dad2805767887acd3ea01e1ace988822b1295e58be92",
+    "examples/lifecycle-provider/src/lib.rs": "89705349d667dd2a45727c566d57c10ea2b767cf663fb3d98737616208822948",
+    "examples/other/Cargo.toml": "504115372d44bca0290e923362af2ab81f54c2fb7e695bff7c5f1975a9f23c1e",
+    "examples/other/src/lib.rs": "7f2dcf721f0d3b682a7e8868a40baa8d4ea156fb24d5271210260ee17a5f456a",
+    "examples/pending/Cargo.toml": "c1e69cafd36fa9ced4cdc3d6e6ee2e196d875ad8d766630138518aeda71f372d",
+    "examples/pending/src/lib.rs": "5cdc7e374aced570cab2423bdf2d24603fdff49a2795e5beed329bb7357102b1",
+    "examples/provider/Cargo.toml": "316692639b31407f68b7842183db2a3f1b1bc6f25d2473c0e412cbefc257bc31",
+    "examples/provider/src/lib.rs": "a23d8c8033b4672bfc59a7c47b6019cafb1e1a3f2b59709cd111975065f8e513",
+    "examples/relay/Cargo.toml": "54b2d4467f82ce77b811c1fdd8bbb396921a1d5d68ffde27036cc3d1311bde26",
+    "examples/relay/src/lib.rs": "3b2a728758082d7efb772cc39e3136f2c5890f71eaeaa23e85e34b7c1bbd6689",
+    "examples/resource-provider/Cargo.toml": "cdb957f82331732f8f8e81109fc649886e734e2e37e69e5aa269bc3f9ac4d1d3",
+    "examples/resource-provider/src/lib.rs": "ad1d0ed3da2e89c6c29aff220c7908138e30e17cd7f1cf5acccba28cbb30bf89",
+    "examples/scoped-client/Cargo.toml": "9b04f15ee5908bf32d6ff3e6a3ad6b56e5790f2399e6e04832845c5c06e7a126",
+    "examples/scoped-client/src/lib.rs": "d420a74dcbfb93c9cca70ffd4ddcee0bb5ca53f2b166fbacafa70b43e06f92b0",
+    "flake.lock": "7008e57b19b891970507a1d76d5a3224b39ad09178a5378f04b695cfe320cdca",
+    "flake.nix": "276af6aceec4ca0db6000e5ce310cef7fd3e8b82ba9692b5a5b27eda9f5ad7fd",
+    "include/phenix.h": "ea875376436273e6c7724603db1612c1516e5a717517451a39ed22bac2ebfcc5",
+    "tests/abi-negative.c": "29110fb95da6e65738645ea5dd9ad7c81e98b69412a8ff6b9e45a6035cb4e5ab",
+    "tests/abi.c": "9e51d7cd8196e355e46a3dfeae0146e90ddce9e12de84dd9a5a3ddd482db31a8",
+    "tests/composition-golden.json": "848628e9dbea248dfabcbfa62de209237f10448d6c3f2fef69a878d68ad9a04a",
+    "tests/composition-product.py": "7c3c985030bc22bd475c750ecb986f941c6756462bae9f4a3f07b27d28011229",
+    "tests/descriptor.py": "294b77a33ddf1750a2db1149fcd81e87205a365baf55cb2baac06da5bbfe388d",
+    "tests/inspection-golden.json": "43e58d65ed66a380038e36a30db1e433f25927d5b6bd9874afe94b411648dc6e",
+    "tests/lifecycle-product.py": "54462caec3f22d16c7601f6d641c58d6ae5fc47cb4aa5d8c57d0a2eb3825b3d7",
+    "tests/pending-product.py": "d3e087411daec6546f8decd13476c231525e812de8ebf0d2f0f1095283c4827a",
+    "tests/product.py": "6588c51a1230a2a0cbe2740f0ead733d2261e63e0af530f8ca9c35c18079255f"
+  }
+}

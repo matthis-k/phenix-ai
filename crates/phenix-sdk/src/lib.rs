@@ -136,3 +136,81 @@ pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failu
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
         .unwrap_or_else(|_| Err(Failure::new(Code::PluginFailed, "caught lifecycle panic")))
 }
+
+/// A pending native result. Ready promises that all native work has stopped.
+/// Missing and duplicate hook annotations reject at compile time.
+/// ```compile_fail
+/// #[phenix_sdk::operation(interface="example.pending@1",operation="run")]
+/// type Op = (String,String,String);
+/// #[phenix_sdk::plugin(id="example.missing",version="1.0.0")]
+/// mod plugin {
+///     use super::*;
+///     #[derive(Default)] pub struct State;
+///     #[pending(Op)] fn begin(_: &mut State,_: &phenix_sdk::PendingHost<'_>,_:String)->phenix_sdk::PendingResult<String,String>{phenix_sdk::PendingResult::Pending}
+/// }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::operation(interface="example.pending@1",operation="run")]
+/// type Op = (String,String,String);
+/// #[phenix_sdk::plugin(id="example.duplicate-poll",version="1.0.0")]
+/// mod plugin {
+///     use super::*;
+///     #[derive(Default)] pub struct State;
+///     #[pending(Op)] fn begin(_: &mut State,_: &phenix_sdk::PendingHost<'_>,_:String)->phenix_sdk::PendingResult<String,String>{phenix_sdk::PendingResult::Pending}
+///     #[poll(Op)] fn poll(_: &mut State,_: &phenix_sdk::PendingHost<'_>)->phenix_sdk::PendingResult<String,String>{phenix_sdk::PendingResult::Pending}
+///     #[poll(Op)] fn duplicate(_: &mut State,_: &phenix_sdk::PendingHost<'_>)->phenix_sdk::PendingResult<String,String>{phenix_sdk::PendingResult::Pending}
+///     #[cancel(Op)] fn cancel(_: &mut State,_: &phenix_sdk::PendingHost<'_>)->Result<bool,phenix_sdk::Failure>{Ok(true)}
+/// }
+/// ```
+/// ```compile_fail
+/// fn send<T: Send>() {}
+/// send::<phenix_sdk::PendingHost<'static>>();
+/// ```
+pub enum PendingResult<T, E> {
+    Pending,
+    Ready(CallResult<T, E>),
+}
+/// A copied worker permit authorizes wake only, never ordinary host imports.
+#[derive(Clone, Copy)]
+pub struct WakePermit {
+    ticket: u64,
+    permit: u64,
+    wake: unsafe extern "C" fn(u64, u64) -> u32,
+}
+impl WakePermit {
+    pub fn wake(&self) -> bool {
+        unsafe { (self.wake)(self.permit, self.ticket) == 0 }
+    }
+}
+pub struct PendingHost<'call> {
+    host: Host<'call>,
+    wake: WakePermit,
+}
+impl<'call> PendingHost<'call> {
+    /// # Safety
+    /// The API must be issued by the kernel for this native entry.
+    pub unsafe fn from_api(api: &'call abi::PendingHostApi) -> Self {
+        Self {
+            host: unsafe { Host::from_api(&api.host) },
+            wake: WakePermit {
+                ticket: api.ticket,
+                permit: api.permit,
+                wake: api.wake,
+            },
+        }
+    }
+    pub fn host(&self) -> &Host<'call> {
+        &self.host
+    }
+    pub fn wake_permit(&self) -> WakePermit {
+        self.wake
+    }
+}
+#[doc(hidden)]
+pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> Reply {
+    match result {
+        PendingResult::Pending => Reply::value(3, Value::Null),
+        PendingResult::Ready(Err(CallError::Kernel(e))) => Reply::value(5, e.to_value()),
+        PendingResult::Ready(result) => reply(result),
+    }
+}

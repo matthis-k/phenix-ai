@@ -107,6 +107,7 @@ impl Writer {
         d: Declaration,
         role: &str,
         policy: ImportPolicy,
+        pending: bool,
     ) {
         let enhanced = policy.optional || policy.implementation.is_some();
         self.map(if enhanced { 8 } else { 6 });
@@ -128,6 +129,8 @@ impl Writer {
         self.key("kind");
         self.text(if enhanced {
             "phenix.import.v1"
+        } else if pending {
+            "phenix.pending-operation.v1"
         } else {
             "phenix.operation.v1"
         });
@@ -212,9 +215,28 @@ pub const fn descriptor<const I: usize, const E: usize>(
 pub const fn descriptor_with_policy<const I: usize, const E: usize>(
     id: &str,
     version: &str,
+    imports: [Declaration; I],
+    policies: [ImportPolicy; I],
+    exports: [Declaration; E],
+) -> [u8; SECTION_BYTES] {
+    descriptor_profile(id, version, imports, policies, exports, false)
+}
+pub const fn descriptor_pending<const I: usize, const E: usize>(
+    id: &str,
+    version: &str,
+    imports: [Declaration; I],
+    policies: [ImportPolicy; I],
+    exports: [Declaration; E],
+) -> [u8; SECTION_BYTES] {
+    descriptor_profile(id, version, imports, policies, exports, true)
+}
+const fn descriptor_profile<const I: usize, const E: usize>(
+    id: &str,
+    version: &str,
     mut imports: [Declaration; I],
     mut policies: [ImportPolicy; I],
     mut exports: [Declaration; E],
+    pending: bool,
 ) -> [u8; SECTION_BYTES] {
     let mut i = 1;
     while i < I {
@@ -263,7 +285,7 @@ pub const fn descriptor_with_policy<const I: usize, const E: usize>(
     };
     w.map(12);
     w.key("abi_major");
-    w.u64(1);
+    w.u64(if pending { 2 } else { 1 });
     w.key("abi_minor");
     w.u64(0);
 
@@ -352,23 +374,23 @@ pub const fn descriptor_with_policy<const I: usize, const E: usize>(
         w.text("Declare");
     }
     w.key("execution");
-    w.text("sync");
+    w.text(if pending { "pending" } else { "sync" });
     w.key("exports");
     w.list(E);
     let mut i = 0;
     while i < E {
-        w.contribution(id, exports[i], "Provide", ImportPolicy::REQUIRED);
+        w.contribution(id, exports[i], "Provide", ImportPolicy::REQUIRED, pending);
         i += 1;
     }
     w.key("features");
-    w.u64(0);
+    w.u64(if pending { 1 } else { 0 });
     w.key("format");
     w.text("phenix.descriptor.v1");
     w.key("imports");
     w.list(I);
     let mut i = 0;
     while i < I {
-        w.contribution(id, imports[i], "Require", policies[i]);
+        w.contribution(id, imports[i], "Require", policies[i], false);
         i += 1;
     }
     w.key("plugin_id");

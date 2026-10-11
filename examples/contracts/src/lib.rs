@@ -40,3 +40,6 @@ pub type ResourceCount = (Count, Count, TransformError);
 pub type LifecycleService = (Text, Text, TransformError);
 #[operation(interface = "example.lifecycle@1", operation = "run")]
 pub type LifecycleRun = (Text, Text, TransformError);
+
+#[operation(interface = "example.pending@1", operation = "run")]
+pub type PendingRun = (Text, Text, TransformError);
