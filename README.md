@@ -28,8 +28,8 @@ Use `nix flake check -L` for the complete M1 conformance suite, `nix run .#pheni
 [verified audit](spec/m1-consolidation-audit.md) and [roadmap](spec/m1-roadmap.md)
 record scope and acceptance. M0 acceptance documents retain historical evidence.
 Their authority, cancellation, ordering, generation and retirement guarantees now
-have M1 tests. The transition passed exact-head CI at `367420e33b`. S3b completion
-follows in [PR #781](https://github.com/matthis-k/phenix-ai/pull/781), with its own
-acceptance gate.
+have M1 tests. The transition passed exact-head CI at `367420e33b`.
+[PR #781](https://github.com/matthis-k/phenix-ai/pull/781) completes S3b at
+`75a255b9`, with full CI and verified release evidence.
 
 Reactive G1-G4 development follows consolidation and S3b acceptance. The synchronous A0 agent remains an ordinary plugin fixture, exercised by `nix run .#phenix-a0-demo`. The final Basic agent will compose triggered graph nodes through the kernel's existing execution machinery.

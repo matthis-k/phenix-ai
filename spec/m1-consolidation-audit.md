@@ -128,5 +128,6 @@ in [CI 38197645494](https://github.com/matthis-k/phenix-ai/actions/runs/38197645
 Artifact 11724252850 contains the complete contemporary evidence product.
 [Saved CI evidence](evidence/m1-consolidation-ci.json) verifies its archive digest,
 exact commit and 56 JSON report hashes.
-S3b stage acceptance and reactive trigger/readiness integration remain subsequent
-work; this migration does not declare those stages complete.
+S3b is separately accepted at `75a255b9` in CI 38205255204.
+[Its matrix](m1-contract-authoring-matrix.md) owns authoring acceptance.
+Reactive trigger/readiness integration remains G1-G4.

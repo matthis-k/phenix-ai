@@ -1,6 +1,6 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a, S1b, S2 and S3a accepted; S3b implementation in progress
+Status: S1a, S1b, S2, S3a and S3b accepted; G1 is next
 Updated: 2026-10-12
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
@@ -23,8 +23,10 @@ wire/ABI profiles, macros, synthetic normalization and preparation input forms.
 migration. Local M1 native, lifecycle, pending/import, generation, state, SDK,
 authoring and agent suites pass. Independent wire, metadata and C ABI gates pass.
 Consolidation passed exact-head full Nix CI 38197645494 at `367420e33b`.
-S3b completion on `impl/m1-authoring-acceptance` adds property discovery, sealed
-pending slots and adversarial import tests. G1-G4 start after S3b acceptance. Historical profiles and acceptance claims below describe
+S3b completion adds property discovery, sealed pending slots and adversarial
+import tests. It passed full CI 38205255204 at `75a255b9`;
+[its matrix](m1-contract-authoring-matrix.md) binds the downloaded artifact.
+G1-G4 now follow the accepted consolidated kernel. Historical profiles and acceptance claims below describe
 their pinned commits, not the active product.
 
 ## 1. Branch and PR ownership
@@ -40,7 +42,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | PROVEN at `6ce818c4`, CI 38170397949; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
-| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Native metadata, generated ABI 3, fields and typed slots tested; pending imports proven in #780; property discovery and security completion await exact-head CI |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Accepted at `75a255b9`, CI 38205255204; generated native metadata, ABI 3, typed fields/slots, pending imports and property/security completion proven |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1 and G2 below; not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3 and G4 below; not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
@@ -246,7 +248,7 @@ cancellation and native lifetimes. Plugins own agent and frontend semantics.
 
 | Stage | Depends on | Concrete ownership | Acceptance | State |
 | --- | --- | --- | --- | --- |
-| S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | **CURRENTLY HERE**, partial |
+| S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | PROVEN at `75a255b9`, CI 38205255204 |
 | G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | NOT STARTED |
 | G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | NOT STARTED |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | NOT STARTED |
