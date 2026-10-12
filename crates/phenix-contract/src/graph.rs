@@ -56,7 +56,6 @@ pub struct GraphContribution {
     pub nodes: Vec<GraphNode>,
 }
 
-
 /// Static SDK declarations contain no runtime handles or plugin code.
 #[derive(Debug, Clone, Copy)]
 pub struct StaticEventDefinition {
@@ -92,21 +91,42 @@ impl StaticGraphContribution {
     pub fn owned(self) -> Result<GraphContribution, Failure> {
         GraphContribution {
             plugin: self.plugin.into(),
-            events: self.events.iter().map(|e| Ok(EventDefinition {
-                id: e.id.into(), payload: e.payload.owned()?,
-            })).collect::<Result<_, Failure>>()?,
-            actions: self.actions.iter().map(|a| ActionDefinition {
-                id: a.id.into(), event: a.event.into(), description: a.description.into(),
-                requires: a.requires.iter().map(|v| (*v).into()).collect(),
-            }).collect(),
-            nodes: self.nodes.iter().map(|n| GraphNode {
-                id: n.id.into(), triggers: n.triggers.iter().map(|v| (*v).into()).collect(),
-                after: n.after.iter().map(|v| (*v).into()).collect(),
-                selector: n.selector.into(), operation: n.operation.into(),
-                writes: n.writes.iter().map(|v| (*v).into()).collect(),
-                join: n.join, failure: n.failure,
-            }).collect(),
-        }.normalized()
+            events: self
+                .events
+                .iter()
+                .map(|e| {
+                    Ok(EventDefinition {
+                        id: e.id.into(),
+                        payload: e.payload.owned()?,
+                    })
+                })
+                .collect::<Result<_, Failure>>()?,
+            actions: self
+                .actions
+                .iter()
+                .map(|a| ActionDefinition {
+                    id: a.id.into(),
+                    event: a.event.into(),
+                    description: a.description.into(),
+                    requires: a.requires.iter().map(|v| (*v).into()).collect(),
+                })
+                .collect(),
+            nodes: self
+                .nodes
+                .iter()
+                .map(|n| GraphNode {
+                    id: n.id.into(),
+                    triggers: n.triggers.iter().map(|v| (*v).into()).collect(),
+                    after: n.after.iter().map(|v| (*v).into()).collect(),
+                    selector: n.selector.into(),
+                    operation: n.operation.into(),
+                    writes: n.writes.iter().map(|v| (*v).into()).collect(),
+                    join: n.join,
+                    failure: n.failure,
+                })
+                .collect(),
+        }
+        .normalized()
     }
 }
 
@@ -197,42 +217,61 @@ impl GraphContribution {
     /// Graph metadata has one representation; this does not encode a capability.
     pub fn encode(&self) -> Result<Vec<u8>, Failure> {
         let declaration = self.normalized()?;
-        let events = declaration.events.iter().map(|e| {
-            Ok(Value::map([
-                ("id", Value::String(e.id.clone())),
-                ("payload", Value::Bytes(e.payload.encode()?)),
-            ]))
-        }).collect::<Result<Vec<_>, Failure>>()?;
-        let actions = declaration.actions.iter().map(|a| {
-            Value::map([
-                ("id", Value::String(a.id.clone())),
-                ("event", Value::String(a.event.clone())),
-                ("description", Value::String(a.description.clone())),
-                ("requires", strings(&a.requires)),
-            ])
-        }).collect();
-        let nodes = declaration.nodes.iter().map(|n| {
-            Value::map([
-                ("id", Value::String(n.id.clone())),
-                ("operation", Value::String(n.operation.clone())),
-                ("selector", Value::String(n.selector.clone())),
-                ("triggers", strings(&n.triggers)),
-                ("after", strings(&n.after)),
-                ("writes", strings(&n.writes)),
-                ("join", Value::String("all-active".into())),
-                ("failure", Value::String(match n.failure {
-                    FailurePolicy::Skip => "skip",
-                    FailurePolicy::FailRoot => "fail-root",
-                }.into())),
-            ])
-        }).collect();
+        let events = declaration
+            .events
+            .iter()
+            .map(|e| {
+                Ok(Value::map([
+                    ("id", Value::String(e.id.clone())),
+                    ("payload", Value::Bytes(e.payload.encode()?)),
+                ]))
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        let actions = declaration
+            .actions
+            .iter()
+            .map(|a| {
+                Value::map([
+                    ("id", Value::String(a.id.clone())),
+                    ("event", Value::String(a.event.clone())),
+                    ("description", Value::String(a.description.clone())),
+                    ("requires", strings(&a.requires)),
+                ])
+            })
+            .collect();
+        let nodes = declaration
+            .nodes
+            .iter()
+            .map(|n| {
+                Value::map([
+                    ("id", Value::String(n.id.clone())),
+                    ("operation", Value::String(n.operation.clone())),
+                    ("selector", Value::String(n.selector.clone())),
+                    ("triggers", strings(&n.triggers)),
+                    ("after", strings(&n.after)),
+                    ("writes", strings(&n.writes)),
+                    ("join", Value::String("all-active".into())),
+                    (
+                        "failure",
+                        Value::String(
+                            match n.failure {
+                                FailurePolicy::Skip => "skip",
+                                FailurePolicy::FailRoot => "fail-root",
+                            }
+                            .into(),
+                        ),
+                    ),
+                ])
+            })
+            .collect();
         Value::map([
             ("format", Value::String("phenix.graph.v1".into())),
             ("plugin", Value::String(declaration.plugin)),
             ("events", Value::List(events)),
             ("actions", Value::List(actions)),
             ("nodes", Value::List(nodes)),
-        ]).encode()
+        ])
+        .encode()
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
@@ -241,46 +280,74 @@ impl GraphContribution {
             return Err(bad("unknown graph declaration format"));
         }
         let plugin = text(&mut root, "plugin")?;
-        let events = list(&mut root, "events")?.into_iter().map(|v| {
-            let mut f = fields(v)?;
-            let id = text(&mut f, "id")?;
-            let payload = match take(&mut f, "payload")? {
-                Value::Bytes(bytes) => ValueSchema::decode(&bytes)?,
-                _ => return Err(bad("event payload schema is not bytes")),
-            };
-            empty(f)?;
-            Ok(EventDefinition { id, payload })
-        }).collect::<Result<Vec<_>, Failure>>()?;
-        let actions = list(&mut root, "actions")?.into_iter().map(|v| {
-            let mut f = fields(v)?;
-            let id = text(&mut f, "id")?;
-            let event = text(&mut f, "event")?;
-            let description = text(&mut f, "description")?;
-            let requires = text_list(&mut f, "requires")?;
-            empty(f)?;
-            Ok(ActionDefinition { id, event, description, requires })
-        }).collect::<Result<Vec<_>, Failure>>()?;
-        let nodes = list(&mut root, "nodes")?.into_iter().map(|v| {
-            let mut f = fields(v)?;
-            let id = text(&mut f, "id")?;
-            let operation = text(&mut f, "operation")?;
-            let selector = text(&mut f, "selector")?;
-            let triggers = text_list(&mut f, "triggers")?;
-            let after = text_list(&mut f, "after")?;
-            let writes = text_list(&mut f, "writes")?;
-            if text(&mut f, "join")? != "all-active" {
-                return Err(bad("unknown graph join policy"));
-            }
-            let failure = match text(&mut f, "failure")?.as_str() {
-                "skip" => FailurePolicy::Skip,
-                "fail-root" => FailurePolicy::FailRoot,
-                _ => return Err(bad("unknown graph failure policy")),
-            };
-            empty(f)?;
-            Ok(GraphNode { id, operation, selector, triggers, after, writes, join: JoinPolicy::AllActive, failure })
-        }).collect::<Result<Vec<_>, Failure>>()?;
+        let events = list(&mut root, "events")?
+            .into_iter()
+            .map(|v| {
+                let mut f = fields(v)?;
+                let id = text(&mut f, "id")?;
+                let payload = match take(&mut f, "payload")? {
+                    Value::Bytes(bytes) => ValueSchema::decode(&bytes)?,
+                    _ => return Err(bad("event payload schema is not bytes")),
+                };
+                empty(f)?;
+                Ok(EventDefinition { id, payload })
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        let actions = list(&mut root, "actions")?
+            .into_iter()
+            .map(|v| {
+                let mut f = fields(v)?;
+                let id = text(&mut f, "id")?;
+                let event = text(&mut f, "event")?;
+                let description = text(&mut f, "description")?;
+                let requires = text_list(&mut f, "requires")?;
+                empty(f)?;
+                Ok(ActionDefinition {
+                    id,
+                    event,
+                    description,
+                    requires,
+                })
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        let nodes = list(&mut root, "nodes")?
+            .into_iter()
+            .map(|v| {
+                let mut f = fields(v)?;
+                let id = text(&mut f, "id")?;
+                let operation = text(&mut f, "operation")?;
+                let selector = text(&mut f, "selector")?;
+                let triggers = text_list(&mut f, "triggers")?;
+                let after = text_list(&mut f, "after")?;
+                let writes = text_list(&mut f, "writes")?;
+                if text(&mut f, "join")? != "all-active" {
+                    return Err(bad("unknown graph join policy"));
+                }
+                let failure = match text(&mut f, "failure")?.as_str() {
+                    "skip" => FailurePolicy::Skip,
+                    "fail-root" => FailurePolicy::FailRoot,
+                    _ => return Err(bad("unknown graph failure policy")),
+                };
+                empty(f)?;
+                Ok(GraphNode {
+                    id,
+                    operation,
+                    selector,
+                    triggers,
+                    after,
+                    writes,
+                    join: JoinPolicy::AllActive,
+                    failure,
+                })
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
         empty(root)?;
-        let declaration = Self { plugin, events, actions, nodes };
+        let declaration = Self {
+            plugin,
+            events,
+            actions,
+            nodes,
+        };
         declaration.validate()?;
         if declaration.encode()? != bytes {
             return Err(bad("noncanonical graph declaration"));
@@ -293,24 +360,43 @@ fn strings(values: &[String]) -> Value {
 }
 type Fields = std::collections::BTreeMap<String, Value>;
 fn fields(value: Value) -> Result<Fields, Failure> {
-    match value { Value::Map(map) => Ok(map), _ => Err(bad("expected graph map")) }
+    match value {
+        Value::Map(map) => Ok(map),
+        _ => Err(bad("expected graph map")),
+    }
 }
 fn take(fields: &mut Fields, key: &str) -> Result<Value, Failure> {
-    fields.remove(key).ok_or_else(|| bad(format!("missing graph field {key}")))
+    fields
+        .remove(key)
+        .ok_or_else(|| bad(format!("missing graph field {key}")))
 }
 fn text(fields: &mut Fields, key: &str) -> Result<String, Failure> {
-    match take(fields, key)? { Value::String(s) => Ok(s), _ => Err(bad(format!("graph field {key} must be text"))) }
+    match take(fields, key)? {
+        Value::String(s) => Ok(s),
+        _ => Err(bad(format!("graph field {key} must be text"))),
+    }
 }
 fn list(fields: &mut Fields, key: &str) -> Result<Vec<Value>, Failure> {
-    match take(fields, key)? { Value::List(v) if v.len() <= MAX_COUNT => Ok(v), _ => Err(bad(format!("graph field {key} must be bounded list"))) }
+    match take(fields, key)? {
+        Value::List(v) if v.len() <= MAX_COUNT => Ok(v),
+        _ => Err(bad(format!("graph field {key} must be bounded list"))),
+    }
 }
 fn text_list(fields: &mut Fields, key: &str) -> Result<Vec<String>, Failure> {
-    list(fields, key)?.into_iter().map(|v| {
-        match v { Value::String(s) => Ok(s), _ => Err(bad("graph list element must be text")) }
-    }).collect()
+    list(fields, key)?
+        .into_iter()
+        .map(|v| match v {
+            Value::String(s) => Ok(s),
+            _ => Err(bad("graph list element must be text")),
+        })
+        .collect()
 }
 fn empty(fields: Fields) -> Result<(), Failure> {
-    if fields.is_empty() { Ok(()) } else { Err(bad("unexpected graph declaration field")) }
+    if fields.is_empty() {
+        Ok(())
+    } else {
+        Err(bad("unexpected graph declaration field"))
+    }
 }
 
 #[cfg(test)]
@@ -319,12 +405,25 @@ mod tests {
     fn sample() -> GraphContribution {
         GraphContribution {
             plugin: "search".into(),
-            events: vec![EventDefinition { id: "prompt.submitted".into(), payload: ValueSchema::String }],
-            actions: vec![ActionDefinition { id: "prompt".into(), event: "prompt.submitted".into(), description: "Submit a prompt".into(), requires: vec!["agent.input@1/submit".into()] }],
+            events: vec![EventDefinition {
+                id: "prompt.submitted".into(),
+                payload: ValueSchema::String,
+            }],
+            actions: vec![ActionDefinition {
+                id: "prompt".into(),
+                event: "prompt.submitted".into(),
+                description: "Submit a prompt".into(),
+                requires: vec!["agent.input@1/submit".into()],
+            }],
             nodes: vec![GraphNode {
-                id: "retrieve".into(), triggers: vec!["prompt.submitted".into()], after: vec![],
-                operation: "search.api@1/retrieve".into(), selector: String::new(), writes: vec!["search/results".into()],
-                join: JoinPolicy::AllActive, failure: FailurePolicy::FailRoot,
+                id: "retrieve".into(),
+                triggers: vec!["prompt.submitted".into()],
+                after: vec![],
+                operation: "search.api@1/retrieve".into(),
+                selector: String::new(),
+                writes: vec!["search/results".into()],
+                join: JoinPolicy::AllActive,
+                failure: FailurePolicy::FailRoot,
             }],
         }
     }
@@ -333,19 +432,30 @@ mod tests {
         const GRAPH: StaticGraphContribution = StaticGraphContribution {
             plugin: "search",
             events: &[StaticEventDefinition {
-                id: "prompt.submitted", payload: crate::StaticSchema::String,
+                id: "prompt.submitted",
+                payload: crate::StaticSchema::String,
             }],
             actions: &[StaticActionDefinition {
-                id: "prompt", event: "prompt.submitted",
-                description: "Submit a prompt", requires: &["agent.input@1/submit"],
+                id: "prompt",
+                event: "prompt.submitted",
+                description: "Submit a prompt",
+                requires: &["agent.input@1/submit"],
             }],
             nodes: &[StaticGraphNode {
-                id: "retrieve", triggers: &["prompt.submitted"], after: &[],
-                operation: "search.api@1/retrieve", selector: "", writes: &["search/results"],
-                join: JoinPolicy::AllActive, failure: FailurePolicy::FailRoot,
+                id: "retrieve",
+                triggers: &["prompt.submitted"],
+                after: &[],
+                operation: "search.api@1/retrieve",
+                selector: "",
+                writes: &["search/results"],
+                join: JoinPolicy::AllActive,
+                failure: FailurePolicy::FailRoot,
             }],
         };
-        assert_eq!(GRAPH.owned().unwrap().encode().unwrap(), sample().encode().unwrap());
+        assert_eq!(
+            GRAPH.owned().unwrap().encode().unwrap(),
+            sample().encode().unwrap()
+        );
     }
     #[test]
     fn portable_roundtrip_and_authored_order() {
@@ -354,12 +464,20 @@ mod tests {
         assert_eq!(GraphContribution::decode(&bytes).unwrap(), source);
         let mut reversed = source.clone();
         reversed.nodes.push(GraphNode {
-            id: "archive".into(), triggers: vec![], after: vec![],
-            operation: "search.api@1/archive".into(), selector: String::new(), writes: vec![],
-            join: JoinPolicy::AllActive, failure: FailurePolicy::Skip,
+            id: "archive".into(),
+            triggers: vec![],
+            after: vec![],
+            operation: "search.api@1/archive".into(),
+            selector: String::new(),
+            writes: vec![],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::Skip,
         });
         reversed.nodes.reverse();
-        assert_eq!(reversed.encode().unwrap(), reversed.normalized().unwrap().encode().unwrap());
+        assert_eq!(
+            reversed.encode().unwrap(),
+            reversed.normalized().unwrap().encode().unwrap()
+        );
     }
     #[test]
     fn duplicates_and_malformed_payloads_reject() {
@@ -370,7 +488,9 @@ mod tests {
         bad.actions[0].requires.push("agent.input@1/submit".into());
         assert!(bad.encode().is_err());
         let bytes = sample().encode().unwrap();
-        let Value::Map(mut map) = Value::decode(&bytes).unwrap() else { panic!() };
+        let Value::Map(mut map) = Value::decode(&bytes).unwrap() else {
+            panic!()
+        };
         map.insert("unknown".into(), Value::Null);
         assert!(GraphContribution::decode(&Value::Map(map).encode().unwrap()).is_err());
     }
