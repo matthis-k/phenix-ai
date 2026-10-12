@@ -129,6 +129,13 @@
       resources = plugin "example-resource-provider";
       valueProvider = plugin "example-value-provider";
       valueClient = plugin "example-value-client";
+      graphA = plugin "example-graph-a";
+      graphB = plugin "example-graph-b";
+      graphC = plugin "example-graph-c";
+      graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} $out
+      '';
       authoredProvider = plugin "example-authoring-provider";
       authoredClient = plugin "example-authoring-client";
       authoredField = plugin "example-authoring-field";
@@ -481,6 +488,7 @@
         ln -s ${referenceWireCheck} $out/wire
         ln -s ${metadataStateCheck} $out/metadata-state
         ln -s ${authoringCheck} $out/authoring
+        ln -s ${graphCheck} $out/graph
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -522,6 +530,7 @@
       };
       checks.${system} = {
         m1-native-authoring = authoringCheck;
+        m1-graph = graphCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
