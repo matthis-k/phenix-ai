@@ -28,7 +28,8 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
 mod provider {
     use super::*;
     #[provide(Task::run)]
-    fn run(host: &live::Host<'_>, _: Start) -> CallResult<String, String> {
+    fn run(host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
+        let _ = input;
         let first = ResultA::get::locate(host, "a")?;
         let second = ResultB::get::locate(host, "b")?;
         let a = first
