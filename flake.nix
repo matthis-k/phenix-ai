@@ -75,6 +75,9 @@
         ./crates/phenix-artifact
         ./crates/phenix-kernel
         ./crates/phenix-conformance
+        ./crates/phenix-sdk
+        ./crates/phenix-macros
+        ./crates/phenix-basic-contracts
         ./tests/generation-identity-v2.json
       ];
       describe = build "phenix-artifact" artifactSource;
@@ -179,6 +182,31 @@
         assert report["plugin"] == "phenix.basic-contracts"
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
+      '';
+      scriptedSource = subset (publicPaths ++ [
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-plugin-model-scripted
+      ]);
+      scriptedModel = rust.buildRustPackage {
+        pname = "phenix-plugin-model-scripted";
+        version = "0.1.0";
+        src = scriptedSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-model-scripted" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = false;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_model_scripted.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} $out
+        '';
+      };
+      scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
       '';
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
         mkdir -p $out
@@ -527,6 +555,7 @@
         ln -s ${authoringCheck} $out/authoring
         ln -s ${graphCheck} $out/graph
         ln -s ${basicContractsCheck} $out/basic-contracts
+        ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -547,6 +576,7 @@
         phenix-m1-conformance-runner = conformanceBinary;
         phenix-m1-release = release;
         phenix-basic-contracts = basicDefinitions;
+        phenix-plugin-model-scripted = scriptedModel;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -573,6 +603,7 @@
         m1-native-authoring = authoringCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
+        b4-scripted = scriptedModelCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
