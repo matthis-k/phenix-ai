@@ -482,7 +482,8 @@ mod tests {
     #[test]
     fn duplicates_and_malformed_payloads_reject() {
         let mut bad = sample();
-        bad.nodes.push(bad.nodes[0].clone());
+        let duplicate = bad.nodes[0].clone();
+        bad.nodes.push(duplicate);
         assert!(bad.encode().is_err());
         let mut bad = sample();
         bad.actions[0].requires.push("agent.input@1/submit".into());
