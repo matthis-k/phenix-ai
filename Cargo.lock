@@ -153,6 +153,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-event-journal"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "phenix-plugin-storage-fixture"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-model-scripted"
 version = "0.1.0"
 dependencies = [
