@@ -112,6 +112,30 @@ fn main() {
     assert_eq!(err.code, Code::Denied);
     assert!(!witness.exists(), "rejected graph activated native code");
 
+
+    // An attacker who controls the package record can recompute its artifact
+    // checksum. The graph decoder must still reject malformed graph bytes
+    // without activating the library.
+    let tampered = output.join("tampered-graph");
+    fs::create_dir_all(tampered.join("lib")).unwrap();
+    fs::copy(Path::new(&policy.artifacts[0]).join("descriptor.bin"), tampered.join("descriptor.bin")).unwrap();
+    let mut executable = fs::read(Path::new(&policy.artifacts[0]).join("lib/plugin.so")).unwrap();
+    let old = b"phenix.graph.v1";
+    let at = executable.windows(old.len()).position(|window| window == old).expect("embedded graph format");
+    executable[at + old.len() - 1] = b'0';
+    fs::write(tampered.join("lib/plugin.so"), &executable).unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(
+        &fs::read(Path::new(&policy.artifacts[0]).join("package.json")).unwrap()
+    ).unwrap();
+    record["artifact_sha256"] = serde_json::Value::String(phenix_artifact::digest(&executable));
+    fs::write(tampered.join("package.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(
+        phenix_artifact::VerifiedPackage::verify_trusted_read_only(&tampered)
+            .unwrap_err().code,
+        Code::DescriptorInvalid
+    );
+    assert!(!witness.exists(), "tampered graph activated native code");
+
     let graph_identity = graph.identity.clone();
     let graph_order = graph.order.clone();
     let action_ids = prepared
@@ -150,6 +174,7 @@ fn main() {
             "permutation-invariant-generation",
             "authorized-action-discovery",
             "denied-graph-operation-no-constructor",
+            "re-signed-graph-tamper-rejected",
             "dormant-predecessor-semantics",
             "existing-direct-invocation"
         ]
