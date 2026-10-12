@@ -90,6 +90,7 @@ pub struct Prepared {
     pub(crate) resource: Option<String>,
     pub(crate) slot_counts: BTreeMap<(String, String), u64>,
     pub(crate) state_identity: Vec<String>,
+    pub(crate) graph: Option<crate::graph::CompiledGraph>,
     pub(crate) startup_order: Vec<String>,
     pub(crate) operations: BTreeMap<(String, String), PreparedOperation>,
     pub(crate) ceilings: BTreeMap<String, BTreeSet<String>>,
@@ -440,7 +441,8 @@ impl Prepared {
         {
             return Err(invalid("root ceiling operation absent"));
         }
-        let prepared = Self {
+        let graph_inputs = packages.values().filter_map(|package| package.graph().cloned()).collect::<Vec<_>>();
+        let mut prepared = Self {
             packages,
             entry: composition.entry,
             bindings,
@@ -449,6 +451,7 @@ impl Prepared {
             resource: composition.resource,
             slot_counts,
             state_identity: state_identity.into_iter().collect(),
+            graph: None,
             startup_order,
             operations,
             ceilings,
@@ -463,7 +466,22 @@ impl Prepared {
                 "default root entry lacks admission grant",
             ));
         }
+        if !graph_inputs.is_empty() {
+            prepared.graph = Some(prepared.compile_graph(&graph_inputs)?);
+        }
         Ok(prepared)
+    }
+    pub fn compiled_graph(&self) -> Option<&crate::graph::CompiledGraph> {
+        self.graph.as_ref()
+    }
+    /// Discover only actions whose declared admission requirements have root grants.
+    pub fn discover_actions(&self) -> Vec<crate::graph::ActionInfo> {
+        self.graph.iter().flat_map(|graph| graph.discover()).filter(|action| {
+            action.required_operations.iter().all(|key| {
+                self.authority.operations.contains(key)
+                    && self.grants.contains_key(&("root".into(), key.clone()))
+            })
+        }).cloned().collect()
     }
     pub(crate) fn permits(&self, provider: &str, key: &str) -> bool {
         self.ceilings
