@@ -37,14 +37,25 @@ fn main() {
     let context_set = "phenix.basic.context@1/set";
     let storage_read = "phenix.basic.storage@1/read";
     let storage_write = "phenix.basic.storage@1/transact";
-    let ops = [skill_list, skill_set, context_list, context_set, storage_read, storage_write];
+    let ops = [
+        skill_list,
+        skill_set,
+        context_list,
+        context_set,
+        storage_read,
+        storage_write,
+    ];
     let resources = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let grants = [
-        ("root", skill_list), ("root", skill_set),
-        ("root", context_list), ("root", context_set),
+        ("root", skill_list),
+        ("root", skill_set),
+        ("root", context_list),
+        ("root", context_set),
         ("phenix.basic.memory", storage_read),
         ("phenix.basic.memory", storage_write),
-    ].into_iter().map(|(caller, key)| {
+    ]
+    .into_iter()
+    .map(|(caller, key)| {
         let (interface, operation) = key.split_once('/').unwrap();
         ScopedGrant {
             caller: caller.into(),
@@ -52,7 +63,8 @@ fn main() {
             operation: operation.into(),
             resources: resources.clone(),
         }
-    }).collect();
+    })
+    .collect();
     let policy = Composition {
         format: "phenix.composition.v2".into(),
         artifacts: args[2..4].to_vec(),
@@ -75,7 +87,9 @@ fn main() {
         resource: Some("phenix.session.s1".into()),
     };
     let kernel = Prepared::prepare(policy).unwrap().load().unwrap();
-    let session = Scope { session: "s1".into() };
+    let session = Scope {
+        session: "s1".into(),
+    };
     let skills = vec![Skill {
         id: "rust".into(),
         description: "Rust".into(),
@@ -86,41 +100,106 @@ fn main() {
         text: "Phenix is graph-driven".into(),
     }];
     if args[1] == "seed" {
-        assert!(invoke::<Vec<Skill>>(&kernel, skill_list, session.clone()).unwrap().unwrap().is_empty());
-        assert!(invoke::<Vec<ContextItem>>(&kernel, context_list, session.clone()).unwrap().unwrap().is_empty());
-        invoke::<()>(&kernel, skill_set, SkillSet {
-            session: "s1".into(), skills: skills.clone()
-        }).unwrap().unwrap();
-        invoke::<()>(&kernel, context_set, ContextSet {
-            session: "s1".into(), items: context.clone()
-        }).unwrap().unwrap();
-        assert_eq!(invoke::<()>(&kernel, skill_set, SkillSet {
-            session: "s2".into(), skills: skills.clone()
-        }).unwrap().unwrap_err().code, ErrorCode::Denied);
-        assert_eq!(invoke::<()>(&kernel, context_set, ContextSet {
-            session: "s1".into(),
-            items: vec![context[0].clone(), context[0].clone()],
-        }).unwrap().unwrap_err().code, ErrorCode::InvalidInput);
-        assert_eq!(invoke::<Vec<Skill>>(&kernel, skill_list, session.clone()).unwrap().unwrap(), skills);
+        assert!(invoke::<Vec<Skill>>(&kernel, skill_list, session.clone())
+            .unwrap()
+            .unwrap()
+            .is_empty());
+        assert!(
+            invoke::<Vec<ContextItem>>(&kernel, context_list, session.clone())
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        invoke::<()>(
+            &kernel,
+            skill_set,
+            SkillSet {
+                session: "s1".into(),
+                skills: skills.clone(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        invoke::<()>(
+            &kernel,
+            context_set,
+            ContextSet {
+                session: "s1".into(),
+                items: context.clone(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            invoke::<()>(
+                &kernel,
+                skill_set,
+                SkillSet {
+                    session: "s2".into(),
+                    skills: skills.clone()
+                }
+            )
+            .unwrap()
+            .unwrap_err()
+            .code,
+            ErrorCode::Denied
+        );
+        assert_eq!(
+            invoke::<()>(
+                &kernel,
+                context_set,
+                ContextSet {
+                    session: "s1".into(),
+                    items: vec![context[0].clone(), context[0].clone()],
+                }
+            )
+            .unwrap()
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            invoke::<Vec<Skill>>(&kernel, skill_list, session.clone())
+                .unwrap()
+                .unwrap(),
+            skills
+        );
     } else if args[1] == "reload" {
-        let saved: Vec<Skill> = invoke(&kernel, skill_list, session.clone()).unwrap().unwrap();
-        let saved_context: Vec<ContextItem> = invoke(&kernel, context_list, session.clone()).unwrap().unwrap();
+        let saved: Vec<Skill> = invoke(&kernel, skill_list, session.clone())
+            .unwrap()
+            .unwrap();
+        let saved_context: Vec<ContextItem> = invoke(&kernel, context_list, session.clone())
+            .unwrap()
+            .unwrap();
         assert_eq!(saved, skills);
         assert_eq!(saved_context, context);
-        invoke::<()>(&kernel, skill_set, SkillSet {
-            session: "s1".into(), skills: vec![]
-        }).unwrap().unwrap();
-        assert!(invoke::<Vec<Skill>>(&kernel, skill_list, session).unwrap().unwrap().is_empty());
+        invoke::<()>(
+            &kernel,
+            skill_set,
+            SkillSet {
+                session: "s1".into(),
+                skills: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(invoke::<Vec<Skill>>(&kernel, skill_list, session)
+            .unwrap()
+            .unwrap()
+            .is_empty());
         let out = Path::new(&args[5]);
         fs::create_dir_all(out).unwrap();
-        fs::write(out.join("memory-restart.json"), serde_json::to_vec_pretty(
-            &serde_json::json!({
+        fs::write(
+            out.join("memory-restart.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
                 "format": "phenix.b3.memory.v1",
                 "cases": ["independent-skills-context", "sqlite-restart",
                     "cross-session-denial", "duplicate-id-no-effect",
                     "persistence-of-updates"]
-            })
-        ).unwrap()).unwrap();
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     } else {
         panic!("expected seed or reload");
     }
