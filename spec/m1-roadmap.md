@@ -1,6 +1,6 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a, S1b, S2, S3a and S3b accepted; G1 is next
+Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 implementation in progress, neither accepted
 Updated: 2026-10-12
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
@@ -249,8 +249,8 @@ cancellation and native lifetimes. Plugins own agent and frontend semantics.
 | Stage | Depends on | Concrete ownership | Acceptance | State |
 | --- | --- | --- | --- | --- |
 | S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | PROVEN at `75a255b9`, CI 38205255204 |
-| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | NOT STARTED |
-| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | NOT STARTED |
+| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | PARTIAL (#782): owned declarations, canonical encoding and offline action discovery; native metadata and macros pending |
+| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | PARTIAL (#782): offline compiler and prepared target lookup; verified metadata contributions, generation identity and external fixtures pending |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | NOT STARTED |
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | NOT STARTED |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | NOT STARTED |
@@ -265,6 +265,8 @@ cancellation and native lifetimes. Plugins own agent and frontend semantics.
 G1-G4 refine the existing S4/S5 work, using one resolver and dispatcher.
 S6 parallel scheduling remains outside the Basic critical path. B1 can proceed
 after G1 and F1 after G3; the shipped Basic agent still requires G4.
+
+G1/G2 work-in-progress: [PR #782](https://github.com/matthis-k/phenix-ai/pull/782) owns the first executable typed graph declarations and offline compiler. [Its contract and remaining gates](m1-graph-declarations.md) distinguish pure graph tests from integrated package acceptance. CI evidence remains outstanding; these stages are not accepted.
 
 ### Event admission and graph rules
 
