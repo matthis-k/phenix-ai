@@ -116,6 +116,7 @@ dependencies = [
 name = "phenix-conformance"
 version = "0.1.0"
 dependencies = [
+ "phenix-basic-contracts",
  "phenix-artifact",
  "phenix-contract",
  "phenix-kernel",
@@ -140,6 +141,14 @@ dependencies = [
  "phenix-contract",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-model-scripted"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
 ]
 
 [[package]]
