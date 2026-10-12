@@ -172,6 +172,37 @@ impl CompiledGraph {
     }
 }
 
+
+impl crate::resolve::Prepared {
+    /// Only the established M1 resolver may turn a declaration into a
+    /// dispatchable target. The graph compiler never grants permissions.
+    pub fn compile_graph(
+        &self,
+        declarations: &[GraphContribution],
+    ) -> Result<CompiledGraph, Failure> {
+        CompiledGraph::compile(declarations, |caller, selector, key| {
+            let provider = if selector.is_empty() {
+                caller.to_owned()
+            } else {
+                let identity = phenix_contract::import_identity(selector, key);
+                self.bindings
+                    .get(&(caller.to_owned(), identity))
+                    .cloned()
+                    .ok_or_else(|| Failure::new(Code::MissingBinding, "unselected graph import"))?
+            };
+            if !self.operations.contains_key(&(provider.clone(), key.to_owned())) {
+                return Err(Failure::new(Code::MissingBinding, "graph operation absent"));
+            }
+            if !self.permits(caller, key)
+                || !self.grants.contains_key(&(caller.to_owned(), key.to_owned()))
+            {
+                return Err(Failure::new(Code::Denied, "graph operation lacks prepared grant"));
+            }
+            Ok(provider)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
