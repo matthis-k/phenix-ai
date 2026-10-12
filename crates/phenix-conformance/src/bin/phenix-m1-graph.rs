@@ -121,7 +121,17 @@ fn main() {
     fs::copy(Path::new(&policy.artifacts[0]).join("descriptor.bin"), tampered.join("descriptor.bin")).unwrap();
     let mut executable = fs::read(Path::new(&policy.artifacts[0]).join("lib/plugin.so")).unwrap();
     let old = b"phenix.graph.v1";
-    let at = executable.windows(old.len()).position(|window| window == old).expect("embedded graph format");
+    let at = executable
+        .windows(old.len())
+        .enumerate()
+        .filter(|(_, bytes)| *bytes == old)
+        .map(|(index, _)| index)
+        .find(|index| {
+            let mut candidate = executable.clone();
+            candidate[*index + old.len() - 1] = b'0';
+            phenix_artifact::extract_graph(&candidate).is_err()
+        })
+        .expect("embedded graph section format");
     executable[at + old.len() - 1] = b'0';
     fs::write(tampered.join("lib/plugin.so"), &executable).unwrap();
     let mut record: serde_json::Value = serde_json::from_slice(
