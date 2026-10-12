@@ -188,6 +188,12 @@ pub fn expand(
                         pub fn invoke_at<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> {
                             host.invoke::<O>(&format!("{}#{}", #slot, index), request)
                         }
+                        pub fn begin_at<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, request: &O::Request) -> Result<::phenix_sdk::ImportCall<O>, ::phenix_sdk::Failure> {
+                            host.begin::<O>(&format!("{}#{}", #slot, index), request)
+                        }
+                        pub fn begin_scoped_at<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, scope: &::phenix_sdk::ScopedRequest, request: &O::Request) -> Result<::phenix_sdk::ImportCall<O>, ::phenix_sdk::Failure> {
+                            host.begin_scoped::<O>(&format!("{}#{}", #slot, index), scope, request)
+                        }
                     }
                 } else {
                     quote!()
@@ -197,6 +203,8 @@ pub fn expand(
                     #[allow(non_camel_case_types)] pub struct #symbol;
                     impl #symbol {
                         pub fn invoke<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> { host.invoke::<O>(#selector, request) }
+                        pub fn begin<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> Result<::phenix_sdk::ImportCall<O>, ::phenix_sdk::Failure> { host.begin::<O>(#selector, request) }
+                        pub fn begin_scoped<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, scope: &::phenix_sdk::ScopedRequest, request: &O::Request) -> Result<::phenix_sdk::ImportCall<O>, ::phenix_sdk::Failure> { host.begin_scoped::<O>(#selector, scope, request) }
                         #invoke_at
                         pub fn count(host: &::phenix_sdk::live::Host<'_>) -> Result<usize, ::phenix_sdk::Failure> { host.slot_count(#slot) }
                     }

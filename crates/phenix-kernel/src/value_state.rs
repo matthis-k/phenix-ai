@@ -190,6 +190,12 @@ impl Cells {
         let c = self.cell(r)?;
         Ok((&c.owner, &c.property))
     }
+    pub(super) fn location(&self, owner: &str, property: &str) -> Option<ValueLocation> {
+        self.cells
+            .values()
+            .find(|cell| cell.owner == owner && cell.property.id == property)
+            .map(|cell| cell.location)
+    }
     pub(super) fn read(&self, r: &ValueLocation) -> Result<Value, Error> {
         Ok(self.cell(r)?.snapshot.value())
     }

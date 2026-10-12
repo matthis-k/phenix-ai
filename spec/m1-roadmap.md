@@ -22,8 +22,9 @@ wire/ABI profiles, macros, synthetic normalization and preparation input forms.
 [Its frozen contract](m1-only-runtime-contract.md) owns the coordinated C1/C2
 migration. Local M1 native, lifecycle, pending/import, generation, state, SDK,
 authoring and agent suites pass. Independent wire, metadata and C ABI gates pass.
-Exact-head full Nix CI is still required. No G1-G4 implementation is authorized
-before that acceptance. Historical profiles and acceptance claims below describe
+Consolidation passed exact-head full Nix CI 38197645494 at `367420e33b`.
+S3b completion on `impl/m1-authoring-acceptance` adds property discovery, sealed
+pending slots and adversarial import tests. G1-G4 start after S3b acceptance. Historical profiles and acceptance claims below describe
 their pinned commits, not the active product.
 
 ## 1. Branch and PR ownership
@@ -39,7 +40,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S1b | Definition-only contracts, property/import metadata and negotiated state ABI | S1a | Metadata-only package and independent C/native ABI vectors | PROVEN at `51017e07` in CI 38128644908 |
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | PROVEN at `6ce818c4`, CI 38170397949; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
-| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Native metadata, generated ABI 3, fields and typed slots tested; authenticated pending imports remain |
+| S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | **CURRENTLY HERE**. Native metadata, generated ABI 3, fields and typed slots tested; pending imports proven in #780; property discovery and security completion await exact-head CI |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1 and G2 below; not started |
 | S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3 and G4 below; not started |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |

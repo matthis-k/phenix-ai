@@ -1,4 +1,4 @@
-use example_authoring_api::{Count, Counter, Relay};
+use example_authoring_api::{Count, Counter, Notes, Relay};
 use phenix_sdk::{live, *};
 
 #[plugin(
@@ -8,12 +8,61 @@ use phenix_sdk::{live, *};
     provide(Relay, slot = "relay"),
     require(Counter, slot = "counter"),
     require(Counter, slot = "fallback", optional),
-    require(Counter, slot = "all", many(min = 0))
+    require(Counter, slot = "all", many(min = 0)),
+    require(Count, slot = "count"),
+    require(Notes, slot = "notes")
 )]
 mod client {
     use super::*;
+    fn property_error(error: CallError<live::PropertyError>) -> CallError<String> {
+        match error {
+            CallError::Kernel(failure) => CallError::Kernel(failure),
+            CallError::Domain(error) => CallError::Domain(format!("{error:?}")),
+        }
+    }
     #[provide(Relay::run)]
     fn run(input: String, host: &live::Host<'_>) -> CallResult<u64, String> {
+        match input.as_str() {
+            "locate-field" => {
+                let location = Notes::get::locate(host, "notes")?;
+                return Ok(host
+                    .invoke::<Notes::get>("notes", &location)
+                    .map_err(property_error)?
+                    .len() as u64);
+            }
+            "locate-count" => {
+                let location = Count::get::locate(host, "count")?;
+                assert_eq!(
+                    location.location(),
+                    Count::set::locate(host, "count")?.location()
+                );
+                assert_eq!(
+                    location.location(),
+                    Count::watch::locate(host, "count")?.location()
+                );
+                return host
+                    .invoke::<Count::get>("count", &location)
+                    .map_err(property_error);
+            }
+            "lookup-native" => {
+                return host
+                    .locate_property::<u64>("counter", Counter::run::KEY)
+                    .map(|_| 0)
+                    .map_err(Into::into);
+            }
+            "lookup-missing" => {
+                return Count::get::locate(host, "absent")
+                    .map(|_| 0)
+                    .map_err(Into::into);
+            }
+            "lookup-mismatch" => {
+                return host
+                    .locate_property::<String>("count", Count::get::KEY)
+                    .map(|_| 0)
+                    .map_err(Into::into);
+            }
+            _ => (),
+        }
         assert_eq!(imports::fallback::count(host)?, 0);
         assert_eq!(imports::all::count(host)?, 1);
         let first = imports::all::invoke::<Counter::reference>(host, &())?;

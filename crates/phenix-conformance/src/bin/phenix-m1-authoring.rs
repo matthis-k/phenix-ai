@@ -10,6 +10,7 @@ const CLIENT: &str = "test.authored-client";
 const COUNTER: &str = "test.authored.counter@1";
 const RELAY: &str = "test.authored.relay@1";
 const PROPERTY: &str = "test.authored-provider.property.counter@1";
+const FIELD_PROPERTY: &str = "test.authored-field.property.notes@1";
 fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
     Selection {
         interface: interface.into(),
@@ -18,7 +19,9 @@ fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
     }
 }
 fn composition(artifacts: Vec<String>) -> Composition {
-    let resources: BTreeSet<_> = [PROPERTY.trim_end_matches("@1").to_owned()].into();
+    let resources: BTreeSet<_> = [PROPERTY, FIELD_PROPERTY]
+        .map(|key| key.trim_end_matches("@1").to_owned())
+        .into();
     let mut operations = BTreeSet::new();
     let mut grants = Vec::new();
     for (caller, interface, names) in [
@@ -27,6 +30,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
         ("root", PROPERTY, vec!["get", "set", "watch"]),
         (CLIENT, COUNTER, vec!["run", "reference"]),
         (PROVIDER, PROPERTY, vec!["get", "set", "watch"]),
+        (CLIENT, PROPERTY, vec!["get", "set", "watch"]),
+        (CLIENT, FIELD_PROPERTY, vec!["get"]),
     ] {
         for operation in names {
             operations.insert(format!("{interface}/{operation}"));
@@ -49,7 +54,24 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 provider: PROVIDER.into(),
                 export: "counter".into(),
             })
-            .into(),
+            .into_iter()
+            .chain([
+                SlotBinding {
+                    caller: CLIENT.into(),
+                    slot: "count".into(),
+                    index: 0,
+                    provider: PROVIDER.into(),
+                    export: "property.counter".into(),
+                },
+                SlotBinding {
+                    caller: CLIENT.into(),
+                    slot: "notes".into(),
+                    index: 0,
+                    provider: "test.authored-field".into(),
+                    export: "property.notes".into(),
+                },
+            ])
+            .collect(),
 
         artifacts,
         entry: selection(RELAY, "run", CLIENT),
@@ -71,13 +93,19 @@ fn main() {
     let mut c = composition(args[1..4].to_vec());
     c.definitions.push(args[4].clone());
     let prepared = Prepared::prepare(c.clone()).unwrap();
-    // A delegated declaration adds no provider import or service binding.
-    assert!(!prepared.inspect()["bindings"]
+    // Property imports exist only through the two explicitly selected slots.
+    assert!(prepared.inspect()["bindings"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|binding| binding["caller"] == CLIENT
-            && binding["operation"].as_str().unwrap().contains(PROPERTY)));
+        .filter(|binding| binding["caller"] == CLIENT
+            && binding["operation"]
+                .as_str()
+                .unwrap()
+                .contains(".property."))
+        .all(|binding| binding["operation"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("count:") || key.starts_with("notes:"))));
     let field_package =
         phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&args[3])).unwrap();
     let field = field_package.metadata();
@@ -103,6 +131,33 @@ fn main() {
         Outcome::Success(Value::U64(7))
     );
     assert_eq!(kernel.inspect()["live_state"]["epoch"], 1);
+    for (input, expected) in [("locate-field", 0), ("locate-count", 7)] {
+        assert_eq!(
+            kernel
+                .admit_default_root()
+                .unwrap()
+                .invoke(&Value::String(input.into()))
+                .unwrap(),
+            Outcome::Success(Value::U64(expected))
+        );
+    }
+    for (input, code) in [
+        ("lookup-native", Code::Denied),
+        ("lookup-missing", Code::Denied),
+        ("lookup-mismatch", Code::SchemaRejected),
+    ] {
+        assert_eq!(
+            kernel
+                .admit_default_root()
+                .unwrap()
+                .invoke(&Value::String(input.into()))
+                .unwrap_err()
+                .code,
+            code
+        );
+    }
+    assert_eq!(kernel.inspect()["live_state"]["epoch"], 1);
+    assert_eq!(kernel.inspect()["live_state"]["subscriptions"], 0);
     assert_eq!(
         kernel
             .admit_default_root()
@@ -135,6 +190,14 @@ fn main() {
             panic!("expected pending")
         };
         assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+        assert_eq!(
+            root.invoke_selected(
+                &selection(RELAY, "run", CLIENT),
+                &Value::String("locate-count".into())
+            )
+            .unwrap(),
+            Outcome::Success(Value::U64(7))
+        );
         assert_eq!(
             root.invoke_selected(&selection(PROPERTY, "get", PROVIDER), &reference)
                 .unwrap(),
@@ -206,6 +269,52 @@ fn main() {
     }
     let before = kernel.inspect();
     kernel.shutdown().unwrap();
+    for boundary in [
+        "root-lookup-ceiling",
+        "client-lookup-grant",
+        "client-lookup-resource",
+        "unselected-lookup",
+    ] {
+        let mut denied = c.clone();
+        match boundary {
+            "root-lookup-ceiling" => {
+                denied
+                    .authority
+                    .operations
+                    .remove(&format!("{PROPERTY}/get"));
+            }
+            "client-lookup-grant" => denied.grants.retain(|g| {
+                !(g.caller == CLIENT && g.interface == PROPERTY && g.operation == "get")
+            }),
+            "client-lookup-resource" => {
+                for grant in &mut denied.grants {
+                    if grant.caller == CLIENT && grant.interface == PROPERTY {
+                        grant.resources.clear();
+                    }
+                }
+            }
+            _ => (),
+        }
+        let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
+        let input = if boundary == "unselected-lookup" {
+            "lookup-missing"
+        } else {
+            "locate-count"
+        };
+        assert_eq!(
+            kernel
+                .admit_default_root()
+                .unwrap()
+                .invoke(&Value::String(input.into()))
+                .unwrap_err()
+                .code,
+            Code::Denied,
+            "{boundary}"
+        );
+        assert_eq!(kernel.inspect()["live_state"]["epoch"], 0);
+        assert_eq!(kernel.inspect()["live_state"]["subscriptions"], 0);
+        kernel.shutdown().unwrap();
+    }
     assert_eq!(kernel.inspect()["live_state"]["cells"], 0);
     for denied_boundary in [
         "root-ceiling",
@@ -349,6 +458,7 @@ fn main() {
     fs::write(output.join("authoring.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "format":"phenix.m1-native-authoring-evidence.v1", "all_passed":true,
         "cases":["sdk-only-provider-client-field", "definition-only-package", "generated-v3-native-glue", "field-binding-cleanup", "typed-import-slots", "optional-and-many", "delegation-ceiling-without-import", "synthetic-property-read", "domain-propagation", "pending-poll", "cancellation-quiescence", "root-client-provider-denied-write-zero-effects", "panic-poisoning-v2", "stateless-client-short-signature", "cell-get-set-watch-during-native-worker", "native-reentry-denied-during-worker", "conflict-forged-cell-zero-effects", "root-cell-grant-resource-scope-denials-zero-effects", "unknown-selection-denied-before-encoding", "root-watch-cleanup"],
+        "property_discovery_cases":["independent-field-only-reader", "typed-get-set-watch-locations", "native-target-rejected", "unselected-slot-rejected", "typed-schema-mismatch", "discovery-during-physical-pending", "root-ceiling-denied", "import-grant-denied", "resource-denied", "zero-writes-and-subscriptions"],
         "before_stop":before,
     })).unwrap()).unwrap();
     println!("S3b native authoring slice passed");

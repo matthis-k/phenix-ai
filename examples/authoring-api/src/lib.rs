@@ -13,6 +13,9 @@ pub trait Relay {
 #[property(owner = "test.authored-provider", id = "counter", get, set, watch)]
 pub type Count = u64;
 
+#[property(owner = "test.authored-field", id = "notes", get)]
+pub type Notes = Vec<String>;
+
 #[phenix_sdk::plugin(
     id = "test.authored-api",
     version = "1.0.0",

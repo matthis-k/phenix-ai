@@ -82,5 +82,19 @@ pub fn symbols(
         .unwrap()
         .1
         .push(syn::parse2(quote!(pub const ID: &str = #id;))?);
+    for (operation, enabled) in ["get", "set", "watch"].into_iter().zip(access) {
+        if enabled {
+            let symbol = syn::Ident::new(operation, name.span());
+            module.content.as_mut().unwrap().1.push(syn::parse2(quote! {
+                impl #symbol {
+                    pub fn locate(host: &::phenix_sdk::live::Host<'_>, slot: &str)
+                        -> Result<::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Failure>
+                    {
+                        host.locate_property(slot, <Self as ::phenix_sdk::Operation>::KEY)
+                    }
+                }
+            })?);
+        }
+    }
     Ok(quote!(#module))
 }

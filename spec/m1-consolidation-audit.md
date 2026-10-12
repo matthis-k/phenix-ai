@@ -4,8 +4,8 @@ Verified against S3b `ffa206d0e66d0ba7eb1c34b7aab25fde577ef28f`, main
 `1dd0ffc8ba882d46c4e6c6d5a8cee328fa8f8063`, and the pinned PR heads below.
 The [consolidation contract](m1-consolidation-contract.md) owns the transition.
 PR #779 implements C3, the ordering part of C4 and stateless C5 handlers.
-The M1-only transition implements the coordinated C1/C2 removal; its local
-semantic suites pass and exact-head full CI remains required. It introduces no new executor,
+The M1-only transition implements the coordinated C1/C2 removal; its semantic suites and full Nix CI pass at `367420e33b` in run
+38197645494. It introduces no new executor,
 ticket manager, registry or crate.
 
 ## Findings checked against source
@@ -57,24 +57,24 @@ S3b pending imports on the compatibility representation would add throwaway work
 
 | Owner and files | Required disposition | State |
 | --- | --- | --- |
-| C1, contract descriptor/mod.rs and descriptor/encode.rs | Delete M0 Schema, SchemaSpec, Contract, Contribution, Descriptor and encoders. Keep identifier/operation identity helpers in the canonical module. | IMPLEMENTED; full CI pending |
-| C1, contract lib.rs, abi.rs, value.rs, scope.rs and include/phenix.h | One M1 Portable/Operation family, ABI 3 and reference-capable wire. Remove ABI 1/2 and v1/profile-selection APIs. | IMPLEMENTED; full CI pending |
-| C1, macros lib.rs/state.rs/definitions.rs and SDK lib.rs/live.rs | Delete legacy expansion, old host and old derives. Definition-only/native packaging keeps one semantic metadata encoder. | IMPLEMENTED; full CI pending |
-| C1/C2, artifact lib.rs and describe/value/metadata probes | Delete empty_descriptor and normalize_metadata. Only canonical native/definition packages verify. Preserve offline ELF, digest, path and padding rejection. | IMPLEMENTED; full CI pending |
-| C2, kernel resolve.rs and state_resolve.rs | One declarative composition and resolved M1 operation/binding map, retaining cardinality, revision, substitutions, exclusions and explicit grants. | IMPLEMENTED; full CI pending |
-| C2, kernel native.rs, runtime.rs, pending.rs, generation.rs and kernel CLI | Consume selected M1 operations directly, load ABI 3 only, keep the existing tickets/leases/generation lifecycle and common attenuation. | IMPLEMENTED; full CI pending |
-| C1/C2, examples/contracts, provider/consumer/alternate/choice/other/cycle, resource-provider/relay/scoped-client | Port provider selection, optional/exact imports, cycles and zero-effect denials to annotated M1 fixtures. | IMPLEMENTED; full CI pending |
-| C1/C2, examples/lifecycle-provider/lifecycle-consumer, pending/pending-consumer/pending-immediate, revision-a/revision-b | Port lifecycle failure/rollback, nested pending/cancel/wake and pinned-generation/retirement semantics to ABI 3. | IMPLEMENTED; full CI pending |
-| C1/C2, conformance main.rs, phenix-m01-conformance, phenix-m02-lifecycle, phenix-m02-pending, phenix-m02-imports and phenix-m03-generations | Contemporary M1 suite retains each semantic assertion before old interface tests retire. | IMPLEMENTED; full CI pending |
-| C1/C2, examples/agent-contracts/agent/agent-model/agent-alternate/agent-tool and phenix-a0-agent | Port accepted synchronous preflight to M1 selected contracts. Keep agent logic outside the kernel. | IMPLEMENTED; full CI pending |
-| C1/C2, tests descriptor.py/abi.c/abi-negative.c/product.py/composition-product.py/lifecycle-product.py/pending-product.py/generation-identity.py/shipping-product.py, flake.nix and workflow | Replace obsolete format-specific vectors; retain independent ABI, offline, packaged CLI, generation and shipping checks. Remove old active gates after migration. | IMPLEMENTED; full CI pending |
+| C1, contract descriptor/mod.rs and descriptor/encode.rs | Delete M0 Schema, SchemaSpec, Contract, Contribution, Descriptor and encoders. Keep identifier/operation identity helpers in the canonical module. | PROVEN at 367420e33b, CI 38197645494 |
+| C1, contract lib.rs, abi.rs, value.rs, scope.rs and include/phenix.h | One M1 Portable/Operation family, ABI 3 and reference-capable wire. Remove ABI 1/2 and v1/profile-selection APIs. | PROVEN at 367420e33b, CI 38197645494 |
+| C1, macros lib.rs/state.rs/definitions.rs and SDK lib.rs/live.rs | Delete legacy expansion, old host and old derives. Definition-only/native packaging keeps one semantic metadata encoder. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, artifact lib.rs and describe/value/metadata probes | Delete empty_descriptor and normalize_metadata. Only canonical native/definition packages verify. Preserve offline ELF, digest, path and padding rejection. | PROVEN at 367420e33b, CI 38197645494 |
+| C2, kernel resolve.rs and state_resolve.rs | One declarative composition and resolved M1 operation/binding map, retaining cardinality, revision, substitutions, exclusions and explicit grants. | PROVEN at 367420e33b, CI 38197645494 |
+| C2, kernel native.rs, runtime.rs, pending.rs, generation.rs and kernel CLI | Consume selected M1 operations directly, load ABI 3 only, keep the existing tickets/leases/generation lifecycle and common attenuation. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, examples/contracts, provider/consumer/alternate/choice/other/cycle, resource-provider/relay/scoped-client | Port provider selection, optional/exact imports, cycles and zero-effect denials to annotated M1 fixtures. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, examples/lifecycle-provider/lifecycle-consumer, pending/pending-consumer/pending-immediate, revision-a/revision-b | Port lifecycle failure/rollback, nested pending/cancel/wake and pinned-generation/retirement semantics to ABI 3. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, conformance main.rs, phenix-m01-conformance, phenix-m02-lifecycle, phenix-m02-pending, phenix-m02-imports and phenix-m03-generations | Contemporary M1 suite retains each semantic assertion before old interface tests retire. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, examples/agent-contracts/agent/agent-model/agent-alternate/agent-tool and phenix-a0-agent | Port accepted synchronous preflight to M1 selected contracts. Keep agent logic outside the kernel. | PROVEN at 367420e33b, CI 38197645494 |
+| C1/C2, tests descriptor.py/abi.c/abi-negative.c/product.py/composition-product.py/lifecycle-product.py/pending-product.py/generation-identity.py/shipping-product.py, flake.nix and workflow | Replace obsolete format-specific vectors; retain independent ABI, offline, packaged CLI, generation and shipping checks. Remove old active gates after migration. | PROVEN at 367420e33b, CI 38197645494 |
 | C3, resolve.rs/runtime.rs/state_effects.rs | Prepared native/cell targets; one dispatch scope calculation; cell owner/identity/resource checks; common atomic storage. | TESTED locally |
 | C3, Root::invoke_selected | Trusted calls retain admitted root ID, narrowed authority/resource and pinned generation. Unknown selections reject before provider-dependent encoding. | TESTED locally |
 | C3, authoring-provider and phenix-m1-authoring | Actual worker and FD remain live during get/set/watch. Native reentry, conflicting/forged cell requests and grant/resource/root-scope denials have no unauthorized effects. Poll/cancel join the worker; root drop clears watches. | TESTED locally |
 | C4, dag.rs/resolve.rs | Resolver uses one extracted deterministic cycle/order function. Joined and disconnected projections have ordering tests. | TESTED locally; trigger/readiness integration remains |
 | C5, macros state.rs and SDK live.rs | Generated empty State, optional State/Host parameters, owned request or unit request, ordinary response/Result/CallResult. | TESTED locally |
 | C5, SDK stateless_authoring.rs and authoring-client | Generated ABI 3 works with stateless business handlers and a stateless native importing client. Four new compile failures retain request/response/parameter checks. | TESTED locally |
-| Full M1-only acceptance | External provider/consumer, all migrated semantic gates, obsolete symbol absence, exact-head CI evidence. | NOT PROVEN |
+| Full M1-only acceptance | External provider/consumer, all migrated semantic gates, obsolete symbol absence, exact-head CI evidence. | PROVEN at 367420e33b, CI 38197645494 |
 
 ## Measurements
 
@@ -123,6 +123,8 @@ only acquired instances. This does not claim a backport to the historical branch
 
 The release evidence product now includes all 21 contemporary semantic and
 protocol gates, plus the standalone public SDK and shipping closure.
-Full M1-only acceptance requires exact-head full Nix CI and its evidence product.
+M1-only acceptance passed at `367420e33bbaaa55b6d680394b9cc99a3c6f43e6`
+in [CI 38197645494](https://github.com/matthis-k/phenix-ai/actions/runs/38197645494).
+Artifact 11724252850 contains the complete contemporary evidence product.
 S3b stage acceptance and reactive trigger/readiness integration remain subsequent
 work; this migration does not declare those stages complete.

@@ -295,6 +295,22 @@ impl<'call> Host<'call> {
             _ => Err(invalid()),
         }
     }
+    /// Locate a selected property after its operation and resource checks.
+    pub fn locate_property<T: Portable>(
+        &self,
+        slot: &str,
+        key: &str,
+    ) -> Result<ValueRef<T>, Failure> {
+        match self.raw(
+            slot,
+            "phenix.host.property.v2",
+            WireValue::String(key.into()),
+        )? {
+            (0, value) => ValueRef::from_value(value),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(invalid()),
+        }
+    }
     pub fn create<T: Portable>(&self, property: &str, initial: &T) -> AccessResult<ValueRef<T>> {
         Ok(ValueRef::from_value(self.state(StateRequest::Create {
             property: property.into(),
@@ -666,6 +682,22 @@ pub fn boundary(f: impl FnOnce() -> crate::abi::Reply) -> crate::abi::Reply {
 /// ```
 #[doc(hidden)]
 pub struct UnsupportedNativeAuthoring;
+
+/// Pending slot helpers retain the declared contract membership.
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.a@1")] pub trait A { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::contract(id="test.b@1")] pub trait B { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.pending",require(A,slot="selected"))]
+/// mod plugin { use super::*; fn wrong(host:&phenix_sdk::Host<'_>) { let _ = imports::selected::begin::<B::run>(host,&()); } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.a@1")] pub trait A { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::contract(id="test.b@1")] pub trait B { fn run(&self)->Result<u64,String>; }
+/// #[phenix_sdk::plugin(id="test.pending",require(A,slot="selected",many(min=0)))]
+/// mod plugin { use super::*; fn wrong(host:&phenix_sdk::Host<'_>,scope:&phenix_sdk::ScopedRequest) { let _ = imports::selected::begin_scoped_at::<B::run>(host,0,scope,&()); } }
+/// ```
+#[doc(hidden)]
+pub struct UnsupportedPendingSlots;
 
 /// Invalid concise signatures still fail against their declared contract.
 /// ```compile_fail

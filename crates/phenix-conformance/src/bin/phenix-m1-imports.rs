@@ -38,8 +38,12 @@ fn fds() -> usize {
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 6, "CONSUMER WORKER PROVIDER IMMEDIATE OUTPUT");
-    let output = Path::new(&args[5]);
+    assert_eq!(
+        args.len(),
+        7,
+        "CONSUMER WORKER PROVIDER IMMEDIATE SECURITY OUTPUT"
+    );
+    let output = Path::new(&args[6]);
     fs::create_dir_all(output).unwrap();
     let policy = Composition {
         format: "phenix.composition.v2".into(),
@@ -163,5 +167,60 @@ fn main() {
     root.release(&t).unwrap();
     drop(root);
     denied.shutdown().unwrap();
-    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m1.imports.v1","cases":["typed completion","immediate provider","denial before worker acquisition","domain error","child failure","frozen attenuation","ancestor wake","double settlement","wrong parent without handle consumption","live-child completion rejected","native-quiescent parent not reentered","recursive cancellation","caller-drop tree draining","actual resource release"],"inspection":kernel.inspect()})).unwrap()).unwrap();
+    let mut security_policy = policy.clone();
+    security_policy.artifacts[0] = args[5].clone();
+    security_policy.entry.provider = "example.pending-security".into();
+    for grant in &mut security_policy.grants {
+        if grant.caller == "example.pending-consumer" {
+            grant.caller = "example.pending-security".into();
+        }
+    }
+    for binding in &mut security_policy.slots {
+        if binding.caller == "example.pending-consumer" {
+            binding.caller = "example.pending-security".into();
+            if binding.slot == "TransitiveEffect" {
+                binding.slot = "Service".into();
+            }
+        }
+    }
+    let mut sibling = security_policy
+        .slots
+        .iter()
+        .find(|slot| slot.caller == "example.pending-security" && slot.slot == "Worker")
+        .unwrap()
+        .clone();
+    sibling.slot = "Sibling".into();
+    security_policy.slots.push(sibling);
+    for resource in [None, Some("red")] {
+        let mut security_policy = security_policy.clone();
+        security_policy.resource = resource.map(str::to_owned);
+        if resource.is_some() {
+            security_policy.authority.resources = ["red".into(), "blue".into()].into();
+            for grant in &mut security_policy.grants {
+                grant.resources = ["red".into(), "blue".into()].into();
+            }
+        }
+        let security = Prepared::prepare(security_policy).unwrap().load().unwrap();
+        let root = security.admit_default_root().unwrap();
+        let t = ticket(
+            root.begin(&request(resource.unwrap_or("security")))
+                .unwrap(),
+        );
+        assert_eq!(fds(), baseline + 1, "forgeries must retain the live worker");
+        assert_eq!(security.inspect()["pending"]["physical_leases"], 2);
+        let inspection = security.inspect();
+        for child in inspection["pending"]["tickets"].as_array().unwrap() {
+            assert_eq!(child["cancellation_requested"], false);
+            assert_eq!(child["delivered"], false);
+            assert_eq!(child["native_quiescent"], false);
+        }
+        assert!(
+            matches!(root.poll(&t).unwrap(), Poll::Ready(Ok(Outcome::Success(v))) if v == request("HELLO"))
+        );
+        root.release(&t).unwrap();
+        assert_eq!(fds(), baseline);
+        drop(root);
+        security.shutdown().unwrap();
+    }
+    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m1.imports.v1","cases":["typed completion","immediate provider","denial before worker acquisition","domain error","child failure","frozen attenuation","ancestor wake","double settlement","wrong parent without handle consumption","live-child completion rejected","native-quiescent parent not reentered","recursive cancellation","caller-drop tree draining","actual resource release","raw-ABI malformed begin zero acquisition","forged slot","forged Many index","forged operation","selected-provider mismatch","parent ticket substitution","unknown ticket","forged cancel zero effects","valid child survives forgeries","scope checked before invalid borrowed bytes","cross-thread scope rejection","read-only inherited resource in begin and poll","scoped resource switch rejected"],"inspection":kernel.inspect()})).unwrap()).unwrap();
 }

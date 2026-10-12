@@ -368,7 +368,20 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 Err(error) => Reply::value(1, error.to_value()),
             });
         }
-        let scoped = if key == phenix_contract::SCOPED_IMPORT {
+        let locate = key == "phenix.host.property.v2";
+        let property_key = if locate {
+            let Value::String(key) = Value::decode(bytes)? else {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "property lookup expects an operation key",
+                ));
+            };
+            Some(key)
+        } else {
+            None
+        };
+        let key = property_key.as_deref().unwrap_or(key);
+        let scoped = if !locate && key == phenix_contract::SCOPED_IMPORT {
             Some(phenix_contract::ScopedRequest::decode(bytes)?)
         } else {
             None
@@ -412,6 +425,26 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             operation: operation.into(),
             provider: provider.clone(),
         };
+        if locate {
+            let operation = kernel.prepared.operation(&selection)?;
+            let crate::resolve::EffectTarget::Cell { property, .. } = &operation.target else {
+                return Err(Failure::new(
+                    Code::Denied,
+                    "selected operation is not a property",
+                ));
+            };
+            let location = kernel
+                .cells
+                .borrow()
+                .location(provider, property)
+                .ok_or_else(|| {
+                    Failure::new(Code::ScopeRejected, "selected property is not live")
+                })?;
+            kernel
+                .authorize_state(&record.caller, &location, &selection.operation)
+                .map_err(|_| Failure::new(Code::Denied, "property discovery is not authorized"))?;
+            return Ok(Reply::value(0, Value::Ref(Box::new(location))));
+        }
         let outcome = kernel.dispatch_call(
             record.root,
             Caller::Plugin(&record.caller, slot),

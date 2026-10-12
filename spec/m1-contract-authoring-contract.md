@@ -1,5 +1,9 @@
 # S3b contract and native authoring freeze
 
+The M1-only transition supersedes retired profile requirements in this historical
+freeze. The [acceptance addendum](m1-authoring-acceptance-contract.md) owns the
+active pending reply encoding, property discovery and generated pending slots.
+
 S3b follows S3a PR #777. It owns constant metadata lowering in
 `phenix-contract/src/descriptor/static_metadata.rs`, contract/property/plugin
 macros, SDK declaration symbols and generated ABI 3 glue. External API,

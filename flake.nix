@@ -433,7 +433,7 @@
             python ${./tests/pending-product.py} ${kernel}/bin/phenix-kernel ${pendingCheck} $out
           '';
       importsCheck = pkgs.runCommand "phenix-m1-imports" { } ''
-        ${conformanceBinary}/bin/phenix-m1-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} $out
+        ${conformanceBinary}/bin/phenix-m1-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} ${plugin "example-pending-security"} $out
       '';
       generationsCheck =
         pkgs.runCommand "phenix-m1-generations" { nativeBuildInputs = [ pkgs.python3 ]; }

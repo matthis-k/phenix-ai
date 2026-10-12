@@ -46,8 +46,8 @@ mod plugin {
             },
         };
         let call = if state.mode == "attenuated" {
-            host.begin_scoped::<Worker>(
-                "Worker",
+            imports::Worker::begin_scoped::<Worker>(
+                host,
                 &ScopedRequest {
                     authority: Authority {
                         operations: ["example.pending@1/run".into()].into(),
@@ -58,7 +58,7 @@ mod plugin {
                 &child_request,
             )
         } else {
-            host.begin::<Worker>("Worker", &child_request)
+            imports::Worker::begin::<Worker>(host, &child_request)
         };
         match call {
             Err(f) => PendingResult::QuiescentFailure(f),
