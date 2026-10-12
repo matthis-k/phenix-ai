@@ -374,22 +374,17 @@
         };
         resource = "phenix.session.s1";
       });
-      basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { } ''
+      basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
         printf 'hello\n' | ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} > $out/terminal.txt
         grep -F 'answer: mock:hello' $out/terminal.txt
         printf '%s\n' '{"type":"prompt","session":"s1","text":"tools:hello","limits":{"model_turns":2,"tool_calls":2}}' | ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} > $out/jsonl.txt
         grep -F 'mock:call-1:HELLO|call-2:5' $out/jsonl.txt
-        printf '%s\n' \
-          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' \
-          '{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}' \
-          '{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"acp-smoke"}]}}' \
-          | ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} > $out/acp.jsonl
-        grep -F '"stopReason":"end_turn"' $out/acp.jsonl
-        grep -F 'mock:acp-smoke' $out/acp.jsonl
+        python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
+        test -s "$out/acp-product.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
-        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"acp_v1_single_session":true,"p1_accepted":false}' > $out/evidence.json
+        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
       '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
