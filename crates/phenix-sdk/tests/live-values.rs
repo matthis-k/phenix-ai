@@ -1,14 +1,14 @@
 use phenix_sdk::{
-    live::{Portable, Value, ValueRef},
-    LivePortable, Value as WireValue,
+    live::{Value, ValueRef},
+    Portable, Value as WireValue,
 };
-#[derive(LivePortable, Debug, PartialEq)]
+#[derive(Portable, Debug, PartialEq)]
 struct Record {
     names: Vec<String>,
     enabled: bool,
     optional: Option<Option<u64>>,
 }
-#[derive(LivePortable, Debug, PartialEq)]
+#[derive(Portable, Debug, PartialEq)]
 enum Status {
     Ready,
     Empty,

@@ -1,15 +1,12 @@
-use example_contracts::{PendingConsumer, PendingRun, Text, Transform, TransformError};
+use example_contracts::{PendingConsumer, PendingRun, Text, TransformError};
 use phenix_sdk::{
-    Authority, Code, Failure, ImportCall, ImportPoll, PendingHost, PendingImport, PendingResult,
+    Authority, Code, Failure, ImportCall, ImportPoll, Host, PendingImport, PendingResult,
     ScopedRequest,
 };
-#[phenix_sdk::plugin(id = "example.pending-consumer", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.pending-consumer", version = "1.0.0", define(example_contracts::PendingConsumerContract), define(example_contracts::PendingRunContract), define(example_contracts::TransformContract), provide(example_contracts::PendingConsumerContract, slot = "PendingConsumer"), require(example_contracts::PendingRunContract, slot = "Worker"), require(example_contracts::TransformContract, slot = "TransitiveEffect"))]
 mod plugin {
     use super::*;
-    #[import]
     type Worker = PendingRun;
-    #[import]
-    type TransitiveEffect = Transform;
     #[derive(Default)]
     pub struct State {
         child: Option<PendingImport<Worker>>,
@@ -18,7 +15,7 @@ mod plugin {
     #[pending(PendingConsumer)]
     fn begin(
         state: &mut State,
-        host: &PendingHost<'_>,
+        host: &Host<'_>,
         request: Text,
     ) -> PendingResult<Text, TransformError> {
         if request.text == "wrong-owner" {
@@ -40,7 +37,7 @@ mod plugin {
             },
         };
         let call = if state.mode == "attenuated" {
-            host.begin_scoped::<Worker>(
+            host.begin_scoped::<Worker>("Worker", 
                 &ScopedRequest {
                     authority: Authority {
                         operations: ["example.pending@1/run".into()].into(),
@@ -51,10 +48,10 @@ mod plugin {
                 &child_request,
             )
         } else {
-            host.begin::<Worker>(&child_request)
+            host.begin::<Worker>("Worker", &child_request)
         };
         match call {
-            Err(f) => PendingResult::Ready(Err(f.into())),
+            Err(f) => PendingResult::QuiescentFailure(f),
             Ok(ImportCall::Ready(result)) => PendingResult::Ready(result),
             Ok(ImportCall::Pending(child)) => {
                 state.child = Some(child);
@@ -74,24 +71,25 @@ mod plugin {
         }
     }
     #[poll(PendingConsumer)]
-    fn poll(state: &mut State, host: &PendingHost<'_>) -> PendingResult<Text, TransformError> {
+    fn poll(state: &mut State, host: &Host<'_>) -> PendingResult<Text, TransformError> {
         let child = state.child.as_mut().unwrap();
         match child.poll(host) {
             Ok(ImportPoll::Ready(result)) => {
                 assert_eq!(child.poll(host).err().unwrap().code, Code::ScopeRejected);
-                PendingResult::Ready(result)
+                match result {
+                    Err(phenix_sdk::CallError::Kernel(error)) => PendingResult::QuiescentFailure(error),
+                    result => PendingResult::Ready(result),
+                }
             }
             Ok(ImportPoll::Cancelled) => {
-                PendingResult::Ready(Err(
-                    Failure::new(Code::PluginFailed, "child cancelled").into()
-                ))
+                PendingResult::QuiescentFailure(Failure::new(Code::PluginFailed, "child cancelled"))
             }
             Ok(ImportPoll::Pending | ImportPoll::Draining) => PendingResult::Pending,
-            Err(f) => PendingResult::Ready(Err(f.into())),
+            Err(f) => PendingResult::QuiescentFailure(f),
         }
     }
     #[cancel(PendingConsumer)]
-    fn cancel(_: &mut State, _: &PendingHost<'_>) -> Result<bool, Failure> {
+    fn cancel(_: &mut State, _: &Host<'_>) -> Result<bool, Failure> {
         Ok(true)
     }
     #[stop]

@@ -1,321 +1,66 @@
 use libloading::Library;
 use phenix_artifact::VerifiedPackage;
-use phenix_contract::{
-    abi::{
-        Bytes, Header, HostApi, PendingHostApi, PendingPluginTable, PluginTable, Reply,
-        StatePluginTable,
-    },
-    Code, Failure, Value,
-};
+use phenix_contract::{abi::{Bytes,Header,StateHostApi,StatePluginTable},Code,Failure,Value};
 use std::ffi::c_void;
-// Nullable function representations let the loader reject null entries without
-// constructing an invalid Rust function pointer. Layout matches the C header.
-#[repr(C)]
-struct RawTable {
-    header: Header,
-    create: Option<unsafe extern "C" fn(*mut *mut c_void) -> Reply>,
-    invoke: Option<unsafe extern "C" fn(*mut c_void, *const HostApi, Bytes, Bytes) -> Reply>,
-    stop: Option<unsafe extern "C" fn(*mut c_void) -> Reply>,
-}
-#[repr(C)]
-struct RawPendingTable {
-    header: Header,
-    create: Option<unsafe extern "C" fn(*mut *mut c_void) -> Reply>,
-    invoke: Option<unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes, Bytes) -> Reply>,
-    stop: Option<unsafe extern "C" fn(*mut c_void) -> Reply>,
-    poll: Option<unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply>,
-    cancel: Option<unsafe extern "C" fn(*mut c_void, *const PendingHostApi, Bytes) -> Reply>,
-}
-enum Table {
-    Sync(PluginTable),
-    Pending(PendingPluginTable),
-    State(StatePluginTable),
-}
-impl Table {
-    unsafe fn create(&self, out: *mut *mut c_void) -> Reply {
-        unsafe {
-            match self {
-                Self::Sync(t) => (t.create)(out),
-                Self::Pending(t) => (t.create)(out),
-                Self::State(t) => (t.create.unwrap())(out),
-            }
-        }
-    }
-    unsafe fn stop(&self, instance: *mut c_void) -> Reply {
-        unsafe {
-            match self {
-                Self::Sync(t) => (t.stop)(instance),
-                Self::Pending(t) => (t.stop)(instance),
-                Self::State(t) => (t.stop.unwrap())(instance),
-            }
-        }
-    }
-}
-pub(crate) struct Native {
-    table: Table,
-    instance: *mut c_void,
-    _image: Library,
-}
+pub(crate) struct Native { table: StatePluginTable, instance: *mut c_void, _image: Library }
 impl Native {
-    pub(crate) fn load(package: &VerifiedPackage) -> Result<Self, Failure> {
+    pub(crate) fn load(package: &VerifiedPackage)->Result<Self,Failure> {
         package.recheck()?;
-        // The control plane already verified all selected packages and bindings.
-        // Constructors are trusted code and may execute here, before negotiation.
-        let image = unsafe { Library::new(package.artifact()) }
-            .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
-        let entry = unsafe {
-            image.get::<unsafe extern "C" fn() -> *const Header>(
-                if package.descriptor().abi_major == 3 {
-                    b"phenix_native_v3\0"
-                } else if package.descriptor().abi_major == 2 {
-                    b"phenix_native_v2\0"
-                } else {
-                    b"phenix_native_v1\0"
-                },
-            )
+        let image=unsafe { Library::new(package.artifact()) }.map_err(|e|Failure::new(Code::ArtifactInvalid,e.to_string()))?;
+        let entry=unsafe { image.get::<unsafe extern "C" fn()->*const Header>(b"phenix_native_v3\0") }.map_err(|e|Failure::new(Code::AbiIncompatible,e.to_string()))?;
+        let ptr=unsafe { entry() };
+        if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<StatePluginTable>()) { return Err(Failure::new(Code::AbiIncompatible,"invalid ABI header pointer")); }
+        let table=unsafe { StatePluginTable::negotiate(ptr) }?;
+        let mut instance=std::ptr::null_mut();
+        let result=unsafe { table.create.unwrap()(&mut instance).consume() };
+        if !matches!(&result,Ok((0,Value::Null))) || instance.is_null() {
+            if !instance.is_null() { let _=unsafe { table.stop.unwrap()(instance).consume() }; }
+            return Err(match result { Ok((2,value))=>Failure::from_value(value)?,Err(error)=>error,_=>Failure::new(Code::PluginFailed,"invalid create result") });
         }
-        .map_err(|e| Failure::new(Code::AbiIncompatible, e.to_string()))?;
-        let ptr = unsafe { entry() };
-        if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<RawTable>()) {
-            return Err(Failure::new(
-                Code::AbiIncompatible,
-                "invalid ABI header pointer",
-            ));
-        }
-        let header = unsafe { *ptr };
-        if header.major != package.descriptor().abi_major
-            || header.minor != 0
-            || header.features != package.descriptor().features
-            || header.table_bytes
-                < (if header.major == 3 {
-                    std::mem::size_of::<StatePluginTable>()
-                } else if header.major == 2 {
-                    std::mem::size_of::<RawPendingTable>()
-                } else {
-                    std::mem::size_of::<RawTable>()
-                }) as u32
-        {
-            return Err(Failure::new(
-                Code::AbiIncompatible,
-                "invalid loaded ABI header",
-            ));
-        }
-        let table = if header.major == 3 {
-            Table::State(unsafe { StatePluginTable::negotiate(ptr) }?)
-        } else if header.major == 2 {
-            let raw = unsafe { &*ptr.cast::<RawPendingTable>() };
-            let missing = || Failure::new(Code::AbiIncompatible, "null pending table entry");
-            Table::Pending(PendingPluginTable {
-                header,
-                create: raw.create.ok_or_else(missing)?,
-                invoke: raw.invoke.ok_or_else(missing)?,
-                stop: raw.stop.ok_or_else(missing)?,
-                poll: raw.poll.ok_or_else(missing)?,
-                cancel: raw.cancel.ok_or_else(missing)?,
-            })
-        } else {
-            let raw = unsafe { &*ptr.cast::<RawTable>() };
-            Table::Sync(PluginTable {
-                header,
-                create: raw
-                    .create
-                    .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null create entry"))?,
-                invoke: raw
-                    .invoke
-                    .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null invoke entry"))?,
-                stop: raw
-                    .stop
-                    .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null stop entry"))?,
-            })
-        };
-        let mut instance = std::ptr::null_mut();
-        let result = unsafe {
-            let reply = table.create(&mut instance);
-            if matches!(table, Table::State(_)) {
-                reply.consume_state()
-            } else {
-                reply.consume()
-            }
-        };
-        let successful = matches!(&result, Ok((0, Value::Null))) && !instance.is_null();
-        if !successful {
-            if !instance.is_null() {
-                let _ = unsafe {
-                    let reply = table.stop(instance);
-                    if matches!(table, Table::State(_)) {
-                        reply.consume_state()
-                    } else {
-                        reply.consume()
-                    }
-                };
-            }
-            return Err(match result {
-                Ok((2, value)) => Failure::from_value(value)?,
-                Err(e) => e,
-                _ => Failure::new(Code::PluginFailed, "invalid create result"),
-            });
-        }
-        Ok(Self {
-            table,
-            instance,
-            _image: image,
-        })
+        Ok(Self { table,instance,_image:image })
     }
-    pub(crate) fn initialize(&self, scope: u64) -> Result<(), Failure> {
-        let Table::State(table) = self.table else {
-            return Ok(());
-        };
-        let host = super::runtime::state_host(scope, 0, 0);
-        match unsafe { (table.initialize.unwrap())(self.instance, &host).consume_state() }? {
-            (0, Value::Null) => Ok(()),
-            (2, v) => Err(Failure::from_value(v)?),
-            _ => Err(Failure::new(
-                Code::PluginFailed,
-                "invalid initialization reply",
-            )),
+    pub(crate) fn initialize(&self,scope:u64)->Result<(),Failure> {
+        let host=super::runtime::state_host(scope,0,0);
+        match unsafe { self.table.initialize.unwrap()(self.instance,&host).consume() }? {
+            (0,Value::Null)=>Ok(()),(2,value)=>Err(Failure::from_value(value)?),_=>Err(Failure::new(Code::PluginFailed,"invalid initialization reply")),
         }
     }
-    pub(crate) fn invoke(
-        &self,
-        host: &HostApi,
-        key: &str,
-        input: &[u8],
-    ) -> Result<(u32, Value), Failure> {
-        if self.instance.is_null() {
-            return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
-        }
-        if let Table::State(table) = self.table {
-            let api = super::runtime::state_host(host.scope, 0, 0);
-            return unsafe {
-                (table.invoke.unwrap())(
-                    self.instance,
-                    &api,
-                    Bytes::new(key.as_bytes()),
-                    Bytes::new(input),
-                )
-                .consume_state()
-            };
-        }
-        let Table::Sync(table) = self.table else {
-            return Err(Failure::new(
-                Code::AbiIncompatible,
-                "pending provider requires a ticket",
-            ));
-        };
+    pub(crate) fn invoke(&self,scope:u64,key:&str,input:&[u8])->Result<(u32,Value),Failure> {
+        let host=super::runtime::state_host(scope,0,0);
+        self.pending(&host,key,Some(input),false)
+    }
+    pub(crate) fn pending(&self,host:&StateHostApi,key:&str,input:Option<&[u8]>,cancel:bool)->Result<(u32,Value),Failure> {
+        if self.instance.is_null() { return Err(Failure::new(Code::PluginFailed,"instance already stopped")); }
+        let key=Bytes::new(key.as_bytes());
         unsafe {
-            (table.invoke)(
-                self.instance,
-                host,
-                Bytes::new(key.as_bytes()),
-                Bytes::new(input),
-            )
-            .consume()
+            let reply=match input { Some(bytes)=>self.table.invoke.unwrap()(self.instance,host,key,Bytes::new(bytes)),None if cancel=>self.table.cancel.unwrap()(self.instance,host,key),None=>self.table.poll.unwrap()(self.instance,host,key) };
+            reply.consume()
         }
     }
-    pub(crate) fn pending(
-        &self,
-        host: &PendingHostApi,
-        key: &str,
-        input: Option<&[u8]>,
-        cancel: bool,
-    ) -> Result<(u32, Value), Failure> {
-        if let Table::State(table) = self.table {
-            let api = super::runtime::state_host(host.host.scope, host.ticket, host.permit);
-            let key = Bytes::new(key.as_bytes());
-            return unsafe {
-                let reply = match input {
-                    Some(input) => {
-                        (table.invoke.unwrap())(self.instance, &api, key, Bytes::new(input))
-                    }
-                    None if cancel => (table.cancel.unwrap())(self.instance, &api, key),
-                    None => (table.poll.unwrap())(self.instance, &api, key),
-                };
-                reply.consume_state()
-            };
-        }
-        let Table::Pending(table) = self.table else {
-            return Err(Failure::new(
-                Code::AbiIncompatible,
-                "provider has no pending ABI",
-            ));
-        };
-        if self.instance.is_null() {
-            return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
-        }
-        unsafe {
-            let key = Bytes::new(key.as_bytes());
-            let reply = match input {
-                Some(input) => (table.invoke)(self.instance, host, key, Bytes::new(input)),
-                None if cancel => (table.cancel)(self.instance, host, key),
-                None => (table.poll)(self.instance, host, key),
-            };
-            reply.consume_pending()
-        }
-    }
-    pub(crate) fn stop(&mut self) -> Result<(), Failure> {
-        let instance = std::mem::replace(&mut self.instance, std::ptr::null_mut());
-        if instance.is_null() {
-            return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
-        }
-        match unsafe {
-            let reply = self.table.stop(instance);
-            if matches!(self.table, Table::State(_)) {
-                reply.consume_state()
-            } else {
-                reply.consume()
-            }
-        }? {
-            (0, Value::Null) => Ok(()),
-            (2, value) => Err(Failure::from_value(value)?),
-            _ => Err(Failure::new(Code::AbiIncompatible, "invalid stop result")),
+    pub(crate) fn stop(&mut self)->Result<(),Failure> {
+        let instance=std::mem::replace(&mut self.instance,std::ptr::null_mut());
+        if instance.is_null() { return Err(Failure::new(Code::PluginFailed,"instance already stopped")); }
+        match unsafe { self.table.stop.unwrap()(instance).consume() }? {
+            (0,Value::Null)=>Ok(()),(2,value)=>Err(Failure::from_value(value)?),_=>Err(Failure::new(Code::AbiIncompatible,"invalid stop result")),
         }
     }
 }
-impl Drop for Native {
-    fn drop(&mut self) {
-        if !self.instance.is_null() {
-            let _ = self.stop();
-        }
-    }
-}
-
+impl Drop for Native { fn drop(&mut self) { if !self.instance.is_null() { let _=self.stop(); } } }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static STOPS: AtomicUsize = AtomicUsize::new(0);
-    unsafe extern "C" fn stop(instance: *mut c_void) -> Reply {
-        STOPS.fetch_add(1, Ordering::SeqCst);
-        drop(unsafe { Box::from_raw(instance.cast::<u8>()) });
-        Reply::value(0, Value::Null)
-    }
-    unsafe extern "C" fn create(_: *mut *mut c_void) -> Reply {
-        unreachable!()
-    }
-    unsafe extern "C" fn invoke(_: *mut c_void, _: *const HostApi, _: Bytes, _: Bytes) -> Reply {
-        unreachable!()
-    }
+    use phenix_contract::abi::Reply;
+    use std::sync::atomic::{AtomicUsize,Ordering};
+    static STOPS:AtomicUsize=AtomicUsize::new(0);
+    unsafe extern "C" fn stop(instance:*mut c_void)->Reply { STOPS.fetch_add(1,Ordering::SeqCst);drop(unsafe { Box::from_raw(instance.cast::<u8>()) });Reply::value(0,Value::Null) }
+    unsafe extern "C" fn create(_: *mut *mut c_void)->Reply { unreachable!() }
+    unsafe extern "C" fn initialize(_: *mut c_void,_:*const StateHostApi)->Reply { unreachable!() }
+    unsafe extern "C" fn invoke(_: *mut c_void,_:*const StateHostApi,_:Bytes,_:Bytes)->Reply { unreachable!() }
+    unsafe extern "C" fn poll(_: *mut c_void,_:*const StateHostApi,_:Bytes)->Reply { unreachable!() }
     #[test]
     fn repeated_stop_rejects_without_reentering_producer() {
-        STOPS.store(0, Ordering::SeqCst);
-        let mut native = Native {
-            table: Table::Sync(PluginTable {
-                header: Header {
-                    major: 1,
-                    minor: 0,
-                    table_bytes: 40,
-                    features: 0,
-                },
-                create,
-                invoke,
-                stop,
-            }),
-            instance: Box::into_raw(Box::new(0u8)).cast(),
-            _image: libloading::os::unix::Library::this().into(),
-        };
-        native.stop().unwrap();
-        assert_eq!(native.stop().unwrap_err().code, Code::PluginFailed);
-        drop(native);
-        assert_eq!(STOPS.load(Ordering::SeqCst), 1);
+        STOPS.store(0,Ordering::SeqCst);
+        let mut native=Native { table:StatePluginTable { header:Header::state(std::mem::size_of::<StatePluginTable>()),create:Some(create),initialize:Some(initialize),invoke:Some(invoke),poll:Some(poll),cancel:Some(poll),stop:Some(stop) },instance:Box::into_raw(Box::new(0u8)).cast(),_image:libloading::os::unix::Library::this().into() };
+        native.stop().unwrap();assert_eq!(native.stop().unwrap_err().code,Code::PluginFailed);drop(native);assert_eq!(STOPS.load(Ordering::SeqCst),1);
     }
 }

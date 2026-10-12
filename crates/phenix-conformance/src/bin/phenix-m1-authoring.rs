@@ -1,7 +1,7 @@
 //! Loads independently compiled SDK-only plugins through the existing kernel.
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding, StateComposition},
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -17,7 +17,7 @@ fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn composition(artifacts: Vec<String>) -> StateComposition {
+fn composition(artifacts: Vec<String>) -> Composition {
     let resources: BTreeSet<_> = [PROPERTY.trim_end_matches("@1").to_owned()].into();
     let mut operations = BTreeSet::new();
     let mut grants = Vec::new();
@@ -38,8 +38,8 @@ fn composition(artifacts: Vec<String>) -> StateComposition {
             });
         }
     }
-    StateComposition {
-        format: "phenix.state-composition.v2".into(),
+    Composition {
+        format: "phenix.composition.v2".into(),
         definitions: vec![],
         slots: ["counter", "all"]
             .map(|slot| SlotBinding {
@@ -50,11 +50,9 @@ fn composition(artifacts: Vec<String>) -> StateComposition {
                 export: "counter".into(),
             })
             .into(),
-        composition: Composition {
-            format: "phenix.composition.v1".into(),
+        
             artifacts,
             entry: selection(RELAY, "run", CLIENT),
-            bindings: vec![],
             grants,
             excluded: BTreeSet::new(),
             substitutions: vec![],
@@ -63,7 +61,6 @@ fn composition(artifacts: Vec<String>) -> StateComposition {
                 resources,
             },
             resource: None,
-        },
     }
 }
 fn main() {
@@ -73,7 +70,7 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let mut c = composition(args[1..4].to_vec());
     c.definitions.push(args[4].clone());
-    let prepared = Prepared::prepare_state(c.clone()).unwrap();
+    let prepared = Prepared::prepare(c.clone()).unwrap();
     // A delegated declaration adds no provider import or service binding.
     assert!(!prepared.inspect()["bindings"]
         .as_array()
@@ -83,7 +80,7 @@ fn main() {
             && binding["operation"].as_str().unwrap().contains(PROPERTY)));
     let field_package =
         phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&args[3])).unwrap();
-    let field = field_package.metadata().unwrap();
+    let field = field_package.metadata();
     assert!(field.provides.is_empty());
     assert_eq!(field.properties.len(), 1);
     let kernel = prepared.load().unwrap();
@@ -220,28 +217,25 @@ fn main() {
         match denied_boundary {
             "root-ceiling" => {
                 denied
-                    .composition
                     .authority
                     .operations
                     .remove(&format!("{PROPERTY}/set"));
             }
-            "client-import" => denied.composition.grants.retain(|g| {
+            "client-import" => denied.grants.retain(|g| {
                 !(g.caller == CLIENT && g.interface == COUNTER && g.operation == "run")
             }),
             "provider-property" => denied
-                .composition
                 .grants
                 .retain(|g| !(g.caller == PROVIDER && g.operation == "set")),
             _ => {
                 denied
-                    .composition
                     .grants
                     .iter_mut()
                     .filter(|g| g.caller == CLIENT && g.operation == "run")
                     .for_each(|g| g.resources.clear());
             }
         }
-        let kernel = Prepared::prepare_state(denied).unwrap().load().unwrap();
+        let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
         assert_eq!(
             kernel
                 .admit_default_root()
@@ -259,17 +253,16 @@ fn main() {
         let mut denied = c.clone();
         if denied_boundary == "root-cell-grant" {
             denied
-                .composition
                 .grants
                 .retain(|g| !(g.caller == "root" && g.interface == PROPERTY));
         } else if denied_boundary == "root-cell-resource" {
-            for grant in &mut denied.composition.grants {
+            for grant in &mut denied.grants {
                 if grant.caller == "root" && grant.interface == PROPERTY {
                     grant.resources.clear();
                 }
             }
         }
-        let kernel = Prepared::prepare_state(denied.clone())
+        let kernel = Prepared::prepare(denied.clone())
             .unwrap()
             .load()
             .unwrap();
@@ -281,7 +274,7 @@ fn main() {
         else {
             panic!("reference");
         };
-        let mut authority = denied.composition.authority.clone();
+        let mut authority = denied.authority.clone();
         if denied_boundary == "narrow-root" {
             authority
                 .operations
@@ -334,7 +327,7 @@ fn main() {
         drop(root);
         kernel.shutdown().unwrap();
     }
-    let kernel = Prepared::prepare_state(c.clone()).unwrap().load().unwrap();
+    let kernel = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     {
         let root = kernel
             .admit_root(selection(COUNTER, "slow", PROVIDER))

@@ -1,4 +1,4 @@
-use phenix_sdk::{operation, Portable};
+use phenix_sdk::Portable;
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable)]
 pub enum AgentError {
@@ -68,11 +68,15 @@ pub struct RunResponse {
     pub model_turns: u64,
     pub tool_calls: u64,
 }
-#[operation(interface = "example.agent@1", operation = "run")]
-pub type Run = (RunRequest, RunResponse, AgentError);
-#[operation(interface = "example.model@1", operation = "complete")]
-pub type Complete = (ModelRequest, ModelReply, AgentError);
-#[operation(interface = "example.tool@1", operation = "execute")]
-pub type Execute = (ToolRequest, String, AgentError);
-#[operation(interface = "example.tool@1", operation = "count")]
-pub type ToolCount = (String, u64, AgentError);
+#[phenix_sdk::contract(id = "example.agent@1")]
+pub trait RunContract { fn run(&self, request: RunRequest) -> Result<RunResponse, AgentError>; }
+pub type Run = RunContract::run;
+#[phenix_sdk::contract(id = "example.model@1")]
+pub trait CompleteContract { fn complete(&self, request: ModelRequest) -> Result<ModelReply, AgentError>; }
+pub type Complete = CompleteContract::complete;
+#[phenix_sdk::contract(id = "example.tool.execute@1")]
+pub trait ExecuteContract { fn execute(&self, request: ToolRequest) -> Result<String, AgentError>; }
+pub type Execute = ExecuteContract::execute;
+#[phenix_sdk::contract(id = "example.tool.count@1")]
+pub trait ToolCountContract { fn count(&self, request: String) -> Result<u64, AgentError>; }
+pub type ToolCount = ToolCountContract::count;

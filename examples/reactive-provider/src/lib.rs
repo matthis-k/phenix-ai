@@ -3,7 +3,7 @@ use phenix_sdk::{abi::*, *};
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 #[derive(Default)]
 struct State {
     counter: Option<ValueLocation>,
@@ -12,7 +12,7 @@ struct State {
     previous_scope: u64,
 }
 fn failure(message: &str) -> Reply {
-    Reply::state_value(2, Failure::new(Code::PluginFailed, message).to_value())
+    Reply::value(2, Failure::new(Code::PluginFailed, message).to_value())
 }
 unsafe fn host(api: *const StateHostApi) -> Result<StateHostApi, Failure> {
     unsafe { StateHostApi::negotiate(api.cast()) }
@@ -28,7 +28,7 @@ fn create_cell(
     };
     let bytes = r.encode()?;
     let (status, value) =
-        unsafe { (api.state.unwrap())(api.scope, r.opcode(), Bytes::new(&bytes)).consume_state() }?;
+        unsafe { (api.state.unwrap())(api.scope, r.opcode(), Bytes::new(&bytes)).consume() }?;
     match (status, value) {
         (0, Value::Ref(r)) => Ok(*r),
         (_, v) => Err(Failure::from_value(v)?),
@@ -36,7 +36,7 @@ fn create_cell(
 }
 unsafe extern "C" fn create(out: *mut *mut c_void) -> Reply {
     unsafe { *out = Box::into_raw(Box::new(State::default())).cast() };
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn initialize(ptr: *mut c_void, api: *const StateHostApi) -> Reply {
     let result = (|| {
@@ -55,8 +55,8 @@ unsafe extern "C" fn initialize(ptr: *mut c_void, api: *const StateHostApi) -> R
         Ok::<_, Failure>(())
     })();
     match result {
-        Ok(()) => Reply::state_value(0, Value::Null),
-        Err(e) => Reply::state_value(2, e.to_value()),
+        Ok(()) => Reply::value(0, Value::Null),
+        Err(e) => Reply::value(2, e.to_value()),
     }
 }
 unsafe extern "C" fn invoke(
@@ -70,19 +70,19 @@ unsafe extern "C" fn invoke(
         let state = unsafe { &mut *ptr.cast::<State>() };
         let key = std::str::from_utf8(unsafe { key.read() }?)
             .map_err(|_| Failure::new(Code::SchemaRejected, "key"))?;
-        let request = Value::decode_profile(unsafe { input.read() }?, WireProfile::V2)?;
+        let request = Value::decode(unsafe { input.read() }?)?;
         match key {
-            "test.refs@1/get" => Ok(Reply::state_value(
+            "test.refs@1/get" => Ok(Reply::value(
                 0,
                 Value::Ref(Box::new(state.counter.unwrap())),
             )),
-            "test.refs@1/notes" => Ok(Reply::state_value(
+            "test.refs@1/notes" => Ok(Reply::value(
                 0,
                 Value::Ref(Box::new(state.notes.unwrap())),
             )),
             "test.provider@1/run" if request == Value::String("pending".into()) => {
                 state.pending = true;
-                Ok(Reply::state_value(3, Value::Null))
+                Ok(Reply::value(3, Value::Null))
             }
             "test.provider@1/run" => {
                 let scope = if request == Value::String("expired".into()) {
@@ -97,7 +97,7 @@ unsafe extern "C" fn invoke(
                         ptr: std::ptr::null(),
                         len: 8,
                     };
-                    let (status, value) = unsafe { callback(scope, 2, invalid).consume_state() }?;
+                    let (status, value) = unsafe { callback(scope, 2, invalid).consume() }?;
                     status == 2 && Failure::from_value(value)?.code == Code::ScopeRejected
                 } else {
                     std::thread::spawn(move || {
@@ -106,14 +106,14 @@ unsafe extern "C" fn invoke(
                             len: 8,
                         };
                         let (status, value) =
-                            unsafe { callback(scope, 2, invalid).consume_state() }.unwrap();
+                            unsafe { callback(scope, 2, invalid).consume() }.unwrap();
                         status == 2
                             && Failure::from_value(value).unwrap().code == Code::ScopeRejected
                     })
                     .join()
                     .unwrap()
                 };
-                Ok(Reply::state_value(
+                Ok(Reply::value(
                     0,
                     Value::List(vec![Value::U64(u64::from(denied))]),
                 ))
@@ -121,7 +121,7 @@ unsafe extern "C" fn invoke(
             _ => Err(Failure::new(Code::MissingBinding, "fixture operation")),
         }
     })();
-    result.unwrap_or_else(|e| Reply::state_value(2, e.to_value()))
+    result.unwrap_or_else(|e| Reply::value(2, e.to_value()))
 }
 unsafe extern "C" fn poll(ptr: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
     let state = unsafe { &mut *ptr.cast::<State>() };
@@ -129,15 +129,15 @@ unsafe extern "C" fn poll(ptr: *mut c_void, _: *const StateHostApi, _: Bytes) ->
         return failure("no pending fixture");
     }
     state.pending = false;
-    Reply::state_value(0, Value::List(vec![Value::U64(7)]))
+    Reply::value(0, Value::List(vec![Value::U64(7)]))
 }
 unsafe extern "C" fn cancel(ptr: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
     unsafe { (*ptr.cast::<State>()).pending = false };
-    Reply::state_value(4, Value::Null)
+    Reply::value(4, Value::Null)
 }
 unsafe extern "C" fn stop(ptr: *mut c_void) -> Reply {
     drop(unsafe { Box::from_raw(ptr.cast::<State>()) });
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 static TABLE: StatePluginTable = StatePluginTable {
     header: Header {

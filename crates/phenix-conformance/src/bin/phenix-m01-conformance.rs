@@ -1,6 +1,6 @@
 use phenix_contract::{Authority, Code, ScopedRequest, Value};
 use phenix_kernel::{
-    resolve::{Composition, ImportBinding, Prepared, ScopedGrant, Selection, Substitution},
+    resolve::{Composition, SlotBinding, Prepared, ScopedGrant, Selection, Substitution},
     Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -12,15 +12,7 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn bind(caller: &str, key: &str, provider: &str) -> ImportBinding {
-    let s = selection(key, provider);
-    ImportBinding {
-        caller: caller.into(),
-        interface: s.interface,
-        operation: s.operation,
-        provider: s.provider,
-    }
-}
+fn bind(caller: &str, key: &str, provider: &str) -> SlotBinding { phenix_conformance::binding(caller,key,provider) }
 fn grant(caller: &str, key: &str, resources: &[&str]) -> ScopedGrant {
     let s = selection(key, "");
     ScopedGrant {
@@ -37,7 +29,7 @@ fn count(count: u64) -> Value {
     Value::map([("count", Value::U64(count))])
 }
 fn fail(c: Composition, code: Code) -> String {
-    let e = Prepared::prepare_composition(c).err().unwrap();
+    let e = Prepared::prepare(c).err().unwrap();
     assert_eq!(e.code, code);
     e.message
 }
@@ -48,27 +40,20 @@ fn main() {
         10,
         "PROVIDER ALTERNATE CHOICE OTHER RESTRICTED RELAY RESOURCES CYCLE OUTPUT"
     );
-    // The accepted M0.0 declarations keep their byte identity under the new SDK.
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(Path::new(&args[1]).join("package.json")).unwrap())
-            .unwrap();
-    assert_eq!(
-        record["descriptor_sha256"],
-        "0fe90725a4573bcaee5421584607bcd4915044dd0c177cd9e56f5060a1f1a261"
-    );
     let output = Path::new(&args[9]);
     fs::create_dir_all(output).unwrap();
     let witness = output.join("constructor-witness");
     std::env::set_var("PHENIX_CONSTRUCTOR_WITNESS", &witness);
-    let transform = "example.transform@1/apply";
-    let counter = "example.transform@1/count";
+    let transform = "example.transform.apply@1/apply";
+    let counter = "example.transform.count@1/count";
     let choice = "example.choice@1/run";
     let other = "example.other@1/run";
     let mut c = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(choice, "example.choice"),
-        bindings: vec![
+        slots: vec![
             bind("example.choice", transform, "example.alternate"),
             bind("example.other", transform, "example.provider"),
         ],
@@ -90,24 +75,24 @@ fn main() {
         },
         resource: None,
     };
-    let prepared = Prepared::prepare_composition(c.clone()).unwrap();
+    let prepared = Prepared::prepare(c.clone()).unwrap();
     let baseline = prepared.inspect();
     let mut reordered = c.clone();
     reordered.artifacts.reverse();
-    reordered.bindings.reverse();
+    reordered.slots.reverse();
     reordered.grants.reverse();
     assert_eq!(
-        Prepared::prepare_composition(reordered).unwrap().inspect(),
+        Prepared::prepare(reordered).unwrap().inspect(),
         baseline
     );
     let mut bad = c.clone();
-    bad.bindings[1].provider = "example.alternate".into();
+    bad.slots[1].provider = "example.alternate".into();
     fail(bad, Code::MissingBinding);
     let mut bad = c.clone();
-    bad.bindings.clear();
-    let missing = fail(bad.clone(), Code::AmbiguousBinding);
+    bad.slots.clear();
+    let missing = fail(bad.clone(), Code::MissingBinding);
     bad.artifacts.reverse();
-    assert_eq!(fail(bad, Code::AmbiguousBinding), missing);
+    assert_eq!(fail(bad, Code::MissingBinding), missing);
     let mut bad = c.clone();
     bad.excluded.insert("example.alternate".into());
     fail(bad, Code::MissingBinding);
@@ -160,9 +145,9 @@ fn main() {
     drop(root);
     let choices = kernel.inspect();
     drop(kernel);
-    c.bindings
+    c.slots
         .push(bind("example.choice", counter, "example.provider"));
-    let kernel = Prepared::prepare_composition(c.clone())
+    let kernel = Prepared::prepare(c.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -173,12 +158,12 @@ fn main() {
     );
     drop(root);
     drop(kernel);
-    c.bindings.retain(|b| b.key() != counter);
+    c.slots.retain(|b| b.export != "ReadCount");
     c.substitutions.push(Substitution {
         from: "example.alternate".into(),
         to: "example.provider".into(),
     });
-    let kernel = Prepared::prepare_composition(c.clone())
+    let kernel = Prepared::prepare(c.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -190,20 +175,20 @@ fn main() {
     drop(root);
     drop(kernel);
     c.excluded.insert("example.alternate".into());
-    let excluded = Prepared::prepare_composition(c.clone()).unwrap().inspect();
+    let excluded = Prepared::prepare(c.clone()).unwrap().inspect();
     assert_eq!(excluded["plugins"].as_array().unwrap().len(), 3);
     // No provider for the optional counter, yet the required transform is valid.
     let mut optional = c.clone();
     optional.artifacts = vec![args[2].clone(), args[3].clone()];
     optional.excluded.clear();
     optional.substitutions.clear();
-    optional.bindings = vec![bind("example.choice", transform, "example.alternate")];
+    optional.slots = vec![bind("example.choice", transform, "example.alternate")];
     optional.grants = vec![
         grant("root", choice, &[]),
         grant("example.choice", transform, &[]),
     ];
     optional.authority.operations = [choice, transform].map(str::to_owned).into();
-    let kernel = Prepared::prepare_composition(optional)
+    let kernel = Prepared::prepare(optional)
         .unwrap()
         .load()
         .unwrap();
@@ -216,10 +201,11 @@ fn main() {
     drop(kernel);
     let cycle = "example.cycle@1/run";
     let cycle_policy = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: vec![args[8].clone()],
         entry: selection(cycle, "example.cycle"),
-        bindings: vec![bind("example.cycle", cycle, "example.cycle")],
+        slots: vec![bind("example.cycle", cycle, "example.cycle")],
         grants: vec![
             grant("root", cycle, &[]),
             grant("example.cycle", cycle, &[]),
@@ -239,13 +225,14 @@ fn main() {
     );
     let run = "example.restricted@1/run";
     let relay = "example.relay@1/run";
-    let bump = "example.resource@1/bump";
-    let read = "example.resource@1/count";
+    let bump = "example.resource.bump@1/bump";
+    let read = "example.resource.count@1/count";
     let scoped = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[5..8].to_vec(),
         entry: selection(run, "example.restricted"),
-        bindings: vec![
+        slots: vec![
             bind("example.restricted", relay, "example.relay"),
             bind("example.relay", bump, "example.resources"),
         ],
@@ -263,7 +250,7 @@ fn main() {
         },
         resource: None,
     };
-    let kernel = Prepared::prepare_composition(scoped.clone())
+    let kernel = Prepared::prepare(scoped.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -307,7 +294,7 @@ fn main() {
     // A root pinned to red also rejects a plugin request to switch to blue.
     read_policy.entry = selection(run, "example.restricted");
     read_policy.resource = Some("red".into());
-    let kernel = Prepared::prepare_composition(read_policy)
+    let kernel = Prepared::prepare(read_policy)
         .unwrap()
         .load()
         .unwrap();

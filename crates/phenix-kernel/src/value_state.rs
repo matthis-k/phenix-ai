@@ -1,7 +1,7 @@
 //! Cells are owned by one admitted runtime. No raw cell API enters the SDK.
 use phenix_contract::{
     Code, CompareExchange, Epoch, Failure, GenerationDigest, OwnerId, PropertyDefinition, Revision,
-    Value, ValueAccessError as Error, ValueId, ValueLocation, WireProfile,
+    Value, ValueAccessError as Error, ValueId, ValueLocation,
 };
 use std::{
     collections::BTreeMap,
@@ -138,7 +138,7 @@ impl Cells {
                 "duplicate property or invalid initial schema",
             ));
         }
-        initial.encode_profile(WireProfile::V2)?;
+        initial.encode()?;
         let owner = self.owners[plugin];
         let mut bytes = owner.as_bytes().to_vec();
         bytes.extend(property.id.as_bytes());

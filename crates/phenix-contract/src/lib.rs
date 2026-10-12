@@ -7,6 +7,7 @@ pub mod static_schema;
 pub use reference::*;
 pub use state::*;
 pub use static_schema::{StaticField, StaticSchema};
+mod portable;
 pub mod value;
 pub use descriptor::*;
 pub use scope::*;
@@ -59,7 +60,7 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 pub trait Portable: Sized {
-    const SCHEMA: Schema;
+    const SCHEMA: StaticSchema;
     fn to_value(&self) -> Value;
     fn from_value(value: Value) -> Result<Self, Failure>;
 }
@@ -67,7 +68,7 @@ pub trait Operation {
     type Request: Portable;
     type Response: Portable;
     type Error: Portable;
-    const DEFINITION: OperationDef;
+    const KEY: &'static str;
 }
 #[derive(Debug)]
 pub enum CallError<E> {

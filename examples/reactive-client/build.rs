@@ -25,7 +25,7 @@ fn refs() -> ContractDefinition {
     }
 }
 fn main() {
-    let property = |slot: &str, name: &str| ImportSlot {
+    let property = |slot: &str, name: &str| ImportSlot { provider:None,
         slot: slot.into(),
         contract: format!("test.state-provider.property.{name}@1"),
         revision_min: 1,
@@ -60,14 +60,14 @@ fn main() {
         requires: vec![
             property("counter", "counter"),
             property("notes", "notes"),
-            ImportSlot {
+            ImportSlot { provider:None,
                 slot: "refs".into(),
                 contract: "test.refs@1".into(),
                 revision_min: 1,
                 revision_max: 1,
                 cardinality: Cardinality::One,
             },
-            ImportSlot {
+            ImportSlot { provider:None,
                 slot: "many".into(),
                 contract: "test.refs@1".into(),
                 revision_min: 1,
@@ -83,7 +83,7 @@ fn main() {
         properties: vec![],
     };
     let bytes = metadata.encode().unwrap();
-    let mut section = vec![0_u8; SECTION_BYTES];
+    let mut section = vec![0_u8; NATIVE_SECTION_BYTES];
     section[..4].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
     section[4..4 + bytes.len()].copy_from_slice(&bytes);
     fs::write(

@@ -3,7 +3,7 @@ use crate::Value as WireValue;
 use crate::{
     abi::{Bytes as AbiBytes, StateHostApi},
     CallError, CallResult, Code, CompareExchange, Epoch, Failure, Revision, StateRequest,
-    StaticSchema, ValueAccessError, ValueLocation, WireProfile,
+    StaticSchema, ValueAccessError, ValueLocation,
 };
 use std::{
     marker::PhantomData,
@@ -11,35 +11,10 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-pub trait Portable: Sized {
-    const SCHEMA: StaticSchema;
-    fn to_value(&self) -> WireValue;
-    fn from_value(value: WireValue) -> Result<Self, Failure>;
-}
+pub use crate::{Portable, Operation};
 fn invalid() -> Failure {
     Failure::new(Code::SchemaRejected, "invalid typed live value")
 }
-macro_rules! scalar {
-    ($t:ty,$variant:ident,$schema:ident) => {
-        impl Portable for $t {
-            const SCHEMA: StaticSchema = StaticSchema::$schema;
-            fn to_value(&self) -> WireValue {
-                WireValue::$variant(self.clone())
-            }
-            fn from_value(value: WireValue) -> Result<Self, Failure> {
-                if let WireValue::$variant(v) = value {
-                    Ok(v)
-                } else {
-                    Err(invalid())
-                }
-            }
-        }
-    };
-}
-scalar!(bool, Bool, Bool);
-scalar!(i64, I64, I64);
-scalar!(u64, U64, U64);
-scalar!(String, String, String);
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bytes(pub Vec<u8>);
 impl Portable for Bytes {
@@ -52,46 +27,6 @@ impl Portable for Bytes {
             Ok(Self(v))
         } else {
             Err(invalid())
-        }
-    }
-}
-impl Portable for () {
-    const SCHEMA: StaticSchema = StaticSchema::Struct(&[]);
-    fn to_value(&self) -> WireValue {
-        WireValue::map([] as [(&str, WireValue); 0])
-    }
-    fn from_value(v: WireValue) -> Result<Self, Failure> {
-        if matches!(v,WireValue::Map(ref m) if m.is_empty()) {
-            Ok(())
-        } else {
-            Err(invalid())
-        }
-    }
-}
-impl<T: Portable> Portable for Vec<T> {
-    const SCHEMA: StaticSchema = StaticSchema::List(&T::SCHEMA);
-    fn to_value(&self) -> WireValue {
-        WireValue::List(self.iter().map(T::to_value).collect())
-    }
-    fn from_value(v: WireValue) -> Result<Self, Failure> {
-        if let WireValue::List(items) = v {
-            items.into_iter().map(T::from_value).collect()
-        } else {
-            Err(invalid())
-        }
-    }
-}
-impl<T: Portable> Portable for Option<T> {
-    const SCHEMA: StaticSchema = StaticSchema::Option(&T::SCHEMA);
-    fn to_value(&self) -> WireValue {
-        self.as_ref()
-            .map_or(WireValue::Null, |v| WireValue::List(vec![v.to_value()]))
-    }
-    fn from_value(v: WireValue) -> Result<Self, Failure> {
-        match v {
-            WireValue::Null => Ok(None),
-            WireValue::List(mut v) if v.len() == 1 => Ok(Some(T::from_value(v.pop().unwrap())?)),
-            _ => Err(invalid()),
         }
     }
 }
@@ -316,7 +251,7 @@ impl<'call> Host<'call> {
             .state
             .ok_or_else(|| Failure::new(Code::AbiIncompatible, "missing state callback"))?;
         let (status, value) = unsafe {
-            callback(self.api.scope, request.opcode(), AbiBytes::new(&bytes)).consume_state()
+            callback(self.api.scope, request.opcode(), AbiBytes::new(&bytes)).consume()
         }?;
         match status {
             0 => Ok(value),
@@ -326,7 +261,7 @@ impl<'call> Host<'call> {
         }
     }
     fn raw(&self, slot: &str, key: &str, value: WireValue) -> Result<(u32, WireValue), Failure> {
-        let bytes = value.encode_profile(WireProfile::V2)?;
+        let bytes = value.encode()?;
         let callback = self
             .api
             .invoke
@@ -338,7 +273,7 @@ impl<'call> Host<'call> {
                 AbiBytes::new(key.as_bytes()),
                 AbiBytes::new(&bytes),
             )
-            .consume_state()
+            .consume()
         }
     }
     pub fn invoke<O: Operation>(
@@ -537,12 +472,6 @@ impl<'call> Host<'call> {
 /// #[phenix_sdk::contract(id="example.bad@1")]
 /// trait Bad { fn call(&self) -> Result<String, String>; fn call(&self) -> Result<String, String>; }
 /// ```
-pub trait Operation {
-    type Request: Portable;
-    type Response: Portable;
-    type Error: Portable;
-    const KEY: &'static str;
-}
 /// Generated synchronous handlers accept an ordinary value, domain Result or
 /// CallResult. Contract types choose the conversion; aliases remain supported.
 #[doc(hidden)]
@@ -649,9 +578,9 @@ impl<T: Portable> Cell<T> {
 #[doc(hidden)]
 pub fn reply<T: Portable, E: Portable>(result: CallResult<T, E>) -> crate::abi::Reply {
     match result {
-        Ok(v) => crate::abi::Reply::state_value(0, v.to_value()),
-        Err(CallError::Domain(v)) => crate::abi::Reply::state_value(1, v.to_value()),
-        Err(CallError::Kernel(v)) => crate::abi::Reply::state_value(2, v.to_value()),
+        Ok(v) => crate::abi::Reply::value(0, v.to_value()),
+        Err(CallError::Domain(v)) => crate::abi::Reply::value(1, v.to_value()),
+        Err(CallError::Kernel(v)) => crate::abi::Reply::value(2, v.to_value()),
     }
 }
 
@@ -665,16 +594,16 @@ pub enum PendingResult<T, E> {
 pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> crate::abi::Reply {
     match result {
         PendingResult::Ready(result) => reply(result),
-        PendingResult::Pending => crate::abi::Reply::state_value(3, WireValue::Null),
+        PendingResult::Pending => crate::abi::Reply::value(3, WireValue::Null),
         PendingResult::QuiescentFailure(error) => {
-            crate::abi::Reply::state_value(5, error.to_value())
+            crate::abi::Reply::value(5, error.to_value())
         }
     }
 }
 #[doc(hidden)]
 pub fn boundary(f: impl FnOnce() -> crate::abi::Reply) -> crate::abi::Reply {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
-        crate::abi::Reply::state_value(
+        crate::abi::Reply::value(
             2,
             Failure::new(Code::PluginFailed, "caught state plugin panic").to_value(),
         )
@@ -858,13 +787,13 @@ impl<T: Portable> Portable for PropertyUpdate<T> {
 
 /// Unsupported source representations cannot become live contracts.
 /// ```compile_fail
-/// #[derive(phenix_sdk::LivePortable)] struct Pointer { address:*const u8 }
+/// #[derive(phenix_sdk::Portable)] struct Pointer { address:*const u8 }
 /// ```
 /// ```compile_fail
-/// #[derive(phenix_sdk::LivePortable)] struct Borrowed<'a> { value:&'a str }
+/// #[derive(phenix_sdk::Portable)] struct Borrowed<'a> { value:&'a str }
 /// ```
 /// ```compile_fail
-/// #[derive(phenix_sdk::LivePortable)] struct Tuple(String);
+/// #[derive(phenix_sdk::Portable)] struct Tuple(String);
 /// ```
 /// ```compile_fail
 /// fn modify(mut v:phenix_sdk::live::Value<Vec<String>>) { v.push("untracked".into()); }
@@ -874,3 +803,63 @@ impl<T: Portable> Portable for PropertyUpdate<T> {
 /// ```
 #[doc(hidden)]
 pub struct UnsupportedAuthoring;
+
+/// A typed child remains owned by its parent ticket and selected import slot.
+/// ```compile_fail
+/// fn send<T:Send>(){} send::<phenix_sdk::PendingImport<O>>();
+/// #[phenix_sdk::contract(id="test.pending@1")] trait Api { fn run(&self)->Result<String,String>; }
+/// type O=Api::run;
+/// ```
+pub struct PendingImport<O:Operation> { slot:String,ticket:u64,settled:bool,_operation:PhantomData<O>,_serial:PhantomData<Rc<()>> }
+pub enum ImportCall<O:Operation> { Ready(CallResult<O::Response,O::Error>),Pending(PendingImport<O>) }
+pub enum ImportPoll<T,E> { Pending,Ready(CallResult<T,E>),Cancelled,Draining }
+fn import_result<O:Operation>(status:u32,value:WireValue)->Result<CallResult<O::Response,O::Error>,Failure> {
+    Ok(match status { 0=>Ok(O::Response::from_value(value)?),1=>Err(CallError::Domain(O::Error::from_value(value)?)),2=>Err(CallError::Kernel(Failure::from_value(value)?)),_=>return Err(Failure::new(Code::AbiIncompatible,"invalid imported result")) })
+}
+impl Host<'_> {
+    pub fn resource(&self)->Result<Option<String>,Failure> {
+        let (status,value)=self.raw("",crate::RESOURCE_CONTEXT,WireValue::Null)?;
+        match (status,value) { (0,WireValue::Null)=>Ok(None),(0,WireValue::String(id)) if crate::identifier(&id)=>Ok(Some(id)),(2,value)=>Err(Failure::from_value(value)?),_=>Err(invalid()) }
+    }
+    pub fn invoke_scoped<O:Operation>(&self,slot:&str,scope:&crate::ScopedRequest,request:&O::Request)->CallResult<O::Response,O::Error> {
+        let bytes=scope.encode(O::KEY,request.to_value().encode()?)?;
+        let (status,value)=self.raw(slot,crate::SCOPED_IMPORT,WireValue::decode(&bytes)?)?;
+        import_result::<O>(status,value)?
+    }
+    fn pending_command(&self,slot:&str,key:&str,value:WireValue)->Result<(u32,WireValue),Failure> {
+        let (status,value)=self.raw(slot,key,value)?;
+        if status==5 && value!=WireValue::Null { return Err(Failure::from_value(value)?); }
+        Ok((status,value))
+    }
+    pub fn begin<O:Operation>(&self,slot:&str,request:&O::Request)->Result<ImportCall<O>,Failure> {
+        self.begin_command::<O>(slot,"phenix.host.pending.begin.v2",WireValue::map([("operation",WireValue::String(O::KEY.into())),("request",WireValue::Bytes(request.to_value().encode()?))]))
+    }
+    pub fn begin_scoped<O:Operation>(&self,slot:&str,scope:&crate::ScopedRequest,request:&O::Request)->Result<ImportCall<O>,Failure> {
+        self.begin_command::<O>(slot,"phenix.host.pending.scoped.v2",WireValue::decode(&scope.encode(O::KEY,request.to_value().encode()?)?)?)
+    }
+    fn begin_command<O:Operation>(&self,slot:&str,key:&str,value:WireValue)->Result<ImportCall<O>,Failure> {
+        let (status,value)=self.pending_command(slot,key,value)?;
+        match (status,value) {
+            (3,WireValue::U64(ticket))=>Ok(ImportCall::Pending(PendingImport { slot:slot.into(),ticket,settled:false,_operation:PhantomData,_serial:PhantomData })),
+            (2,value)=>Err(Failure::from_value(value)?),
+            (status,value)=>Ok(ImportCall::Ready(import_result::<O>(status,value)?)),
+        }
+    }
+}
+impl<O:Operation> PendingImport<O> {
+    fn value(&self)->Result<WireValue,Failure> {
+        if self.settled { return Err(Failure::new(Code::ScopeRejected,"imported result already settled")); }
+        Ok(WireValue::map([("operation",WireValue::String(O::KEY.into())),("ticket",WireValue::U64(self.ticket))]))
+    }
+    pub fn poll(&mut self,host:&Host<'_>)->Result<ImportPoll<O::Response,O::Error>,Failure> {
+        match host.pending_command(&self.slot,"phenix.host.pending.poll.v2",self.value()?)? {
+            (3,WireValue::Null)=>Ok(ImportPoll::Pending),(5,WireValue::Null)=>Ok(ImportPoll::Draining),
+            (4,WireValue::Null)=>{self.settled=true;Ok(ImportPoll::Cancelled)},
+            (status @ 0..=2,value)=>{self.settled=true;Ok(ImportPoll::Ready(import_result::<O>(status,value)?))},
+            _=>Err(Failure::new(Code::AbiIncompatible,"invalid imported poll reply")),
+        }
+    }
+    pub fn cancel(&self,host:&Host<'_>)->Result<bool,Failure> {
+        match host.pending_command(&self.slot,"phenix.host.pending.cancel.v2",self.value()?)? { (0,WireValue::Bool(quiet))=>Ok(quiet),_=>Err(Failure::new(Code::AbiIncompatible,"invalid imported cancel reply")) }
+    }
+}

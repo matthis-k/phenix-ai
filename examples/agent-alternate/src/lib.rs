@@ -1,10 +1,10 @@
-#[phenix_sdk::plugin(id = "example.agent-alternate", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.agent-alternate", version = "1.0.0", define(example_agent_contracts::CompleteContract), provide(example_agent_contracts::CompleteContract, slot = "Complete"))]
 mod plugin {
     use example_agent_contracts::{AgentError, Complete, ModelReply, ModelRequest, ReplyKind};
     use phenix_sdk::{CallResult, Host};
     #[derive(Default)]
     pub struct State;
-    #[export(Complete)]
+    #[provide(Complete)]
     fn complete(
         _: &mut State,
         _: &Host<'_>,

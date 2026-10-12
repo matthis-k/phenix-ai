@@ -1,7 +1,7 @@
 //! Public-contract test probe. It has no kernel or native-plugin dependency.
 use phenix_contract::{
     Code, DynValue, Failure, GenerationDigest, OwnerId, SchemaId, Value, ValueId, ValueLocation,
-    ValueSchema, WireProfile,
+    ValueSchema,
 };
 use serde::Deserialize;
 use std::{
@@ -98,19 +98,22 @@ impl Input {
         })
     }
 }
+fn require_profile(profile: &str) -> Result<(), Failure> {
+    if profile == "phenix.value.v2" { Ok(()) } else { Err(Failure::new(Code::AbiIncompatible, "unsupported wire format")) }
+}
 fn handle(request: Request) -> Result<serde_json::Value, Failure> {
     match request {
         Request::Decode { profile, hex: text } => {
-            let profile = WireProfile::negotiate(&profile)?;
-            let value = Value::decode_profile(&unhex(&text)?, profile)?;
+            require_profile(&profile)?;
+            let value = Value::decode(&unhex(&text)?)?;
             Ok(
-                serde_json::json!({"hex": hex(&value.encode_profile(profile)?), "value": value.to_json()}),
+                serde_json::json!({"hex": hex(&value.encode()?), "value": value.to_json()}),
             )
         }
         Request::Encode { profile, value } => {
             let value = value.portable()?;
             Ok(
-                serde_json::json!({"hex": hex(&value.encode_profile(WireProfile::negotiate(&profile)?)?)}),
+                serde_json::json!({"hex": hex(&{ require_profile(&profile)?; value.encode()? })}),
             )
         }
         Request::Schema { hex: text } => {
@@ -126,7 +129,7 @@ fn handle(request: Request) -> Result<serde_json::Value, Failure> {
         } => {
             let schema = ValueSchema::decode(&unhex(&schema_hex)?)?;
             let value =
-                Value::decode_profile(&unhex(&value_hex)?, WireProfile::negotiate(&profile)?)?;
+                { require_profile(&profile)?; Value::decode(&unhex(&value_hex)?)? };
             let dynamic = DynValue::new(&schema, value)?;
             Ok(
                 serde_json::json!({"id": hex(dynamic.schema().as_bytes()), "value": dynamic.value().to_json()}),

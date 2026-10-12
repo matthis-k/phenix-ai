@@ -1,5 +1,5 @@
 //! Offline M1 definitions and contributions. This module never selects providers.
-use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, WireProfile, MAX_COUNT};
+use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, MAX_COUNT};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub enum Cardinality {
 pub struct ImportSlot {
     pub slot: String,
     pub contract: String,
+    pub provider: Option<String>,
     pub revision_min: u64,
     pub revision_max: u64,
     pub cardinality: Cardinality,
@@ -85,10 +86,10 @@ impl ContractMetadata {
         metadata.provides.sort_by(|a, b| a.slot.cmp(&b.slot));
         metadata.properties.sort_by(|a, b| a.id.cmp(&b.id));
         metadata.validate()?;
-        metadata.value()?.encode_profile(WireProfile::V2)
+        metadata.value()?.encode()
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
-        let mut root = Fields::new(Value::decode_profile(bytes, WireProfile::V2)?)?;
+        let mut root = Fields::new(Value::decode(bytes)?)?;
         if root.text("format")? != "phenix.contract-metadata.v2" {
             return Err(invalid("metadata profile"));
         }
@@ -136,6 +137,7 @@ impl ContractMetadata {
                 let mut f = Fields::new(v)?;
                 let slot = f.text("slot")?;
                 let contract = f.text("contract")?;
+                let provider = match f.take("provider")? { Value::Null=>None,Value::String(id)=>Some(id),_=>return Err(invalid("import provider identity")) };
                 let revision_min = f.number("revision_min")?;
                 let revision_max = f.number("revision_max")?;
                 let kind = f.text("cardinality")?;
@@ -152,6 +154,7 @@ impl ContractMetadata {
                 Ok(ImportSlot {
                     slot,
                     contract,
+                    provider,
                     revision_min,
                     revision_max,
                     cardinality,
@@ -244,6 +247,7 @@ impl ContractMetadata {
         for slot in &self.requires {
             if !identifier(&slot.slot)
                 || !contract(&slot.contract)
+                || slot.provider.as_ref().is_some_and(|id| !identifier(id) || id=="root")
                 || slot.revision_min == 0
                 || slot.revision_max < slot.revision_min
                 || matches!(slot.cardinality, Cardinality::Many { minimum } if minimum > MAX_COUNT as u64)
@@ -300,6 +304,7 @@ impl ContractMetadata {
                 Value::map([
                     ("slot", string(&s.slot)),
                     ("contract", string(&s.contract)),
+                    ("provider", s.provider.as_ref().map_or(Value::Null,|id|string(id))),
                     ("revision_min", Value::U64(s.revision_min)),
                     ("revision_max", Value::U64(s.revision_max)),
                     ("cardinality", string(kind)),
@@ -405,4 +410,69 @@ impl Fields {
             Err(invalid("unknown metadata field"))
         }
     }
+}
+
+/// Stable synthetic property contract identities. No access is granted here.
+pub fn property_contract(owner: &str, property: &str) -> Result<String, Failure> {
+    let name = format!("{owner}.property.{property}");
+    if !crate::identifier(&name) {
+        return Err(Failure::new(
+            Code::DescriptorInvalid,
+            "property identity exceeds protocol limits",
+        ));
+    }
+    Ok(format!("{name}@1"))
+}
+pub fn property_definitions(
+    metadata: &ContractMetadata,
+) -> Result<Vec<crate::ContractDefinition>, Failure> {
+    use crate::{ContractDefinition, OperationSchema, ValueSchema as S};
+    metadata
+        .properties
+        .iter()
+        .map(|p| {
+            let reference = S::Ref(p.schema.id()?);
+            let error = S::Variants(vec![
+                "Conflict".into(),
+                "Denied".into(),
+                "OwnerGone".into(),
+                "SchemaMismatch".into(),
+                "StaleReference".into(),
+            ]);
+            let mut operations = vec![];
+            if p.get {
+                operations.push(OperationSchema {
+                    name: "get".into(),
+                    request: reference.clone(),
+                    response: p.schema.clone(),
+                    error: error.clone(),
+                });
+            }
+            if p.set {
+                operations.push(OperationSchema {
+                    name: "set".into(),
+                    request: S::Struct(std::collections::BTreeMap::from([
+                        ("expected".into(), S::U64),
+                        ("location".into(), reference.clone()),
+                        ("value".into(), p.schema.clone()),
+                    ])),
+                    response: S::U64,
+                    error: error.clone(),
+                });
+            }
+            if p.watch {
+                operations.push(OperationSchema {
+                    name: "watch".into(),
+                    request: reference,
+                    response: S::U64,
+                    error,
+                });
+            }
+            Ok(ContractDefinition {
+                contract: property_contract(&metadata.plugin, &p.id)?,
+                revision: 1,
+                operations,
+            })
+        })
+        .collect()
 }

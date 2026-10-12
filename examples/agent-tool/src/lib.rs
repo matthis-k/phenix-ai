@@ -1,4 +1,4 @@
-#[phenix_sdk::plugin(id = "example.agent-tool", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.agent-tool", version = "1.0.0", define(example_agent_contracts::ExecuteContract), define(example_agent_contracts::ToolCountContract), provide(example_agent_contracts::ExecuteContract, slot = "Execute"), provide(example_agent_contracts::ToolCountContract, slot = "ToolCount"))]
 mod plugin {
     use example_agent_contracts::{AgentError, Execute, ToolCount, ToolRequest};
     use phenix_sdk::{CallError, CallResult, Host};
@@ -6,7 +6,7 @@ mod plugin {
     pub struct State {
         calls: u64,
     }
-    #[export(Execute)]
+    #[provide(Execute)]
     fn execute(
         state: &mut State,
         _: &Host<'_>,
@@ -18,7 +18,7 @@ mod plugin {
         }
         Ok(request.text.to_uppercase())
     }
-    #[export(ToolCount)]
+    #[provide(ToolCount)]
     fn count(state: &mut State, _: &Host<'_>, _: String) -> CallResult<u64, AgentError> {
         Ok(state.calls)
     }

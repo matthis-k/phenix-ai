@@ -1,12 +1,12 @@
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, ImportBinding, Prepared, ScopedGrant, Selection},
+    resolve::{Composition, Prepared, ScopedGrant, Selection},
     Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 const PARENT: &str = "example.pending-consumer@1/run";
 const CHILD: &str = "example.pending@1/run";
-const SERVICE: &str = "example.transform@1/apply";
+const SERVICE: &str = "example.transform.apply@1/apply";
 fn selection(key: &str, provider: &str) -> Selection {
     let (interface, operation) = key.split_once('/').unwrap();
     Selection {
@@ -42,10 +42,11 @@ fn main() {
     let output = Path::new(&args[5]);
     fs::create_dir_all(output).unwrap();
     let policy = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[1..4].to_vec(),
         entry: selection(PARENT, "example.pending-consumer"),
-        bindings: [
+        slots: [
             ("example.pending-consumer", CHILD, "example.pending"),
             ("example.pending", SERVICE, "example.provider"),
             ("example.pending-consumer", SERVICE, "example.provider"),
@@ -53,12 +54,7 @@ fn main() {
         .into_iter()
         .map(|(caller, key, provider)| {
             let s = selection(key, provider);
-            ImportBinding {
-                caller: caller.into(),
-                interface: s.interface,
-                operation: s.operation,
-                provider: s.provider,
-            }
+            phenix_conformance::binding(&(caller), &format!("{}/{}", s.interface, s.operation), &(s.provider))
         })
         .collect(),
         grants: vec![
@@ -80,7 +76,7 @@ fn main() {
     )
     .unwrap();
     let baseline = fds();
-    let kernel = Prepared::prepare_composition(policy.clone())
+    let kernel = Prepared::prepare(policy.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -134,7 +130,7 @@ fn main() {
     root.release(&t).unwrap();
     drop(root);
     kernel.shutdown().unwrap();
-    let abandoned = Prepared::prepare_composition(policy.clone())
+    let abandoned = Prepared::prepare(policy.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -148,7 +144,7 @@ fn main() {
     abandoned.shutdown().unwrap();
     let mut immediate_policy = policy.clone();
     immediate_policy.artifacts[1] = args[4].clone();
-    let immediate = Prepared::prepare_composition(immediate_policy)
+    let immediate = Prepared::prepare(immediate_policy)
         .unwrap()
         .load()
         .unwrap();
@@ -164,7 +160,7 @@ fn main() {
     denied_policy
         .grants
         .retain(|g| g.caller != "example.pending-consumer");
-    let denied = Prepared::prepare_composition(denied_policy)
+    let denied = Prepared::prepare(denied_policy)
         .unwrap()
         .load()
         .unwrap();

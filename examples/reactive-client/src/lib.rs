@@ -3,7 +3,7 @@ use phenix_sdk::{abi::*, *};
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 #[derive(Default)]
 struct State {
     leaked: u64,
@@ -11,7 +11,7 @@ struct State {
 fn state(api: &StateHostApi, r: StateRequest) -> Result<Value, String> {
     let bytes = r.encode().map_err(|e| e.to_string())?;
     let (status, value) =
-        unsafe { (api.state.unwrap())(api.scope, r.opcode(), Bytes::new(&bytes)).consume_state() }
+        unsafe { (api.state.unwrap())(api.scope, r.opcode(), Bytes::new(&bytes)).consume() }
             .map_err(|e| e.to_string())?;
     match status {
         0 => Ok(value),
@@ -34,7 +34,7 @@ fn state(api: &StateHostApi, r: StateRequest) -> Result<Value, String> {
 }
 fn imported(api: &StateHostApi, slot: &str, key: &str, request: Value) -> Result<Value, String> {
     let bytes = request
-        .encode_profile(WireProfile::V2)
+        .encode()
         .map_err(|e| e.to_string())?;
     let (status, value) = unsafe {
         (api.invoke.unwrap())(
@@ -43,7 +43,7 @@ fn imported(api: &StateHostApi, slot: &str, key: &str, request: Value) -> Result
             Bytes::new(key.as_bytes()),
             Bytes::new(&bytes),
         )
-        .consume_state()
+        .consume()
     }
     .map_err(|e| e.to_string())?;
     if status == 0 {
@@ -240,10 +240,10 @@ fn run(s: &mut State, api: &StateHostApi, command: &str) -> Result<Vec<u64>, Str
 }
 unsafe extern "C" fn create(out: *mut *mut c_void) -> Reply {
     unsafe { *out = Box::into_raw(Box::new(State::default())).cast() };
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn initialize(_: *mut c_void, _: *const StateHostApi) -> Reply {
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn invoke(
     ptr: *mut c_void,
@@ -255,10 +255,8 @@ unsafe extern "C" fn invoke(
         let api = unsafe { StateHostApi::negotiate(api.cast()) }.map_err(|e| e.to_string())?;
         let key = std::str::from_utf8(unsafe { key.read() }.map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        let input = Value::decode_profile(
-            unsafe { input.read() }.map_err(|e| e.to_string())?,
-            WireProfile::V2,
-        )
+        let input = Value::decode(
+            unsafe { input.read() }.map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
         if key == "test.state@1/read" {
             let Value::Ref(r) = input else {
@@ -277,19 +275,19 @@ unsafe extern "C" fn invoke(
         ))
     })();
     match result {
-        Ok(v) => Reply::state_value(0, v),
-        Err(e) => Reply::state_value(1, Value::String(e)),
+        Ok(v) => Reply::value(0, v),
+        Err(e) => Reply::value(1, Value::String(e)),
     }
 }
 unsafe extern "C" fn poll(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(0, Value::List(vec![]))
+    Reply::value(0, Value::List(vec![]))
 }
 unsafe extern "C" fn cancel(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(4, Value::Null)
+    Reply::value(4, Value::Null)
 }
 unsafe extern "C" fn stop(ptr: *mut c_void) -> Reply {
     drop(unsafe { Box::from_raw(ptr.cast::<State>()) });
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 static TABLE: StatePluginTable = StatePluginTable {
     header: Header {

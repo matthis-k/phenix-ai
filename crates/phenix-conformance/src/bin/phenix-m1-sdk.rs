@@ -1,7 +1,7 @@
 //! Independent process loads SDK-only typed fixtures, with no linked plugin code.
 use phenix_contract::{Authority, Value};
 use phenix_kernel::{
-    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding, StateComposition},
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -17,7 +17,7 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn composition(provider: &str, client: &str, alternative: &str) -> StateComposition {
+fn composition(provider: &str, client: &str, alternative: &str) -> Composition {
     let resources: BTreeSet<_> = [COUNTER, NOTES]
         .map(|s| s.trim_end_matches("@1").to_owned())
         .into();
@@ -66,8 +66,8 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
         provider: PROVIDER.into(),
         export: export.into(),
     };
-    StateComposition {
-        format: "phenix.state-composition.v2".into(),
+    Composition {
+        format: "phenix.composition.v2".into(),
         definitions: vec![],
         slots: vec![
             slot("refs", "refs"),
@@ -82,11 +82,9 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
                 export: "refs".into(),
             },
         ],
-        composition: Composition {
-            format: "phenix.composition.v1".into(),
+        
             artifacts: vec![provider.into(), client.into(), alternative.into()],
             entry: selection("test.state@1/run", CLIENT),
-            bindings: vec![],
             grants,
             excluded: BTreeSet::new(),
             substitutions: vec![],
@@ -95,7 +93,6 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
                 resources,
             },
             resource: None,
-        },
     }
 }
 
@@ -105,7 +102,7 @@ fn main() {
     let output = Path::new(&args[4]);
     fs::create_dir_all(output).unwrap();
     let c = composition(&args[1], &args[2], &args[3]);
-    let kernel = Prepared::prepare_state(c.clone()).unwrap().load().unwrap();
+    let kernel = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     assert_eq!(
         kernel
             .admit_default_root()
@@ -120,8 +117,8 @@ fn main() {
     kernel.shutdown().unwrap();
     assert_eq!(kernel.inspect()["live_state"]["cells"], 0);
     let mut denied = c.clone();
-    denied.composition.grants.retain(|g| g.operation != "set");
-    let kernel = Prepared::prepare_state(denied).unwrap().load().unwrap();
+    denied.grants.retain(|g| g.operation != "set");
+    let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
     assert_eq!(
         kernel
             .admit_default_root()

@@ -1,6 +1,6 @@
 use phenix_contract::{Code, Failure, Value};
 use phenix_kernel::{
-    resolve::{Composition, Deployment, Prepared, StateComposition},
+    resolve::{Composition, Prepared},
     Call, Outcome, Phase, Poll,
 };
 use std::path::Path;
@@ -16,68 +16,16 @@ fn main() {
 }
 fn run(phase: &mut Phase) -> Result<(), Failure> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() < 3 || args.len() > 4 || !["inspect", "invoke"].contains(&args[1].as_str()) {
-        return Err(Failure::new(
-            Code::InfrastructureFailure,
-            "usage: phenix-kernel inspect DEPLOYMENT | invoke DEPLOYMENT REQUEST.bin",
-        ));
+    if args.len()<3 || args.len()>5 || !["inspect","invoke"].contains(&args[1].as_str()) {
+        return Err(Failure::new(Code::InfrastructureFailure,"usage: phenix-kernel inspect COMPOSITION | invoke COMPOSITION REQUEST.bin [--poll-limit=N]"));
     }
-    let document: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&args[2])
-            .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?,
-    )
-    .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
-    let state_profile = document["format"] == "phenix.state-composition.v2";
-    let artifact_document = if state_profile {
-        &document["composition"]
-    } else {
-        &document
-    };
-    let artifacts = artifact_document["artifacts"]
-        .as_array()
-        .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "artifacts must be a list"))?;
-    let mut inputs: Vec<_> = artifacts.iter().collect();
-    if state_profile {
-        inputs.extend(
-            document["definitions"].as_array().ok_or_else(|| {
-                Failure::new(Code::DescriptorInvalid, "definitions must be a list")
-            })?,
-        );
+    let composition:Composition=serde_json::from_slice(&std::fs::read(&args[2]).map_err(|e|Failure::new(Code::InfrastructureFailure,e.to_string()))?).map_err(|e|Failure::new(Code::DescriptorInvalid,e.to_string()))?;
+    for artifact in composition.artifacts.iter().chain(&composition.definitions) {
+        let path=Path::new(artifact).canonicalize().map_err(|e|Failure::new(Code::ArtifactInvalid,e.to_string()))?;
+        if !path.starts_with("/nix/store") { return Err(Failure::new(Code::ArtifactInvalid,"CLI requires trusted immutable Nix store packages")); }
     }
-    for artifact in inputs {
-        let artifact = artifact.as_str().ok_or_else(|| {
-            Failure::new(Code::DescriptorInvalid, "artifact path must be a string")
-        })?;
-        let p = Path::new(artifact)
-            .canonicalize()
-            .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
-        if !p.starts_with("/nix/store") {
-            return Err(Failure::new(
-                Code::ArtifactInvalid,
-                "CLI requires trusted immutable Nix store packages",
-            ));
-        }
-    }
-    let prepared = match document["format"].as_str() {
-        Some("phenix.state-composition.v2") => Prepared::prepare_state(
-            serde_json::from_value::<StateComposition>(document)
-                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
-        )?,
-        Some("phenix.deployment.v1") => Prepared::prepare(
-            serde_json::from_value::<Deployment>(document)
-                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
-        )?,
-        Some("phenix.composition.v1") => Prepared::prepare_composition(
-            serde_json::from_value::<Composition>(document)
-                .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?,
-        )?,
-        _ => {
-            return Err(Failure::new(
-                Code::DescriptorInvalid,
-                "unsupported deployment profile",
-            ))
-        }
-    };
+    let poll_limit=args.get(4).map(|arg|arg.strip_prefix("--poll-limit=").ok_or_else(||Failure::new(Code::SchemaRejected,"unknown CLI option")).and_then(|limit|limit.parse::<u64>().map_err(|_|Failure::new(Code::SchemaRejected,"invalid poll limit")))).transpose()?;
+    let prepared=Prepared::prepare(composition)?;
     if args[1] == "inspect" {
         println!("{}", prepared.inspect());
         return Ok(());
@@ -88,24 +36,24 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
     let input = std::fs::read(path)
         .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?;
     // Reject malformed portable input before loading any trusted constructors.
-    let profile = if state_profile {
-        phenix_contract::WireProfile::V2
-    } else {
-        phenix_contract::WireProfile::V1
-    };
-    Value::decode_profile(&input, profile)?;
+    Value::decode(&input)?;
     *phase = Phase::ExecutableAbi;
     let kernel = prepared.load()?;
     *phase = Phase::Admission;
     let root = kernel.admit_default_root()?;
     *phase = Phase::Invocation;
     let outcome = (|| {
-        match root.begin(&Value::decode_profile(&input, profile)?)? {
+        match root.begin(&Value::decode(&input)?)? {
             Call::Ready(outcome) => Ok(outcome),
             Call::Pending(ticket) => {
-                // One bounded trusted polling client uses the kernel's same path.
-                // Exhaustion requests cancellation; caller drop retains live leases.
-                for _ in 0..64 {
+                // Explicit limits request cancellation; leases survive caller drop.
+                let mut polls=0;
+                loop {
+                    if poll_limit.is_some_and(|limit|polls>=limit) {
+                        let _=root.cancel(&ticket);
+                        return Err(Failure::new(Code::Cancelled,"explicit CLI poll limit exhausted"));
+                    }
+                    polls+=1;
                     match root.poll(&ticket)? {
                         Poll::Ready(result) => {
                             if kernel.inspect()["pending"]["physical_leases"] != 0 {
@@ -122,11 +70,7 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
                         Poll::Pending | Poll::Draining => {}
                     }
                 }
-                let _ = root.cancel(&ticket);
-                Err(Failure::new(
-                    Code::Cancelled,
-                    "trusted CLI poll budget exhausted",
-                ))
+
             }
         }
     })();

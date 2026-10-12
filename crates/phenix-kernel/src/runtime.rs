@@ -3,8 +3,8 @@ use crate::{
     resolve::{EffectTarget, Prepared, Selection},
 };
 use phenix_contract::{
-    abi::{Bytes, Header, HostApi, Reply, StateHostApi},
-    Authority, Code, Failure, ScopedRequest, Value, RESOURCE_CONTEXT, SCOPED_IMPORT,
+    abi::{Header, StateHostApi},
+    Authority, Code, Failure, ScopedRequest, Value,
 };
 use std::{
     cell::RefCell,
@@ -140,29 +140,12 @@ impl Prepared {
         let digest = super::value_state::digest_bytes(identity);
         let mut cells = super::value_state::Cells::new(&digest)?;
         for (id, p) in &self.packages {
-            if p.metadata().is_some() {
-                cells.register_owner(id)?;
-            }
-        }
-        let mut images = BTreeMap::new();
-        for id in &self.startup_order {
-            match Native::load(&self.packages[id]) {
-                Ok(native) => {
-                    images.insert(id.clone(), native);
-                }
-                Err(failure) => {
-                    for acquired in self.startup_order.iter().rev() {
-                        if let Some(mut native) = images.remove(acquired) {
-                            let _ = native.stop();
-                        }
-                    }
-                    return Err(failure);
-                }
-            }
+            let _ = p;
+            cells.register_owner(id)?;
         }
         let kernel = Kernel {
             prepared: self,
-            images: RefCell::new(images),
+            images: RefCell::new(BTreeMap::new()),
             thread: thread::current().id(),
             state: RefCell::new(State::default()),
             cells: RefCell::new(cells),
@@ -170,9 +153,9 @@ impl Prepared {
             _serial: PhantomData,
         };
         for id in &kernel.prepared.startup_order {
-            let Some(metadata) = kernel.prepared.packages[id].metadata() else {
-                continue;
-            };
+            let native = Native::load(&kernel.prepared.packages[id])?;
+            kernel.images.borrow_mut().insert(id.clone(), native);
+            let metadata = kernel.prepared.packages[id].metadata();
             *kernel.initializing.borrow_mut() = Some(id.clone());
             let guard = CallGuard::new(&kernel, 0, id, Authority::default(), None, false)?;
             let initialized = kernel.images.borrow()[id].initialize(guard.scope);
@@ -194,13 +177,6 @@ impl Prepared {
     }
 }
 impl Kernel {
-    pub(super) fn profile(&self, provider: &str) -> phenix_contract::WireProfile {
-        if self.prepared.packages[provider].descriptor().abi_major == 3 {
-            phenix_contract::WireProfile::V2
-        } else {
-            phenix_contract::WireProfile::V1
-        }
-    }
     pub fn admit_default_root(&self) -> Result<Root<'_>, Failure> {
         self.admit_root(self.prepared.entry.clone())
     }
@@ -312,6 +288,9 @@ impl Kernel {
             context,
         });
     }
+    pub(super) fn observe_import_failure(&self,caller:&str,key:Option<&str>,provider:Option<&str>,failure:&Failure) {
+        self.observe_propagation(failure,FailureContext {caller:caller.into(),provider:provider.map(str::to_owned),operation:key.map(str::to_owned)});
+    }
     pub(super) fn observe_propagation(&self, failure: &Failure, context: FailureContext) {
         // Preserve a nested observation only while the same failure propagates.
         // A plugin that replaces a handled failure gets its own result context.
@@ -368,47 +347,16 @@ impl Kernel {
                 "cancelled call has no host effect authority",
             );
         }
-        let package = self
-            .prepared
-            .packages
-            .get(&selection.provider)
-            .ok_or_else(|| {
-                Failure::new(Code::MissingBinding, "provider absent from frozen snapshot")
-            })?;
         if let Caller::Plugin(plugin, import_slot) = caller {
-            let declared = self.prepared.packages.get(plugin).is_some_and(|p| {
-                p.descriptor()
-                    .imports
-                    .iter()
-                    .any(|i| i.operation == key && i.slot.as_deref().unwrap_or("") == import_slot)
-            });
-            if !declared
-                || self.prepared.bindings.get(&(
-                    plugin.into(),
-                    phenix_contract::import_identity(import_slot, &key),
-                )) != Some(&selection.provider)
-            {
-                return self.fail(Code::Denied, "undeclared import or unselected provider");
+            if self.prepared.bindings.get(&(plugin.into(),phenix_contract::import_identity(import_slot,&key))) != Some(&selection.provider) {
+                return self.fail(Code::Denied,"undeclared import or unselected provider");
             }
         }
-        let target = self
-            .prepared
-            .targets
-            .get(&(selection.provider.clone(), key.clone()))
-            .ok_or_else(|| {
-                Failure::new(Code::MissingBinding, "operation is not a prepared export")
-            })?;
-        let contract = package
-            .descriptor()
-            .contract(&key)
-            .ok_or_else(|| Failure::new(Code::SchemaRejected, "operation schema absent"))?;
-        let request = Value::decode_profile(input, self.profile(&selection.provider))?;
-        if !contract.request.accepts(&request) {
-            return self.fail(
-                Code::SchemaRejected,
-                "request does not match declared schema",
-            );
-        }
+        let operation = self.prepared.operation(selection)?;
+        let target = &operation.target;
+        let contract = &operation.schema;
+        let request = Value::decode(input)?;
+        if !contract.request.accepts(&request) { return self.fail(Code::SchemaRejected,"request does not match declared schema"); }
         let ScopedRequest {
             authority,
             resource,
@@ -437,14 +385,7 @@ impl Kernel {
                 _ => self.fail(Code::SchemaRejected, "cell returned an undeclared result"),
             };
         }
-        let pending = package.descriptor().execution == "pending"
-            || (package.descriptor().abi_major == 3 && pending_allowed);
-        if pending && !pending_allowed {
-            return self.fail(
-                Code::AbiIncompatible,
-                "pending import requires a typed ticket",
-            );
-        }
+        let pending = pending_allowed;
         if self
             .state
             .borrow()
@@ -475,14 +416,9 @@ impl Kernel {
             false,
         )?;
         if pending {
-            return self.begin_pending(root, selection, input, &guard, authority, resource);
+            return self.begin_pending(root, selection, match caller { Caller::Plugin(_,slot)=>slot,Caller::Root=>"" }, input, &guard, authority, resource);
         }
-        let api = HostApi {
-            scope: guard.scope,
-            invoke: invoke_import,
-        };
-        let (status, value) =
-            self.images.borrow()[&selection.provider].invoke(&api, &key, input)?;
+        let (status,value)=self.images.borrow()[&selection.provider].invoke(guard.scope,&key,input)?;
         match status {
             0 if contract.response.accepts(&value) => {
                 Ok(super::pending::Call::Ready(Outcome::Success(value)))
@@ -491,7 +427,7 @@ impl Kernel {
                 Ok(super::pending::Call::Ready(Outcome::Domain(value)))
             }
             2 => Err(Failure::from_value(value)?),
-            5 if package.descriptor().abi_major == 3 => Err(Failure::from_value(value)?),
+            5 => Err(Failure::from_value(value)?),
             _ => self.fail(
                 Code::SchemaRejected,
                 "provider returned an undeclared result",
@@ -506,7 +442,6 @@ impl Kernel {
         key: &str,
         restriction: Option<&ScopedRequest>,
     ) -> Result<ScopedRequest, Failure> {
-        let package = &self.prepared.packages[provider];
         let state = self.state.borrow();
         let mut authority = state
             .stack
@@ -531,15 +466,13 @@ impl Kernel {
             .get(&(caller.to_owned(), key.to_owned()));
         let operation_allowed = grant.is_some()
             && authority.operations.contains(key)
-            && package.descriptor().permits(key)
+            && self.prepared.permits(provider,key)
             && state.stack.iter().all(|f| {
-                self.prepared.packages[&f.provider]
-                    .descriptor()
-                    .permits(key)
+                self.prepared.permits(&f.provider,key)
             });
         authority
             .operations
-            .retain(|op| package.descriptor().permits(op));
+            .retain(|op| self.prepared.permits(provider,op));
         if let Some(resources) = grant {
             authority.resources = authority
                 .resources
@@ -579,12 +512,6 @@ impl Kernel {
         if !self.prepared.state_identity.is_empty() {
             report["live_state"] = self.cells.borrow().inspect();
         }
-        if !self.state.borrow().tickets.is_empty()
-            || self
-                .prepared
-                .packages
-                .values()
-                .any(|p| p.descriptor().abi_major == 2)
         {
             report["pending"] = self.pending_inspection();
         }
@@ -686,7 +613,7 @@ impl Root<'_> {
             .kernel
             .prepared
             .check_entry(selection)
-            .and_then(|()| request.encode_profile(self.kernel.profile(&selection.provider)));
+            .and_then(|()| request.encode());
         match encoded {
             Ok(bytes) => self.invoke_selected_bytes(selection, &bytes),
             Err(failure) => {
@@ -768,7 +695,7 @@ impl<'a> CallGuard<'a> {
                 },
             );
         let mut state = kernel.state.borrow_mut();
-        state.calls += 1;
+        if root != 0 { state.calls += 1; }
         state.stack.push(Frame {
             ticket: None,
             revoked,
@@ -799,160 +726,9 @@ impl Drop for CallGuard<'_> {
         self.kernel.state.borrow_mut().stack.pop();
     }
 }
-pub(super) unsafe extern "C" fn invoke_import(scope: u64, key: Bytes, input: Bytes) -> Reply {
-    unsafe { import_command(scope, key, input, false) }
-}
-pub(super) unsafe extern "C" fn invoke_pending_import(
-    scope: u64,
-    key: Bytes,
-    input: Bytes,
-) -> Reply {
-    unsafe { import_command(scope, key, input, true) }
-}
-unsafe fn import_command(scope: u64, key: Bytes, input: Bytes, pending: bool) -> Reply {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let result = (|| -> Result<Reply, Failure> {
-            let record = scopes()
-                .lock()
-                .map_err(|_| Failure::new(Code::InfrastructureFailure, "scope registry poisoned"))?
-                .get(&scope)
-                .cloned()
-                .ok_or_else(|| Failure::new(Code::ScopeRejected, "expired or unknown scope"))?;
-            // Authenticate thread before dereferencing the kernel address. No TLS
-            // authority, caller-supplied principal, or shared mutable reference.
-            if record.thread != thread::current().id() {
-                return Err(Failure::new(
-                    Code::ScopeRejected,
-                    "host import on an unregistered thread",
-                ));
-            }
-            let kernel = unsafe { &*(record.kernel as *const Kernel) };
-            if kernel.state.borrow().stack.last().map(|f| f.scope) != Some(scope) {
-                return Err(Failure::new(
-                    Code::ScopeRejected,
-                    "scope is not the current call",
-                ));
-            }
-            if kernel
-                .state
-                .borrow()
-                .stack
-                .last()
-                .is_some_and(|f| f.revoked)
-            {
-                return Err(Failure::new(Code::ScopeRejected, "cancelled host scope"));
-            }
-            let mut context = FailureContext {
-                caller: record.caller.clone(),
-                provider: None,
-                operation: None,
-            };
-            let result = (|| -> Result<Reply, Failure> {
-                let key = std::str::from_utf8(unsafe { key.read() }?)
-                    .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
-                let input = unsafe { input.read() }?;
-                if pending && key.starts_with("phenix.host.pending.") {
-                    let parent = kernel
-                        .state
-                        .borrow()
-                        .stack
-                        .last()
-                        .and_then(|f| f.ticket)
-                        .ok_or_else(|| {
-                            Failure::new(
-                                Code::ScopeRejected,
-                                "pending command needs a native ticket",
-                            )
-                        })?;
-                    return kernel.import_pending(record.root, &record.caller, parent, key, input);
-                }
-                if key == RESOURCE_CONTEXT {
-                    if Value::decode(input)? != Value::Null {
-                        return Err(Failure::new(
-                            Code::SchemaRejected,
-                            "resource context expects Null",
-                        ));
-                    }
-                    let resource = kernel
-                        .state
-                        .borrow()
-                        .stack
-                        .last()
-                        .and_then(|f| f.resource.clone());
-                    return Ok(Reply::value(0, resource.map_or(Value::Null, Value::String)));
-                }
-                let scoped = if key == SCOPED_IMPORT {
-                    Some(ScopedRequest::decode(input)?)
-                } else {
-                    None
-                };
-                let (key, input, restriction) = match &scoped {
-                    Some((key, input, scope)) => (key.as_str(), input.as_slice(), Some(scope)),
-                    None => (key, input, None),
-                };
-                context.operation = phenix_contract::operation_key(key).then(|| key.into());
-                let Some(provider) = kernel
-                    .prepared
-                    .bindings
-                    .get(&(record.caller.clone(), key.into()))
-                else {
-                    let optional = kernel.prepared.packages[&record.caller]
-                        .descriptor()
-                        .imports
-                        .iter()
-                        .any(|i| i.operation == key && i.optional);
-                    return kernel.fail(
-                        if optional {
-                            Code::MissingBinding
-                        } else {
-                            Code::Denied
-                        },
-                        "operation is not a selected declared import",
-                    );
-                };
-                context.provider = Some(provider.clone());
-                let (interface, operation) = key
-                    .split_once('/')
-                    .ok_or_else(|| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
-                let selection = Selection {
-                    interface: interface.into(),
-                    operation: operation.into(),
-                    provider: provider.clone(),
-                };
-                Ok(
-                    match kernel.dispatch(
-                        record.root,
-                        Caller::Plugin(&record.caller, ""),
-                        &selection,
-                        input,
-                        restriction,
-                    )? {
-                        Outcome::Success(v) => Reply::value(0, v),
-                        Outcome::Domain(v) => Reply::value(1, v),
-                    },
-                )
-            })();
-            if let Err(failure) = &result {
-                kernel.observe_propagation(failure, context);
-            }
-            result
-        })();
-        match result {
-            Ok(reply) => reply,
-            Err(e) if pending => Reply::value(5, e.to_value()),
-            Err(e) => Reply::failure(e),
-        }
-    }))
-    .unwrap_or_else(|_| {
-        let failure = Failure::new(Code::InfrastructureFailure, "caught host command panic");
-        if pending {
-            Reply::value(5, failure.to_value())
-        } else {
-            Reply::failure(failure)
-        }
-    })
-}
-pub(super) fn authenticate_scope(scope: u64) -> Result<ScopeRecord, Failure> {
+pub(super) fn authenticate_scope(scope:u64)->Result<ScopeRecord,Failure> { authenticate_scope_inner(scope,false) }
+pub(super) fn authenticate_import_scope(scope:u64)->Result<ScopeRecord,Failure> { authenticate_scope_inner(scope,true) }
+fn authenticate_scope_inner(scope: u64, allow_cleanup:bool) -> Result<ScopeRecord, Failure> {
     let record = scopes()
         .lock()
         .map_err(|_| Failure::new(Code::InfrastructureFailure, "scope registry poisoned"))?
@@ -970,7 +746,7 @@ pub(super) fn authenticate_scope(scope: u64) -> Result<ScopeRecord, Failure> {
     if !state
         .stack
         .last()
-        .is_some_and(|f| f.scope == scope && !f.revoked)
+        .is_some_and(|f| f.scope == scope && (allow_cleanup || !f.revoked))
     {
         return Err(Failure::new(
             Code::ScopeRejected,
@@ -985,7 +761,7 @@ pub(super) fn state_host(scope: u64, ticket: u64, permit: u64) -> StateHostApi {
         scope,
         ticket,
         permit,
-        invoke: Some(super::state_effects::invoke),
+        invoke: Some(crate::state_effects::invoke),
         state: Some(super::state_effects::state),
         wake: Some(super::pending::wake),
     }
@@ -994,6 +770,7 @@ pub(super) fn state_host(scope: u64, ticket: u64, permit: u64) -> StateHostApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_contract::abi::Bytes;
     #[test]
     fn wrong_thread_and_expired_scopes_reject_before_kernel_access() {
         let scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
@@ -1007,7 +784,7 @@ mod tests {
             },
         );
         let code = thread::spawn(move || {
-            let reply = unsafe { invoke_import(scope, Bytes::new(b"not/read"), Bytes::new(&[])) };
+            let reply = unsafe { crate::state_effects::invoke(scope, Bytes::new(b"slot"), Bytes::new(b"not/read"), Bytes::new(&[])) };
             let (status, value) = unsafe { reply.consume() }.unwrap();
             assert_eq!(status, 2);
             Failure::from_value(value).unwrap().code
@@ -1020,9 +797,9 @@ mod tests {
                 ptr: std::ptr::null(),
                 len: 1,
             };
-            let reply = unsafe { invoke_pending_import(scope, invalid, invalid) };
-            let (status, value) = unsafe { reply.consume_pending() }.unwrap();
-            assert_eq!(status, 5);
+            let reply = unsafe { crate::state_effects::invoke(scope, invalid, invalid, invalid) };
+            let (status, value) = unsafe { reply.consume() }.unwrap();
+            assert_eq!(status, 2);
             assert_eq!(
                 Failure::from_value(value).unwrap().code,
                 Code::ScopeRejected
@@ -1031,7 +808,7 @@ mod tests {
         .join()
         .unwrap();
         scopes().lock().unwrap().remove(&scope);
-        let reply = unsafe { invoke_import(scope, Bytes::new(b"not/read"), Bytes::new(&[])) };
+        let reply = unsafe { crate::state_effects::invoke(scope, Bytes::new(b"slot"), Bytes::new(b"not/read"), Bytes::new(&[])) };
         let (_, value) = unsafe { reply.consume() }.unwrap();
         assert_eq!(
             Failure::from_value(value).unwrap().code,
@@ -1041,8 +818,9 @@ mod tests {
     #[test]
     fn forged_scope_rejects_before_reading_pointers() {
         let reply = unsafe {
-            invoke_import(
+            crate::state_effects::invoke(
                 u64::MAX,
+                Bytes { ptr:std::ptr::null(),len:8 },
                 Bytes {
                     ptr: std::ptr::null(),
                     len: 8,

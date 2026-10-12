@@ -1,4 +1,4 @@
-#[phenix_sdk::plugin(id = "example.agent", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.agent", version = "1.0.0", define(example_agent_contracts::RunContract), define(example_agent_contracts::CompleteContract), define(example_agent_contracts::ExecuteContract), provide(example_agent_contracts::RunContract, slot = "Run"), require(example_agent_contracts::CompleteContract, slot = "Model"), require(example_agent_contracts::ExecuteContract, slot = "Tool"))]
 mod plugin {
     use example_agent_contracts::{
         AgentError, Complete, Execute, Feedback, FeedbackStatus, ModelRequest, ReplyKind, Run,
@@ -9,12 +9,10 @@ mod plugin {
 
     #[derive(Default)]
     pub struct State;
-    #[import]
     type Model = Complete;
-    #[import]
     type Tool = Execute;
 
-    #[export(Run)]
+    #[provide(Run)]
     fn run(
         _: &mut State,
         host: &Host<'_>,
@@ -31,7 +29,7 @@ mod plugin {
             model_turns = model_turns.checked_add(1).ok_or_else(|| {
                 Failure::new(Code::InfrastructureFailure, "model turn counter exhausted")
             })?;
-            let reply = host.invoke::<Model>(&ModelRequest {
+            let reply = host.invoke::<Model>("Model", &ModelRequest {
                 prompt: request.prompt.clone(),
                 turn: model_turns,
                 available_tool: "uppercase".into(),
@@ -58,7 +56,7 @@ mod plugin {
                     tool_calls = tool_calls.checked_add(1).ok_or_else(|| {
                         Failure::new(Code::InfrastructureFailure, "tool call counter exhausted")
                     })?;
-                    feedback = match host.invoke::<Tool>(&ToolRequest {
+                    feedback = match host.invoke::<Tool>("Tool", &ToolRequest {
                         call_id: reply.call_id.clone(),
                         text: reply.text,
                     }) {

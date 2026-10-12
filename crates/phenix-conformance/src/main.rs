@@ -1,8 +1,9 @@
 use phenix_artifact::{digest, extract, PackageRecord, VerifiedPackage};
 // Executes public deployment APIs against real, separately compiled artifacts.
-use phenix_contract::{Code, Value};
+use phenix_contract::{Authority,Code,Value,ValueSchema};
+use std::collections::BTreeSet;
 use phenix_kernel::{
-    resolve::{Deployment, Grant, Prepared, Selection},
+    resolve::{Composition, ScopedGrant, Prepared, Selection},
     Outcome,
 };
 use std::{
@@ -16,39 +17,21 @@ fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn deployment(provider: &str, consumer: &str) -> Deployment {
-    Deployment {
-        format: "phenix.deployment.v1".into(),
-        artifacts: vec![provider.into(), consumer.into()],
-        entry: selection("example.consumer@1", "run", "example.consumer"),
-        bindings: vec![selection(
-            "example.transform@1",
-            "apply",
-            "example.provider",
-        )],
-        grants: vec![
-            Grant {
-                caller: "root".into(),
-                interface: "example.consumer@1".into(),
-                operation: "run".into(),
-            },
-            Grant {
-                caller: "example.consumer".into(),
-                interface: "example.transform@1".into(),
-                operation: "apply".into(),
-            },
-            Grant {
-                caller: "root".into(),
-                interface: "example.transform@1".into(),
-                operation: "count".into(),
-            },
-        ],
-    }
+fn deployment(provider:&str,consumer:&str)->Composition {
+    let entry=selection("example.consumer@1","run","example.consumer");
+    let grants=vec![
+        ScopedGrant {caller:"root".into(),interface:entry.interface.clone(),operation:entry.operation.clone(),resources:BTreeSet::new()},
+        ScopedGrant {caller:"example.consumer".into(),interface:"example.transform.apply@1".into(),operation:"apply".into(),resources:BTreeSet::new()},
+        ScopedGrant {caller:"root".into(),interface:"example.transform.count@1".into(),operation:"count".into(),resources:BTreeSet::new()},
+    ];
+    Composition {format:"phenix.composition.v2".into(),artifacts:vec![provider.into(),consumer.into()],definitions:vec![],entry,
+        slots:vec![phenix_conformance::binding("example.consumer","example.transform.apply@1/apply","example.provider")],
+        authority:Authority {operations:grants.iter().map(ScopedGrant::key).collect(),resources:BTreeSet::new()},grants,excluded:BTreeSet::new(),substitutions:vec![],resource:None}
 }
 fn request(text: &str) -> Value {
     Value::map([("text", Value::String(text.into()))])
 }
-fn expect_prepare_error(d: Deployment, code: Code) {
+fn expect_prepare_error(d: Composition, code: Code) {
     match Prepared::prepare(d) {
         Err(e) => assert_eq!(e.code, code, "{e}"),
         Ok(_) => panic!("preparation unexpectedly passed"),
@@ -71,7 +54,7 @@ fn mutate_package(
     if embed {
         let offset = artifact.windows(old.len()).position(|w| w == old).unwrap();
         let section_start = offset - 4;
-        let range = section_start..section_start + phenix_contract::SECTION_BYTES;
+        let range = section_start..section_start + phenix_contract::NATIVE_SECTION_BYTES;
         artifact[range.clone()].fill(0);
         artifact[section_start..offset].copy_from_slice(&(new.len() as u32).to_be_bytes());
         artifact[offset..offset + new.len()].copy_from_slice(&new);
@@ -112,7 +95,9 @@ fn main() {
         &work.join("signed-version"),
         |v| {
             let Value::Map(fields) = v else { panic!() };
-            fields.insert("abi_major".into(), Value::I64(1));
+            let Value::List(definitions)=fields.get_mut("definitions").unwrap() else {panic!()};
+            let Value::Map(definition)=&mut definitions[0] else {panic!()};
+            definition.insert("revision".into(),Value::I64(1));
         },
         true,
     );
@@ -131,12 +116,12 @@ fn main() {
     missing.artifacts.retain(|p| p != provider);
     expect_prepare_error(missing, Code::MissingBinding);
     let mut unselected = d.clone();
-    unselected.bindings.clear();
+    unselected.slots.clear();
     expect_prepare_error(unselected.clone(), Code::MissingBinding);
     unselected.artifacts.push(alternate.into());
-    expect_prepare_error(unselected, Code::AmbiguousBinding);
+    expect_prepare_error(unselected, Code::MissingBinding);
     let mut absent = d.clone();
-    absent.bindings[0].provider = "unknown".into();
+    absent.slots[0].provider = "unknown".into();
     expect_prepare_error(absent, Code::MissingBinding);
     let mut reordered = d.clone();
     reordered.artifacts.reverse();
@@ -146,28 +131,23 @@ fn main() {
         &work.join("schema"),
         |v| {
             let Value::Map(m) = v else { panic!() };
-            let Value::List(contracts) = m.get_mut("contracts").unwrap() else {
-                panic!()
-            };
-            let Value::Map(contract) = &mut contracts[0] else {
-                panic!()
-            };
-            contract.insert(
-                "request".into(),
-                Value::map([("kind", Value::String("Bool".into()))]),
-            );
+            let Value::List(definitions)=m.get_mut("definitions").unwrap() else {panic!()};
+            let Value::Map(definition)=&mut definitions[0] else {panic!()};
+            let Value::List(operations)=definition.get_mut("operations").unwrap() else {panic!()};
+            let Value::Map(operation)=&mut operations[0] else {panic!()};
+            operation.insert("request".into(),Value::Bytes(ValueSchema::Bool.encode().unwrap()));
         },
         true,
     );
     let mut incompatible = d.clone();
     incompatible.artifacts[0] = mismatch.to_string_lossy().into();
-    expect_prepare_error(incompatible, Code::SchemaRejected);
+    expect_prepare_error(incompatible, Code::DescriptorInvalid);
     let unsupported = mutate_package(
         Path::new(provider),
         &work.join("abi"),
         |v| {
             let Value::Map(m) = v else { panic!() };
-            m.insert("abi_major".into(), Value::U64(99));
+            m.insert("execution".into(), Value::String("legacy-native".into()));
         },
         true,
     );
@@ -175,14 +155,14 @@ fn main() {
         VerifiedPackage::verify_trusted_read_only(&unsupported)
             .unwrap_err()
             .code,
-        Code::AbiIncompatible
+        Code::DescriptorInvalid
     );
     let metadata = mutate_package(
         Path::new(provider),
         &work.join("metadata"),
         |v| {
             let Value::Map(m) = v else { panic!() };
-            m.insert("plugin_version".into(), Value::String("2.0.0".into()));
+            m.insert("version".into(), Value::String("2.0.0".into()));
         },
         false,
     );
@@ -197,7 +177,7 @@ fn main() {
         &work.join("owner"),
         |v| {
             let Value::Map(m) = v else { panic!() };
-            let Value::List(exports) = m.get_mut("exports").unwrap() else {
+            let Value::List(exports) = m.get_mut("provides").unwrap() else {
                 panic!()
             };
             let Value::Map(export) = &mut exports[0] else {
@@ -226,7 +206,7 @@ fn main() {
     );
     let mut unknown = serde_json::to_value(&d).unwrap();
     unknown["implicit_grant"] = true.into();
-    assert!(serde_json::from_value::<Deployment>(unknown).is_err());
+    assert!(serde_json::from_value::<Composition>(unknown).is_err());
     assert!(
         !witness.exists(),
         "negative preparation executed plugin code"
@@ -289,7 +269,7 @@ fn main() {
         handled_failure["context"],
         serde_json::json!({
             "caller":"example.consumer", "provider":null,
-            "operation":"example.transform@1/count",
+            "operation":"example.transform.count@1/count",
         })
     );
     assert_eq!(kernel.inspect()["calls"], 1);
@@ -317,9 +297,7 @@ fn main() {
     // available for a later valid root. Existing instances remain owned here.
     assert_eq!(
         kernel
-            .admit_root(selection(
-                "example.transform@1",
-                "apply",
+            .admit_root(selection("example.transform.apply@1", "apply",
                 "example.provider"
             ))
             .err()
@@ -360,9 +338,7 @@ fn main() {
     );
     drop(root);
     let root = kernel
-        .admit_root(selection(
-            "example.transform@1",
-            "count",
+        .admit_root(selection("example.transform.count@1", "count",
             "example.provider",
         ))
         .unwrap();
@@ -380,50 +356,30 @@ fn main() {
         denied["last_failure"]["context"],
         serde_json::json!({
             "caller":"example.consumer", "provider":"example.provider",
-            "operation":"example.transform@1/apply",
+            "operation":"example.transform.apply@1/apply",
         })
     );
     drop(kernel);
-    let cycle_key = selection("example.cycle@1", "run", "example.cycle");
-    let cycle_deployment = Deployment {
-        format: "phenix.deployment.v1".into(),
-        artifacts: vec![args[4].clone()],
-        entry: cycle_key.clone(),
-        bindings: vec![cycle_key],
-        grants: vec![
-            Grant {
-                caller: "root".into(),
-                interface: "example.cycle@1".into(),
-                operation: "run".into(),
-            },
-            Grant {
-                caller: "example.cycle".into(),
-                interface: "example.cycle@1".into(),
-                operation: "run".into(),
-            },
-        ],
-    };
-    let cycle_kernel = Prepared::prepare(cycle_deployment).unwrap().load().unwrap();
-    let cycle_root = cycle_kernel.admit_default_root().unwrap();
-    assert_eq!(
-        cycle_root.invoke(&request("cycle")).unwrap_err().code,
-        Code::ReentrancyRejected
-    );
-    drop(cycle_root);
-    assert_eq!(cycle_kernel.inspect()["calls"], 1);
-    drop(cycle_kernel);
+    let cycle_key=selection("example.cycle@1","run","example.cycle");
+    let mut cycle=Composition {format:"phenix.composition.v2".into(),artifacts:vec![args[4].clone()],definitions:vec![],entry:cycle_key.clone(),
+        slots:vec![phenix_conformance::binding("example.cycle","example.cycle@1/run","example.cycle")],
+        grants:["root","example.cycle"].map(|caller|ScopedGrant {caller:caller.into(),interface:cycle_key.interface.clone(),operation:cycle_key.operation.clone(),resources:BTreeSet::new()}).into(),
+        excluded:BTreeSet::new(),substitutions:vec![],authority:Authority {operations:[cycle_key.key()].into(),resources:BTreeSet::new()},resource:None};
+    expect_prepare_error(cycle.clone(),Code::MissingBinding);
+    let optional=mutate_package(Path::new(&args[4]),&work.join("optional-cycle"),|value| {
+        let Value::Map(root)=value else {panic!()}; let Value::List(imports)=root.get_mut("requires").unwrap() else {panic!()};
+        let Value::Map(import)=&mut imports[0] else {panic!()}; import.insert("cardinality".into(),Value::String("optional".into())); import.insert("minimum".into(),Value::U64(0));
+    },true);
+    cycle.artifacts=vec![optional.to_string_lossy().into()];
+    let cycle_kernel=Prepared::prepare(cycle).unwrap().load().unwrap();
+    let cycle_root=cycle_kernel.admit_default_root().unwrap();
+    assert_eq!(cycle_root.invoke(&request("cycle")).unwrap_err().code,Code::ReentrancyRejected);
+    drop(cycle_root);assert_eq!(cycle_kernel.inspect()["calls"],1);drop(cycle_kernel);
     for bad in &args[5..9] {
-        let deployment = Deployment {
-            format: "phenix.deployment.v1".into(),
-            artifacts: vec![bad.clone()],
-            entry: selection("example.transform@1", "apply", "example.provider"),
-            bindings: vec![],
-            grants: vec![Grant {
-                caller: "root".into(),
-                interface: "example.transform@1".into(),
-                operation: "apply".into(),
-            }],
-        };
+        let entry=selection("example.transform.apply@1","apply","example.provider");
+        let deployment=Composition {format:"phenix.composition.v2".into(),artifacts:vec![bad.clone()],definitions:vec![],entry:entry.clone(),slots:vec![],
+            grants:vec![ScopedGrant {caller:"root".into(),interface:entry.interface.clone(),operation:entry.operation.clone(),resources:BTreeSet::new()}],
+            authority:Authority {operations:[entry.key()].into(),resources:BTreeSet::new()},excluded:BTreeSet::new(),substitutions:vec![],resource:None};
         let prepared = Prepared::prepare(deployment).unwrap();
         match prepared.load() {
             Err(e) => assert_eq!(e.code, Code::AbiIncompatible),
@@ -435,7 +391,11 @@ fn main() {
     // producer resources and the already started consumer must be stopped once.
     let lifecycle = work.join("lifecycle");
     std::env::set_var("PHENIX_LIFECYCLE_WITNESS", &lifecycle);
-    let rollback = Prepared::prepare(deployment(&args[9], consumer)).unwrap();
+    let optional_consumer=mutate_package(Path::new(consumer),&work.join("optional-consumer"),|value| {
+        let Value::Map(root)=value else {panic!()};let Value::List(imports)=root.get_mut("requires").unwrap() else {panic!()};
+        let Value::Map(import)=&mut imports[0] else {panic!()};import.insert("cardinality".into(),Value::String("optional".into()));import.insert("minimum".into(),Value::U64(0));
+    },true);
+    let rollback = Prepared::prepare(deployment(&args[9], &optional_consumer.to_string_lossy())).unwrap();
     assert!(!lifecycle.exists(), "preparation executed lifecycle code");
     match rollback.load() {
         Err(e) => assert_eq!(e.code, Code::AbiIncompatible),
@@ -455,7 +415,7 @@ fn main() {
         ]
     );
     assert!(!rollback_events.contains("foreign:invoke"));
-    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","ambiguous-binding","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries","loaded-null-release","failed-create-rollback","signed-descriptor-version","handled-host-denial","replaced-provider-failure","admission-failure-recovery"],"observations":observations,"rollback_events":rollback_events.lines().collect::<Vec<_>>()})).unwrap()).unwrap();
+    fs::write(output.join("native.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.conformance.v1","sdk_version":"0.1.0","contract_version":"0.1.0","successful":successful,"denied":denied,"cases":["offline-no-execution","real-nested-call","domain-error","panic-translation","poisoned-provider","missing-binding","single-provider-needs-selection","multiple-providers-still-need-selection","absent-selection","schema-mismatch","bad-abi","metadata-mismatch","wrong-owner","artifact-tamper","unknown-policy","binding-order","schema-rejection","denied-counter-unchanged","buffer-roundtrip","native-cycle","loaded-abi-major","loaded-short-table","loaded-null-entries","loaded-null-release","failed-create-rollback","unsigned-contract-revision","handled-host-denial","replaced-provider-failure","admission-failure-recovery"],"observations":observations,"rollback_events":rollback_events.lines().collect::<Vec<_>>()})).unwrap()).unwrap();
     fs::remove_dir_all(work).unwrap();
-    println!("M0.0 native conformance passed");
+    println!("M1 native conformance passed");
 }

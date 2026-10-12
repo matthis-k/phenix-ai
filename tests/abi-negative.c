@@ -6,9 +6,9 @@
 #if PHENIX_BADCASE == 1
 _Alignas(8) static PhenixHeader bad = {99,0,16,0};
 #elif PHENIX_BADCASE == 2
-_Alignas(8) static PhenixHeader bad = {1,0,16,0};
+_Alignas(8) static PhenixHeader bad = {3,0,16,3};
 #elif PHENIX_BADCASE == 3
-static PhenixPluginTable bad = {{1,0,sizeof(PhenixPluginTable),0},NULL,NULL,NULL};
+static PhenixStatePluginTable bad = {{3,0,sizeof(PhenixStatePluginTable),3},NULL,NULL,NULL,NULL,NULL,NULL};
 #else
 static void event(const char *name) {
   const char *path = getenv("PHENIX_LIFECYCLE_WITNESS");
@@ -20,10 +20,10 @@ static void release(uint8_t *ptr, size_t len) {
   free(ptr);
 }
 static PhenixReply reply(uint32_t status) {
-  uint8_t *bytes = malloc(1);
+  uint8_t *bytes = malloc(5);
   if (!bytes) abort();
-  bytes[0] = 0; /* phenix.value.v1 Null */
-  return (PhenixReply){status, bytes, 1, release};
+  bytes[0]=0x50;bytes[1]=0x56;bytes[2]=2;bytes[3]=0;bytes[4]=0; /* canonical Null */
+  return (PhenixReply){status, bytes, 5, release};
 }
 static PhenixReply create(void **out) {
   event("foreign:create");
@@ -37,7 +37,7 @@ static PhenixReply create(void **out) {
   return reply(99); /* acquired instance and buffer, recoverable ABI failure */
 #endif
 }
-static PhenixReply invoke(void *instance, const PhenixHostApi *host, PhenixBytes key, PhenixBytes input) {
+static PhenixReply invoke(void *instance, const PhenixStateHostApi *host, PhenixBytes key, PhenixBytes input) {
   (void)instance; (void)host; (void)key; (void)input;
   event("foreign:invoke");
   return reply(99);
@@ -47,6 +47,8 @@ static PhenixReply stop(void *instance) {
   free(instance);
   return reply(0);
 }
-static PhenixPluginTable bad = {{1,0,sizeof(PhenixPluginTable),0},create,invoke,stop};
+static PhenixReply initialize(void *instance,const PhenixStateHostApi *host) { (void)instance;(void)host;return reply(0); }
+static PhenixReply poll(void *instance,const PhenixStateHostApi *host,PhenixBytes key) { (void)instance;(void)host;(void)key;return reply(3); }
+static PhenixStatePluginTable bad = {{3,0,sizeof(PhenixStatePluginTable),3},create,initialize,invoke,stop,poll,poll};
 #endif
-const PhenixHeader *phenix_native_v1(void) { return (const PhenixHeader *)&bad; }
+const PhenixHeader *phenix_native_v3(void) { return (const PhenixHeader *)&bad; }

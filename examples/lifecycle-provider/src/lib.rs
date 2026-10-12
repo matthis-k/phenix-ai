@@ -1,7 +1,7 @@
 use example_contracts::*;
 use phenix_sdk::{CallResult, Code, Failure, Host};
 
-#[phenix_sdk::plugin(id = "example.lifecycle.z-provider", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.lifecycle.z-provider", version = "1.0.0", define(example_contracts::LifecycleServiceContract), provide(example_contracts::LifecycleServiceContract, slot = "LifecycleService"))]
 mod plugin {
     use super::*;
     #[derive(Default)]
@@ -56,7 +56,7 @@ mod plugin {
         hook("stop")
     }
 
-    #[export(LifecycleService)]
+    #[provide(LifecycleService)]
     fn echo(_: &mut State, _: &Host<'_>, request: Text) -> CallResult<Text, TransformError> {
         trace("invoke");
         if request.text == "fail" {

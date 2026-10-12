@@ -22,6 +22,7 @@ pub struct StaticContract {
 pub struct StaticImport {
     pub slot: &'static str,
     pub contract: &'static str,
+    pub provider: Option<&'static str>,
     pub revision_min: u64,
     pub revision_max: u64,
     pub cardinality: Cardinality,
@@ -547,13 +548,15 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
             minimum <= crate::MAX_COUNT as u64,
             "import cardinality limit"
         );
-        output.map(6);
+        output.map(7);
         output.key("cardinality");
         output.text(kind);
         output.key("contract");
         output.text(import.contract);
         output.key("minimum");
         output.number(minimum);
+        output.key("provider");
+        match import.provider { Some(provider)=>{ assert!(identity(provider) && crate::static_schema::compare(provider,"root")!=0,"invalid import provider"); output.text(provider); },None=>output.byte(0) }
         output.key("revision_max");
         output.number(import.revision_max);
         output.key("revision_min");

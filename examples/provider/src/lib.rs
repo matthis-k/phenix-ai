@@ -1,4 +1,4 @@
-#[phenix_sdk::plugin(id = "example.provider", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.provider", version = "1.0.0", define(example_contracts::TransformContract), define(example_contracts::ReadCountContract), provide(example_contracts::TransformContract, slot = "Transform"), provide(example_contracts::ReadCountContract, slot = "ReadCount"))]
 mod provider {
     use example_contracts::{Count, ReadCount, Text, Transform, TransformError};
     use phenix_sdk::{CallError, CallResult, Host};
@@ -6,7 +6,7 @@ mod provider {
     pub struct State {
         calls: u64,
     }
-    #[export(Transform)]
+    #[provide(Transform)]
     fn apply(state: &mut State, _: &Host<'_>, request: Text) -> CallResult<Text, TransformError> {
         if request.text.is_empty() {
             return Err(CallError::Domain(TransformError::Empty));
@@ -19,7 +19,7 @@ mod provider {
             text: request.text.to_uppercase(),
         })
     }
-    #[export(ReadCount)]
+    #[provide(ReadCount)]
     fn count(state: &mut State, _: &Host<'_>, _: Count) -> CallResult<Count, TransformError> {
         Ok(Count { count: state.calls })
     }

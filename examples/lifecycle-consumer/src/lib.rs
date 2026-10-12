@@ -1,7 +1,7 @@
 use example_contracts::*;
 use phenix_sdk::{CallResult, Code, Failure, Host};
 
-#[phenix_sdk::plugin(id = "example.lifecycle.a-consumer", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.lifecycle.a-consumer", version = "1.0.0", define(example_contracts::LifecycleRunContract), define(example_contracts::LifecycleServiceContract), provide(example_contracts::LifecycleRunContract, slot = "LifecycleRun"), require(example_contracts::LifecycleServiceContract, slot = "Service"))]
 mod plugin {
     use super::*;
     #[derive(Default)]
@@ -56,10 +56,9 @@ mod plugin {
         hook("stop")
     }
 
-    #[import]
     type Service = LifecycleService;
-    #[export(LifecycleRun)]
+    #[provide(LifecycleRun)]
     fn run(_: &mut State, host: &Host<'_>, request: Text) -> CallResult<Text, TransformError> {
-        host.invoke::<Service>(&request)
+        host.invoke::<Service>("Service", &request)
     }
 }

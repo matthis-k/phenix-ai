@@ -1,9 +1,9 @@
 use phenix_sdk::{
     contract, live::Operation, Cardinality, ContractDefinition, ContractMetadata, ImportSlot,
-    LivePortable, MetadataExecution, OperationSchema, ValueSchema,
+    Portable, MetadataExecution, OperationSchema, ValueSchema,
 };
 
-#[derive(LivePortable)]
+#[derive(Portable)]
 pub enum Error {
     Missing,
 }
@@ -20,7 +20,7 @@ pub trait Reversed {
     fn write(&mut self, value: u64) -> Result<u64, Error>;
 }
 
-#[derive(LivePortable)]
+#[derive(Portable)]
 pub struct Request {
     pub cell: phenix_sdk::live::ValueRef<Vec<String>>,
     pub query: Option<String>,
@@ -132,7 +132,7 @@ fn external_types_and_raw_identifiers_have_portable_identity() {
     );
     let mut native = metadata(definition);
     native.execution = MetadataExecution::StatePending;
-    native.requires.push(ImportSlot {
+    native.requires.push(ImportSlot { provider:None,
         slot: "search".into(),
         contract: "example.search@2".into(),
         revision_min: 2,

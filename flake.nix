@@ -37,7 +37,7 @@
         ./examples
         ./include
         ./tests/abi.c
-        ./tests/generation-identity-v1.json
+        ./tests/generation-identity-v2.json
       ];
       artifactSource = subset [
         ./Cargo.toml
@@ -51,7 +51,7 @@
         ./crates/phenix-contract
         ./crates/phenix-artifact
         ./crates/phenix-kernel
-        ./tests/generation-identity-v1.json
+        ./tests/generation-identity-v2.json
       ];
       build =
         name: src:
@@ -74,7 +74,7 @@
         ./crates/phenix-artifact
         ./crates/phenix-kernel
         ./crates/phenix-conformance
-        ./tests/generation-identity-v1.json
+        ./tests/generation-identity-v2.json
       ];
       describe = build "phenix-artifact" artifactSource;
       kernel = build "phenix-kernel" kernelSource;
@@ -436,7 +436,7 @@
         pkgs.runCommand "phenix-m03-generations" { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
             mkdir -p $out
-            python ${./tests/generation-identity.py} ${./tests/generation-identity-v1.json} > $out/identity-vector.json
+            python ${./tests/generation-identity.py} ${./tests/generation-identity-v2.json} > $out/identity-vector.json
             ${conformanceBinary}/bin/phenix-m03-generations ${revisionA} ${revisionB} ${importsCheck} $out
           '';
       publicSdkCheck = (build "phenix-public-sdk-check" publicSource).overrideAttrs (_: {

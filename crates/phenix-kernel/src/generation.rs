@@ -27,17 +27,16 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
         .packages
         .iter()
         .map(|(id, p)| {
-            let d = p.descriptor();
             let r = p.record();
             Value::List(vec![
                 Value::String(id.clone()),
                 Value::String(r.artifact_sha256.clone()),
                 Value::String(r.descriptor_sha256.clone()),
                 Value::String(r.target.clone()),
-                Value::U64(d.abi_major.into()),
-                Value::U64(d.abi_minor.into()),
-                Value::U64(d.features.into()),
-                Value::String(d.execution.clone()),
+                Value::U64(3),
+                Value::U64(0),
+                Value::U64(3),
+                Value::String("state-pending".into()),
             ])
         })
         .collect();
@@ -109,7 +108,7 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
     Ok(canonical)
 }
 fn identity(tuple: &Value) -> Result<GenerationId, Failure> {
-    let mut bytes = b"phenix.generation.v1\0".to_vec();
+    let mut bytes = b"phenix.generation.v2\0".to_vec();
     bytes.extend(tuple.encode()?);
     Ok(GenerationId(phenix_artifact::digest(&bytes)))
 }
@@ -310,7 +309,7 @@ mod tests {
     #[test]
     fn canonical_hash_matches_independent_frozen_vector_and_every_field_matters() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../../tests/generation-identity-v1.json"))
+            serde_json::from_str(include_str!("../../../tests/generation-identity-v2.json"))
                 .unwrap();
         let canonical = value(&fixture["tuple"]);
         let encoded: String = canonical

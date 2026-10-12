@@ -16,7 +16,7 @@ unsafe extern "C" fn released(ptr: *mut u8, len: usize) {
     drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
 }
 fn owned(value: Value) -> Reply {
-    let mut r = Reply::state_value(0, value);
+    let mut r = Reply::value(0, value);
     r.release = Some(released);
     r
 }
@@ -54,7 +54,7 @@ unsafe extern "C" fn invoke(scope: u64, slot: Bytes, op: Bytes, request: Bytes) 
     assert_eq!(unsafe { slot.read() }.unwrap(), b"counter");
     assert_eq!(unsafe { op.read() }.unwrap(), b"read");
     assert_eq!(
-        Value::decode_profile(unsafe { request.read() }.unwrap(), WireProfile::V2).unwrap(),
+        Value::decode(unsafe { request.read() }.unwrap()).unwrap(),
         Value::Null
     );
     assert_eq!(CALLS.fetch_add(1, Ordering::SeqCst), 2);
@@ -79,44 +79,44 @@ fn main() {
     unsafe { StateHostApi::negotiate(&host.header) }.unwrap();
     let mut instance: *mut c_void = std::ptr::null_mut();
     assert_eq!(
-        unsafe { table.create.unwrap()(&mut instance).consume_state() }.unwrap(),
+        unsafe { table.create.unwrap()(&mut instance).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert_eq!(CALLS.load(Ordering::SeqCst), 0);
     assert!(!instance.is_null());
     assert_eq!(
-        unsafe { table.initialize.unwrap()(instance, &host).consume_state() }.unwrap(),
+        unsafe { table.initialize.unwrap()(instance, &host).consume() }.unwrap(),
         (0, Value::Null)
     );
     let empty = Bytes::new(&[]);
     assert_eq!(
-        unsafe { table.invoke.unwrap()(instance, &host, empty, empty).consume_state() }.unwrap(),
+        unsafe { table.invoke.unwrap()(instance, &host, empty, empty).consume() }.unwrap(),
         (0, Value::Ref(Box::new(location())))
     );
     assert_eq!(
-        unsafe { table.poll.unwrap()(instance, &host, empty).consume_state() }.unwrap(),
+        unsafe { table.poll.unwrap()(instance, &host, empty).consume() }.unwrap(),
         (3, Value::Null)
     );
     assert_eq!(
-        unsafe { table.cancel.unwrap()(instance, &host, empty).consume_state() }.unwrap(),
+        unsafe { table.cancel.unwrap()(instance, &host, empty).consume() }.unwrap(),
         (4, Value::Null)
     );
     assert_eq!(
-        unsafe { table.stop.unwrap()(instance).consume_state() }.unwrap(),
+        unsafe { table.stop.unwrap()(instance).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert_eq!(CALLS.load(Ordering::SeqCst), 4);
     assert_eq!(RELEASES.load(Ordering::SeqCst), 3);
     assert_eq!(unsafe { m1_fixture_releases() }, 6);
     for kind in 0..4 {
-        assert!(unsafe { m1_fixture_bad_reply(kind).consume_state() }.is_err());
+        assert!(unsafe { m1_fixture_bad_reply(kind).consume() }.is_err());
     }
     assert_eq!(unsafe { m1_fixture_releases() }, 9);
-    assert!(unsafe { m1_fixture_bad_reply(4).consume_pending() }.is_err());
+    assert!(unsafe { m1_fixture_bad_reply(4).consume() }.is_err());
     assert_eq!(unsafe { m1_fixture_releases() }, 10);
-    assert!(unsafe { Reply::value(0, Value::Null).consume_state() }.is_err());
+    assert!(unsafe { Reply::value(0, Value::Null).consume() }.is_err());
     for status in [3, 4] {
-        assert!(unsafe { Reply::state_value(status, Value::U64(1)).consume_state() }.is_err());
+        assert!(unsafe { Reply::value(status, Value::U64(1)).consume() }.is_err());
     }
     let mut rejected = 0;
     assert!(unsafe { StatePluginTable::negotiate(std::ptr::null()) }.is_err());

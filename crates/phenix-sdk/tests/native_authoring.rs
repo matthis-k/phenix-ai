@@ -104,7 +104,7 @@ unsafe extern "C" fn state(_: u64, opcode: u32, bytes: Bytes) -> Reply {
     assert_eq!(property, "stable_count");
     assert_eq!(initial, Value::U64(0));
     CREATES.fetch_add(1, Ordering::SeqCst);
-    Reply::state_value(
+    Reply::value(
         0,
         Value::Ref(Box::new(ValueLocation {
             generation: GenerationDigest::from_bytes(&[1; 32]).unwrap(),
@@ -118,9 +118,9 @@ unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, input: Bytes) -
     assert_eq!(scope, 9);
     assert_eq!(unsafe { slot.read() }.unwrap(), b"primary");
     assert_eq!(unsafe { key.read() }.unwrap(), b"test.dependency@1/echo");
-    Reply::state_value(
+    Reply::value(
         0,
-        Value::decode_profile(unsafe { input.read() }.unwrap(), WireProfile::V2).unwrap(),
+        Value::decode(unsafe { input.read() }.unwrap()).unwrap(),
     )
 }
 unsafe extern "C" fn wake(_: u64, _: u64) -> u32 {
@@ -141,18 +141,18 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     };
     let mut instance = std::ptr::null_mut();
     assert_eq!(
-        unsafe { table.create.unwrap()(&mut instance).consume_state() }.unwrap(),
+        unsafe { table.create.unwrap()(&mut instance).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert!(!instance.is_null());
     assert_eq!(
-        unsafe { table.initialize.unwrap()(instance, &host).consume_state() }.unwrap(),
+        unsafe { table.initialize.unwrap()(instance, &host).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert_eq!(CREATES.load(Ordering::SeqCst), 1);
     let synchronous_host = StateHostApi { ticket: 0, ..host };
     let input = Value::String("pending".into())
-        .encode_profile(WireProfile::V2)
+        .encode()
         .unwrap();
     let (status, failure) = unsafe {
         table.invoke.unwrap()(
@@ -161,7 +161,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
             Bytes::new(Service::run::KEY.as_bytes()),
             Bytes::new(&input),
         )
-        .consume_state()
+        .consume()
     }
     .unwrap();
     assert_eq!(status, 5);
@@ -170,7 +170,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
         Code::AbiIncompatible
     );
     assert_eq!(
-        unsafe { table.initialize.unwrap()(instance, &host).consume_state() }
+        unsafe { table.initialize.unwrap()(instance, &host).consume() }
             .unwrap()
             .0,
         2
@@ -178,7 +178,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(CREATES.load(Ordering::SeqCst), 1);
     let call = |text: &str| {
         let bytes = Value::String(text.into())
-            .encode_profile(WireProfile::V2)
+            .encode()
             .unwrap();
         unsafe {
             table.invoke.unwrap()(
@@ -187,7 +187,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
                 Bytes::new(Service::run::KEY.as_bytes()),
                 Bytes::new(&bytes),
             )
-            .consume_state()
+            .consume()
         }
         .unwrap()
     };
@@ -197,7 +197,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(
         unsafe {
             table.cancel.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
-                .consume_state()
+                .consume()
         }
         .unwrap(),
         (4, Value::Null)
@@ -206,7 +206,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(
         unsafe {
             table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
-                .consume_state()
+                .consume()
         }
         .unwrap(),
         (0, Value::String("drained".into()))
@@ -216,14 +216,14 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(
         unsafe {
             table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
-                .consume_state()
+                .consume()
         }
         .unwrap(),
         (0, Value::String("drained".into()))
     );
     assert_eq!(call("echo").0, 5);
     assert_eq!(
-        unsafe { table.stop.unwrap()(instance).consume_state() }.unwrap(),
+        unsafe { table.stop.unwrap()(instance).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert_eq!(STOPS.load(Ordering::SeqCst), 1);

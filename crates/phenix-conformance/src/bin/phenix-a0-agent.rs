@@ -1,6 +1,6 @@
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, ImportBinding, Prepared, ScopedGrant, Selection},
+    resolve::{Composition, SlotBinding, Prepared, ScopedGrant, Selection},
     Kernel, Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -13,15 +13,7 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn binding(key: &str, provider: &str) -> ImportBinding {
-    let s = selection(key, provider);
-    ImportBinding {
-        caller: "example.agent".into(),
-        interface: s.interface,
-        operation: s.operation,
-        provider: s.provider,
-    }
-}
+fn binding(key: &str, provider: &str) -> SlotBinding { phenix_conformance::binding("example.agent",key,provider) }
 fn grant(caller: &str, key: &str) -> ScopedGrant {
     let s = selection(key, "");
     ScopedGrant {
@@ -50,7 +42,7 @@ fn invoke(kernel: &Kernel, prompt: &str, limit: u64) -> Result<Outcome, phenix_c
 }
 fn count(kernel: &Kernel) -> u64 {
     let root = kernel
-        .admit_root(selection("example.tool@1/count", "example.agent-tool"))
+        .admit_root(selection("example.tool.count@1/count", "example.agent-tool"))
         .unwrap();
     let Outcome::Success(Value::U64(count)) = root.invoke(&Value::String(String::new())).unwrap()
     else {
@@ -65,13 +57,14 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let run = "example.agent@1/run";
     let model = "example.model@1/complete";
-    let tool = "example.tool@1/execute";
-    let audit = "example.tool@1/count";
+    let tool = "example.tool.execute@1/execute";
+    let audit = "example.tool.count@1/count";
     let composition = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(run, "example.agent"),
-        bindings: vec![
+        slots: vec![
             binding(model, "example.agent-model"),
             binding(tool, "example.agent-tool"),
         ],
@@ -94,14 +87,14 @@ fn main() {
         serde_json::to_vec_pretty(&composition).unwrap(),
     )
     .unwrap();
-    let prepared = Prepared::prepare_composition(composition.clone()).unwrap();
+    let prepared = Prepared::prepare(composition.clone()).unwrap();
     let inspection = prepared.inspect();
     let mut reversed = composition.clone();
     reversed.artifacts.reverse();
-    reversed.bindings.reverse();
+    reversed.slots.reverse();
     reversed.grants.reverse();
     assert_eq!(
-        Prepared::prepare_composition(reversed).unwrap().inspect(),
+        Prepared::prepare(reversed).unwrap().inspect(),
         inspection
     );
     let kernel = prepared.load().unwrap();
@@ -152,7 +145,7 @@ fn main() {
         denied
             .grants
             .retain(|g| !(g.caller == "example.agent" && g.key() == denied_key));
-        let kernel = Prepared::prepare_composition(denied)
+        let kernel = Prepared::prepare(denied)
             .unwrap()
             .load()
             .unwrap();
@@ -162,8 +155,8 @@ fn main() {
         cases.push(serde_json::json!({"case":"denied","operation":denied_key,"tool_calls":0}));
     }
     let mut alternate = composition.clone();
-    alternate.bindings[0].provider = "example.agent-alternate".into();
-    let kernel = Prepared::prepare_composition(alternate)
+    alternate.slots[0].provider = "example.agent-alternate".into();
+    let kernel = Prepared::prepare(alternate)
         .unwrap()
         .load()
         .unwrap();

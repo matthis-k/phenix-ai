@@ -7,7 +7,7 @@ use phenix_sdk::{
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 #[derive(Default)]
 struct State {
     counter: live::Cell<u64>,
@@ -15,7 +15,7 @@ struct State {
 }
 unsafe extern "C" fn create(out: *mut *mut c_void) -> Reply {
     unsafe { *out = Box::into_raw(Box::new(State::default())).cast() };
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn initialize(ptr: *mut c_void, api: *const StateHostApi) -> Reply {
     let result = (|| {
@@ -33,8 +33,8 @@ unsafe extern "C" fn initialize(ptr: *mut c_void, api: *const StateHostApi) -> R
         Ok::<_, Failure>(())
     })();
     match result {
-        Ok(()) => Reply::state_value(0, Value::Null),
-        Err(e) => Reply::state_value(2, e.to_value()),
+        Ok(()) => Reply::value(0, Value::Null),
+        Err(e) => Reply::value(2, e.to_value()),
     }
 }
 unsafe extern "C" fn invoke(
@@ -60,22 +60,22 @@ unsafe extern "C" fn invoke(
         })
     })();
     match result {
-        Ok(v) => Reply::state_value(0, v),
-        Err(e) => Reply::state_value(2, e.to_value()),
+        Ok(v) => Reply::value(0, v),
+        Err(e) => Reply::value(2, e.to_value()),
     }
 }
 unsafe extern "C" fn poll(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(
+    Reply::value(
         2,
         Failure::new(Code::MissingBinding, "synchronous typed provider").to_value(),
     )
 }
 unsafe extern "C" fn cancel(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(4, Value::Null)
+    Reply::value(4, Value::Null)
 }
 unsafe extern "C" fn stop(ptr: *mut c_void) -> Reply {
     drop(unsafe { Box::from_raw(ptr.cast::<State>()) });
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 static TABLE: StatePluginTable = StatePluginTable {
     header: Header {

@@ -16,7 +16,7 @@ const CONTRACT: StaticContract = StaticContract {
         error: StaticSchema::Variants(&["Missing"]),
     }],
 };
-const PRIMARY: StaticImport = StaticImport {
+const PRIMARY: StaticImport = StaticImport { provider:None,
     slot: "primary",
     contract: "example.counter@1",
     revision_min: 1,
@@ -25,12 +25,12 @@ const PRIMARY: StaticImport = StaticImport {
 };
 const IMPORTS: [StaticImport; 3] = [
     PRIMARY,
-    StaticImport {
+    StaticImport { provider:None,
         slot: "fallback",
         cardinality: Cardinality::Optional,
         ..PRIMARY
     },
-    StaticImport {
+    StaticImport { provider:None,
         slot: "all",
         cardinality: Cardinality::Many { minimum: 0 },
         ..PRIMARY
@@ -88,21 +88,21 @@ fn const_native_bytes_match_independent_owned_metadata() {
             }],
         }],
         requires: vec![
-            ImportSlot {
+            ImportSlot { provider:None,
                 slot: "all".into(),
                 contract: "example.counter@1".into(),
                 revision_min: 1,
                 revision_max: 3,
                 cardinality: Cardinality::Many { minimum: 0 },
             },
-            ImportSlot {
+            ImportSlot { provider:None,
                 slot: "fallback".into(),
                 contract: "example.counter@1".into(),
                 revision_min: 1,
                 revision_max: 3,
                 cardinality: Cardinality::Optional,
             },
-            ImportSlot {
+            ImportSlot { provider:None,
                 slot: "primary".into(),
                 contract: "example.counter@1".into(),
                 revision_min: 1,
@@ -173,7 +173,7 @@ fn invalid_native_declarations_reject_before_encoding() {
     rejected([IMPORTS[0], IMPORTS[0], IMPORTS[2]], [EXPORT], PROPERTIES);
     rejected(
         [
-            StaticImport {
+            StaticImport { provider:None,
                 revision_min: 0,
                 ..IMPORTS[0]
             },
@@ -185,7 +185,7 @@ fn invalid_native_declarations_reject_before_encoding() {
     );
     rejected(
         [
-            StaticImport {
+            StaticImport { provider:None,
                 revision_max: 0,
                 ..IMPORTS[0]
             },
@@ -197,7 +197,7 @@ fn invalid_native_declarations_reject_before_encoding() {
     );
     rejected(
         [
-            StaticImport {
+            StaticImport { provider:None,
                 cardinality: Cardinality::Many { minimum: 65537 },
                 ..IMPORTS[0]
             },

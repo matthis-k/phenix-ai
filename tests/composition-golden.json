@@ -2,8 +2,8 @@
   "format": "phenix.inspect.v2",
   "entry": {"interface": "example.choice@1", "operation": "run", "provider": "example.choice"},
   "bindings": [
-    {"caller": "example.choice", "operation": "example.transform@1/apply", "provider": "example.provider"},
-    {"caller": "example.other", "operation": "example.transform@1/apply", "provider": "example.provider"}
+    {"caller": "example.choice", "operation": "example.transform.apply@1/apply", "provider": "example.provider"},
+    {"caller": "example.other", "operation": "example.transform.apply@1/apply", "provider": "example.provider"}
   ],
   "roots": {"active": null, "completed": 1, "last_root_id": 1},
   "calls": 2,

@@ -1,12 +1,12 @@
 use example_contracts::{Revision, Text, TransformError};
-use phenix_sdk::{Code, Failure, PendingHost, PendingResult, WakePermit};
+use phenix_sdk::{Code, Failure, Host, PendingResult, WakePermit};
 use std::{
     sync::{mpsc, Mutex},
     thread::JoinHandle,
 };
 const REVISION: &str = "A";
 static LATE: Mutex<Option<WakePermit>> = Mutex::new(None);
-#[phenix_sdk::plugin(id = "example.revision", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.revision", version = "1.0.0", define(example_contracts::RevisionContract), provide(example_contracts::RevisionContract, slot = "Revision"))]
 mod plugin {
     use super::*;
     #[derive(Default)]
@@ -32,7 +32,7 @@ mod plugin {
     #[pending(Revision)]
     fn begin(
         state: &mut State,
-        host: &PendingHost<'_>,
+        host: &Host<'_>,
         request: Text,
     ) -> PendingResult<Text, TransformError> {
         if request.text == "late" {
@@ -59,7 +59,7 @@ mod plugin {
         PendingResult::Pending
     }
     #[poll(Revision)]
-    fn poll(state: &mut State, _: &PendingHost<'_>) -> PendingResult<Text, TransformError> {
+    fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<Text, TransformError> {
         if state.stubborn && state.polls == 0 {
             state.polls += 1;
             return PendingResult::Pending;
@@ -67,7 +67,7 @@ mod plugin {
         PendingResult::Ready(Ok(finish(state)))
     }
     #[cancel(Revision)]
-    fn cancel(state: &mut State, _: &PendingHost<'_>) -> Result<bool, Failure> {
+    fn cancel(state: &mut State, _: &Host<'_>) -> Result<bool, Failure> {
         if state.stubborn {
             return Ok(false);
         }

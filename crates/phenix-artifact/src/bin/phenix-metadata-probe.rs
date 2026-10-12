@@ -1,5 +1,5 @@
 //! Independent process boundary for external canonical and rejection vectors.
-use phenix_contract::{ContractMetadata, StateRequest, Value, ValueAccessError, WireProfile};
+use phenix_contract::{ContractMetadata, StateRequest, Value, ValueAccessError};
 use serde::Deserialize;
 use std::io::{self, BufRead};
 #[derive(Deserialize)]
@@ -25,9 +25,9 @@ fn run(s: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = match input.kind.as_str() {
         "metadata" => ContractMetadata::decode(&bytes)?.encode()?,
         "request" => StateRequest::decode(input.opcode, &bytes)?.encode()?,
-        "error" => ValueAccessError::from_value(Value::decode_profile(&bytes, WireProfile::V2)?)?
+        "error" => ValueAccessError::from_value(Value::decode(&bytes)?)?
             .to_value()
-            .encode_profile(WireProfile::V2)?,
+            .encode()?,
         _ => return Err("unknown probe kind".into()),
     };
     Ok(output.iter().map(|b| format!("{b:02x}")).collect())

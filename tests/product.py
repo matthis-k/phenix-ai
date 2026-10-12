@@ -20,7 +20,7 @@ assert witness.exists()
 assert loaded["outcome"] == dict(kind="success", value=dict(text="PHENIX"))
 assert loaded["calls"] == 2
 assert loaded["roots"]["completed"] == 1
-assert loaded["bindings"] == {"example.transform@1/apply": "example.provider"}
+assert loaded["bindings"] == {"example.transform.apply@1/apply": "example.provider"}
 assert all(p["abi_negotiated"] for p in loaded["plugins"])
 for plugin in loaded["plugins"]:
     assert len(plugin["artifact_sha256"]) == 64 and len(plugin["descriptor_sha256"]) == 64
@@ -44,7 +44,7 @@ failure = denied["outcome"]["failure"]
 assert denied["outcome"]["kind"] == "kernel_failure"
 assert failure["code"] == "Denied" and failure["phase"] == "invocation"
 assert failure["context"] == dict(caller="example.consumer", provider="example.provider",
-                                  operation="example.transform@1/apply")
+                                  operation="example.transform.apply@1/apply")
 assert failure == denied["last_failure"]
 assert denied["calls"] == 1 and denied["denied_operations"] == 1
 assert denied["roots"]["completed"] == 1
@@ -70,7 +70,7 @@ assert handled["outcome"] == dict(kind="success", value=dict(text="handled"))
 assert handled["last_failure"]["code"] == "Denied"
 assert handled["last_failure"]["phase"] == "invocation"
 assert handled["last_failure"]["context"] == dict(caller="example.consumer", provider=None,
-                                                    operation="example.transform@1/count")
+                                                    operation="example.transform.count@1/count")
 assert handled["calls"] == 1 and handled["denied_operations"] == 1
 replaced = invoke_cli(policy, text_request("replace-failure"))
 assert replaced["outcome"]["failure"]["message"] == "consumer replacement failure"

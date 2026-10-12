@@ -1,7 +1,7 @@
 //! Independent trusted host assertions. Does not link either fixture's code.
-use phenix_contract::{Authority, Code, ScopedRequest, Value, WireProfile};
+use phenix_contract::{Authority, Code, ScopedRequest, Value};
 use phenix_kernel::{
-    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding, StateComposition},
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Call, Generations, Kernel, Outcome, Poll, Retirement,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -17,7 +17,7 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn composition(provider: &str, client: &str, alternative: &str) -> StateComposition {
+fn composition(provider: &str, client: &str, alternative: &str) -> Composition {
     let resources: BTreeSet<_> = [COUNTER, NOTES]
         .map(|s| s.trim_end_matches("@1").to_owned())
         .into();
@@ -66,8 +66,8 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
         provider: PROVIDER.into(),
         export: export.into(),
     };
-    StateComposition {
-        format: "phenix.state-composition.v2".into(),
+    Composition {
+        format: "phenix.composition.v2".into(),
         definitions: vec![],
         slots: vec![
             slot("refs", "refs"),
@@ -82,11 +82,9 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
                 export: "refs".into(),
             },
         ],
-        composition: Composition {
-            format: "phenix.composition.v1".into(),
+        
             artifacts: vec![provider.into(), client.into(), alternative.into()],
             entry: selection("test.state@1/run", CLIENT),
-            bindings: vec![],
             grants,
             excluded: BTreeSet::new(),
             substitutions: vec![],
@@ -95,7 +93,6 @@ fn composition(provider: &str, client: &str, alternative: &str) -> StateComposit
                 resources,
             },
             resource: None,
-        },
     }
 }
 fn run(kernel: &Kernel, command: &str) -> Outcome {
@@ -137,11 +134,11 @@ fn revision(kernel: &Kernel, property: &str) -> u64 {
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|a| a == "--process-ref") {
-        let c: StateComposition = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
-        let kernel = Prepared::prepare_state(c).unwrap().load().unwrap();
+        let c: Composition = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        let kernel = Prepared::prepare(c).unwrap().load().unwrap();
         let value = reference(&kernel);
         let bytes: String = value
-            .encode_profile(WireProfile::V2)
+            .encode()
             .unwrap()
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -187,16 +184,16 @@ fn main() {
         serde_json::to_vec_pretty(&c).unwrap(),
     )
     .unwrap();
-    let prepared = Prepared::prepare_state(c.clone()).unwrap();
+    let prepared = Prepared::prepare(c.clone()).unwrap();
     let identity = prepared.generation_identity("test").unwrap();
     let offline = prepared.inspect();
     assert_eq!(offline["state"]["slots"].as_array().unwrap().len(), 4);
     let mut reversed = c.clone();
-    reversed.composition.artifacts.reverse();
-    reversed.composition.grants.reverse();
+    reversed.artifacts.reverse();
+    reversed.grants.reverse();
     reversed.slots.reverse();
     assert_eq!(
-        Prepared::prepare_state(reversed)
+        Prepared::prepare(reversed)
             .unwrap()
             .generation_identity("test")
             .unwrap(),
@@ -229,7 +226,7 @@ fn main() {
         run(&kernel, "snapshot"),
         success(&[4, 4, 4]),
     );
-    let gap = Prepared::prepare_state(c.clone()).unwrap().load().unwrap();
+    let gap = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     check(
         "read-subscribe-gap",
         run(&gap, "bootstrap-gap"),
@@ -292,7 +289,7 @@ fn main() {
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
         .collect::<Vec<_>>();
-    let foreign_ref = Value::decode_profile(&bytes, WireProfile::V2).unwrap();
+    let foreign_ref = Value::decode(&bytes).unwrap();
     let foreign_read = kernel
         .admit_root(selection("test.state@1/read", CLIENT))
         .unwrap();
@@ -357,19 +354,18 @@ fn main() {
     cases.push(serde_json::json!({"case":"abi3-cancel","passed":true}));
     let mut denied = c.clone();
     denied
-        .composition
         .grants
         .retain(|g| !(g.caller == CLIENT && g.key() == format!("{COUNTER}/set")));
-    let denied = Prepared::prepare_state(denied).unwrap().load().unwrap();
+    let denied = Prepared::prepare(denied).unwrap().load().unwrap();
     assert_eq!(run(&denied, "denied"), domain("Denied"));
     assert_eq!(revision(&denied, "counter"), 0);
     denied.shutdown().unwrap();
     cases.push(serde_json::json!({"case":"denied-write-zero-effects","passed":true}));
-    let mut scope = c.composition.authority.clone();
+    let mut scope = c.authority.clone();
     scope.operations.remove(&format!("{COUNTER}/set"));
     let narrow = kernel
         .admit_scoped_root(
-            c.composition.entry.clone(),
+            c.entry.clone(),
             ScopedRequest {
                 authority: scope,
                 resource: None,
@@ -384,8 +380,8 @@ fn main() {
     assert_eq!(revision(&kernel, "counter"), counter);
     cases.push(serde_json::json!({"case":"root-intersection-zero-effects","passed":true}));
     let mut no_resources = c.clone();
-    no_resources.composition.authority.resources.clear();
-    let no_resources = Prepared::prepare_state(no_resources)
+    no_resources.authority.resources.clear();
+    let no_resources = Prepared::prepare(no_resources)
         .unwrap()
         .load()
         .unwrap();
@@ -393,7 +389,7 @@ fn main() {
     no_resources.shutdown().unwrap();
     cases.push(serde_json::json!({"case":"resource-grant-required","passed":true}));
     // A fresh incarnation from identical packages cannot resurrect a ref.
-    let fresh = Prepared::prepare_state(c.clone()).unwrap().load().unwrap();
+    let fresh = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     let read = fresh
         .admit_root(selection("test.state@1/read", CLIENT))
         .unwrap();
@@ -402,16 +398,15 @@ fn main() {
     fresh.shutdown().unwrap();
     cases.push(serde_json::json!({"case":"incarnation-ref-rejection","passed":true}));
     let mut session_context = c.clone();
-    session_context.composition.resource = Some("session.root".into());
+    session_context.resource = Some("session.root".into());
     session_context
-        .composition
         .authority
         .resources
         .insert("session.root".into());
-    for grant in &mut session_context.composition.grants {
+    for grant in &mut session_context.grants {
         grant.resources.insert("session.root".into());
     }
-    let session_context = Prepared::prepare_state(session_context)
+    let session_context = Prepared::prepare(session_context)
         .unwrap()
         .load()
         .unwrap();
@@ -434,7 +429,7 @@ fn main() {
             2 => invalid.slots[4].index = 2,
             _ => invalid.slots.push(invalid.slots[0].clone()),
         };
-        assert!(Prepared::prepare_state(invalid).is_err(), "{name}");
+        assert!(Prepared::prepare(invalid).is_err(), "{name}");
         negatives.push(name);
     }
     for (name, index, code) in [
@@ -443,7 +438,7 @@ fn main() {
         ("short-state-table", 6, Code::AbiIncompatible),
     ] {
         let bad = composition(&args[index], &args[2], &args[3]);
-        let err = Prepared::prepare_state(bad).unwrap().load().err().unwrap();
+        let err = Prepared::prepare(bad).unwrap().load().err().unwrap();
         assert_eq!(err.code, code, "{name}");
         negatives.push(name);
     }
@@ -467,13 +462,13 @@ fn main() {
     invalid
         .definitions
         .push(bad_package.to_str().unwrap().into());
-    assert!(Prepared::prepare_state(invalid).is_err());
+    assert!(Prepared::prepare(invalid).is_err());
     negatives.push("conflicting-definitions");
     let mut duplicate = c.clone();
     let mut repeated_binding = duplicate.slots[3].clone();
     repeated_binding.index = 2;
     duplicate.slots.push(repeated_binding);
-    assert!(Prepared::prepare_state(duplicate).is_err());
+    assert!(Prepared::prepare(duplicate).is_err());
     negatives.push("duplicate-provider-selection");
     let Outcome::Domain(order_error) = run(&kernel, "snapshot-order") else {
         panic!("snapshot order");
@@ -482,10 +477,9 @@ fn main() {
     negatives.push("snapshot-order");
     let mut missing_get = c.clone();
     missing_get
-        .composition
         .grants
         .retain(|g| !(g.caller == CLIENT && g.key() == format!("{NOTES}/get")));
-    let missing_get = Prepared::prepare_state(missing_get)
+    let missing_get = Prepared::prepare(missing_get)
         .unwrap()
         .load()
         .unwrap();
@@ -500,7 +494,7 @@ fn main() {
     assert_eq!(kernel.inspect()["live_state"]["cells"], 0);
     let mut generations = Generations::default();
     let old = generations
-        .install_candidate(Prepared::prepare_state(c.clone()).unwrap(), "old")
+        .install_candidate(Prepared::prepare(c.clone()).unwrap(), "old")
         .unwrap();
     generations.promote(&old).unwrap();
     let pinned = generations
@@ -519,7 +513,7 @@ fn main() {
         .collect();
     assert_eq!(hex, old.as_str());
     let new = generations
-        .install_candidate(Prepared::prepare_state(c).unwrap(), "new")
+        .install_candidate(Prepared::prepare(c).unwrap(), "new")
         .unwrap();
     generations.promote(&new).unwrap();
     assert!(matches!(

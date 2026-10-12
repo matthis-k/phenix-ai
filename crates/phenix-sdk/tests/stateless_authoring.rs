@@ -63,15 +63,15 @@ fn stateless_handlers_have_typed_results_and_generated_v3_lifecycle() {
     };
     let mut instance = std::ptr::null_mut();
     assert_eq!(
-        unsafe { table.create.unwrap()(&mut instance).consume_state() }.unwrap(),
+        unsafe { table.create.unwrap()(&mut instance).consume() }.unwrap(),
         (0, Value::Null)
     );
     assert_eq!(
-        unsafe { table.initialize.unwrap()(instance, &host).consume_state() }.unwrap(),
+        unsafe { table.initialize.unwrap()(instance, &host).consume() }.unwrap(),
         (0, Value::Null)
     );
     let invoke = |operation: &str, value: Value| {
-        let bytes = value.encode_profile(WireProfile::V2).unwrap();
+        let bytes = value.encode().unwrap();
         unsafe {
             table.invoke.unwrap()(
                 instance,
@@ -79,7 +79,7 @@ fn stateless_handlers_have_typed_results_and_generated_v3_lifecycle() {
                 Bytes::new(operation.as_bytes()),
                 Bytes::new(&bytes),
             )
-            .consume_state()
+            .consume()
         }
         .unwrap()
     };
@@ -103,7 +103,7 @@ fn stateless_handlers_have_typed_results_and_generated_v3_lifecycle() {
         (0, Value::U64(42))
     );
     assert_eq!(
-        unsafe { table.stop.unwrap()(instance).consume_state() }.unwrap(),
+        unsafe { table.stop.unwrap()(instance).consume() }.unwrap(),
         (0, Value::Null)
     );
 }

@@ -1,7 +1,7 @@
 use super::runtime::{CallGuard, Kernel, Root};
 use crate::resolve::Selection;
 use phenix_contract::{
-    abi::{HostApi, PendingHostApi},
+    abi::StateHostApi,
     Authority, Code, Failure, Value,
 };
 use std::{
@@ -77,6 +77,7 @@ pub(super) enum Logical {
 pub(super) struct Record {
     pub root: u64,
     pub parent: Option<u64>,
+    pub import_slot: String,
     pub native_quiescent: bool,
     pub selection: Selection,
     pub authority: Authority,
@@ -102,6 +103,7 @@ impl Kernel {
         &self,
         root: u64,
         selection: &Selection,
+        import_slot: &str,
         input: &[u8],
         guard: &CallGuard<'_>,
         authority: Authority,
@@ -140,6 +142,7 @@ impl Kernel {
         let record = Record {
             root,
             parent,
+            import_slot:import_slot.into(),
             native_quiescent: false,
             selection: selection.clone(),
             authority,
@@ -163,20 +166,14 @@ impl Kernel {
             false,
         );
         self.accept_reply(id, reply);
+        let ready={let mut state=self.state.borrow_mut();let record=state.tickets.get_mut(&id).unwrap();
+            if parent.is_some() && record.quiescent && record.result.as_ref().is_some_and(Result::is_ok) { record.result.take() } else { None }
+        };
+        if let Some(Ok(outcome))=ready { self.release_tree(id);return Ok(Call::Ready(outcome)); }
         Ok(Call::Pending(Ticket { id, root }))
     }
-    fn pending_api(&self, id: u64, scope: u64) -> PendingHostApi {
-        let state = self.state.borrow();
-        let record = &state.tickets[&id];
-        PendingHostApi {
-            host: HostApi {
-                scope,
-                invoke: super::runtime::invoke_pending_import,
-            },
-            ticket: id,
-            permit: record.permit,
-            wake,
-        }
+    fn pending_api(&self,id:u64,scope:u64)->StateHostApi {
+        super::runtime::state_host(scope,id,self.state.borrow().tickets[&id].permit)
     }
     fn accept_reply(&self, id: u64, reply: Result<(u32, Value), Failure>) {
         let live_children = self
@@ -196,10 +193,7 @@ impl Kernel {
             }
             Ok((status @ (0 | 1 | 5), value)) => {
                 record.native_quiescent = true;
-                let contract = self.prepared.packages[&record.selection.provider]
-                    .descriptor()
-                    .contract(&record.selection.key())
-                    .unwrap();
+                let contract = &self.prepared.operation(&record.selection).unwrap().schema;
                 match status {
                     0 if contract.response.accepts(&value) => {
                         Ok(super::runtime::Outcome::Success(value))
@@ -454,7 +448,7 @@ impl Root<'_> {
             self.id,
             super::runtime::Caller::Root,
             &self.entry,
-            &request.encode_profile(self.kernel.profile(&self.entry.provider))?,
+            &request.encode()?,
             Some(&self.scope),
             true,
         );
@@ -521,6 +515,7 @@ impl Kernel {
         &self,
         root: u64,
         caller: &str,
+        slot: &str,
         parent: u64,
         command: &str,
         bytes: &[u8],
@@ -528,8 +523,8 @@ impl Kernel {
         use phenix_contract::abi::Reply;
         let malformed = || Failure::new(Code::SchemaRejected, "invalid pending host command");
         match command {
-            "phenix.host.pending.begin.v1" | "phenix.host.pending.scoped.v1" => {
-                let (key, input, scope) = if command == "phenix.host.pending.scoped.v1" {
+            "phenix.host.pending.begin.v2" | "phenix.host.pending.scoped.v2" => {
+                let (key, input, scope) = if command == "phenix.host.pending.scoped.v2" {
                     let (key, input, scope) = phenix_contract::ScopedRequest::decode(bytes)?;
                     (key, input, Some(scope))
                 } else {
@@ -547,19 +542,9 @@ impl Kernel {
                     };
                     (key, input, None)
                 };
-                let Some(provider) = self.prepared.bindings.get(&(caller.into(), key.clone()))
+                let Some(provider) = self.prepared.bindings.get(&(caller.into(),phenix_contract::import_identity(slot,&key)))
                 else {
-                    let optional = self.prepared.packages[caller]
-                        .descriptor()
-                        .imports
-                        .iter()
-                        .any(|i| i.operation == key && i.optional);
-                    return self.fail(
-                        if optional {
-                            Code::MissingBinding
-                        } else {
-                            Code::Denied
-                        },
+                    return self.fail(Code::MissingBinding,
                         "pending import is not selected",
                     );
                 };
@@ -572,7 +557,7 @@ impl Kernel {
                 Ok(
                     match self.dispatch_call(
                         root,
-                        super::runtime::Caller::Plugin(caller, ""),
+                        super::runtime::Caller::Plugin(caller, slot),
                         &selection,
                         &input,
                         scope.as_ref(),
@@ -588,7 +573,7 @@ impl Kernel {
                     },
                 )
             }
-            "phenix.host.pending.poll.v1" | "phenix.host.pending.cancel.v1" => {
+            "phenix.host.pending.poll.v2" | "phenix.host.pending.cancel.v2" => {
                 let Value::Map(mut fields) = Value::decode(bytes)? else {
                     return Err(malformed());
                 };
@@ -604,7 +589,7 @@ impl Kernel {
                 let authenticated = {
                     let state = self.state.borrow();
                     state.tickets.get(&id).is_some_and(|r| {
-                        r.root == root && r.parent == Some(parent) && r.selection.key() == operation
+                        r.root == root && r.parent == Some(parent) && r.selection.key() == operation && r.import_slot==slot && self.prepared.bindings.get(&(caller.into(),phenix_contract::import_identity(slot,&operation)))==Some(&r.selection.provider)
                     }) && state
                         .tickets
                         .get(&parent)
@@ -616,7 +601,7 @@ impl Kernel {
                         "wrong imported ticket owner or operation",
                     ));
                 }
-                if command == "phenix.host.pending.cancel.v1" {
+                if command == "phenix.host.pending.cancel.v2" {
                     return Ok(Reply::value(0, Value::Bool(self.cancel_ticket(id)?)));
                 }
                 if !self.state.borrow().tickets[&id].quiescent {

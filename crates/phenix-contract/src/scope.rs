@@ -2,8 +2,8 @@
 use crate::{identifier, operation_key, Code, Failure, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-pub const SCOPED_IMPORT: &str = "phenix.host.scoped.v1";
-pub const RESOURCE_CONTEXT: &str = "phenix.host.resource.v1";
+pub const SCOPED_IMPORT: &str = "phenix.host.scoped.v2";
+pub const RESOURCE_CONTEXT: &str = "phenix.host.resource.v2";
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Authority {

@@ -1,4 +1,4 @@
-#[phenix_sdk::plugin(id = "example.agent-model", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.agent-model", version = "1.0.0", define(example_agent_contracts::CompleteContract), provide(example_agent_contracts::CompleteContract, slot = "Complete"))]
 mod plugin {
     use example_agent_contracts::{
         AgentError, Complete, Feedback, FeedbackStatus, ModelReply, ModelRequest, ReplyKind,
@@ -16,7 +16,7 @@ mod plugin {
             text,
         }
     }
-    #[export(Complete)]
+    #[provide(Complete)]
     fn complete(
         _: &mut State,
         _: &Host<'_>,

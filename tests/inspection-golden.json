@@ -1,7 +1,7 @@
 {
   "success": {
     "format": "phenix.inspect.v1",
-    "bindings": {"example.transform@1/apply": "example.provider"},
+    "bindings": {"example.transform.apply@1/apply": "example.provider"},
     "roots": {"active": null, "completed": 1, "last_root_id": 1},
     "calls": 2,
     "denied_operations": 0,
@@ -19,7 +19,7 @@
       "context": {
         "caller": "example.consumer",
         "provider": null,
-        "operation": "example.transform@1/count"
+        "operation": "example.transform.count@1/count"
       }
     },
     "outcome": {"kind": "success", "value": {"text": "handled"}}
@@ -35,7 +35,7 @@
       "context": {
         "caller": "example.consumer",
         "provider": "example.provider",
-        "operation": "example.transform@1/apply"
+        "operation": "example.transform.apply@1/apply"
       }
     },
     "outcome": {"kind": "kernel_failure"}

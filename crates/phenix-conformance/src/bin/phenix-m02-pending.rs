@@ -1,12 +1,12 @@
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, ImportBinding, Prepared, ScopedGrant, Selection},
+    resolve::{Composition, Prepared, ScopedGrant, Selection},
     Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 const RUN: &str = "example.pending@1/run";
-const COUNT: &str = "example.transform@1/count";
-const SERVICE: &str = "example.transform@1/apply";
+const COUNT: &str = "example.transform.count@1/count";
+const SERVICE: &str = "example.transform.apply@1/apply";
 fn selection(key: &str, provider: &str) -> Selection {
     let (interface, operation) = key.split_once('/').unwrap();
     Selection {
@@ -46,15 +46,11 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let s = selection(SERVICE, "example.provider");
     let policy = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, "example.pending"),
-        bindings: vec![ImportBinding {
-            caller: "example.pending".into(),
-            interface: s.interface,
-            operation: s.operation,
-            provider: s.provider,
-        }],
+        slots: vec![phenix_conformance::binding(&("example.pending"), &format!("{}/{}", s.interface, s.operation), &(s.provider))],
         grants: vec![
             grant("root", RUN),
             grant("root", COUNT),
@@ -71,7 +67,7 @@ fn main() {
     let trace = output.join("start-trace");
     let _ = fs::remove_file(&trace);
     std::env::set_var("PHENIX_PENDING_TRACE", &trace);
-    let prepared = Prepared::prepare_composition(policy.clone()).unwrap();
+    let prepared = Prepared::prepare(policy.clone()).unwrap();
     assert!(
         !trace.exists(),
         "offline preparation executed pending plugin"
@@ -135,7 +131,7 @@ fn main() {
         Code::ReentrancyRejected
     );
     // A different selected kernel/root cannot poll another kernel's handle.
-    let other = Prepared::prepare_composition(policy.clone())
+    let other = Prepared::prepare(policy.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -221,7 +217,7 @@ fn main() {
     drop(counter);
     kernel.shutdown().unwrap();
     // Drop initiates cancellation. Physical work pins the root until draining.
-    let draining = Prepared::prepare_composition(policy.clone())
+    let draining = Prepared::prepare(policy.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -239,7 +235,7 @@ fn main() {
     denied_policy
         .grants
         .retain(|g| g.caller != "example.pending");
-    let denied = Prepared::prepare_composition(denied_policy)
+    let denied = Prepared::prepare(denied_policy)
         .unwrap()
         .load()
         .unwrap();

@@ -131,7 +131,7 @@ impl ValueSchema {
 
     pub fn encode(&self) -> Result<Vec<u8>, Failure> {
         self.validate(0)?;
-        self.descriptor().encode()
+        self.descriptor().encode_schema()
     }
 
     pub fn id(&self) -> Result<SchemaId, Failure> {
@@ -182,7 +182,7 @@ impl ValueSchema {
                 _ => return Err(invalid("invalid schema descriptor")),
             })
         }
-        let schema = parse(Value::decode(bytes)?)?;
+        let schema = parse(Value::decode_schema(bytes)?)?;
         if schema.encode()? != bytes {
             return Err(invalid("noncanonical schema"));
         }
@@ -222,7 +222,7 @@ pub struct DynValue {
 impl DynValue {
     pub fn new(schema: &ValueSchema, value: Value) -> Result<Self, Failure> {
         let id = schema.id()?;
-        value.encode_profile(crate::WireProfile::V2)?;
+        value.encode()?;
         if !schema.accepts(&value) {
             return Err(invalid("dynamic value schema mismatch"));
         }

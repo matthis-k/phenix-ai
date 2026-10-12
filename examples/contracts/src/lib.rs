@@ -1,4 +1,4 @@
-use phenix_sdk::{operation, Portable};
+use phenix_sdk::Portable;
 #[derive(Debug, PartialEq, Eq, Portable)]
 pub struct Text {
     pub text: String,
@@ -11,41 +11,55 @@ pub struct Count {
 pub enum TransformError {
     Empty,
 }
-#[operation(interface = "example.transform@1", operation = "apply")]
-pub type Transform = (Text, Text, TransformError);
-#[operation(interface = "example.consumer@1", operation = "run")]
-pub type Run = (Text, Text, TransformError);
-#[operation(interface = "example.transform@1", operation = "count")]
-pub type ReadCount = (Count, Count, TransformError);
+#[phenix_sdk::contract(id = "example.transform.apply@1")]
+pub trait TransformContract { fn apply(&self, request: Text) -> Result<Text, TransformError>; }
+pub type Transform = TransformContract::apply;
+#[phenix_sdk::contract(id = "example.consumer@1")]
+pub trait RunContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type Run = RunContract::run;
+#[phenix_sdk::contract(id = "example.transform.count@1")]
+pub trait ReadCountContract { fn count(&self, request: Count) -> Result<Count, TransformError>; }
+pub type ReadCount = ReadCountContract::count;
 
-#[operation(interface = "example.choice@1", operation = "run")]
-pub type Choice = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.choice@1")]
+pub trait ChoiceContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type Choice = ChoiceContract::run;
 
-#[operation(interface = "example.other@1", operation = "run")]
-pub type Other = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.other@1")]
+pub trait OtherContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type Other = OtherContract::run;
 
-#[operation(interface = "example.restricted@1", operation = "run")]
-pub type ScopedRun = (Text, Count, TransformError);
+#[phenix_sdk::contract(id = "example.restricted@1")]
+pub trait ScopedRunContract { fn run(&self, request: Text) -> Result<Count, TransformError>; }
+pub type ScopedRun = ScopedRunContract::run;
 
-#[operation(interface = "example.relay@1", operation = "run")]
-pub type Relay = (Text, Count, TransformError);
+#[phenix_sdk::contract(id = "example.relay@1")]
+pub trait RelayContract { fn run(&self, request: Text) -> Result<Count, TransformError>; }
+pub type Relay = RelayContract::run;
 
-#[operation(interface = "example.resource@1", operation = "bump")]
-pub type Bump = (Count, Count, TransformError);
+#[phenix_sdk::contract(id = "example.resource.bump@1")]
+pub trait BumpContract { fn bump(&self, request: Count) -> Result<Count, TransformError>; }
+pub type Bump = BumpContract::bump;
 
-#[operation(interface = "example.resource@1", operation = "count")]
-pub type ResourceCount = (Count, Count, TransformError);
+#[phenix_sdk::contract(id = "example.resource.count@1")]
+pub trait ResourceCountContract { fn count(&self, request: Count) -> Result<Count, TransformError>; }
+pub type ResourceCount = ResourceCountContract::count;
 
-#[operation(interface = "example.lifecycle-service@1", operation = "echo")]
-pub type LifecycleService = (Text, Text, TransformError);
-#[operation(interface = "example.lifecycle@1", operation = "run")]
-pub type LifecycleRun = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.lifecycle-service@1")]
+pub trait LifecycleServiceContract { fn echo(&self, request: Text) -> Result<Text, TransformError>; }
+pub type LifecycleService = LifecycleServiceContract::echo;
+#[phenix_sdk::contract(id = "example.lifecycle@1")]
+pub trait LifecycleRunContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type LifecycleRun = LifecycleRunContract::run;
 
-#[operation(interface = "example.pending@1", operation = "run")]
-pub type PendingRun = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.pending@1")]
+pub trait PendingRunContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type PendingRun = PendingRunContract::run;
 
-#[operation(interface = "example.pending-consumer@1", operation = "run")]
-pub type PendingConsumer = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.pending-consumer@1")]
+pub trait PendingConsumerContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type PendingConsumer = PendingConsumerContract::run;
 
-#[operation(interface = "example.revision@1", operation = "run")]
-pub type Revision = (Text, Text, TransformError);
+#[phenix_sdk::contract(id = "example.revision@1")]
+pub trait RevisionContract { fn run(&self, request: Text) -> Result<Text, TransformError>; }
+pub type Revision = RevisionContract::run;

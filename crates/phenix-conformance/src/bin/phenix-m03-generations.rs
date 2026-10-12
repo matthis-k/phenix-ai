@@ -13,10 +13,11 @@ fn selection() -> Selection {
 }
 fn policy(path: &str) -> Composition {
     Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: vec![path.into()],
         entry: selection(),
-        bindings: vec![],
+        slots: vec![],
         grants: vec![ScopedGrant {
             caller: "root".into(),
             interface: selection().interface,
@@ -66,13 +67,13 @@ fn main() {
     let mut owner = Generations::default();
     let a = owner
         .install_candidate(
-            Prepared::prepare_composition(a_policy.clone()).unwrap(),
+            Prepared::prepare(a_policy.clone()).unwrap(),
             "local.test",
         )
         .unwrap();
     let b = owner
         .install_candidate(
-            Prepared::prepare_composition(b_policy.clone()).unwrap(),
+            Prepared::prepare(b_policy.clone()).unwrap(),
             "local.test",
         )
         .unwrap();
@@ -92,19 +93,19 @@ fn main() {
     );
     assert_eq!(
         a,
-        Prepared::prepare_composition(a_policy.clone())
+        Prepared::prepare(a_policy.clone())
             .unwrap()
             .generation_identity("local.test")
             .unwrap()
     );
     assert_ne!(
         a,
-        Prepared::prepare_composition(a_policy.clone())
+        Prepared::prepare(a_policy.clone())
             .unwrap()
             .generation_identity("other.environment")
             .unwrap()
     );
-    assert!(Prepared::prepare_composition(a_policy.clone())
+    assert!(Prepared::prepare(a_policy.clone())
         .unwrap()
         .generation_identity("invalid identity")
         .is_err());
@@ -113,7 +114,7 @@ fn main() {
     reordered.grants.reverse();
     assert_eq!(
         a,
-        Prepared::prepare_composition(reordered)
+        Prepared::prepare(reordered)
             .unwrap()
             .generation_identity("local.test")
             .unwrap()
@@ -159,7 +160,7 @@ fn main() {
     drop(rollback);
     let failed = owner
         .install_candidate(
-            Prepared::prepare_composition(b_policy.clone()).unwrap(),
+            Prepared::prepare(b_policy.clone()).unwrap(),
             "local.failed-start",
         )
         .unwrap();
@@ -179,7 +180,7 @@ fn main() {
     let mut invalid = b_policy.clone();
     invalid.grants.clear();
     assert_eq!(
-        Prepared::prepare_composition(invalid).err().unwrap().code,
+        Prepared::prepare(invalid).err().unwrap().code,
         Code::Denied
     );
     assert_eq!(owner.default_identity(), Some(&a));
@@ -214,7 +215,7 @@ fn main() {
     let tree_entry = tree_policy.entry.clone();
     let tree = owner
         .install_candidate(
-            Prepared::prepare_composition(tree_policy).unwrap(),
+            Prepared::prepare(tree_policy).unwrap(),
             "local.pending-tree",
         )
         .unwrap();
@@ -236,7 +237,7 @@ fn main() {
     let mut dropped = Generations::default();
     let id = dropped
         .install_candidate(
-            Prepared::prepare_composition(a_policy).unwrap(),
+            Prepared::prepare(a_policy).unwrap(),
             "local.owner-drop",
         )
         .unwrap();

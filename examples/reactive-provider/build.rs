@@ -78,7 +78,7 @@ fn main() {
         ],
     };
     let bytes = metadata.encode().unwrap();
-    let mut section = vec![0_u8; SECTION_BYTES];
+    let mut section = vec![0_u8; NATIVE_SECTION_BYTES];
     section[..4].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
     section[4..4 + bytes.len()].copy_from_slice(&bytes);
     fs::write(

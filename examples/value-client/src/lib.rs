@@ -7,7 +7,7 @@ use phenix_sdk::{
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 struct Counter;
 impl live::Operation for Counter {
     type Request = String;
@@ -97,10 +97,10 @@ fn run(host: &live::Host<'_>, command: String) -> CallResult<Vec<u64>, String> {
 }
 unsafe extern "C" fn create(out: *mut *mut c_void) -> Reply {
     unsafe { *out = Box::into_raw(Box::new(())).cast() };
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn initialize(_: *mut c_void, _: *const StateHostApi) -> Reply {
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 unsafe extern "C" fn invoke(
     _: *mut c_void,
@@ -113,33 +113,33 @@ unsafe extern "C" fn invoke(
         let host = unsafe { live::Host::from_api(&api) };
         let key = std::str::from_utf8(unsafe { key.read() }?)
             .map_err(|_| Failure::new(Code::SchemaRejected, "key"))?;
-        let value = Value::decode_profile(unsafe { input.read() }?, WireProfile::V2)?;
+        let value = Value::decode(unsafe { input.read() }?)?;
         match key {
             "test.state@1/run" => Ok(live::reply(run(&host, String::from_value(value)?))),
             "test.state@1/read" => {
                 let reference = live::ValueRef::<u64>::from_value(value)?;
                 match reference.read(&host) {
-                    Ok(v) => Ok(Reply::state_value(0, v.value.to_value())),
+                    Ok(v) => Ok(Reply::value(0, v.value.to_value())),
                     Err(e) => Err(Failure::new(Code::PluginFailed, e.to_string())),
                 }
             }
             _ => Err(Failure::new(Code::MissingBinding, "typed client operation")),
         }
     })();
-    result.unwrap_or_else(|e: Failure| Reply::state_value(2, e.to_value()))
+    result.unwrap_or_else(|e: Failure| Reply::value(2, e.to_value()))
 }
 unsafe extern "C" fn poll(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(
+    Reply::value(
         2,
         Failure::new(Code::MissingBinding, "synchronous typed caller").to_value(),
     )
 }
 unsafe extern "C" fn cancel(_: *mut c_void, _: *const StateHostApi, _: Bytes) -> Reply {
-    Reply::state_value(4, Value::Null)
+    Reply::value(4, Value::Null)
 }
 unsafe extern "C" fn stop(ptr: *mut c_void) -> Reply {
     drop(unsafe { Box::from_raw(ptr.cast::<()>()) });
-    Reply::state_value(0, Value::Null)
+    Reply::value(0, Value::Null)
 }
 static TABLE: StatePluginTable = StatePluginTable {
     header: Header {

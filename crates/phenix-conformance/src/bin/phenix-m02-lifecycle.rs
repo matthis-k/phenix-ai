@@ -1,6 +1,6 @@
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, ImportBinding, Prepared, ScopedGrant, Selection},
+    resolve::{Composition, Prepared, ScopedGrant, Selection},
     Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -54,15 +54,11 @@ fn main() {
     let trace = output.join("trace");
     let s = selection(SERVICE, PROVIDER);
     let policy = Composition {
-        format: "phenix.composition.v1".into(),
+        format: "phenix.composition.v2".into(),
+        definitions:vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, CONSUMER),
-        bindings: vec![ImportBinding {
-            caller: CONSUMER.into(),
-            interface: s.interface,
-            operation: s.operation,
-            provider: s.provider,
-        }],
+        slots: vec![phenix_conformance::binding(&(CONSUMER), &format!("{}/{}", s.interface, s.operation), &(s.provider))],
         grants: vec![grant("root", RUN), grant(CONSUMER, SERVICE)],
         excluded: BTreeSet::new(),
         substitutions: vec![],
@@ -82,7 +78,7 @@ fn main() {
         "provider:drop",
     ];
     reset(&trace, "");
-    let prepared = Prepared::prepare_composition(policy.clone()).unwrap();
+    let prepared = Prepared::prepare(policy.clone()).unwrap();
     assert!(
         !trace.exists(),
         "offline validation executed lifecycle code"
@@ -94,7 +90,7 @@ fn main() {
     let mut reverse = policy.clone();
     reverse.artifacts.reverse();
     assert_eq!(
-        Prepared::prepare_composition(reverse).unwrap().inspect(),
+        Prepared::prepare(reverse).unwrap().inspect(),
         prepared.inspect()
     );
     let kernel = prepared.load().unwrap();
@@ -153,7 +149,7 @@ fn main() {
         "explicit shutdown leaked resources"
     );
     reset(&trace, "");
-    let kernel = Prepared::prepare_composition(policy.clone())
+    let kernel = Prepared::prepare(policy.clone())
         .unwrap()
         .load()
         .unwrap();
@@ -171,7 +167,7 @@ fn main() {
         "provider:start-panic",
     ] {
         reset(&trace, faults);
-        let error = Prepared::prepare_composition(policy.clone())
+        let error = Prepared::prepare(policy.clone())
             .unwrap()
             .load()
             .err()
@@ -212,7 +208,7 @@ fn main() {
         "consumer:stop,consumer:drop-panic",
     ] {
         reset(&trace, faults);
-        let kernel = Prepared::prepare_composition(policy.clone())
+        let kernel = Prepared::prepare(policy.clone())
             .unwrap()
             .load()
             .unwrap();

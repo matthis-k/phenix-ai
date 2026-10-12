@@ -1,14 +1,13 @@
 //! Authenticated state effects and ABI 3 imports enter the existing runtime.
 use crate::{
     resolve::{CellOperation, Selection},
-    runtime::{authenticate_scope, Caller, Kernel},
+    runtime::{authenticate_scope, authenticate_import_scope, Caller, Kernel},
     Call, Outcome,
 };
 use phenix_contract::{
     abi::{Bytes, Reply},
     Code, CompareExchange, Failure, StateRequest, Value, ValueAccessError as Error, ValueLocation,
-    WireProfile,
-};
+    };
 
 impl Kernel {
     pub(super) fn require_property_resource(
@@ -42,22 +41,11 @@ impl Kernel {
             _ => false,
         };
         let interface =
-            phenix_artifact::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
+            phenix_contract::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
         let key = format!("{interface}/{operation}");
         let selected = caller == "root"
             || caller == owner
-            || self.prepared.packages[caller]
-                .descriptor()
-                .imports
-                .iter()
-                .any(|i| {
-                    i.operation == key
-                        && self
-                            .prepared
-                            .bindings
-                            .get(&(caller.into(), i.binding_key()))
-                            .is_some_and(|p| p == owner)
-                });
+            || self.prepared.bindings.iter().any(|((principal,identity),provider)| principal==caller && provider==owner && identity.split_once(':').is_some_and(|(_,operation)|operation==key));
         if !enabled || !selected {
             let _ = self.fail::<()>(Code::Denied, "state access is not selected");
             return Err(Error::Denied);
@@ -96,7 +84,6 @@ impl Kernel {
             };
             let property = self.prepared.packages[caller]
                 .metadata()
-                .unwrap()
                 .properties
                 .iter()
                 .find(|p| p.id == property)
@@ -246,8 +233,8 @@ impl Kernel {
 fn protected(body: impl FnOnce() -> Result<Reply, Failure>) -> Reply {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(Ok(reply)) => reply,
-        Ok(Err(failure)) => Reply::state_value(2, failure.to_value()),
-        Err(_) => Reply::state_value(
+        Ok(Err(failure)) => Reply::value(2, failure.to_value()),
+        Err(_) => Reply::value(
             2,
             Failure::new(Code::InfrastructureFailure, "caught state host panic").to_value(),
         ),
@@ -260,15 +247,15 @@ pub(super) unsafe extern "C" fn state(scope: u64, opcode: u32, bytes: Bytes) -> 
         let request = StateRequest::decode(opcode, unsafe { bytes.read() }?)?;
         Ok(
             match kernel.state_request(record.root, &record.caller, request)? {
-                Ok(value) => Reply::state_value(0, value),
-                Err(error) => Reply::state_value(1, error.to_value()),
+                Ok(value) => Reply::value(0, value),
+                Err(error) => Reply::value(1, error.to_value()),
             },
         )
     })
 }
 pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, input: Bytes) -> Reply {
     protected(|| {
-        let record = authenticate_scope(scope)?;
+        let record = authenticate_import_scope(scope)?;
         let kernel = unsafe { &*(record.kernel as *const Kernel) };
         if kernel.initializing.borrow().is_some() {
             return Err(Failure::new(
@@ -280,9 +267,24 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             .map_err(|_| Failure::new(Code::SchemaRejected, "invalid slot selector"))?;
         let key = std::str::from_utf8(unsafe { key.read() }?)
             .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
+        let cleanup=key=="phenix.host.pending.poll.v2" || key=="phenix.host.pending.cancel.v2";
+        if kernel.state.borrow().stack.last().is_some_and(|frame|frame.revoked) && !cleanup {
+            return Err(Failure::new(Code::ScopeRejected,"cancelled host scope"));
+        }
         let bytes = unsafe { input.read() }?;
+        if key.starts_with("phenix.host.pending.") {
+            let parent=kernel.state.borrow().stack.last().and_then(|frame|frame.ticket).ok_or_else(||Failure::new(Code::ScopeRejected,"pending command needs a native ticket"))?;
+            return Ok(match kernel.import_pending(record.root,&record.caller,slot,parent,key,bytes) {
+                Ok(reply)=>reply,Err(error)=>Reply::value(5,error.to_value()),
+            });
+        }
+        if key==phenix_contract::RESOURCE_CONTEXT {
+            if !slot.is_empty() || Value::decode(bytes)?!=Value::Null { return Err(Failure::new(Code::SchemaRejected,"resource context expects Null and no slot")); }
+            let resource=kernel.state.borrow().stack.last().and_then(|frame|frame.resource.clone());
+            return Ok(Reply::value(0,resource.map_or(Value::Null,Value::String)));
+        }
         if key == "phenix.host.slots@1/count" {
-            if Value::decode_profile(bytes, WireProfile::V2)? != Value::Null {
+            if Value::decode(bytes)? != Value::Null {
                 return Err(Failure::new(
                     Code::SchemaRejected,
                     "slot count expects Null",
@@ -293,10 +295,10 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 .slot_counts
                 .get(&(record.caller.clone(), slot.into()))
                 .ok_or_else(|| Failure::new(Code::Denied, "undeclared slot"))?;
-            return Ok(Reply::state_value(0, Value::U64(*count)));
+            return Ok(Reply::value(0, Value::U64(*count)));
         }
         if key == "phenix.host.state@1/snapshot" {
-            let Value::List(items) = Value::decode_profile(bytes, WireProfile::V2)? else {
+            let Value::List(items) = Value::decode(bytes)? else {
                 return Err(Failure::new(
                     Code::SchemaRejected,
                     "snapshot expects a ref list",
@@ -323,16 +325,23 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 kernel.cells.borrow().snapshot(&locations)
             })();
             return Ok(match result {
-                Ok(value) => Reply::state_value(0, value),
-                Err(error) => Reply::state_value(1, error.to_value()),
+                Ok(value) => Reply::value(0, value),
+                Err(error) => Reply::value(1, error.to_value()),
             });
         }
+        let scoped=if key==phenix_contract::SCOPED_IMPORT { Some(phenix_contract::ScopedRequest::decode(bytes)?) } else { None };
+        let (key,bytes,restriction)=match &scoped { Some((key,input,scope))=>(key.as_str(),input.as_slice(),Some(scope)),None=>(key,bytes,None) };
         let identity = phenix_contract::import_identity(slot, key);
-        let provider = kernel
-            .prepared
-            .bindings
-            .get(&(record.caller.clone(), identity))
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "slot operation is not selected"))?;
+        let provider=match kernel.prepared.bindings.get(&(record.caller.clone(),identity)) {
+            Some(provider)=>provider,
+            None=>{
+                let base=slot.split_once('#').map_or(slot,|(base,_)|base);
+                let declared=kernel.prepared.slot_counts.contains_key(&(record.caller.clone(),base.into()));
+                let failure=kernel.fail::<()>(if declared {Code::MissingBinding} else {Code::Denied},"slot operation is not selected").unwrap_err();
+                kernel.observe_import_failure(&record.caller,Some(key),None,&failure);
+                return Err(failure);
+            }
+        };
         let (interface, operation) = key
             .split_once('/')
             .ok_or_else(|| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
@@ -346,12 +355,13 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             Caller::Plugin(&record.caller, slot),
             &selection,
             bytes,
-            None,
+            restriction,
             false,
-        )?;
+        );
+        let outcome=match outcome { Ok(outcome)=>outcome,Err(failure)=>{kernel.observe_import_failure(&record.caller,Some(key),Some(provider),&failure);return Err(failure);} };
         Ok(match outcome {
-            Call::Ready(Outcome::Success(v)) => Reply::state_value(0, v),
-            Call::Ready(Outcome::Domain(v)) => Reply::state_value(1, v),
+            Call::Ready(Outcome::Success(v)) => Reply::value(0, v),
+            Call::Ready(Outcome::Domain(v)) => Reply::value(1, v),
             Call::Pending(_) => unreachable!(),
         })
     })

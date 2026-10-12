@@ -1,6 +1,6 @@
 //! State request vocabulary; decoding a reference never grants live authority.
 use crate::{
-    identifier, Code, Failure, Revision, Value, ValueAccessError, ValueLocation, WireProfile,
+    identifier, Code, Failure, Revision, Value, ValueAccessError, ValueLocation,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompareExchange {
@@ -80,14 +80,14 @@ impl StateRequest {
             }
             _ => return Err(invalid()),
         };
-        value.encode_profile(WireProfile::V2)
+        value.encode()
     }
     pub fn decode(opcode: u32, bytes: &[u8]) -> Result<Self, Failure> {
         // Unknown opcodes fail before parsing borrowed payloads or dispatching effects.
         if !(1..=7).contains(&opcode) {
             return Err(invalid());
         }
-        let value = Value::decode_profile(bytes, WireProfile::V2)?;
+        let value = Value::decode(bytes)?;
         let request = match opcode {
             1 => {
                 let Value::List(v) = value else {

@@ -10,32 +10,6 @@ fn declarations(tokens: proc_macro2::TokenStream) -> syn::Result<Vec<Meta>> {
             .collect(),
     )
 }
-pub fn selected(tokens: proc_macro2::TokenStream) -> syn::Result<bool> {
-    let mut contributions = false;
-    for meta in declarations(tokens)? {
-        if let Meta::List(list) = &meta {
-            contributions |= ["define", "require", "provide"]
-                .iter()
-                .any(|name| list.path.is_ident(name));
-        }
-        if let Meta::NameValue(value) = meta {
-            if value.path.is_ident("profile") {
-                if let Expr::Lit(value) = value.value {
-                    if let syn::Lit::Str(text) = value.lit {
-                        if text.value() == "state" {
-                            return Ok(true);
-                        }
-                        if text.value() == "definitions" {
-                            return Ok(false);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(contributions)
-}
-
 // Rust's type checker validates injected arguments against the declaration.
 // Only the roles have syntax rules; response conversion stays type directed.
 fn arguments(
@@ -171,6 +145,9 @@ pub fn expand(
                 }
             }
             let slot = required(&mut options, "slot")?;
+            let provider=options.remove("provider");
+            if !require && provider.is_some() { return Err(syn::Error::new(list.span(),"provider identity belongs to require")); }
+            let provider=match provider { Some(id)=>quote!(Some(#id)),None=>quote!(None) };
             no_extra(&options)?;
             let symbol: syn::Ident = syn::parse_str(&slot).map_err(|_| {
                 syn::Error::new(list.span(), "slot symbol must be a Rust identifier")
@@ -179,6 +156,9 @@ pub fn expand(
                 return Err(syn::Error::new(list.span(), "duplicate slot"));
             }
             if require {
+                let mut import_api=api.clone();
+                if api.segments.first().is_some_and(|segment|segment.ident=="super") { import_api.segments.insert(0,syn::parse_quote!(super)); }
+                else if api.segments.first().is_some_and(|segment|segment.ident=="self") { import_api.segments.first_mut().unwrap().ident=syn::parse_quote!(super); }
                 let selector = if indexed {
                     format!("{slot}#0")
                 } else {
@@ -186,18 +166,18 @@ pub fn expand(
                 };
                 let invoke_at = if indexed {
                     quote! {
-                        pub fn invoke_at<O: #api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> {
+                        pub fn invoke_at<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, index: usize, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> {
                             host.invoke::<O>(&format!("{}#{}", #slot, index), request)
                         }
                     }
                 } else {
                     quote!()
                 };
-                requirements.push(quote!(::phenix_sdk::StaticImport { slot: #slot, contract: #api::CONTRACT.contract, revision_min: #api::CONTRACT.revision, revision_max: #api::CONTRACT.revision, cardinality: #cardinality }));
+                requirements.push(quote!(::phenix_sdk::StaticImport { provider:#provider, slot: #slot, contract: #api::CONTRACT.contract, revision_min: #api::CONTRACT.revision, revision_max: #api::CONTRACT.revision, cardinality: #cardinality }));
                 imports.push(quote! {
                     #[allow(non_camel_case_types)] pub struct #symbol;
                     impl #symbol {
-                        pub fn invoke<O: #api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> { host.invoke::<O>(#selector, request) }
+                        pub fn invoke<O: #import_api::Member>(host: &::phenix_sdk::live::Host<'_>, request: &O::Request) -> ::phenix_sdk::CallResult<O::Response, O::Error> { host.invoke::<O>(#selector, request) }
                         #invoke_at
                         pub fn count(host: &::phenix_sdk::live::Host<'_>) -> Result<usize, ::phenix_sdk::Failure> { host.slot_count(#slot) }
                     }
@@ -252,7 +232,7 @@ pub fn expand(
             syn::Item::Struct(s) if s.ident == "State" => {
                 if state
                     || !s.generics.params.is_empty()
-                    || !matches!(s.fields, syn::Fields::Named(_))
+                    || !matches!(s.fields, syn::Fields::Named(_) | syn::Fields::Unit)
                 {
                     return Err(syn::Error::new(
                         s.span(),
@@ -455,7 +435,7 @@ pub fn expand(
         let (cancel_name, cancel_arguments) = matching(&cancels)?;
         invoke.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
             if api.ticket == 0 {
-                return Ok(::phenix_sdk::abi::Reply::state_value(5, ::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible, "pending operation requires an existing native ticket").to_value()));
+                return Ok(::phenix_sdk::abi::Reply::value(5, ::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible, "pending operation requires an existing native ticket").to_value()));
             }
             let request = <<#op as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::from_value(value)?;
             #unit_request
@@ -468,7 +448,7 @@ pub fn expand(
         }});
         cancel.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
             let result: Result<bool, ::phenix_sdk::Failure> = #cancel_name(#cancel_arguments);
-            return Ok(::phenix_sdk::abi::Reply::state_value(if result? { 4 } else { 3 }, ::phenix_sdk::Value::Null));
+            return Ok(::phenix_sdk::abi::Reply::value(if result? { 4 } else { 3 }, ::phenix_sdk::Value::Null));
         }});
     }
     let start =
@@ -485,7 +465,7 @@ pub fn expand(
         pub mod imports { #[allow(unused_imports)] use super::*; #(#imports)* }
         pub mod properties { #[allow(unused_imports)] use super::*; #(#property_symbols)* }
         struct __Instance { state: State, initialized: bool, poisoned: bool }
-        fn __failure(error: ::phenix_sdk::Failure) -> ::phenix_sdk::abi::Reply { ::phenix_sdk::abi::Reply::state_value(2, error.to_value()) }
+        fn __failure(error: ::phenix_sdk::Failure) -> ::phenix_sdk::abi::Reply { ::phenix_sdk::abi::Reply::value(2, error.to_value()) }
         fn __invalid(message: &str) -> ::phenix_sdk::Failure { ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, message) }
         unsafe extern "C" fn __create(out: *mut *mut ::std::ffi::c_void) -> ::phenix_sdk::abi::Reply {
             ::phenix_sdk::live::boundary(|| {
@@ -493,7 +473,7 @@ pub fn expand(
                 unsafe { *out = ::std::ptr::null_mut(); }
                 let state = State::default();
                 unsafe { *out = Box::into_raw(Box::new(__Instance { state, initialized: false, poisoned: false })).cast(); }
-                ::phenix_sdk::abi::Reply::state_value(0, ::phenix_sdk::Value::Null)
+                ::phenix_sdk::abi::Reply::value(0, ::phenix_sdk::Value::Null)
             })
         }
         unsafe extern "C" fn __initialize(ptr: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::StateHostApi) -> ::phenix_sdk::abi::Reply {
@@ -511,7 +491,7 @@ pub fn expand(
                     instance.poisoned = false;
                     Ok(())
                 })();
-                match result { Ok(()) => ::phenix_sdk::abi::Reply::state_value(0, ::phenix_sdk::Value::Null), Err(error) => __failure(error) }
+                match result { Ok(()) => ::phenix_sdk::abi::Reply::value(0, ::phenix_sdk::Value::Null), Err(error) => __failure(error) }
             })
         }
         unsafe fn __entry(ptr: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::StateHostApi, key: ::phenix_sdk::abi::Bytes, input: Option<::phenix_sdk::abi::Bytes>, mode: u8) -> ::phenix_sdk::abi::Reply {
@@ -522,7 +502,7 @@ pub fn expand(
                     #[allow(unused_variables)] let host = unsafe { ::phenix_sdk::live::Host::from_api(&api) };
                     let instance = unsafe { &mut *ptr.cast::<__Instance>() };
                     if !instance.initialized || (instance.poisoned && mode == 0) {
-                        return Ok(::phenix_sdk::abi::Reply::state_value(5, __invalid("instance uninitialized or poisoned").to_value()));
+                        return Ok(::phenix_sdk::abi::Reply::value(5, __invalid("instance uninitialized or poisoned").to_value()));
                     }
                     let poisoned = instance.poisoned;
                     instance.poisoned = true;
@@ -530,7 +510,7 @@ pub fn expand(
                         #[allow(unused_variables)] let state = &mut instance.state;
                         let key = ::std::str::from_utf8(unsafe { key.read() }?).map_err(|_| __invalid("invalid operation key"))?;
                         match mode {
-                            0 => { #[allow(unused_variables)] let value = ::phenix_sdk::Value::decode_profile(unsafe { input.ok_or_else(|| __invalid("missing invocation input"))?.read() }?, ::phenix_sdk::WireProfile::V2)?; #(#invoke)* }
+                            0 => { #[allow(unused_variables)] let value = ::phenix_sdk::Value::decode(unsafe { input.ok_or_else(|| __invalid("missing invocation input"))?.read() }?)?; #(#invoke)* }
                             1 => { #(#poll)* }
                             _ => { #(#cancel)* }
                         }
@@ -551,7 +531,7 @@ pub fn expand(
                 let mut instance = unsafe { Box::from_raw(ptr.cast::<__Instance>()) };
                 let result = #stop;
                 let cleanup = ::phenix_sdk::lifecycle(|| { drop(instance); Ok(()) });
-                match result.and(cleanup) { Ok(()) => ::phenix_sdk::abi::Reply::state_value(0, ::phenix_sdk::Value::Null), Err(error) => __failure(error) }
+                match result.and(cleanup) { Ok(()) => ::phenix_sdk::abi::Reply::value(0, ::phenix_sdk::Value::Null), Err(error) => __failure(error) }
             })
         }
         static __TABLE: ::phenix_sdk::abi::StatePluginTable = ::phenix_sdk::abi::StatePluginTable {

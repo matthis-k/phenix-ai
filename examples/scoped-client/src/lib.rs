@@ -1,14 +1,12 @@
-#[phenix_sdk::plugin(id = "example.restricted", version = "1.0.0")]
+#[phenix_sdk::plugin(id = "example.restricted", version = "1.0.0", define(example_contracts::ScopedRunContract), define(example_contracts::RelayContract), define(example_contracts::BumpContract), provide(example_contracts::ScopedRunContract, slot = "ScopedRun"), require(example_contracts::RelayContract, slot = "Delegate"), require(example_contracts::BumpContract, slot = "EffectLimit", optional))]
 mod restricted {
     use example_contracts::{Bump, Count, Relay, ScopedRun, Text, TransformError};
-    use phenix_sdk::{Authority, CallResult, Host, Operation, ScopedRequest};
+    use phenix_sdk::{Authority, CallResult, Host, ScopedRequest};
     #[derive(Default)]
     pub struct State;
-    #[import]
     type Delegate = Relay;
-    #[import(optional = "true")]
     type EffectLimit = Bump;
-    #[export(ScopedRun)]
+    #[provide(ScopedRun)]
     fn run(_: &mut State, host: &Host<'_>, request: Text) -> CallResult<Count, TransformError> {
         let resource = if request.text == "blue" {
             "blue"
@@ -26,6 +24,6 @@ mod restricted {
             },
             resource: Some(resource.into()),
         };
-        host.invoke_scoped::<Delegate>(&scope, &request)
+        host.invoke_scoped::<Delegate>("Delegate", &scope, &request)
     }
 }
