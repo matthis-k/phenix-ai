@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["terminal"]
 terminal = []
 jsonl = []
+acp = []
 
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
