@@ -270,6 +270,17 @@
           "--no-default-features" "--features" "jsonl"
         ];
       });
+      frontendAcp = frontendTerminal.overrideAttrs (old: {
+        pname = "phenix-basic-frontend-acp";
+        cargoBuildFlags = old.cargoBuildFlags ++ [
+          "--no-default-features" "--features" "acp"
+        ];
+      });
+      acpCheck = pkgs.runCommand "phenix-f2-acp" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-f2-acp ${frontendAcp} ${basicDefinitions} $out
+        test -s "$out/acp-codec.json"
+      '';
       frontendCheck = pkgs.runCommand "phenix-f1-frontends" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-f1-frontends ${frontendTerminal} ${frontendJsonl} ${basicDefinitions} $out
@@ -339,6 +350,7 @@
           "${storageSqlite}"
           "${frontendTerminal}"
           "${frontendJsonl}"
+          "${frontendAcp}"
         ];
         definitions = [ "${basicDefinitions}" ];
         slots = [
@@ -744,6 +756,7 @@
         ln -s ${basicMemoryCheck} $out/basic-memory
         ln -s ${basicAgentCheck} $out/basic-agent
         ln -s ${frontendCheck} $out/frontends
+        ln -s ${acpCheck} $out/acp-codec
         ln -s ${basicProductCheck} $out/basic-host-smoke
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
@@ -774,6 +787,7 @@
         phenix-plugin-basic-agent = basicAgent;
         phenix-plugin-frontend-terminal = frontendTerminal;
         phenix-plugin-frontend-jsonl = frontendJsonl;
+        phenix-plugin-frontend-acp = frontendAcp;
         phenix-basic-runtime = basicRuntime;
         phenix-basic-composition = basicComposition;
         phenix-basic-terminal = pkgs.writeShellApplication {
@@ -818,6 +832,7 @@
         b3-memory = basicMemoryCheck;
         b5-agent = basicAgentCheck;
         f1-frontends = frontendCheck;
+        f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
