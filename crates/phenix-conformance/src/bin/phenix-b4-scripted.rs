@@ -140,7 +140,10 @@ fn main() {
     let mut denied = policy;
     denied.grants.clear();
     let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
-    assert_eq!(invoke(&kernel, &request("hello")).unwrap_err().code, Code::Denied);
+    assert_eq!(
+        invoke(&kernel, &request("hello")).unwrap_err().code,
+        Code::Denied
+    );
     assert_eq!(kernel.inspect()["denied_operations"], 1);
     let result = serde_json::json!({
         "format": "phenix.b4.scripted.v1",
