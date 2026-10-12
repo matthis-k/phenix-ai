@@ -167,6 +167,32 @@ impl CompiledGraph {
         Ok(Self { identity, nodes, events, actions, predecessors, order })
     }
 
+
+    /// G3 preparation: derive the active projection for one admitted event set.
+    /// Declared ordering edges do not activate successors or dormant ancestors.
+    /// Runtime execution is deliberately outside this method.
+    pub fn activation_order(
+        &self,
+        event_ids: &BTreeSet<String>,
+    ) -> Result<Vec<String>, Failure> {
+        for id in event_ids {
+            if !self.events.contains_key(id) {
+                return Err(invalid(format!("unknown admitted event {id}")));
+            }
+        }
+        let active: BTreeSet<_> = self.nodes.iter()
+            .filter(|(_, node)| node.definition.triggers.iter().any(|id| event_ids.contains(id)))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let projection = active.iter().map(|id| {
+            let dependencies = self.predecessors[id].intersection(&active).cloned().collect();
+            (id.clone(), dependencies)
+        }).collect();
+        dag::order(&projection).map_err(|cycle| {
+            invalid(format!("invalid active graph projection: {}", cycle.join(" -> ")))
+        })
+    }
+
     pub fn discover(&self) -> impl Iterator<Item = &ActionInfo> {
         self.actions.values()
     }
@@ -294,6 +320,21 @@ mod tests {
         bad[1].plugin = "forbidden".into();
         assert_eq!(compile(&bad).unwrap_err().code, Code::Denied);
     }
+    #[test]
+    fn after_edges_do_not_trigger_and_dormant_predecessors_never_block() {
+        let input = vec![
+            contribution("alpha", true, vec![node("a", &["event.prompt"], &[], &[])]),
+            contribution("beta", false, vec![node("b", &[], &[], &[])]),
+            contribution("gamma", false, vec![node("c", &["event.prompt"], &["alpha/a", "beta/b"], &[])]),
+            contribution("delta", false, vec![node("d", &[], &["alpha/a"], &[])]),
+        ];
+        let graph = compile(&input).unwrap();
+        let active = BTreeSet::from(["event.prompt".into()]);
+        assert_eq!(graph.activation_order(&active).unwrap(), ["alpha/a", "gamma/c"]);
+        assert!(graph.activation_order(&BTreeSet::from(["unknown".into()])).is_err());
+        assert!(graph.activation_order(&BTreeSet::new()).unwrap().is_empty());
+    }
+
     #[test]
     fn ordered_writers_are_permitted() {
         let input = vec![contribution("alpha", true, vec![
