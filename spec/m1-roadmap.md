@@ -263,7 +263,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] NOT STARTED |
-| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] NOT STARTED |
+| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: native terminal/JSONL product host and SQLite-backed graph smoke on impl/m1-basic-runtime. Full streaming, host-controlled cancellation, ACP parity, multi-session and exact-head CI still open |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -381,6 +381,25 @@ conformance fixture**. It does not prove durability, process restart, SQLite
 storage, independent observer checkpoint persistence, or session replay.
 Those are still B2 acceptance requirements. No persistence or journal
 logic enters the kernel.
+
+### P1 terminal and JSONL host smoke
+
+`impl/m1-basic-runtime` packages `phenix-basic-runtime` outside the kernel.
+It loads one selected M1 composition with terminal and JSONL adapters,
+independent model/tool/skill/context/session/journal/storage providers, and the
+definition-only Basic contracts. The host asks the frontend plugin to decode
+a prompt, submits `phenix.basic.submit` through the kernel graph and obtains
+output by replaying the typed journal through BasicOutput and the selected
+frontend renderer. Terminal and JSONL use the same kernel and Basic agent.
+
+The `basic-host-smoke` Nix check submits a prompt and a multi-tool turn in
+separate product processes against the same SQLite file. It verifies visible
+terminal and JSONL answers, rather than proving only isolated plugin ABIs.
+This initial launcher uses one preselected session resource, `s1`; it is not
+yet a full multi-session host. The synchronous agent cannot accept live
+cancellation while model I/O blocks. The full P1 gate remains unchecked until
+pending/streaming, ACP, session/resource selection and all product acceptance
+cases pass on the exact integrated head.
 
 ### F1 terminal and JSONL frontend codecs
 
