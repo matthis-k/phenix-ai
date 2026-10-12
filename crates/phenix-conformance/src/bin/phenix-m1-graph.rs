@@ -233,7 +233,10 @@ fn main() {
         domain[0].outcome,
         phenix_kernel::Outcome::Domain(Value::String("domain fixture".into()))
     );
-    assert!(!successor_witness.exists(), "A failure must stop downstream C");
+    assert!(
+        !successor_witness.exists(),
+        "A failure must stop downstream C"
+    );
     let later_failure = kernel
         .submit_action(
             "example.graph.submit",
@@ -251,7 +254,10 @@ fn main() {
         later_failure[1].outcome,
         phenix_kernel::Outcome::Domain(Value::String("domain fixture b".into()))
     );
-    assert!(!successor_witness.exists(), "B failure must have zero C invocations");
+    assert!(
+        !successor_witness.exists(),
+        "B failure must have zero C invocations"
+    );
     assert_eq!(
         kernel
             .submit_action("example.graph.unknown", &Value::String("x".into()))
