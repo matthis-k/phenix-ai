@@ -98,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           read -r -a checks <<< "$CHECKS"
-          test "$${#checks[@]}" -gt 0
+          test "${#checks[@]}" -gt 0
           targets=()
           for check in "${checks[@]}"; do
             targets+=(".#checks.x86_64-linux.$check")
