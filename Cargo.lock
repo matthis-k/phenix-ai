@@ -152,6 +152,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-basic-frontends"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-basic-memory"
 version = "0.1.0"
 dependencies = [
