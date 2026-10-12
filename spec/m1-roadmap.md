@@ -257,7 +257,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation tested locally on impl/m1-pending-graph; live state triggers and full shipping evidence remain |
 | CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
-| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: storage-backed EventJournal plugin with CAS revisioned append, independent replay cursors and SDK-only native Storage fixture on impl/m1-basic-journal. Durable SQLite backend, sessions/checkpoint/restart remain pending |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: storage-backed EventJournal and independent Session plugins with CAS checkpoints, caller-owned replay offsets, and explicit interrupted-tool reconciliation; tested with volatile native Storage fixture on impl/m1-basic-session. Durable SQLite backend, sessions/checkpoint/restart remain pending |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: independently packaged typed tool catalog + executor with resource scoped calls, query-bound cursors, actual native denial test on impl/m1-basic-tools; persistent Skills/Context and B2 storage integration pending |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] NOT STARTED |
@@ -324,6 +324,23 @@ context; replaceable providers; usage; streaming; durable session continuation;
 caller-selected limits; and denied imports with zero tool effects. Planning,
 compaction and MCP remain later plugin work.
 
+
+### B2 session/checkpoint slice
+
+`impl/m1-basic-session` stacks on the journal branch and provides the public
+`Session` contract from a separate native plugin. Snapshot open, revisioned
+checkpoint and pending tool reconciliation all delegate to an explicitly
+selected Storage implementation. A restarted provider's first open of a
+previously Running snapshot with unresolved tool calls marks it Indeterminate
+through a CAS transaction. It never silently repeats an indeterminate tool;
+the caller must reconcile its recorded call ID. A native fixture seeds a
+checkpoint in independently packaged Storage to verify the transition,
+stale revisions and cross-session denial.
+
+This is not process-restart or SQLite proof: the fixture is volatile and the
+simulated reload seeds the stored checkpoint explicitly. SQLite durability,
+journal-backed replay integration, true restart/resume, observer cursor storage
+and fault-injection remain the B2 product acceptance gate.
 
 ### B2 semantic event journal slice
 
