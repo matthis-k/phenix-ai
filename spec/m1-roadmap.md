@@ -255,10 +255,11 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant CI 38231650549 passed; generation-aware admission context remains |
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation tested locally on impl/m1-pending-graph; live state triggers and full shipping evidence remain |
+| CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] NOT STARTED |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] NOT STARTED |
-| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] NOT STARTED |
+| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] NOT STARTED |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] NOT STARTED |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] NOT STARTED |
@@ -322,6 +323,25 @@ multi-turn history; multiple tools; typed tool-error recovery; loaded skills and
 context; replaceable providers; usage; streaming; durable session continuation;
 caller-selected limits; and denied imports with zero tool effects. Planning,
 compaction and MCP remain later plugin work.
+
+
+### Development branch after the CI matrix
+
+`impl/m1-basic-providers` branches from `impl/m1-ci-matrix` (PR #790)
+without changing the CI branch. The matrix remains a cross-cutting
+development accelerator, not an agent execution layer or a replacement for
+the shipping acceptance gate. CI0's measured comparison is between the
+same PR's head and generated merge commit; full shipping parity is open.
+
+The first executable B4 slice provides a stateless scripted Model contract
+implementation using the public Basic types. It validates transcript tool
+call IDs, returns deterministic multiple calls and usage, honors caller
+token limits, and checks the authenticated session resource at the native
+ABI boundary. An independent package and native black-box gate exercise
+these contracts; HTTP transport, streaming and full B4 acceptance are still
+unchecked. B2 durable sessions, B3 tools/skills/context, G4 committed
+state-change triggers, B5 graph-composed agent and F1/F2 remain in their
+existing roadmap order. This slice does not add a new kernel mechanism.
 
 ## 9. Kernel operations and independent plugins
 
