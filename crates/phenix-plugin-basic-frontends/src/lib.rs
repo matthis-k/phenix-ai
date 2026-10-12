@@ -4,8 +4,8 @@
 compile_error!("select exactly one Basic frontend adapter");
 
 use phenix_basic_contracts::{
-    encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits,
-    PromptSubmitted, RenderRequest, Submission,
+    encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits, PromptSubmitted,
+    RenderRequest, Submission,
 };
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,12 @@ fn prompt(session: String, text: String, limits: Limits) -> Result<Submission, B
     if text.is_empty() {
         return Err(error(ErrorCode::InvalidInput, "empty prompt"));
     }
-    let payload = encode(&PromptSubmitted { session, text, limits })
-        .map_err(|_| error(ErrorCode::InvalidInput, "invalid prompt payload"))?;
+    let payload = encode(&PromptSubmitted {
+        session,
+        text,
+        limits,
+    })
+    .map_err(|_| error(ErrorCode::InvalidInput, "invalid prompt payload"))?;
     Ok(Submission {
         action: "phenix.basic.submit".into(),
         payload,
@@ -47,14 +51,20 @@ enum Input {
         #[serde(default)]
         limits: Limits,
     },
-    Cancel { session: String },
+    Cancel {
+        session: String,
+    },
 }
 
 pub fn jsonl_decode(request: ClientInput) -> Result<Submission, BasicError> {
     let incoming: Input = serde_json::from_str(&request.line)
         .map_err(|_| error(ErrorCode::InvalidInput, "malformed JSONL input"))?;
     match incoming {
-        Input::Prompt { session, text, limits } => {
+        Input::Prompt {
+            session,
+            text,
+            limits,
+        } => {
             if session != request.session {
                 return Err(error(ErrorCode::Denied, "JSONL session mismatch"));
             }
@@ -96,8 +106,10 @@ pub fn jsonl_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
         if event.session != request.session {
             return Err(error(ErrorCode::Denied, "cross-session output"));
         }
-        lines.push(serde_json::to_string(&event)
-            .map_err(|_| error(ErrorCode::InvalidReply, "event encoding failed"))?);
+        lines.push(
+            serde_json::to_string(&event)
+                .map_err(|_| error(ErrorCode::InvalidReply, "event encoding failed"))?,
+        );
     }
     Ok(lines)
 }
@@ -138,11 +150,7 @@ mod terminal {
     }
 
     #[provide(Frontend::cancel)]
-    fn cancel(
-        _: &mut State,
-        host: &Host<'_>,
-        request: Scope,
-    ) -> CallResult<(), BasicError> {
+    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         Err(CallError::Domain(phenix_basic_contracts::error(
             phenix_basic_contracts::ErrorCode::InvalidInput,
@@ -187,11 +195,7 @@ mod jsonl {
     }
 
     #[provide(Frontend::cancel)]
-    fn cancel(
-        _: &mut State,
-        host: &Host<'_>,
-        request: Scope,
-    ) -> CallResult<(), BasicError> {
+    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         Err(CallError::Domain(phenix_basic_contracts::error(
             phenix_basic_contracts::ErrorCode::InvalidInput,
@@ -210,31 +214,40 @@ mod tests {
         let line = terminal_decode(ClientInput {
             session: "s1".into(),
             line: "hello".into(),
-        }).unwrap();
+        })
+        .unwrap();
         let json = jsonl_decode(ClientInput {
             session: "s1".into(),
             line: r#"{"type":"prompt","session":"s1","text":"hello"}"#.into(),
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(line, json);
         assert_eq!(line.action, "phenix.basic.submit");
         assert_eq!(
             terminal_decode(ClientInput {
                 session: "s1".into(),
                 line: "/cancel".into(),
-            }).unwrap(),
+            })
+            .unwrap(),
             cancellation()
         );
         assert_eq!(
             jsonl_decode(ClientInput {
                 session: "s1".into(),
                 line: r#"{"type":"cancel","session":"s1"}"#.into(),
-            }).unwrap(),
+            })
+            .unwrap(),
             cancellation()
         );
-        assert_eq!(jsonl_decode(ClientInput {
-            session: "s1".into(),
-            line: r#"{"type":"prompt","session":"s2","text":"forged"}"#.into()
-        }).unwrap_err().code, ErrorCode::Denied);
+        assert_eq!(
+            jsonl_decode(ClientInput {
+                session: "s1".into(),
+                line: r#"{"type":"prompt","session":"s2","text":"forged"}"#.into()
+            })
+            .unwrap_err()
+            .code,
+            ErrorCode::Denied
+        );
     }
 
     #[test]
@@ -251,7 +264,10 @@ mod tests {
                 data: Blob(vec![]),
             }],
         };
-        assert_eq!(terminal_render(request.clone()).unwrap_err().code, ErrorCode::Denied);
+        assert_eq!(
+            terminal_render(request.clone()).unwrap_err().code,
+            ErrorCode::Denied
+        );
         assert_eq!(jsonl_render(request).unwrap_err().code, ErrorCode::Denied);
     }
 }
