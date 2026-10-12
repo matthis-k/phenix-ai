@@ -87,9 +87,16 @@ fn main() {
         resource: Some(resource.into()),
     };
     let kernel = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
-    let fresh: SessionSnapshot = invoke(&kernel, open, "phenix.basic.session", Scope {
-        session: session.into(),
-    }).unwrap().unwrap();
+    let fresh: SessionSnapshot = invoke(
+        &kernel,
+        open,
+        "phenix.basic.session",
+        Scope {
+            session: session.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(fresh.revision, 0);
     assert_eq!(fresh.status, RunStatus::Idle);
     let mut running = fresh.clone();
@@ -108,25 +115,39 @@ fn main() {
         arguments: r#""prompt""#.into(),
     });
     let saved: SessionSnapshot = invoke(&kernel, checkpoint, "phenix.basic.session", running)
-        .unwrap().unwrap();
+        .unwrap()
+        .unwrap();
     assert_eq!(saved.revision, 1);
     assert_eq!(
-        invoke::<SessionSnapshot>(&kernel, open, "phenix.basic.session", Scope {
-            session: session.into(),
-        }).unwrap().unwrap().status,
+        invoke::<SessionSnapshot>(
+            &kernel,
+            open,
+            "phenix.basic.session",
+            Scope {
+                session: session.into(),
+            }
+        )
+        .unwrap()
+        .unwrap()
+        .status,
         RunStatus::Running
     );
     assert_eq!(
         invoke::<SessionSnapshot>(&kernel, checkpoint, "phenix.basic.session", fresh)
-            .unwrap().unwrap_err().code,
+            .unwrap()
+            .unwrap_err()
+            .code,
         ErrorCode::Conflict
     );
     let denied: Result<SessionSnapshot, BasicError> = invoke(
         &kernel,
         open,
         "phenix.basic.session",
-        Scope { session: "s2".into() },
-    ).unwrap();
+        Scope {
+            session: "s2".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(denied.unwrap_err().code, ErrorCode::Denied);
     drop(kernel);
 
@@ -152,23 +173,35 @@ fn main() {
                 data: encode(&saved).unwrap(),
             }],
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(seeded.len(), 1);
     let interrupted: SessionSnapshot = invoke(
-        &kernel, open, "phenix.basic.session",
-        Scope { session: session.into() },
-    ).unwrap().unwrap();
+        &kernel,
+        open,
+        "phenix.basic.session",
+        Scope {
+            session: session.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(interrupted.status, RunStatus::Indeterminate);
     assert_eq!(interrupted.revision, 2);
     let resolved: SessionSnapshot = invoke(
-        &kernel, reconcile, "phenix.basic.session",
+        &kernel,
+        reconcile,
+        "phenix.basic.session",
         ReconcileTool {
             session: session.into(),
             call_id: "call-1".into(),
             text: "PROMPT".into(),
             error: None,
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(resolved.status, RunStatus::Running);
     assert_eq!(resolved.revision, 3);
     assert!(resolved.pending.is_empty());
@@ -188,6 +221,7 @@ fn main() {
             "real_restart_or_sqlite_verified": false
         }))
         .unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
     println!("B2 session native gate passed (volatile Storage fixture)");
 }
