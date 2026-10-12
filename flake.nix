@@ -260,6 +260,21 @@
         ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModel} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
         test -s "$out/agent.json"
       '';
+      frontendTerminal = basicNativePlugin
+        "phenix-plugin-basic-frontends"
+        "phenix_plugin_basic_frontends"
+        ./crates/phenix-plugin-basic-frontends;
+      frontendJsonl = frontendTerminal.overrideAttrs (old: {
+        pname = "phenix-basic-frontend-jsonl";
+        cargoBuildFlags = old.cargoBuildFlags ++ [
+          "--no-default-features" "--features" "jsonl"
+        ];
+      });
+      frontendCheck = pkgs.runCommand "phenix-f1-frontends" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-f1-frontends ${frontendTerminal} ${frontendJsonl} ${basicDefinitions} $out
+        test -s "$out/frontends.json"
+      '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -630,6 +645,7 @@
         ln -s ${sqliteRestartCheck} $out/sqlite-restart
         ln -s ${basicMemoryCheck} $out/basic-memory
         ln -s ${basicAgentCheck} $out/basic-agent
+        ln -s ${frontendCheck} $out/frontends
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -657,6 +673,8 @@
         phenix-plugin-storage-sqlite = storageSqlite;
         phenix-plugin-basic-memory = basicMemory;
         phenix-plugin-basic-agent = basicAgent;
+        phenix-plugin-frontend-terminal = frontendTerminal;
+        phenix-plugin-frontend-jsonl = frontendJsonl;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -690,6 +708,7 @@
         b2-sqlite = sqliteRestartCheck;
         b3-memory = basicMemoryCheck;
         b5-agent = basicAgentCheck;
+        f1-frontends = frontendCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
