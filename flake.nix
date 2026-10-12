@@ -213,6 +213,14 @@
         "phenix-plugin-basic-tools"
         "phenix_plugin_basic_tools"
         ./crates/phenix-plugin-basic-tools;
+      eventJournal = basicNativePlugin
+        "phenix-plugin-event-journal"
+        "phenix_plugin_event_journal"
+        ./crates/phenix-plugin-event-journal;
+      storageFixture = basicNativePlugin
+        "phenix-plugin-storage-fixture"
+        "phenix_plugin_storage_fixture"
+        ./crates/phenix-plugin-storage-fixture;
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -220,6 +228,10 @@
       basicToolsCheck = pkgs.runCommand "phenix-b3-tools" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b3-tools ${basicTools} ${basicDefinitions} $out
+      '';
+      eventJournalCheck = pkgs.runCommand "phenix-b2-journal" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-b2-journal ${eventJournal} ${storageFixture} ${basicDefinitions} $out
       '';
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
         mkdir -p $out
@@ -570,6 +582,7 @@
         ln -s ${basicContractsCheck} $out/basic-contracts
         ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${basicToolsCheck} $out/basic-tools
+        ln -s ${eventJournalCheck} $out/event-journal
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -592,6 +605,7 @@
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-basic-tools = basicTools;
+        phenix-plugin-event-journal = eventJournal;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -620,6 +634,7 @@
         basic-contracts = basicContractsCheck;
         b4-scripted = scriptedModelCheck;
         b3-tools = basicToolsCheck;
+        b2-journal = eventJournalCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
