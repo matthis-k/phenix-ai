@@ -28,6 +28,10 @@ The kernel identifies graph nodes by plugin and local node ID. Contributions
 may have disconnected components. Repeated global event IDs and action IDs
 reject, including identical duplicates.
 
+## Rust authoring
+
+The public SDK now exposes const-friendly `StaticGraphContribution`, `StaticGraphNode`, `StaticEventDefinition` and `StaticActionDefinition`. `#[event(id = "...")]` uses the type's `Portable` schema. `#[action(...)]` declares discovery metadata and required operation keys. Both generate associated constants without handwritten metadata bytes. The plugin can assemble a static declaration from those constants. Embedding it in the verified native artifact remains unfinished.
+
 ## Preparation
 
 `CompiledGraph::compile` normalizes contributions and validates graph
@@ -55,7 +59,7 @@ This is **not G1 or G2 acceptance**. The following still require executable
 work:
 
 - Embed graph contributions in native/definition-only verified artifact
-  metadata, with constant Rust SDK and macro generation.
+  metadata and wire static declarations through the plugin macro.
 - Prove external independently compiled plugins and malformed offline artifacts.
 - Include resolved provider and grant identities in the generation digest.
 - Bind action inspection and event admission to authenticated root authority.
