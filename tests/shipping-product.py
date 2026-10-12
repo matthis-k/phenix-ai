@@ -3,7 +3,7 @@ import json, re, sys
 from pathlib import Path
 kernel, sdk_check, conformance, closure, examples, output = map(Path, sys.argv[1:])
 output.mkdir(parents=True)
-required = {"contract", "descriptor", "native", "product", "composition", "composition-product", "lifecycle", "lifecycle-product", "pending", "pending-product", "imports", "generations", "wire", "metadata-state", "authoring", "live-state", "live-state-product", "value-sdk", "value-sdk-product", "agent", "agent-product", "graph", "basic-contracts", "scripted-model", "basic-tools", "event-journal", "basic-session"}
+required = {"contract", "descriptor", "native", "product", "composition", "composition-product", "lifecycle", "lifecycle-product", "pending", "pending-product", "imports", "generations", "wire", "metadata-state", "authoring", "live-state", "live-state-product", "value-sdk", "value-sdk-product", "agent", "agent-product", "graph", "basic-contracts", "scripted-model", "basic-tools", "event-journal", "basic-session", "sqlite-restart"}
 assert {p.name for p in conformance.iterdir()} == required
 assert (conformance / "contract" / "contract").read_text().strip() == "passed"
 assert (sdk_check / "public-sdk").read_text().strip() == "passed"
