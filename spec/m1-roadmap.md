@@ -400,6 +400,11 @@ a second isolated session. This still uses a synchronous scripted model, so it
 cannot interrupt active model I/O. Streaming cancellation, richer ACP client
 conformance and exact-head shipping remain before F2/P1 acceptance.
 
+The branch includes the B5 nested Storage ceiling fix and removes direct agent
+Storage grants from the product composition. Runtime and frontend formatting
+pass locally. The native ACP codec and two-process stdio/reload fixture pass
+with independently packaged native providers. Exact-head Nix CI remains pending.
+
 ### P1 terminal and JSONL host smoke
 
 `impl/m1-basic-runtime` packages `phenix-basic-runtime` outside the kernel.
@@ -418,6 +423,12 @@ yet a full multi-session host. The synchronous agent cannot accept live
 cancellation while model I/O blocks. The full P1 gate remains unchecked until
 pending/streaming, ACP, session/resource selection and all product acceptance
 cases pass on the exact integrated head.
+
+The product composition now follows the B5 nested Storage ceiling declaration.
+It grants Storage operations only to the owning Session, Journal and memory
+providers. The runtime passes Rust formatting. Local native Terminal and JSONL
+smoke tests pass in separate processes against one SQLite database. These
+checks cover the synchronous slice; canonical Nix CI is still required.
 
 ### F1 terminal and JSONL frontend codecs
 
@@ -456,6 +467,15 @@ scripted synchronous slice, not yet P1. It still needs pending streaming,
 cancellation while model/tool I/O is in progress, HTTP-backed model tests,
 reactive value triggers and shared terminal/JSONL/ACP product integration.
 Exact-head CI acceptance remains required.
+
+The B5 grant fix declares an optional Storage requirement to retain the
+operation ceiling through nested Session, Journal and memory calls. The agent
+has no selected Storage slot or direct Storage grants. Storage-owning providers
+retain their explicit grants. Resolver and effect-admission rules are unchanged.
+The native gate also rejects duplicate and unknown grants, then narrows root
+Storage authority and verifies denial leaves the session idle with no history.
+Local workspace tests, formatting and the packaged debug native gate pass.
+Canonical Nix acceptance must still pass on the published commit.
 
 ### B3 persisted skills and context slice
 
