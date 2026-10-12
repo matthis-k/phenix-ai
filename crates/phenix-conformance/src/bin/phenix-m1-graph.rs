@@ -154,6 +154,37 @@ fn main() {
     );
     assert!(!witness.exists(), "tampered graph activated native code");
 
+    // These declarations came from three independently packaged native plugins.
+    // Mutating the requested event schema or a declared write must reject
+    // during preparation, before any code from a selected plugin is loaded.
+    let declarations = packages
+        .iter()
+        .map(|package| {
+            phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(package))
+                .unwrap()
+                .graph()
+                .unwrap()
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    let mut bad_schema = declarations.clone();
+    bad_schema[0].events[0].payload = phenix_contract::ValueSchema::String;
+    assert_eq!(
+        prepared.compile_graph(&bad_schema).unwrap_err().code,
+        Code::SchemaRejected
+    );
+    assert!(!witness.exists(), "rejected schema activated native code");
+
+    let mut missing_property = declarations.clone();
+    missing_property[0].nodes[0]
+        .writes
+        .push("example.graph-a/missing".into());
+    assert_eq!(
+        prepared.compile_graph(&missing_property).unwrap_err().code,
+        Code::MissingBinding
+    );
+    assert!(!witness.exists(), "rejected property activated native code");
+
     let graph_identity = graph.identity.clone();
     let graph_order = graph.order.clone();
     let action_ids = prepared
