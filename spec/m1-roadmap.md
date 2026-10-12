@@ -44,10 +44,10 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
 | S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Accepted at `75a255b9`, CI 38205255204; generated native metadata, ABI 3, typed fields/slots, pending imports and property/security completion proven |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1/G2: shipping CI passed, remaining acceptance cases open |
-| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3/G4: G3 partial, G4 pending |
+| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | G3/G4 slices implemented; committed-state triggers and full reactive acceptance remain |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
 | A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
-| Basic | Triggered agent, providers, durable sessions and frontends | G4 and Basic providers | Terminal, JSONL and ACP run the same agent | B1-B5, F1-F2 and P1 below; not started |
+| Basic | Triggered agent, providers, durable sessions and frontends | G4 and Basic providers | Terminal, JSONL and ACP run the same agent | Partial implementation; B1-B5, F1-F2 and P1 below own evidence and remaining gates |
 
 S1/S2/S3 may refine their Rust API shape based on conformance evidence, but MUST maintain the semantic boundaries in the M1 RFC. S6 is a distinct optimization/capability gate: S5 must implement the correct partial order without relying on parallelism.
 
@@ -439,6 +439,11 @@ a second isolated session. This still uses a synchronous scripted model, so it
 cannot interrupt active model I/O. Streaming cancellation, richer ACP client
 conformance and exact-head shipping remain before F2/P1 acceptance.
 
+The branch includes the B5 nested Storage ceiling fix and removes direct agent
+Storage grants from the product composition. Runtime and frontend formatting
+pass locally. The native ACP codec and two-process stdio/reload fixture pass
+with independently packaged native providers. Exact-head Nix CI remains pending.
+
 ### P1 terminal and JSONL host smoke
 
 `impl/m1-basic-runtime` packages `phenix-basic-runtime` outside the kernel.
@@ -457,6 +462,12 @@ yet a full multi-session host. The synchronous agent cannot accept live
 cancellation while model I/O blocks. The full P1 gate remains unchecked until
 pending/streaming, ACP, session/resource selection and all product acceptance
 cases pass on the exact integrated head.
+
+The product composition now follows the B5 nested Storage ceiling declaration.
+It grants Storage operations only to the owning Session, Journal and memory
+providers. The runtime passes Rust formatting. Local native Terminal and JSONL
+smoke tests pass in separate processes against one SQLite database. These
+checks cover the synchronous slice; canonical Nix CI is still required.
 
 ### F1 terminal and JSONL frontend codecs
 
@@ -495,6 +506,15 @@ scripted synchronous slice, not yet P1. It still needs pending streaming,
 cancellation while model/tool I/O is in progress, HTTP-backed model tests,
 reactive value triggers and shared terminal/JSONL/ACP product integration.
 Exact-head CI acceptance remains required.
+
+The B5 grant fix declares an optional Storage requirement to retain the
+operation ceiling through nested Session, Journal and memory calls. The agent
+has no selected Storage slot or direct Storage grants. Storage-owning providers
+retain their explicit grants. Resolver and effect-admission rules are unchanged.
+The native gate also rejects duplicate and unknown grants, then narrows root
+Storage authority and verifies denial leaves the session idle with no history.
+Local workspace tests, formatting and the packaged debug native gate pass.
+Canonical Nix acceptance must still pass on the published commit.
 
 ### B3 persisted skills and context slice
 

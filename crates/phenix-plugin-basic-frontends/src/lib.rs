@@ -230,13 +230,19 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
     match method {
         "session/cancel" => {
             if frame.get("id").is_some() {
-                return Err(error(ErrorCode::InvalidInput, "ACP cancel must be a notification"));
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "ACP cancel must be a notification",
+                ));
             }
             Ok(cancellation())
         }
         "session/prompt" => {
             if frame.get("id").is_none() {
-                return Err(error(ErrorCode::InvalidInput, "ACP prompt requires request ID"));
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "ACP prompt requires request ID",
+                ));
             }
             let blocks = frame
                 .pointer("/params/prompt")
@@ -245,7 +251,10 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
             let mut texts = Vec::with_capacity(blocks.len());
             for block in blocks {
                 if block.get("type").and_then(|value| value.as_str()) != Some("text") {
-                    return Err(error(ErrorCode::InvalidInput, "unsupported ACP content block"));
+                    return Err(error(
+                        ErrorCode::InvalidInput,
+                        "unsupported ACP content block",
+                    ));
                 }
                 let text = block
                     .get("text")
@@ -255,7 +264,10 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
             }
             prompt(request.session, texts.join("\n"), Limits::default())
         }
-        _ => Err(error(ErrorCode::InvalidInput, "unsupported ACP turn method")),
+        _ => Err(error(
+            ErrorCode::InvalidInput,
+            "unsupported ACP turn method",
+        )),
     }
 }
 
@@ -337,11 +349,7 @@ mod acp {
     }
 
     #[provide(Frontend::cancel)]
-    fn cancel(
-        _: &mut State,
-        host: &Host<'_>,
-        request: Scope,
-    ) -> CallResult<(), BasicError> {
+    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         Err(CallError::Domain(phenix_basic_contracts::error(
             phenix_basic_contracts::ErrorCode::InvalidInput,
