@@ -49,10 +49,17 @@ mod graph_declaration_tests {
         };
         let metadata = GRAPH.owned().unwrap();
         assert_eq!(metadata.events[0].id, "example.prompt");
-        assert_eq!(metadata.events[0].payload, ValueSchema::Struct(
-            std::collections::BTreeMap::from([("text".into(), ValueSchema::String)])
-        ));
+        assert_eq!(
+            metadata.events[0].payload,
+            ValueSchema::Struct(std::collections::BTreeMap::from([(
+                "text".into(),
+                ValueSchema::String
+            )]))
+        );
         assert_eq!(metadata.actions[0].requires, vec!["example.input@1/submit"]);
-        assert_eq!(GraphContribution::decode(&metadata.encode().unwrap()).unwrap(), metadata);
+        assert_eq!(
+            GraphContribution::decode(&metadata.encode().unwrap()).unwrap(),
+            metadata
+        );
     }
 }
