@@ -30,3 +30,15 @@ mod provider {
         Ok(input.text)
     }
 }
+
+#[cfg(target_os = "linux")]
+#[used]
+#[link_section = ".init_array"]
+static GRAPH_CONSTRUCTOR_WITNESS: extern "C" fn() = graph_constructor;
+
+#[cfg(target_os = "linux")]
+extern "C" fn graph_constructor() {
+    if let Some(path) = std::env::var_os("PHENIX_GRAPH_CONSTRUCTOR_WITNESS") {
+        let _ = std::fs::write(path, b"native code loaded");
+    }
+}
