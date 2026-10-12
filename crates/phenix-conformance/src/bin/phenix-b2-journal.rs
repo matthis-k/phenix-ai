@@ -52,20 +52,23 @@ fn main() {
     let store_write = "phenix.basic.storage@1/transact";
     let session_resource = "phenix.session.s1";
     let resources = BTreeSet::from([session_resource.to_owned()]);
-    let grants = [("root", append), ("root", read),
+    let grants = [
+        ("root", append),
+        ("root", read),
         ("phenix.basic.event-journal", store_read),
-        ("phenix.basic.event-journal", store_write)]
-        .into_iter()
-        .map(|(caller, key)| {
-            let (interface, operation) = key.split_once('/').unwrap();
-            ScopedGrant {
-                caller: caller.into(),
-                interface: interface.into(),
-                operation: operation.into(),
-                resources: resources.clone(),
-            }
-        })
-        .collect();
+        ("phenix.basic.event-journal", store_write),
+    ]
+    .into_iter()
+    .map(|(caller, key)| {
+        let (interface, operation) = key.split_once('/').unwrap();
+        ScopedGrant {
+            caller: caller.into(),
+            interface: interface.into(),
+            operation: operation.into(),
+            resources: resources.clone(),
+        }
+    })
+    .collect();
     let policy = Composition {
         format: "phenix.composition.v2".into(),
         artifacts: vec![args[1].clone(), args[2].clone()],
@@ -94,10 +97,7 @@ fn main() {
     let kernel = prepared.load().unwrap();
     let first = JournalAppend {
         session: "s1".into(),
-        events: vec![
-            request("s1", "r1", "one"),
-            request("s1", "r1", "two"),
-        ],
+        events: vec![request("s1", "r1", "one"), request("s1", "r1", "two")],
     };
     assert_eq!(invoke::<u64>(&kernel, append, first).unwrap(), 2);
     let a = JournalQuery {
@@ -105,7 +105,10 @@ fn main() {
         after: 0,
         limit: 1,
     };
-    let b = JournalQuery { limit: 2, ..a.clone() };
+    let b = JournalQuery {
+        limit: 2,
+        ..a.clone()
+    };
     let one = invoke::<EventPage>(&kernel, read, a).unwrap();
     let two = invoke::<EventPage>(&kernel, read, b).unwrap();
     assert_eq!(one.next, 1);
@@ -113,17 +116,27 @@ fn main() {
     assert_eq!(one.events[0].sequence, 1);
     assert_eq!(two.events[1].sequence, 2);
     assert_eq!(
-        invoke::<u64>(&kernel, append, JournalAppend {
-            session: "s1".into(),
-            events: vec![request("s1", "r2", "three")],
-        }).unwrap(),
+        invoke::<u64>(
+            &kernel,
+            append,
+            JournalAppend {
+                session: "s1".into(),
+                events: vec![request("s1", "r2", "three")],
+            }
+        )
+        .unwrap(),
         3
     );
-    let third = invoke::<EventPage>(&kernel, read, JournalQuery {
-        session: "s1".into(),
-        after: two.next,
-        limit: 2,
-    }).unwrap();
+    let third = invoke::<EventPage>(
+        &kernel,
+        read,
+        JournalQuery {
+            session: "s1".into(),
+            after: two.next,
+            limit: 2,
+        },
+    )
+    .unwrap();
     assert_eq!(third.events.len(), 1);
     assert_eq!(third.events[0].text, "three");
     // The host context is scoped to s1; requests claiming s2 must reject
@@ -143,11 +156,16 @@ fn main() {
         phenix_basic_contracts::ErrorCode::Denied
     );
     drop(root);
-    let unchanged = invoke::<EventPage>(&kernel, read, JournalQuery {
-        session: "s1".into(),
-        after: 0,
-        limit: 100,
-    }).unwrap();
+    let unchanged = invoke::<EventPage>(
+        &kernel,
+        read,
+        JournalQuery {
+            session: "s1".into(),
+            after: 0,
+            limit: 100,
+        },
+    )
+    .unwrap();
     assert_eq!(unchanged.events.len(), 3);
     drop(kernel);
 
@@ -164,10 +182,15 @@ fn main() {
             let kernel = prepared.load().unwrap();
             let root = kernel.admit_default_root().unwrap();
             assert_eq!(
-                root.invoke(&JournalAppend {
-                    session: "s1".into(),
-                    events: vec![request("s1", "r1", "denied")],
-                }.to_value()).unwrap_err().code,
+                root.invoke(
+                    &JournalAppend {
+                        session: "s1".into(),
+                        events: vec![request("s1", "r1", "denied")],
+                    }
+                    .to_value()
+                )
+                .unwrap_err()
+                .code,
                 phenix_contract::Code::Denied
             );
         }

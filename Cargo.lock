@@ -116,8 +116,8 @@ dependencies = [
 name = "phenix-conformance"
 version = "0.1.0"
 dependencies = [
- "phenix-basic-contracts",
  "phenix-artifact",
+ "phenix-basic-contracts",
  "phenix-contract",
  "phenix-kernel",
  "serde_json",
@@ -144,6 +144,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-macros"
+version = "0.1.0"
+dependencies = [
+ "phenix-contract",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "phenix-plugin-basic-tools"
 version = "0.1.0"
 dependencies = [
@@ -161,14 +171,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-storage-fixture"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
-]
-
-[[package]]
 name = "phenix-plugin-model-scripted"
 version = "0.1.0"
 dependencies = [
@@ -178,13 +180,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-macros"
+name = "phenix-plugin-storage-fixture"
 version = "0.1.0"
 dependencies = [
- "phenix-contract",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
+ "phenix-basic-contracts",
+ "phenix-sdk",
 ]
 
 [[package]]
