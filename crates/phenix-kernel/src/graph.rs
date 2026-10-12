@@ -242,7 +242,7 @@ impl crate::resolve::Prepared {
         &self,
         declarations: &[GraphContribution],
     ) -> Result<CompiledGraph, Failure> {
-        CompiledGraph::compile(declarations, |caller, selector, key| {
+        let graph = CompiledGraph::compile(declarations, |caller, selector, key| {
             let provider = if selector.is_empty() {
                 caller.to_owned()
             } else {
@@ -269,7 +269,34 @@ impl crate::resolve::Prepared {
                 ));
             }
             Ok(provider)
-        })
+        })?;
+        for (id, node) in &graph.nodes {
+            let operation = &self.operations[&(node.provider.clone(), node.definition.operation.clone())];
+            for event in &node.definition.triggers {
+                if operation.schema.request != graph.events[event].payload {
+                    return Err(Failure::new(
+                        Code::SchemaRejected,
+                        format!("node {id} request schema does not match event {event}"),
+                    ));
+                }
+            }
+            for write in &node.definition.writes {
+                let (owner, property) = write.split_once('/').expect("validated property key");
+                let target = self.packages.get(owner)
+                    .and_then(|package| package.metadata().properties.iter().find(|field| field.id == property))
+                    .ok_or_else(|| Failure::new(Code::MissingBinding, format!("graph property {write} not selected")))?;
+                if !target.set {
+                    return Err(Failure::new(Code::Denied, format!("graph property {write} is read-only")));
+                }
+                let key = format!("{}/set", phenix_contract::property_contract(owner, property)?);
+                if !self.permits(&node.owner, &key)
+                    || !self.grants.contains_key(&(node.owner.clone(), key))
+                {
+                    return Err(Failure::new(Code::Denied, format!("graph property {write} has no write grant")));
+                }
+            }
+        }
+        Ok(graph)
     }
 }
 
