@@ -4,6 +4,8 @@ name: Minimal kernel matrix candidate
 on:
   push:
     branches: [impl/m1-ci-matrix]
+  pull_request:
+    branches: [impl/m1-basic-contracts]
   workflow_dispatch:
 
 permissions:
