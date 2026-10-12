@@ -261,7 +261,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
-| F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] NOT STARTED |
+| F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] NOT STARTED |
 | P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] NOT STARTED |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
@@ -381,6 +381,21 @@ conformance fixture**. It does not prove durability, process restart, SQLite
 storage, independent observer checkpoint persistence, or session replay.
 Those are still B2 acceptance requirements. No persistence or journal
 logic enters the kernel.
+
+### F1 terminal and JSONL frontend codecs
+
+`impl/m1-basic-frontends` builds two standalone Frontend plugins from
+one source crate with exclusive Cargo features. Both decode input into the
+same typed `phenix.basic.submit` action payload and render journal events.
+JSONL enforces its declared session against the authenticated client session.
+The host controller owns active graph roots. A frontend's cancellation packet
+signals that controller, while the direct `Frontend::cancel` method refuses to
+report success without an active root to cancel.
+
+The `phenix-f1-frontends` native check loads both artifacts separately and
+checks typed prompt/cancel packets, event output and cross-session refusal.
+The terminal event loop, JSONL host event loop, streaming/cancel dispatch and
+ACP integration are still required for F1/F2/P1 acceptance.
 
 ### B5 graph-driven Basic agent slice
 
