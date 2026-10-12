@@ -1,0 +1,170 @@
+//! Session-scoped Skills and Context providers over independently selected
+//! Storage. These are declarations, not an implicit filesystem or prompt scan.
+use phenix_basic_contracts::{error, BasicError, ErrorCode, ContextItem, Skill};
+use std::collections::BTreeSet;
+
+const SKILLS_KEY: &str = "basic.skills.v1";
+const CONTEXT_KEY: &str = "basic.context.v1";
+
+fn validate<'a>(ids: impl Iterator<Item = &'a str>) -> Result<(), BasicError> {
+    let mut seen = BTreeSet::new();
+    for id in ids {
+        if id.is_empty() || !seen.insert(id) {
+            return Err(error(ErrorCode::InvalidInput, "empty or duplicate item id"));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_skills(skills: &[Skill]) -> Result<(), BasicError> {
+    validate(skills.iter().map(|skill| skill.id.as_str()))
+}
+pub fn validate_context(items: &[ContextItem]) -> Result<(), BasicError> {
+    validate(items.iter().map(|item| item.id.as_str()))
+}
+
+#[phenix_sdk::plugin(
+    id = "phenix.basic.memory",
+    version = "1.0.0",
+    provide(phenix_basic_contracts::Skills, slot = "Skills"),
+    provide(phenix_basic_contracts::Context, slot = "Context"),
+    require(phenix_basic_contracts::Storage, slot = "Storage")
+)]
+mod plugin {
+    use super::{validate_context, validate_skills, CONTEXT_KEY, SKILLS_KEY};
+    use phenix_basic_contracts::{
+        decode, encode, error, BasicError, Context, ContextItem, ContextSet, ErrorCode, RecordKey,
+        Scope, Skill, SkillSet, Skills, Storage, StorageEdit, StorageTransaction,
+    };
+    use phenix_sdk::{CallError, CallResult, Code, Failure, Host, Portable};
+
+    #[derive(Default)]
+    pub struct State;
+
+    fn load<T: Portable>(
+        host: &Host<'_>,
+        session: &str,
+        key: &str,
+    ) -> CallResult<Option<(u64, T)>, BasicError> {
+        match host.invoke::<Storage::read>(
+            "Storage",
+            &RecordKey {
+                session: session.into(),
+                key: key.into(),
+            },
+        ) {
+            Ok(record) => {
+                let value = decode(&record.data).map_err(|_| {
+                    CallError::Domain(error(ErrorCode::StorageFailed, "corrupt item record"))
+                })?;
+                Ok(Some((record.revision, value)))
+            }
+            Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn save<T: Portable>(
+        host: &Host<'_>,
+        session: &str,
+        key: &str,
+        value: &T,
+    ) -> CallResult<(), BasicError> {
+        // The wire contract has no expected revision for callers. Read then
+        // CAS once. Competing writers receive Conflict instead of lost updates.
+        let expected = host.invoke::<Storage::read>(
+            "Storage",
+            &RecordKey {
+                session: session.into(),
+                key: key.into(),
+            },
+        );
+        let revision = match expected {
+            Ok(record) => record.revision,
+            Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => 0,
+            Err(err) => return Err(err),
+        };
+        let next = revision.checked_add(1).ok_or_else(|| {
+            CallError::Domain(error(ErrorCode::Conflict, "revision overflow"))
+        })?;
+        let result = host.invoke::<Storage::transact>(
+            "Storage",
+            &StorageTransaction {
+                session: session.into(),
+                edits: vec![StorageEdit {
+                    key: key.into(),
+                    expected: revision,
+                    data: encode(value)?,
+                }],
+            },
+        )?;
+        if result.len() != 1 || result[0].revision != next {
+            return Err(CallError::Kernel(Failure::new(
+                Code::PluginFailed,
+                "storage returned invalid revision",
+            )));
+        }
+        Ok(())
+    }
+
+    #[provide(Skills::list)]
+    fn skills_list(
+        _: &mut State,
+        host: &Host<'_>,
+        request: Scope,
+    ) -> CallResult<Vec<Skill>, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        Ok(load::<SkillSet>(host, &request.session, SKILLS_KEY)?
+            .map_or_else(Vec::new, |(_, value)| value.skills))
+    }
+
+    #[provide(Skills::set)]
+    fn skills_set(
+        _: &mut State,
+        host: &Host<'_>,
+        request: SkillSet,
+    ) -> CallResult<(), BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        validate_skills(&request.skills).map_err(CallError::Domain)?;
+        save(host, &request.session, SKILLS_KEY, &request)
+    }
+
+    #[provide(Context::list)]
+    fn context_list(
+        _: &mut State,
+        host: &Host<'_>,
+        request: Scope,
+    ) -> CallResult<Vec<ContextItem>, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        Ok(load::<ContextSet>(host, &request.session, CONTEXT_KEY)?
+            .map_or_else(Vec::new, |(_, value)| value.items))
+    }
+
+    #[provide(Context::set)]
+    fn context_set(
+        _: &mut State,
+        host: &Host<'_>,
+        request: ContextSet,
+    ) -> CallResult<(), BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        validate_context(&request.items).map_err(CallError::Domain)?;
+        save(host, &request.session, CONTEXT_KEY, &request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unique_ids_are_required_before_storage_effects() {
+        assert_eq!(validate_skills(&[Skill {
+            id: "".into(),
+            description: "".into(),
+            instructions: "".into(),
+        }]).unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(validate_context(&[
+            ContextItem { id: "dup".into(), text: "a".into() },
+            ContextItem { id: "dup".into(), text: "b".into() },
+        ]).unwrap_err().code, ErrorCode::InvalidInput);
+    }
+}
