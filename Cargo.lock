@@ -144,6 +144,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-basic-session"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-basic-tools"
 version = "0.1.0"
 dependencies = [
