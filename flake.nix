@@ -440,6 +440,7 @@
           '';
       contractCheck = (build "phenix-contract-check" contractSource).overrideAttrs (old: {
         cargoBuildFlags = [ ];
+        buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
         nativeBuildInputs = old.nativeBuildInputs ++ [
           pkgs.rustfmt
           pkgs.python3
