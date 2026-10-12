@@ -381,8 +381,15 @@
         grep -F 'answer: mock:hello' $out/terminal.txt
         printf '%s\n' '{"type":"prompt","session":"s1","text":"tools:hello","limits":{"model_turns":2,"tool_calls":2}}' | ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} > $out/jsonl.txt
         grep -F 'mock:call-1:HELLO|call-2:5' $out/jsonl.txt
+        printf '%s\n' \
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' \
+          '{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}' \
+          '{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"acp-smoke"}]}}' \
+          | ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} > $out/acp.jsonl
+        grep -F '"stopReason":"end_turn"' $out/acp.jsonl
+        grep -F 'mock:acp-smoke' $out/acp.jsonl
         test -s "$PHENIX_BASIC_SQLITE_PATH"
-        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"p1_accepted":false}' > $out/evidence.json
+        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"acp_v1_single_session":true,"p1_accepted":false}' > $out/evidence.json
       '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
@@ -793,6 +800,10 @@
         phenix-basic-terminal = pkgs.writeShellApplication {
           name = "phenix-basic-terminal";
           text = "exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition}";
+        };
+        phenix-basic-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-acp";
+          text = "exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition}";
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
