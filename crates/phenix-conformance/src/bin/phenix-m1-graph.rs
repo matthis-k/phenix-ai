@@ -1,5 +1,5 @@
 //! G2 external artifact gate. All three graph providers are independently built.
-use phenix_contract::{Authority, Code, Value};
+use phenix_contract::{Authority, Code, ScopedRequest, Value};
 use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding};
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -298,6 +298,25 @@ fn main() {
         !successor_witness.exists(),
         "B failure must have zero C invocations"
     );
+    // A discovered action without the submitting root's authority must not
+    // admit a root, invoke A, or write either predecessor's state.
+    let calls_before = kernel.inspect()["calls"].as_u64().unwrap();
+    assert_eq!(
+        kernel
+            .submit_action_scoped(
+                "example.graph.submit",
+                &Value::map([("text", Value::String("denied-scope".into()))]),
+                ScopedRequest {
+                    authority: Authority::default(),
+                    resource: None,
+                },
+            )
+            .unwrap_err()
+            .code,
+        Code::Denied
+    );
+    assert_eq!(kernel.inspect()["calls"].as_u64().unwrap(), calls_before);
+    assert!(!successor_witness.exists());
     assert_eq!(
         kernel
             .submit_action("example.graph.unknown", &Value::String("x".into()))
@@ -347,6 +366,7 @@ fn main() {
             "schema-and-action-rejection",
             "successful-fanin-runs-c",
             "two-committed-property-values-read-by-successor",
+            "narrow-action-scope-zero-effects",
             "predecessor-b-domain-prevents-c-effect"
         ]
         }))

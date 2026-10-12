@@ -7,7 +7,7 @@ use crate::{
 };
 use phenix_contract::{
     graph_node_key, ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
-    Value, ValueSchema,
+    ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -344,6 +344,24 @@ impl Kernel {
         action_id: &str,
         payload: &Value,
     ) -> Result<Vec<GraphStep>, Failure> {
+        self.submit_action_scoped(
+            action_id,
+            payload,
+            ScopedRequest {
+                authority: self.prepared.authority.clone(),
+                resource: self.prepared.resource.clone(),
+            },
+        )
+    }
+
+    /// Admit a graph action using the caller's restricted authority and resource.
+    /// Admission and all child effects share the existing serial root.
+    pub fn submit_action_scoped(
+        &self,
+        action_id: &str,
+        payload: &Value,
+        scope: ScopedRequest,
+    ) -> Result<Vec<GraphStep>, Failure> {
         self.check_thread()?;
         let graph = self
             .prepared
@@ -362,6 +380,7 @@ impl Kernel {
         }
         if !action.required_operations.iter().all(|key| {
             self.prepared.authority.operations.contains(key)
+                && scope.authority.operations.contains(key)
                 && self
                     .prepared
                     .grants
@@ -400,7 +419,7 @@ impl Kernel {
                 ))
             })
             .collect::<Result<Vec<_>, Failure>>()?;
-        let root = self.admit_default_root()?;
+        let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
         let mut completed = Vec::with_capacity(selected.len());
         for (node, owner, target) in selected {
             let outcome = root.invoke_graph(&owner, &target, payload)?;
