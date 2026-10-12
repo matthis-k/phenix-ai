@@ -144,7 +144,8 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
             serde_json::from_str(&line).map_err(|e| e.to_string())?;
         let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
-        let result: Result<serde_json::Value, (i32, String)> = match method {
+        let result: Result<serde_json::Value, (i32, String)> = (|| {
+            match method {
             "initialize" => {
                 if initialized {
                     Err((-32600, "connection already initialized".into()))
@@ -181,7 +182,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 } else {
                     let stamp = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .map_err(|e| e.to_string())?
+                        .map_err(|e| (-32000, e.to_string()))?
                         .as_nanos();
                     issued += 1;
                     let session = format!("s{}_{}_{}", std::process::id(), stamp, issued);
@@ -263,10 +264,15 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         eprintln!("phenix-basic: unknown ACP cancellation session");
                     }
                 }
-                continue;
+                if id.is_null() {
+                    Ok(serde_json::json!({}))
+                } else {
+                    Err((-32600, "cancel must be a notification".into()))
+                }
             }
             _ => Err((-32601, "method unavailable in this Basic host".into())),
-        };
+            }
+        })();
         if id.is_null() {
             continue;
         }
