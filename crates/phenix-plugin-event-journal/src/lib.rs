@@ -159,7 +159,8 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_basic_contracts::{Blob, EventKind};
+    use phenix_basic_contracts::EventKind;
+    use phenix_sdk::Blob;
 
     fn event(session: &str, run: &str, text: &str) -> Event {
         Event {
