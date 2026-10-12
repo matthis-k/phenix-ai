@@ -1,6 +1,6 @@
 //! Authenticated state effects and ABI 3 imports enter the existing runtime.
 use crate::{
-    resolve::Selection,
+    resolve::{CellOperation, Selection},
     runtime::{authenticate_scope, Caller, Kernel},
     Call, Outcome,
 };
@@ -11,6 +11,22 @@ use phenix_contract::{
 };
 
 impl Kernel {
+    pub(super) fn require_property_resource(
+        &self,
+        selection: &Selection,
+        authority: &phenix_contract::Authority,
+    ) -> Result<(), Failure> {
+        let resource = selection.interface.strip_suffix("@1").ok_or_else(|| {
+            Failure::new(
+                Code::DescriptorInvalid,
+                "invalid prepared property identity",
+            )
+        })?;
+        if !authority.resources.contains(resource) {
+            return self.fail(Code::Denied, "state property resource is not granted");
+        }
+        Ok(())
+    }
     fn authorize_state(
         &self,
         caller: &str,
@@ -27,7 +43,6 @@ impl Kernel {
         };
         let interface =
             phenix_artifact::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
-        let resource = interface.strip_suffix("@1").unwrap();
         let key = format!("{interface}/{operation}");
         let selected = caller == "root"
             || caller == owner
@@ -50,11 +65,15 @@ impl Kernel {
         let scope = self
             .effect_scope(caller, owner, &key, None)
             .map_err(|_| Error::Denied)?;
-        if !scope.authority.resources.contains(resource) {
-            let _ = self.fail::<()>(Code::Denied, "state property resource is not granted");
-            return Err(Error::Denied);
-        }
-        Ok(())
+        self.require_property_resource(
+            &Selection {
+                interface,
+                operation: operation.into(),
+                provider: owner.into(),
+            },
+            &scope.authority,
+        )
+        .map_err(|_| Error::Denied)
     }
     pub(super) fn state_request(
         &self,
@@ -92,14 +111,41 @@ impl Kernel {
             ));
         }
         let ticket = self.state.borrow().stack.last().and_then(|f| f.ticket);
-        let result = (|| match request {
-            StateRequest::Create { .. } => Err(Error::Denied),
-            StateRequest::Read(r) => {
-                self.authorize_state(caller, &r, "get")?;
-                self.cells.borrow().read(&r)
+        let result = (|| {
+            match &request {
+                StateRequest::Create { .. } => return Err(Error::Denied),
+                StateRequest::Read(r) => self.authorize_state(caller, r, "get")?,
+                StateRequest::CompareExchange(edit) => {
+                    self.authorize_state(caller, &edit.location, "set")?
+                }
+                StateRequest::Batch(edits) => {
+                    for edit in edits {
+                        self.authorize_state(caller, &edit.location, "set")?;
+                    }
+                }
+                StateRequest::Subscribe(r) => self.authorize_state(caller, r, "watch")?,
+                StateRequest::Next(id) | StateRequest::Unsubscribe(id) => {
+                    let r = self.cells.borrow().cursor(root, caller, ticket, *id)?;
+                    self.authorize_state(caller, &r, "watch")?;
+                }
             }
+            self.apply_state_request(root, caller, request)
+        })();
+        Ok(result)
+    }
+    // Both authenticated host requests and prepared cell targets reach this
+    // mutation point only after their complete operation/resource checks.
+    fn apply_state_request(
+        &self,
+        root: u64,
+        caller: &str,
+        request: StateRequest,
+    ) -> Result<Value, Error> {
+        let ticket = self.state.borrow().stack.last().and_then(|f| f.ticket);
+        match request {
+            StateRequest::Create { .. } => Err(Error::Denied),
+            StateRequest::Read(r) => self.cells.borrow().read(&r),
             StateRequest::CompareExchange(edit) => {
-                self.authorize_state(caller, &edit.location, "set")?;
                 let Value::List(mut batch) = self.cells.borrow_mut().commit(&[edit])? else {
                     unreachable!()
                 };
@@ -108,19 +154,11 @@ impl Kernel {
                 };
                 Ok(snapshots.pop().unwrap())
             }
-            StateRequest::Batch(edits) => {
-                for edit in &edits {
-                    self.authorize_state(caller, &edit.location, "set")?;
-                }
-                self.cells.borrow_mut().commit(&edits)
-            }
+            StateRequest::Batch(edits) => self.cells.borrow_mut().commit(&edits),
             StateRequest::Subscribe(r) => {
-                self.authorize_state(caller, &r, "watch")?;
                 self.cells.borrow_mut().subscribe(root, caller, ticket, r)
             }
             StateRequest::Next(id) | StateRequest::Unsubscribe(id) => {
-                let r = self.cells.borrow().cursor(root, caller, ticket, id)?;
-                self.authorize_state(caller, &r, "watch")?;
                 if matches!(request, StateRequest::Next(_)) {
                     self.cells.borrow_mut().next(root, caller, ticket, id)
                 } else {
@@ -129,29 +167,21 @@ impl Kernel {
                         .unsubscribe(root, caller, ticket, id)
                 }
             }
-        })();
-        Ok(result)
+        }
     }
-    pub(super) fn property_dispatch(
+    pub(super) fn cell_dispatch(
         &self,
         root: u64,
         caller: &str,
         selection: &Selection,
+        property: &str,
+        operation: CellOperation,
         request: &Value,
-    ) -> Result<Option<Outcome>, Failure> {
-        let Some(metadata) = self.prepared.packages[&selection.provider].metadata() else {
-            return Ok(None);
-        };
-        if !metadata.properties.iter().any(|p| {
-            phenix_artifact::property_contract(&metadata.plugin, &p.id)
-                .is_ok_and(|id| id == selection.interface)
-        }) {
-            return Ok(None);
-        }
-        let state_request = match (selection.operation.as_str(), request) {
-            ("get", Value::Ref(r)) => StateRequest::Read(**r),
-            ("watch", Value::Ref(r)) => StateRequest::Subscribe(**r),
-            ("set", Value::Map(m)) => {
+    ) -> Result<Outcome, Failure> {
+        let state_request = match (operation, request) {
+            (CellOperation::Get, Value::Ref(r)) => StateRequest::Read(**r),
+            (CellOperation::Watch, Value::Ref(r)) => StateRequest::Subscribe(**r),
+            (CellOperation::Set, Value::Map(m)) => {
                 let (Some(Value::Ref(r)), Some(Value::U64(expected)), Some(value)) =
                     (m.get("location"), m.get("expected"), m.get("value"))
                 else {
@@ -179,19 +209,18 @@ impl Kernel {
             StateRequest::CompareExchange(e) => &e.location,
             _ => unreachable!(),
         };
-        if !self.cells.borrow().identity(r).is_ok_and(|(owner, p)| {
-            owner == selection.provider
-                && phenix_artifact::property_contract(owner, &p.id)
-                    .is_ok_and(|id| id == selection.interface)
-        }) {
-            return Ok(Some(Outcome::Domain(Value::String(
-                "StaleReference".into(),
-            ))));
+        if !self
+            .cells
+            .borrow()
+            .identity(r)
+            .is_ok_and(|(owner, p)| owner == selection.provider && p.id == property)
+        {
+            return Ok(Outcome::Domain(Value::String("StaleReference".into())));
         }
-        Ok(Some(
-            match self.state_request(root, caller, state_request)? {
-                Ok(Value::List(v)) => Outcome::Success(match selection.operation.as_str() {
-                    "get" => v[2].clone(),
+        Ok(
+            match self.apply_state_request(root, caller, state_request) {
+                Ok(Value::List(v)) => Outcome::Success(match operation {
+                    CellOperation::Get => v[2].clone(),
                     _ => v[0].clone(),
                 }),
                 Ok(_) => {
@@ -211,7 +240,7 @@ impl Kernel {
                     .into(),
                 )),
             },
-        ))
+        )
     }
 }
 fn protected(body: impl FnOnce() -> Result<Reply, Failure>) -> Reply {

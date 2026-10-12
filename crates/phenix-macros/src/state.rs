@@ -11,7 +11,13 @@ fn declarations(tokens: proc_macro2::TokenStream) -> syn::Result<Vec<Meta>> {
     )
 }
 pub fn selected(tokens: proc_macro2::TokenStream) -> syn::Result<bool> {
+    let mut contributions = false;
     for meta in declarations(tokens)? {
+        if let Meta::List(list) = &meta {
+            contributions |= ["define", "require", "provide"]
+                .iter()
+                .any(|name| list.path.is_ident(name));
+        }
         if let Meta::NameValue(value) = meta {
             if value.path.is_ident("profile") {
                 if let Expr::Lit(value) = value.value {
@@ -19,12 +25,81 @@ pub fn selected(tokens: proc_macro2::TokenStream) -> syn::Result<bool> {
                         if text.value() == "state" {
                             return Ok(true);
                         }
+                        if text.value() == "definitions" {
+                            return Ok(false);
+                        }
                     }
                 }
             }
         }
     }
-    Ok(false)
+    Ok(contributions)
+}
+
+// Rust's type checker validates injected arguments against the declaration.
+// Only the roles have syntax rules; response conversion stays type directed.
+fn arguments(
+    signature: &syn::Signature,
+    request_allowed: bool,
+    host_allowed: bool,
+) -> syn::Result<(proc_macro2::TokenStream, bool)> {
+    let mut roles = std::collections::BTreeSet::new();
+    let mut arguments = Vec::new();
+    let mut has_request = false;
+    for argument in &signature.inputs {
+        let syn::FnArg::Typed(argument) = argument else {
+            return Err(syn::Error::new(
+                argument.span(),
+                "native handler cannot have self",
+            ));
+        };
+        let (role, value) = match argument.ty.as_ref() {
+            Type::Reference(reference) => {
+                let Type::Path(path) = reference.elem.as_ref() else {
+                    return Err(syn::Error::new(
+                        reference.span(),
+                        "handler references are State or Host",
+                    ));
+                };
+                match path
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string())
+                    .as_deref()
+                {
+                    Some("State") => ("state", quote!(state)),
+                    Some("Host") if host_allowed && reference.mutability.is_none() => {
+                        ("host", quote!(&host))
+                    }
+                    _ => {
+                        return Err(syn::Error::new(
+                            reference.span(),
+                            "handler references are State or shared Host",
+                        ))
+                    }
+                }
+            }
+            _ if request_allowed => {
+                has_request = true;
+                ("request", quote!(request))
+            }
+            _ => {
+                return Err(syn::Error::new(
+                    argument.span(),
+                    "hook accepts only State and Host",
+                ))
+            }
+        };
+        if !roles.insert(role) {
+            return Err(syn::Error::new(
+                argument.span(),
+                "duplicate handler argument role",
+            ));
+        }
+        arguments.push(value);
+    }
+    Ok((quote!(#(#arguments),*), has_request))
 }
 
 pub fn expand(
@@ -140,8 +215,12 @@ pub fn expand(
         }
     }
     let id = required(&mut attributes, "id")?;
-    let version = required(&mut attributes, "version")?;
-    let profile = required(&mut attributes, "profile")?;
+    let version = attributes
+        .remove("version")
+        .unwrap_or_else(|| "0.1.0".into());
+    let profile = attributes
+        .remove("profile")
+        .unwrap_or_else(|| "state".into());
     no_extra(&attributes)?;
     if profile != "state"
         || id == "root"
@@ -273,6 +352,12 @@ pub fn expand(
                         }
                         annotated = true;
                         let name = function.sig.ident.clone();
+                        let request_allowed =
+                            attr.path().is_ident("provide") || attr.path().is_ident("pending");
+                        let lifecycle =
+                            attr.path().is_ident("start") || attr.path().is_ident("stop");
+                        let (arguments, has_request) =
+                            arguments(&function.sig, request_allowed, !lifecycle)?;
                         if attr.path().is_ident("start") || attr.path().is_ident("stop") {
                             if !matches!(attr.meta, Meta::Path(_)) {
                                 return Err(syn::Error::new(
@@ -285,7 +370,7 @@ pub fn expand(
                             } else {
                                 &mut stop
                             };
-                            if selected.replace(name).is_some() {
+                            if selected.replace((name, arguments)).is_some() {
                                 return Err(syn::Error::new(
                                     attr.span(),
                                     "duplicate lifecycle hook",
@@ -296,14 +381,14 @@ pub fn expand(
                             if attr.path().is_ident("provide") || attr.path().is_ident("pending") {
                                 handlers.push(quote!(::phenix_sdk::StaticOperation { name: "handler", key: <#operation as ::phenix_sdk::live::Operation>::KEY, request: <<#operation as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::SCHEMA, response: <<#operation as ::phenix_sdk::live::Operation>::Response as ::phenix_sdk::live::Portable>::SCHEMA, error: <<#operation as ::phenix_sdk::live::Operation>::Error as ::phenix_sdk::live::Portable>::SCHEMA }));
                                 if attr.path().is_ident("provide") {
-                                    synchronous.push((operation, name));
+                                    synchronous.push((operation, name, arguments, has_request));
                                 } else {
-                                    pending.push((operation, name));
+                                    pending.push((operation, name, arguments, has_request));
                                 }
                             } else if attr.path().is_ident("poll") {
-                                polls.push((operation, name));
+                                polls.push((operation, name, arguments));
                             } else {
-                                cancels.push((operation, name));
+                                cancels.push((operation, name, arguments));
                             }
                         }
                     } else {
@@ -321,10 +406,16 @@ pub fn expand(
             _ => {}
         }
     }
-    if !state || (exports.is_empty() && properties.is_empty()) {
+    if exports.is_empty() && properties.is_empty() {
         return Err(syn::Error::new(
             module.ident.span(),
-            "state plugin needs State and a service or property export",
+            "plugin needs a service or property export",
+        ));
+    }
+    if !state {
+        items.push(syn::parse_quote!(
+            #[derive(Default)]
+            struct State {}
         ));
     }
     if pending.len() != polls.len() || pending.len() != cancels.len() {
@@ -336,18 +427,21 @@ pub fn expand(
     let mut invoke = Vec::new();
     let mut poll = Vec::new();
     let mut cancel = Vec::new();
-    for (op, name) in synchronous {
+    for (op, name, arguments, has_request) in synchronous {
+        let unit_request = (!has_request).then(|| quote!(let _: () = request;));
         invoke.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
             let request = <<#op as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::from_value(value)?;
-            let result: ::phenix_sdk::CallResult<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error> = #name(state, &host, request);
+            #unit_request
+            let result = ::phenix_sdk::live::handler_result::<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error, _>(#name(#arguments));
             return Ok(::phenix_sdk::live::reply(result));
         }});
     }
-    for (op, name) in pending {
-        let matching = |hooks: &[(Type, syn::Ident)]| -> syn::Result<syn::Ident> {
+    for (op, name, arguments, has_request) in pending {
+        let unit_request = (!has_request).then(|| quote!(let _: () = request;));
+        let matching = |hooks: &[(Type, syn::Ident, proc_macro2::TokenStream)]| -> syn::Result<(syn::Ident, proc_macro2::TokenStream)> {
             let matching: Vec<_> = hooks
                 .iter()
-                .filter(|(ty, _)| quote!(#ty).to_string() == quote!(#op).to_string())
+                .filter(|(ty, _, _)| quote!(#ty).to_string() == quote!(#op).to_string())
                 .collect();
             if matching.len() != 1 {
                 return Err(syn::Error::new(
@@ -355,30 +449,32 @@ pub fn expand(
                     "pending export needs one matching hook",
                 ));
             }
-            Ok(matching[0].1.clone())
+            Ok((matching[0].1.clone(), matching[0].2.clone()))
         };
-        let poll_name = matching(&polls)?;
-        let cancel_name = matching(&cancels)?;
+        let (poll_name, poll_arguments) = matching(&polls)?;
+        let (cancel_name, cancel_arguments) = matching(&cancels)?;
         invoke.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
             if api.ticket == 0 {
                 return Ok(::phenix_sdk::abi::Reply::state_value(5, ::phenix_sdk::Failure::new(::phenix_sdk::Code::AbiIncompatible, "pending operation requires an existing native ticket").to_value()));
             }
             let request = <<#op as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::from_value(value)?;
-            let result: ::phenix_sdk::live::PendingResult<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error> = #name(state, &host, request);
+            #unit_request
+            let result: ::phenix_sdk::live::PendingResult<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error> = #name(#arguments);
             return Ok(::phenix_sdk::live::pending_reply(result));
         }});
         poll.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
-            let result: ::phenix_sdk::live::PendingResult<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error> = #poll_name(state, &host);
+            let result: ::phenix_sdk::live::PendingResult<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error> = #poll_name(#poll_arguments);
             return Ok(::phenix_sdk::live::pending_reply(result));
         }});
         cancel.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
-            let result: Result<bool, ::phenix_sdk::Failure> = #cancel_name(state, &host);
+            let result: Result<bool, ::phenix_sdk::Failure> = #cancel_name(#cancel_arguments);
             return Ok(::phenix_sdk::abi::Reply::state_value(if result? { 4 } else { 3 }, ::phenix_sdk::Value::Null));
         }});
     }
-    let start = start.map(|name| quote!(::phenix_sdk::lifecycle(|| #name(state))?;));
+    let start =
+        start.map(|(name, arguments)| quote!(::phenix_sdk::lifecycle(|| #name(#arguments))?;));
     let stop = stop
-        .map(|name| quote!(::phenix_sdk::lifecycle(|| #name(&mut instance.state))))
+        .map(|(name, arguments)| quote!({ let state = &mut instance.state; ::phenix_sdk::lifecycle(|| #name(#arguments)) }))
         .unwrap_or_else(|| quote!(Ok::<(), ::phenix_sdk::Failure>(())));
     let generated = quote! {
         #[allow(clippy::large_const_arrays)]
@@ -410,7 +506,7 @@ pub fn expand(
                     if instance.initialized || instance.poisoned { return Err(__invalid("initialization is single-use")); }
                     instance.initialized = true;
                     instance.poisoned = true;
-                    #[allow(unused_variables)] let state = &mut instance.state;
+                            #[allow(unused_variables)] let state = &mut instance.state;
                     #(#bindings)* #start
                     instance.poisoned = false;
                     Ok(())

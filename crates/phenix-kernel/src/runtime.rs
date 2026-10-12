@@ -1,6 +1,6 @@
 use crate::{
     native::Native,
-    resolve::{Prepared, Selection},
+    resolve::{EffectTarget, Prepared, Selection},
 };
 use phenix_contract::{
     abi::{Bytes, Header, HostApi, Reply, StateHostApi},
@@ -391,6 +391,52 @@ impl Kernel {
                 return self.fail(Code::Denied, "undeclared import or unselected provider");
             }
         }
+        let target = self
+            .prepared
+            .targets
+            .get(&(selection.provider.clone(), key.clone()))
+            .ok_or_else(|| {
+                Failure::new(Code::MissingBinding, "operation is not a prepared export")
+            })?;
+        let contract = package
+            .descriptor()
+            .contract(&key)
+            .ok_or_else(|| Failure::new(Code::SchemaRejected, "operation schema absent"))?;
+        let request = Value::decode_profile(input, self.profile(&selection.provider))?;
+        if !contract.request.accepts(&request) {
+            return self.fail(
+                Code::SchemaRejected,
+                "request does not match declared schema",
+            );
+        }
+        let ScopedRequest {
+            authority,
+            resource,
+        } = self.effect_scope(caller.name(), &selection.provider, &key, restriction)?;
+        if let EffectTarget::Cell {
+            property,
+            operation,
+        } = target
+        {
+            self.require_property_resource(selection, &authority)?;
+            let outcome = self.cell_dispatch(
+                root,
+                caller.name(),
+                selection,
+                property,
+                *operation,
+                &request,
+            )?;
+            return match &outcome {
+                Outcome::Success(value) if contract.response.accepts(value) => {
+                    Ok(super::pending::Call::Ready(outcome))
+                }
+                Outcome::Domain(value) if contract.error.accepts(value) => {
+                    Ok(super::pending::Call::Ready(outcome))
+                }
+                _ => self.fail(Code::SchemaRejected, "cell returned an undeclared result"),
+            };
+        }
         let pending = package.descriptor().execution == "pending"
             || (package.descriptor().abi_major == 3 && pending_allowed);
         if pending && !pending_allowed {
@@ -411,21 +457,6 @@ impl Kernel {
                 "instance has a physical pending call",
             );
         }
-        let contract = package
-            .descriptor()
-            .contract(&key)
-            .ok_or_else(|| Failure::new(Code::SchemaRejected, "operation schema absent"))?;
-        let request = Value::decode_profile(input, self.profile(&selection.provider))?;
-        if !contract.request.accepts(&request) {
-            return self.fail(
-                Code::SchemaRejected,
-                "request does not match declared schema",
-            );
-        }
-        let ScopedRequest {
-            authority,
-            resource,
-        } = self.effect_scope(caller.name(), &selection.provider, &key, restriction)?;
         if self
             .state
             .borrow()
@@ -443,9 +474,6 @@ impl Kernel {
             resource.clone(),
             false,
         )?;
-        if let Some(outcome) = self.property_dispatch(root, caller.name(), selection, &request)? {
-            return Ok(super::pending::Call::Ready(outcome));
-        }
         if pending {
             return self.begin_pending(root, selection, input, &guard, authority, resource);
         }
@@ -645,27 +673,44 @@ impl Root<'_> {
         self.generation.as_deref()
     }
     pub fn invoke(&self, request: &Value) -> Result<Outcome, Failure> {
-        match request.encode_profile(self.kernel.profile(&self.entry.provider)) {
-            Ok(bytes) => self.invoke_bytes(&bytes),
+        self.invoke_selected(&self.entry, request)
+    }
+    /// Trusted control-plane selection within this root's pinned generation.
+    /// The selected call inherits this root's exact authority and resource.
+    pub fn invoke_selected(
+        &self,
+        selection: &Selection,
+        request: &Value,
+    ) -> Result<Outcome, Failure> {
+        let encoded = self
+            .kernel
+            .prepared
+            .check_entry(selection)
+            .and_then(|()| request.encode_profile(self.kernel.profile(&selection.provider)));
+        match encoded {
+            Ok(bytes) => self.invoke_selected_bytes(selection, &bytes),
             Err(failure) => {
                 self.kernel.observe_failure(
                     &failure,
                     Phase::Invocation,
-                    Kernel::context(Caller::Root, &self.entry),
+                    Kernel::context(Caller::Root, selection),
                 );
                 Err(failure)
             }
         }
     }
     pub fn invoke_bytes(&self, request: &[u8]) -> Result<Outcome, Failure> {
+        self.invoke_selected_bytes(&self.entry, request)
+    }
+    fn invoke_selected_bytes(
+        &self,
+        selection: &Selection,
+        request: &[u8],
+    ) -> Result<Outcome, Failure> {
         let previous_failure = self.kernel.state.borrow_mut().last_failure.take();
-        let result = self.kernel.dispatch(
-            self.id,
-            Caller::Root,
-            &self.entry,
-            request,
-            Some(&self.scope),
-        );
+        let result =
+            self.kernel
+                .dispatch(self.id, Caller::Root, selection, request, Some(&self.scope));
         let mut state = self.kernel.state.borrow_mut();
         if state.last_failure.is_none() {
             state.last_failure = previous_failure;

@@ -1,10 +1,22 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
 Status: S1a, S1b, S2 and S3a accepted; S3b implementation in progress
-Updated: 2026-10-11
+Updated: 2026-10-12
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
+
+## Consolidation intervention
+
+The 12 October decision makes M1 the sole supported product after consolidation.
+[The consolidation contract](m1-consolidation-contract.md) supersedes historical
+compatibility requirements for this transition. [The verified audit and file
+matrix](m1-consolidation-audit.md) record corrections, executable changes and
+remaining removal work. M0 acceptance below is historical evidence. C1 and C2
+must replace descriptors and their consumers together, while migrating semantic
+conformance to M1. S3b pending imports and G1 follow that coordinated removal.
+The current intervention implements prepared native/cell effects, shared ordering
+and concise stateless handlers. It does not claim M1-only format acceptance.
 
 ## 1. Branch and PR ownership
 

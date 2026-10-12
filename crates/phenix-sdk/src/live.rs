@@ -543,6 +543,31 @@ pub trait Operation {
     type Error: Portable;
     const KEY: &'static str;
 }
+/// Generated synchronous handlers accept an ordinary value, domain Result or
+/// CallResult. Contract types choose the conversion; aliases remain supported.
+#[doc(hidden)]
+pub trait HandlerResult<T, E> {
+    fn into_call_result(self) -> CallResult<T, E>;
+}
+impl<T, E> HandlerResult<T, E> for T {
+    fn into_call_result(self) -> CallResult<T, E> {
+        Ok(self)
+    }
+}
+impl<T, E> HandlerResult<T, E> for Result<T, E> {
+    fn into_call_result(self) -> CallResult<T, E> {
+        self.map_err(CallError::Domain)
+    }
+}
+impl<T, E> HandlerResult<T, E> for CallResult<T, E> {
+    fn into_call_result(self) -> CallResult<T, E> {
+        self
+    }
+}
+#[doc(hidden)]
+pub fn handler_result<T, E, R: HandlerResult<T, E>>(result: R) -> CallResult<T, E> {
+    result.into_call_result()
+}
 /// A subscription is scoped to its admitted root and native ticket.
 pub struct Watch<T> {
     cursor: u64,
@@ -715,6 +740,34 @@ pub fn boundary(f: impl FnOnce() -> crate::abi::Reply) -> crate::abi::Reply {
 /// ```
 #[doc(hidden)]
 pub struct UnsupportedNativeAuthoring;
+
+/// Invalid concise signatures still fail against their declared contract.
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.short@1")]
+/// trait Api { fn call(&self, input:String)->Result<String,String>; }
+/// #[phenix_sdk::plugin(id="test.short",define(Api),provide(Api,slot="api"))]
+/// mod plugin { use super::*; #[provide(Api::call)] fn call()->String { String::new() } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.short@1")]
+/// trait Api { fn call(&self, input:String)->Result<String,String>; }
+/// #[phenix_sdk::plugin(id="test.short",define(Api),provide(Api,slot="api"))]
+/// mod plugin { use super::*; #[provide(Api::call)] fn call(_:String,_:String)->String { String::new() } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.short@1")]
+/// trait Api { fn call(&self, input:String)->Result<String,String>; }
+/// #[phenix_sdk::plugin(id="test.short",define(Api),provide(Api,slot="api"))]
+/// mod plugin { use super::*; #[provide(Api::call)] fn call(_:String)->u64 { 0 } }
+/// ```
+/// ```compile_fail
+/// #[phenix_sdk::contract(id="test.short@1")]
+/// trait Api { fn call(&self, input:String)->Result<String,String>; }
+/// #[phenix_sdk::plugin(id="test.short",define(Api),provide(Api,slot="api"))]
+/// mod plugin { use super::*; #[provide(Api::call)] fn call(_: &str)->String { String::new() } }
+/// ```
+#[doc(hidden)]
+pub struct UnsupportedConciseAuthoring;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropertyError {

@@ -101,6 +101,29 @@ pub struct StateComposition {
     pub definitions: Vec<String>,
     pub slots: Vec<SlotBinding>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellOperation {
+    Get,
+    Set,
+    Watch,
+}
+impl CellOperation {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Set => "set",
+            Self::Watch => "watch",
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EffectTarget {
+    Native,
+    Cell {
+        property: String,
+        operation: CellOperation,
+    },
+}
 pub struct Prepared {
     pub(crate) packages: BTreeMap<String, VerifiedPackage>,
     pub(crate) entry: Selection,
@@ -110,6 +133,7 @@ pub struct Prepared {
     pub(crate) resource: Option<String>,
     pub(crate) slot_counts: BTreeMap<(String, String), u64>,
     pub(crate) state_identity: Vec<String>,
+    pub(crate) targets: BTreeMap<(String, String), EffectTarget>,
     composition: bool,
     pub(crate) startup_order: Vec<String>,
 }
@@ -425,10 +449,43 @@ impl Prepared {
         {
             return Err(invalid("root ceiling operation absent"));
         }
+        let mut targets = BTreeMap::new();
+        for (provider, package) in &packages {
+            for export in &package.descriptor().exports {
+                targets.insert(
+                    (provider.clone(), export.operation.clone()),
+                    EffectTarget::Native,
+                );
+            }
+            if let Some(metadata) = package.metadata() {
+                for property in &metadata.properties {
+                    let interface = phenix_artifact::property_contract(provider, &property.id)?;
+                    for (enabled, operation) in [
+                        (property.get, CellOperation::Get),
+                        (property.set, CellOperation::Set),
+                        (property.watch, CellOperation::Watch),
+                    ] {
+                        if enabled {
+                            targets.insert(
+                                (
+                                    provider.clone(),
+                                    format!("{interface}/{}", operation.name()),
+                                ),
+                                EffectTarget::Cell {
+                                    property: property.id.clone(),
+                                    operation,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let prepared = Self {
             packages,
             slot_counts,
             state_identity,
+            targets,
             entry: policy.entry,
             bindings,
             grants,
@@ -489,47 +546,23 @@ fn dependency_order(
     packages: &BTreeMap<String, VerifiedPackage>,
     bindings: &BTreeMap<(String, String), String>,
 ) -> Result<Vec<String>, Failure> {
-    fn visit(
-        id: &str,
-        packages: &BTreeMap<String, VerifiedPackage>,
-        bindings: &BTreeMap<(String, String), String>,
-        done: &mut BTreeSet<String>,
-        path: &mut Vec<String>,
-        order: &mut Vec<String>,
-    ) -> Result<(), Failure> {
-        if let Some(at) = path.iter().position(|x| x == id) {
-            let mut cycle = path[at..].to_vec();
-            cycle.push(id.into());
-            return Err(error(
-                Code::MissingBinding,
-                format!("required dependency cycle: {}", cycle.join(" -> ")),
-            ));
-        }
-        if done.contains(id) {
-            return Ok(());
-        }
-        path.push(id.into());
-        for import in &packages[id].descriptor().imports {
-            if !import.optional {
-                visit(
-                    &bindings[&(id.into(), import.binding_key())],
-                    packages,
-                    bindings,
-                    done,
-                    path,
-                    order,
-                )?;
-            }
-        }
-        path.pop();
-        done.insert(id.into());
-        order.push(id.into());
-        Ok(())
-    }
-    let mut done = BTreeSet::new();
-    let mut order = Vec::new();
-    for id in packages.keys() {
-        visit(id, packages, bindings, &mut done, &mut vec![], &mut order)?;
-    }
-    Ok(order)
+    let predecessors = packages
+        .iter()
+        .map(|(id, package)| {
+            let required = package
+                .descriptor()
+                .imports
+                .iter()
+                .filter(|import| !import.optional)
+                .map(|import| bindings[&(id.clone(), import.binding_key())].clone())
+                .collect();
+            (id.clone(), required)
+        })
+        .collect();
+    crate::dag::order(&predecessors).map_err(|cycle| {
+        error(
+            Code::MissingBinding,
+            format!("required dependency cycle: {}", cycle.join(" -> ")),
+        )
+    })
 }

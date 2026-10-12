@@ -3,8 +3,6 @@ use phenix_sdk::{live, *};
 
 #[plugin(
     id = "test.authored-client",
-    version = "1.0.0",
-    profile = "state",
     define(Relay),
     define(Count),
     provide(Relay, slot = "relay"),
@@ -14,10 +12,8 @@ use phenix_sdk::{live, *};
 )]
 mod client {
     use super::*;
-    #[derive(Default)]
-    struct State {}
     #[provide(Relay::run)]
-    fn run(_: &mut State, host: &live::Host<'_>, input: String) -> CallResult<u64, String> {
+    fn run(input: String, host: &live::Host<'_>) -> CallResult<u64, String> {
         assert_eq!(imports::fallback::count(host)?, 0);
         assert_eq!(imports::all::count(host)?, 1);
         let first = imports::all::invoke::<Counter::reference>(host, &())?;

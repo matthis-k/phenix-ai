@@ -22,6 +22,14 @@ Frozen contract: m1-contract-authoring-contract.md, preceding implementation
 | `examples/authoring-api/`, `authoring-provider/`, `authoring-client/`, `authoring-field/` | TESTED | SDK-only annotated API package, mixed synchronous/pending provider, typed intermediary and field-only provider; no build scripts or handwritten native descriptors/table glue |
 | `phenix-conformance/src/bin/phenix-m1-authoring.rs`, `flake.nix`, workflow evidence | TESTED locally | Existing kernel loads independent native packages; named slots, Optional/Many, synthetic property read, pending/cancel, ceiling and resource/import/operation denial with zero committed effects; new m1-native-authoring full-CI gate and artifact |
 | External pending caller and complete import security fixtures | PENDING | ABI 3 parent/child calls, child ticket slot authentication, scoped requests, domain recovery, cancellation and abandonment |
+| Stateless handlers and prepared cell execution | TESTED locally in consolidation branch | Generated empty state, concise typed arguments and ordinary results; selected get/set/watch during a real native worker; denied cell grants/resources/root scopes produce no writes or subscriptions; see `m1-consolidation-audit.md` |
 | Full S3b acceptance | NOT PROVEN | Exact-commit CI, downloaded artifact and all predecessor gates |
 
-The triggered Basic roadmap in `m1-roadmap.md` now owns follow-on work. G1 follows complete S3b acceptance. Authenticated pending imports, native resource context, property control during a physical pending call, and the complete external security suite still block acceptance. The metadata implementation commit `fef00f549ec3fc944e9520307fa13f6509fc34d8` passed full CI 38178581812. The native authoring slice requires its own exact-head full-CI evidence.
+The triggered Basic roadmap in `m1-roadmap.md` owns follow-on work. The coordinated
+C1/C2 removal now precedes S3b pending imports and G1. Authenticated pending
+imports, native resource context, property location discovery and the complete
+external security suite still block acceptance. The consolidation branch tests
+trusted rooted property control during physical native work; it does not claim
+external pending child imports. The metadata implementation commit
+`fef00f549ec3fc944e9520307fa13f6509fc34d8` passed full CI 38178581812. Consolidation
+and full S3b acceptance require their own exact-head full-CI evidence.

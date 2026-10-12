@@ -20,13 +20,10 @@ mod provider {
         #[watch]
         counter: u64,
         pending: bool,
+        worker: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
     }
     #[provide(Counter::reference)]
-    fn reference(
-        state: &mut State,
-        _: &live::Host<'_>,
-        _: (),
-    ) -> CallResult<live::ValueRef<u64>, String> {
+    fn reference(state: &mut State) -> CallResult<live::ValueRef<u64>, String> {
         Ok(state.counter.reference()?)
     }
     #[provide(Counter::run)]
@@ -54,17 +51,35 @@ mod provider {
         if input == "panic" {
             panic!("authoring fixture panic")
         }
+        let (stop, wait) = std::sync::mpsc::channel();
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            let descriptor = std::fs::File::open("/dev/null").unwrap();
+            ready.send(()).unwrap();
+            wait.recv().unwrap();
+            drop(descriptor);
+        });
+        started.recv().unwrap();
+        state.worker = Some((stop, worker));
         PendingResult::Pending
     }
     #[poll(Counter::slow)]
     fn poll(state: &mut State, _: &live::Host<'_>) -> PendingResult<u64, String> {
         assert!(state.pending);
         state.pending = false;
+        drain(state);
         PendingResult::Ready(Ok(23))
     }
     #[cancel(Counter::slow)]
     fn cancel(state: &mut State, _: &live::Host<'_>) -> Result<bool, Failure> {
         state.pending = false;
+        drain(state);
         Ok(true)
+    }
+    fn drain(state: &mut State) {
+        if let Some((stop, worker)) = state.worker.take() {
+            stop.send(()).unwrap();
+            worker.join().unwrap();
+        }
     }
 }

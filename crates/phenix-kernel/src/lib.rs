@@ -1,3 +1,4 @@
+mod dag;
 mod native;
 pub mod resolve;
 mod runtime;

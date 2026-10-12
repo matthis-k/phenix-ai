@@ -1,5 +1,13 @@
 # Minimal kernel implementation
 
+The 12 October M1-only decision supersedes the compatibility requirements below
+for consolidation work. Use `spec/m1-consolidation-contract.md` for this
+transition and `spec/m1-consolidation-audit.md` for its verified file matrix.
+Historical M0 evidence stays in Git history. Port semantic guarantees to M1 as
+their old production interfaces and fixtures are removed. C1/C2 replace the
+descriptor model and its consumers together; S3b pending imports and graph work
+follow that removal. Keep the stack unmerged.
+
 `spec/clean-start-rfc.md` is normative. `spec/m0-contracts.md` fixes the trusted-native x86_64 Linux profile. P0 and M0.0 through M0.4 are accepted. Each milestone's acceptance document and matrix record its semantic proof. PR #771 owns current-head CI status.
 
 Use `nix flake check -L` for acceptance. All fourteen gates and the release evidence product passed on implementation commit `f4fbe2ffd14a6ef7c71dcfc8694e5f073392b23d` in CI run 38110344943. `nix run .#phenix-m0-demo` exercises the packaged CLI. `nix build .#phenix-m0-release` materializes the complete evidence product. The public SDK and external examples build without private kernel sources.
