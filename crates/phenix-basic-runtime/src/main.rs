@@ -111,10 +111,124 @@ fn submit(kernel: &Kernel, input: Submission) -> Result<(), String> {
     Ok(())
 }
 
+/// ACP v1 connection controller for the currently selected session.
+/// Method handlers stay here; the native Frontend plugin handles turn frames.
+fn run_acp(kernel: &Kernel, mut output: impl Write) -> Result<(), String> {
+    let mut initialized = false;
+    let mut allocated = false;
+    let mut after = 0_u64;
+    for line in io::stdin().lock().lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        let frame: serde_json::Value =
+            serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let result: Result<serde_json::Value, (i32, String)> = match method {
+            "initialize" => {
+                if initialized {
+                    Err((-32600, "connection already initialized".into()))
+                } else {
+                    initialized = true;
+                    Ok(serde_json::json!({
+                        "protocolVersion": 1,
+                        "agentCapabilities": {
+                            "loadSession": false,
+                            "promptCapabilities": {
+                                "image": false,
+                                "audio": false,
+                                "embeddedContext": false
+                            }
+                        },
+                        "agentInfo": {
+                            "name": "phenix-basic",
+                            "title": "Phenix Basic",
+                            "version": "0.1.0"
+                        },
+                        "authMethods": []
+                    }))
+                }
+            }
+            "session/new" if initialized => {
+                if allocated {
+                    Err((-32600, "single-session host already allocated".into()))
+                } else if frame.pointer("/params/cwd")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|cwd| !Path::new(cwd).is_absolute())
+                {
+                    Err((-32602, "absolute cwd required".into()))
+                } else if frame.pointer("/params/mcpServers")
+                    .and_then(|v| v.as_array())
+                    .is_none_or(|servers| !servers.is_empty())
+                {
+                    Err((-32602, "this host does not support MCP servers".into()))
+                } else {
+                    allocated = true;
+                    Ok(serde_json::json!({"sessionId":"s1"}))
+                }
+            }
+            "session/prompt" if initialized && allocated => {
+                let decoded = completed(invoke::<Submission>(
+                    kernel,
+                    "phenix.basic.frontend-acp",
+                    "phenix.basic.frontend@1/decode",
+                    ClientInput {session:"s1".into(), line},
+                ));
+                match decoded.and_then(|submission| submit(kernel, submission)) {
+                    Ok(()) => {
+                        render_new(
+                            kernel,
+                            "phenix.basic.frontend-acp",
+                            "s1",
+                            &mut after,
+                            &mut output,
+                        )?;
+                        Ok(serde_json::json!({"stopReason":"end_turn"}))
+                    }
+                    Err(message) => Err((-32000, message)),
+                }
+            }
+            "session/cancel" if initialized && allocated => {
+                let decoded = completed(invoke::<Submission>(
+                    kernel,
+                    "phenix.basic.frontend-acp",
+                    "phenix.basic.frontend@1/decode",
+                    ClientInput {session:"s1".into(), line},
+                ));
+                if decoded.is_err() {
+                    eprintln!("phenix-basic: rejected ACP cancel notification");
+                }
+                // This sequential host has no pending graph root. Cancellation
+                // is intentionally not acknowledged as successful.
+                continue;
+            }
+            _ => Err((-32601, "method unavailable in this Basic host".into())),
+        };
+        if id.is_null() {
+            // JSON-RPC notifications have no responses.
+            continue;
+        }
+        let reply = match result {
+            Ok(value) => serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":id,
+                "result":value
+            }),
+            Err((code,message)) => serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":id,
+                "error":{"code":code,"message":message}
+            }),
+        };
+        writeln!(output, "{reply}").map_err(|e| e.to_string())?;
+        output.flush().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 || !["terminal", "jsonl"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl COMPOSITION.json".into());
+    if args.len() != 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json".into());
     }
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -127,6 +241,7 @@ fn run() -> Result<(), String> {
     let frontend = match args[1].as_str() {
         "terminal" => "phenix.basic.frontend-terminal",
         "jsonl" => "phenix.basic.frontend-jsonl",
+        "acp" => "phenix.basic.frontend-acp",
         _ => unreachable!(),
     };
     // The first product fixture binds one authenticated session. Later
@@ -134,6 +249,11 @@ fn run() -> Result<(), String> {
     let session = "s1";
     let mut after = 0_u64;
     let mut stdout = io::stdout().lock();
+    if args[1] == "acp" {
+        let result = run_acp(&kernel, &mut stdout);
+        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        return result;
+    }
     for line in io::stdin().lock().lines() {
         let line = line.map_err(|e| e.to_string())?;
         let decoded = completed(invoke::<Submission>(
