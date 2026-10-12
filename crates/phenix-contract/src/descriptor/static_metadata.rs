@@ -579,7 +579,6 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
     output
 }
 
-
 /**
  * Embed static graph declarations without initializing a native plugin.
  * This writer uses the same canonical Value envelope as GraphContribution.
@@ -589,7 +588,10 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
 pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataBytes {
     use crate::static_schema::compare;
     assert!(identity(contribution.plugin), "invalid graph contributor");
-    let mut output = MetadataBytes { data: [0; METADATA_BYTES], len: 0 };
+    let mut output = MetadataBytes {
+        data: [0; METADATA_BYTES],
+        len: 0,
+    };
     output.raw(&crate::value::V2_PREFIX);
     output.map(5);
     output.key("actions");
@@ -597,10 +599,19 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
     let mut i = 0;
     while i < contribution.actions.len() {
         let action = contribution.actions[i];
-        assert!(identity(action.id) && identity(action.event), "invalid graph action identity");
-        assert!(!action.description.is_empty() && action.description.len() <= 4096, "invalid action description");
+        assert!(
+            identity(action.id) && identity(action.event),
+            "invalid graph action identity"
+        );
+        assert!(
+            !action.description.is_empty() && action.description.len() <= 4096,
+            "invalid action description"
+        );
         if i > 0 {
-            assert!(compare(contribution.actions[i - 1].id, action.id) < 0, "duplicate or unordered actions");
+            assert!(
+                compare(contribution.actions[i - 1].id, action.id) < 0,
+                "duplicate or unordered actions"
+            );
         }
         output.map(4);
         output.key("description");
@@ -613,9 +624,15 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
         output.list(action.requires.len());
         let mut j = 0;
         while j < action.requires.len() {
-            assert!(operation_key_str(action.requires[j]), "invalid action authority requirement");
+            assert!(
+                operation_key_str(action.requires[j]),
+                "invalid action authority requirement"
+            );
             if j > 0 {
-                assert!(compare(action.requires[j - 1], action.requires[j]) < 0, "duplicate or unordered required operation");
+                assert!(
+                    compare(action.requires[j - 1], action.requires[j]) < 0,
+                    "duplicate or unordered required operation"
+                );
             }
             output.text(action.requires[j]);
             j += 1;
@@ -629,7 +646,10 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
         let event = contribution.events[i];
         assert!(identity(event.id), "invalid event identity");
         if i > 0 {
-            assert!(compare(contribution.events[i - 1].id, event.id) < 0, "duplicate or unordered events");
+            assert!(
+                compare(contribution.events[i - 1].id, event.id) < 0,
+                "duplicate or unordered events"
+            );
         }
         output.map(2);
         output.key("id");
@@ -645,9 +665,15 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
     i = 0;
     while i < contribution.nodes.len() {
         let node = contribution.nodes[i];
-        assert!(identity(node.id) && operation_key_str(node.operation), "invalid graph node identity or operation");
+        assert!(
+            identity(node.id) && operation_key_str(node.operation),
+            "invalid graph node identity or operation"
+        );
         if i > 0 {
-            assert!(compare(contribution.nodes[i - 1].id, node.id) < 0, "duplicate or unordered graph nodes");
+            assert!(
+                compare(contribution.nodes[i - 1].id, node.id) < 0,
+                "duplicate or unordered graph nodes"
+            );
         }
         output.map(8);
         output.key("after");
@@ -681,7 +707,10 @@ const fn output_graph_keys(output: &mut MetadataBytes, values: &[&str]) {
     let mut i = 0;
     while i < values.len() {
         if i > 0 {
-            assert!(crate::static_schema::compare(values[i - 1], values[i]) < 0, "duplicate or unordered graph keys");
+            assert!(
+                crate::static_schema::compare(values[i - 1], values[i]) < 0,
+                "duplicate or unordered graph keys"
+            );
         }
         output.text(values[i]);
         i += 1;
@@ -690,6 +719,8 @@ const fn output_graph_keys(output: &mut MetadataBytes, values: &[&str]) {
 const fn operation_key_str(key: &str) -> bool {
     let bytes = key.as_bytes();
     let mut slash = 0;
-    while slash < bytes.len() && bytes[slash] != b'/' { slash += 1; }
+    while slash < bytes.len() && bytes[slash] != b'/' {
+        slash += 1;
+    }
     slash > 0 && slash + 1 < bytes.len()
 }
