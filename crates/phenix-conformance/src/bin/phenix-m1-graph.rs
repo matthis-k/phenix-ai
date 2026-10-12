@@ -86,8 +86,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 5, "GRAPH_A GRAPH_B GRAPH_C OUTPUT");
-    let output = Path::new(&args[4]);
+    assert_eq!(args.len(), 6, "GRAPH_A GRAPH_B GRAPH_C DEFINITIONS OUTPUT");
+    let output = Path::new(&args[5]);
     fs::create_dir_all(output).unwrap();
     let witness = output.join("constructor-witness");
     std::env::set_var("PHENIX_GRAPH_CONSTRUCTOR_WITNESS", &witness);
@@ -103,9 +103,10 @@ fn main() {
             format!("example.graph-{}", ["a", "b", "c"][index])
         );
         assert_eq!(graph.nodes.len(), if index == 2 { 2 } else { 1 });
-        assert_eq!(graph.events.len(), if index == 0 { 1 } else { 0 });
+        assert!(graph.events.is_empty());
     }
-    let policy = composition(packages.clone());
+    let mut policy = composition(packages.clone());
+    policy.definitions.push(args[4].clone());
     let prepared = Prepared::prepare(policy.clone()).unwrap();
     assert!(
         !witness.exists(),
@@ -141,7 +142,7 @@ fn main() {
             "example.graph-c/d"
         ]
     );
-    assert_eq!(prepared.discover_actions().len(), 1);
+    assert_eq!(prepared.discover_actions().len(), 2);
     assert_eq!(prepared.discover_actions()[0].id, "example.graph.submit");
     let digest = prepared.generation_identity("test.graph").unwrap();
     let mut reversed = policy.clone();
@@ -204,10 +205,42 @@ fn main() {
     );
     assert!(!witness.exists(), "tampered graph activated native code");
 
+    let mut executable = fs::read(Path::new(&policy.artifacts[0]).join("lib/plugin.so")).unwrap();
+    let original = phenix_artifact::extract_graph(&executable)
+        .unwrap()
+        .unwrap();
+    let original_bytes = original.encode().unwrap();
+    let mut forged = original;
+    forged.plugin = "example.graph-z".into();
+    let forged_bytes = forged.encode().unwrap();
+    assert_eq!(original_bytes.len(), forged_bytes.len());
+    let at = executable
+        .windows(original_bytes.len())
+        .position(|bytes| bytes == original_bytes)
+        .unwrap();
+    executable[at..at + forged_bytes.len()].copy_from_slice(&forged_bytes);
+    fs::write(tampered.join("lib/plugin.so"), &executable).unwrap();
+    record["artifact_sha256"] = serde_json::Value::String(phenix_artifact::digest(&executable));
+    fs::write(
+        tampered.join("package.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        phenix_artifact::VerifiedPackage::verify_trusted_read_only(&tampered)
+            .unwrap_err()
+            .code,
+        Code::DescriptorInvalid
+    );
+    assert!(
+        !witness.exists(),
+        "re-signed owner mismatch activated native code"
+    );
+
     // These declarations came from three independently packaged native plugins.
     // Mutating the requested event schema or a declared write must reject
     // during preparation, before any code from a selected plugin is loaded.
-    let declarations = packages
+    let mut declarations = packages
         .iter()
         .map(|package| {
             phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(package))
@@ -217,8 +250,59 @@ fn main() {
                 .clone()
         })
         .collect::<Vec<_>>();
+    let definitions =
+        phenix_artifact::VerifiedContractPackage::verify_trusted_read_only(Path::new(&args[4]))
+            .unwrap();
+    let definition_graph = definitions.graph().expect("definition-only graph").clone();
+    declarations.push(definition_graph.clone());
+    let bad_definition = output.join("bad-definition");
+    fs::create_dir_all(&bad_definition).unwrap();
+    fs::copy(
+        Path::new(&args[4]).join("descriptor.bin"),
+        bad_definition.join("descriptor.bin"),
+    )
+    .unwrap();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(Path::new(&args[4]).join("package.json")).unwrap())
+            .unwrap();
+    for case in 0..3 {
+        let mut bad = definition_graph.clone();
+        if case == 1 {
+            bad.plugin = "wrong.owner".into();
+        }
+        if case == 2 {
+            bad.nodes = declarations[0].nodes.clone();
+        }
+        let bytes = bad.encode().unwrap();
+        fs::write(bad_definition.join("graph.bin"), &bytes).unwrap();
+        record["graph"]["sha256"] = serde_json::Value::String(if case == 0 {
+            "0".repeat(64)
+        } else {
+            phenix_artifact::digest(&bytes)
+        });
+        fs::write(
+            bad_definition.join("package.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            phenix_artifact::VerifiedContractPackage::verify_trusted_read_only(&bad_definition)
+                .unwrap_err()
+                .code,
+            Code::DescriptorInvalid
+        );
+        assert!(
+            !witness.exists(),
+            "rejected definition graph activated native code"
+        );
+    }
     let mut bad_schema = declarations.clone();
-    bad_schema[0].events[0].payload = phenix_contract::ValueSchema::String;
+    bad_schema[3]
+        .events
+        .iter_mut()
+        .find(|event| event.id == EVENT)
+        .unwrap()
+        .payload = phenix_contract::ValueSchema::String;
     assert_eq!(
         prepared.compile_graph(&bad_schema).unwrap_err().code,
         Code::SchemaRejected
@@ -404,6 +488,25 @@ fn main() {
     );
     // Skip handles domain results only. Resource denial must stop the action
     // before A commits anything, without invoking B or either successor.
+    let calls_before = kernel.inspect()["calls"].as_u64().unwrap();
+    let partial = kernel
+        .submit_action(
+            "example.graph.submit-partial",
+            &Value::map([("text", Value::String("partial".into()))]),
+        )
+        .unwrap();
+    assert_eq!(partial.len(), 2);
+    assert_eq!(partial[0].node, "example.graph-a/a");
+    assert_eq!(partial[1].node, "example.graph-c/c");
+    assert_eq!(
+        partial[1].outcome,
+        phenix_kernel::Outcome::Success(Value::String("A:partial|B:domain".into()))
+    );
+    assert_eq!(
+        kernel.inspect()["calls"].as_u64().unwrap(),
+        calls_before + 2
+    );
+    fs::remove_file(&successor_witness).unwrap();
     let before = kernel.inspect()["live_state"].clone();
     let mut restricted = scope.clone();
     restricted
@@ -559,6 +662,8 @@ fn main() {
         "actions": action_ids,
         "cases": [
             "three-native-artifact-contributions",
+            "definition-only-event-action-contributor",
+            "definition-graph-digest-owner-and-executable-node-rejection",
             "pre-dlopen-graph-verification",
             "multi-root-join",
             "independent-order",
@@ -566,7 +671,9 @@ fn main() {
             "authorized-action-discovery",
             "denied-graph-operation-no-constructor",
             "re-signed-graph-tamper-rejected",
+            "re-signed-native-graph-owner-rejected",
             "dormant-predecessor-semantics",
+            "native-dormant-b-does-not-block-c-and-after-does-not-trigger-d",
             "existing-direct-invocation",
             "serial-action-admission",
             "four-external-nodes-dispatched",

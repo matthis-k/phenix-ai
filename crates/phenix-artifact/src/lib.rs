@@ -243,12 +243,21 @@ pub struct ContractPackageRecord {
     pub format: String,
     pub descriptor: String,
     pub descriptor_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<ContractGraphRecord>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractGraphRecord {
+    pub file: String,
+    pub sha256: String,
 }
 #[derive(Debug)]
 pub struct VerifiedContractPackage {
     metadata: phenix_contract::ContractMetadata,
     descriptor_sha256: String,
     package_sha256: String,
+    graph: Option<phenix_contract::GraphContribution>,
 }
 impl VerifiedContractPackage {
     pub fn metadata(&self) -> &phenix_contract::ContractMetadata {
@@ -259,6 +268,9 @@ impl VerifiedContractPackage {
     }
     pub fn package_sha256(&self) -> &str {
         &self.package_sha256
+    }
+    pub fn graph(&self) -> Option<&phenix_contract::GraphContribution> {
+        self.graph.as_ref()
     }
     /// The caller attests a trusted read-only source, as for native packages.
     /// No executable is discovered, extracted or loaded.
@@ -296,11 +308,33 @@ impl VerifiedContractPackage {
         let mut hash = Sha256::new();
         hash.update(b"phenix.contract-package.v2\0");
         hash.update(Sha256::digest(&bytes));
+        let graph = if let Some(record) = record.graph {
+            let bytes = read(&relative(&root, &record.file)?, Code::DescriptorInvalid)?;
+            if digest(&bytes) != record.sha256 {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "definition graph digest mismatch",
+                ));
+            }
+            let graph = phenix_contract::GraphContribution::decode(&bytes)?;
+            if graph.plugin != metadata.plugin || !graph.nodes.is_empty() {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "definition graph owner or executable nodes",
+                ));
+            }
+            hash.update(b"graph\0");
+            hash.update(Sha256::digest(&bytes));
+            Some(graph)
+        } else {
+            None
+        };
         let package_sha256 = format!("{:x}", hash.finalize());
         Ok(Self {
             metadata,
             descriptor_sha256,
             package_sha256,
+            graph,
         })
     }
 }

@@ -1,0 +1,53 @@
+{
+  "base_commit": "672b7f096f1d69d06320c2d68574b6bb24623a79",
+  "format": "phenix.g1-g3-definition-local.v1",
+  "native_fixture": {
+    "actions": [
+      "example.graph.submit",
+      "example.graph.submit-partial"
+    ],
+    "cases": [
+      "three-native-artifact-contributions",
+      "definition-only-event-action-contributor",
+      "definition-graph-digest-owner-and-executable-node-rejection",
+      "pre-dlopen-graph-verification",
+      "multi-root-join",
+      "independent-order",
+      "permutation-invariant-generation",
+      "authorized-action-discovery",
+      "denied-graph-operation-no-constructor",
+      "re-signed-graph-tamper-rejected",
+      "re-signed-native-graph-owner-rejected",
+      "dormant-predecessor-semantics",
+      "native-dormant-b-does-not-block-c-and-after-does-not-trigger-d",
+      "existing-direct-invocation",
+      "serial-action-admission",
+      "four-external-nodes-dispatched",
+      "schema-and-action-rejection",
+      "successful-fanin-runs-c",
+      "two-committed-property-values-read-by-successor",
+      "narrow-action-scope-zero-effects",
+      "predecessor-b-domain-prevents-c-effect",
+      "denied-property-writer-before-activation",
+      "skip-domain-continues-independent-node",
+      "skip-suppresses-transitive-successors",
+      "correlated-host-results-before-successor-effects",
+      "observer-retains-root-and-terminal-outcomes",
+      "resource-denial-zero-commits-and-no-successor",
+      "ungranted-event-resource-zero-invocations",
+      "root-resource-ceiling-bounds-graph-delegation",
+      "action-resource-inherited-by-four-native-nodes"
+    ],
+    "format": "phenix.g2-evidence.v1",
+    "generation_identity": "86b08a69941622358c5e73843701d4dc8df90725bebee8c9a0aa152f39177a7d",
+    "graph_identity": "8f4b0a924fb93d71f46c036a6de9c4d402348ddedddf2be1f011edf4dd1d5663",
+    "nodes": [
+      "example.graph-a/a",
+      "example.graph-b/b",
+      "example.graph-c/c",
+      "example.graph-c/d"
+    ]
+  },
+  "sdk_only_build": true,
+  "shipping_ci_proven": false
+}

@@ -79,19 +79,19 @@ The source includes tests for canonical round-trips, reordering,
 duplicates, missing triggers and anchors, cycles, denied targets, disconnected
 roots and conflicting writers. Exact-head CI has not established acceptance.
 
-**G1/G2 remain unaccepted** until the following gaps have executable evidence:
+The definition-only follow-up implements the remaining package mechanism.
+`#[plugin(profile = "definitions", graph(GRAPH))]` exposes canonical graph
+bytes. The package record binds an optional graph file and digest; package
+identity includes its contents. Definitions contribute events/actions and
+retain their existing restriction against executable nodes. The existing
+resolver combines their declarations with independently authorized native nodes.
 
-- Malformed graph sections and mismatched graph/package identities need an
-  independent tampering fixture, beyond owned decoder unit tests.
-- Definition-only graph contributors have no packaged metadata mechanism yet.
-- An authenticated event-admission API needs to validate payload schemas,
-  resource scopes and root authority, rather than trusting event ID strings.
-- An action's advertised authority requirements must be enforced when the
-  frontend submits it. Discovery currently filters root-granted actions.
-- The prepared compiler now checks event payloads against selected handler
-  request schemas and resolves declared property writes to selected writable
-  properties with caller grants. Negative external fixtures for both rules
-  now run in the external gate; full follow-up shipping CI remains required.
+The external gate rejects graph digest tampering, re-signed native/definition
+owner mismatches, executable definition nodes, handler schema mismatch, missing
+properties and ungranted writes before constructors. It executes a separate
+partial action with only A/C active. B's committed value remains available to C;
+D stays dormant despite its ordering edge. Follow-up shipping CI and uploaded
+exact-head evidence remain before acceptance.
 
 G3 owns activation and dispatch. G4 owns pending calls, cancellation and live
 state triggers. No agent-specific entry point or second dispatcher is added.

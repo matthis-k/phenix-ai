@@ -38,8 +38,16 @@ pub fn expand(
 ) -> syn::Result<proc_macro2::TokenStream> {
     let mut attributes = std::collections::BTreeMap::new();
     let mut contracts = Vec::new();
+    let mut graph = None;
     for meta in declarations(tokens)? {
         if let Meta::List(list) = &meta {
+            if list.path.is_ident("graph") {
+                if graph.is_some() {
+                    return Err(syn::Error::new(list.span(), "duplicate graph contribution"));
+                }
+                graph = Some(syn::parse2::<syn::Path>(list.tokens.clone())?);
+                continue;
+            }
             if !list.path.is_ident("define") {
                 return Err(syn::Error::new(
                     list.span(),
@@ -95,5 +103,12 @@ pub fn expand(
         pub const METADATA: ::phenix_sdk::MetadataBytes =
             ::phenix_sdk::descriptor::static_metadata::definitions(#id, #version, [#(#contracts),*]);
     })?);
+    if let Some(path) = graph {
+        items.push(syn::parse2(quote! {
+            #[allow(clippy::large_const_arrays)]
+            pub const GRAPH_METADATA: ::phenix_sdk::MetadataBytes =
+                ::phenix_sdk::descriptor::static_metadata::graph(#path);
+        })?);
+    }
     Ok(quote!(#module))
 }

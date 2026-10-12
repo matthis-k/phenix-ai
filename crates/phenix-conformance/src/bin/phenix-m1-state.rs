@@ -171,6 +171,7 @@ fn main() {
     fs::write(
         package.join("package.json"),
         serde_json::to_vec(&phenix_artifact::ContractPackageRecord {
+            graph: None,
             format: "phenix.contract-package.v2".into(),
             descriptor: "descriptor.bin".into(),
             descriptor_sha256: phenix_artifact::digest(&bytes),
@@ -446,6 +447,7 @@ fn main() {
     fs::write(
         bad_package.join("package.json"),
         serde_json::to_vec(&phenix_artifact::ContractPackageRecord {
+            graph: None,
             format: "phenix.contract-package.v2".into(),
             descriptor: "descriptor.bin".into(),
             descriptor_sha256: phenix_artifact::digest(&bytes),

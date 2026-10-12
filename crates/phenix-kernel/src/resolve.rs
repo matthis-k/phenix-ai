@@ -185,6 +185,7 @@ impl Prepared {
         let mut definitions = Definitions::new();
         let mut owners: BTreeSet<_> = packages.keys().cloned().collect();
         let mut state_identity = BTreeSet::new();
+        let mut graph_inputs = Vec::new();
         composition.definitions.sort();
         for path in composition.definitions {
             let package = VerifiedContractPackage::verify_trusted_read_only(Path::new(&path))?;
@@ -193,6 +194,9 @@ impl Prepared {
                 return Err(invalid("duplicate definition package owner"));
             }
             state_identity.insert(format!("{}:{}", metadata.plugin, package.package_sha256()));
+            if let Some(graph) = package.graph() {
+                graph_inputs.push(graph.clone());
+            }
             for d in &metadata.definitions {
                 add_definition(&mut definitions, d.clone())?;
             }
@@ -441,10 +445,11 @@ impl Prepared {
         {
             return Err(invalid("root ceiling operation absent"));
         }
-        let graph_inputs = packages
-            .values()
-            .filter_map(|package| package.graph().cloned())
-            .collect::<Vec<_>>();
+        graph_inputs.extend(
+            packages
+                .values()
+                .filter_map(|package| package.graph().cloned()),
+        );
         let mut prepared = Self {
             packages,
             entry: composition.entry,

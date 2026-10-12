@@ -1,13 +1,13 @@
-use example_graph_contracts::{Start, Submit, Task};
+use example_graph_contracts::{Start, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "example.graph-a",
-    events: &[Start::EVENT],
-    actions: &[Submit::ACTION],
+    events: &[],
+    actions: &[],
     nodes: &[StaticGraphNode {
         id: "a",
-        triggers: &["example.graph.start"],
+        triggers: &["example.graph.partial", "example.graph.start"],
         after: &[],
         selector: "",
         operation: "example.graph.task@1/run",

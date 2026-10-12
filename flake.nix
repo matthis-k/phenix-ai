@@ -132,9 +132,37 @@
       graphA = plugin "example-graph-a";
       graphB = plugin "example-graph-b";
       graphC = plugin "example-graph-c";
+      graphDefinitionsBinary = rust.buildRustPackage {
+        pname = "example-graph-contracts";
+        version = "0.1.0";
+        src = pluginSource;
+        buildAndTestSubdir = "examples";
+        cargoRoot = "examples";
+        cargoLock.lockFile = ./examples/Cargo.lock;
+        cargoBuildFlags = [
+          "-p"
+          "example-graph-contracts"
+          "--bin"
+          "example-graph-contracts"
+        ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = false;
+        installPhase = "mkdir -p $out/bin; cp target/*/release/example-graph-contracts $out/bin/";
+      };
+      graphDefinitions = pkgs.runCommand "phenix-graph-definitions" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p $out
+        ${graphDefinitionsBinary}/bin/example-graph-contracts $out/descriptor.bin $out/graph.bin
+        python - "$out" <<'PY'
+        import hashlib, json, sys
+        from pathlib import Path
+        out = Path(sys.argv[1])
+        digest = lambda name: hashlib.sha256((out / name).read_bytes()).hexdigest()
+        (out / "package.json").write_text(json.dumps(dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest("descriptor.bin"), graph=dict(file="graph.bin", sha256=digest("graph.bin")))))
+        PY
+      '';
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
         mkdir -p $out
-        ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} $out
+        ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} ${graphDefinitions} $out
       '';
       authoredProvider = plugin "example-authoring-provider";
       authoredClient = plugin "example-authoring-client";

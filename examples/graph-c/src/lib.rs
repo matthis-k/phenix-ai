@@ -8,7 +8,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     nodes: &[
         StaticGraphNode {
             id: "c",
-            triggers: &["example.graph.start"],
+            triggers: &["example.graph.partial", "example.graph.start"],
             after: &["example.graph-a/a", "example.graph-b/b"],
             selector: "",
             operation: "example.graph.task@1/run",
