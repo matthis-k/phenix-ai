@@ -239,6 +239,17 @@
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         test -s "$out/sqlite-restart.json"
       '';
+      basicMemory = basicNativePlugin
+        "phenix-plugin-basic-memory"
+        "phenix_plugin_basic_memory"
+        ./crates/phenix-plugin-basic-memory;
+      basicMemoryCheck = pkgs.runCommand "phenix-b3-memory" { } ''
+        mkdir -p $out
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-memory.db"
+        ${conformanceBinary}/bin/phenix-b3-memory seed ${basicMemory} ${storageSqlite} ${basicDefinitions} $out
+        ${conformanceBinary}/bin/phenix-b3-memory reload ${basicMemory} ${storageSqlite} ${basicDefinitions} $out
+        test -s "$out/memory-restart.json"
+      '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -607,6 +618,7 @@
         ln -s ${eventJournalCheck} $out/event-journal
         ln -s ${basicSessionCheck} $out/basic-session
         ln -s ${sqliteRestartCheck} $out/sqlite-restart
+        ln -s ${basicMemoryCheck} $out/basic-memory
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -632,6 +644,7 @@
         phenix-plugin-event-journal = eventJournal;
         phenix-plugin-basic-session = basicSession;
         phenix-plugin-storage-sqlite = storageSqlite;
+        phenix-plugin-basic-memory = basicMemory;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -663,6 +676,7 @@
         b2-journal = eventJournalCheck;
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
+        b3-memory = basicMemoryCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
