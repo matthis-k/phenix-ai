@@ -144,6 +144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-basic-tools"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-model-scripted"
 version = "0.1.0"
 dependencies = [
