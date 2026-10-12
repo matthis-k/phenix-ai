@@ -1,6 +1,6 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 implementation in progress, neither accepted
+Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 shipping CI passed with semantic gaps; G3 partial; G4 pending
 Updated: 2026-10-12
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
@@ -43,8 +43,8 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S2 | Kernel-owned ValueRef cells, CAS, subscriptions, transactions | S1b; stacked on #775 | External native state and security fixtures | PROVEN at `6ce818c4`, CI 38170397949; `m1-live-state-matrix.md` |
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
 | S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Accepted at `75a255b9`, CI 38205255204; generated native metadata, ABI 3, typed fields/slots, pending imports and property/security completion proven |
-| S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1 and G2 below; not started |
-| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3 and G4 below; not started |
+| S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1/G2: shipping CI passed, remaining acceptance cases open |
+| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | Refined into G3/G4: G3 partial, G4 pending |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
 | A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
 | Basic | Triggered agent, providers, durable sessions and frontends | G4 and Basic providers | Terminal, JSONL and ACP run the same agent | B1-B5, F1-F2 and P1 below; not started |
@@ -246,29 +246,34 @@ Frontends observe ordered output events. Product startup never calls a special
 `Agent::run()` entry. The kernel owns authority, generation selection, readiness,
 cancellation and native lifetimes. Plugins own agent and frontend semantics.
 
+Status is an acceptance checklist: `[x]` means proven on an exact implementation head; `[ ]` means further acceptance work. Passing CI is necessary but does not alone close a semantic gate.
+
 | Stage | Depends on | Concrete ownership | Acceptance | State |
 | --- | --- | --- | --- | --- |
-| S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | PROVEN at `75a255b9`, CI 38205255204 |
-| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | IMPLEMENTED, NOT PROVEN (#782): const macros, typed declarations and verified ELF graph section; negative package and full action admission gates pending CI |
-| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | IMPLEMENTED, NOT PROVEN (#782): verified native contributions from three independent providers, generation digest, denied-target and constructor-witness conformance; exact-head CI and missing schema/write gates pending |
-| G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | PARTIAL (#783): typed action admission and serial root dispatch over three external nodes; state-dependent successors, policy handling, scopes and output events remain |
-| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | NOT STARTED |
-| B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | NOT STARTED |
-| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | NOT STARTED |
-| B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | NOT STARTED |
-| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | NOT STARTED |
-| B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | NOT STARTED |
-| F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | NOT STARTED |
-| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | NOT STARTED |
-| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | NOT STARTED |
+| S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | [x] PROVEN at `75a255b9`, CI 38205255204 |
+| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | [ ] IMPLEMENTED, NOT ACCEPTED (#782): shipping CI 38220130161 passed at `1615ed52`; definition-only contributors and negative semantic gates remain |
+| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [ ] IMPLEMENTED, NOT ACCEPTED (#782): native prepared graph and shipping CI passed; remaining schema/write and definition-only contribution gates |
+| G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] PARTIAL (#783): A/B commit typed properties, C reads both, scoped admission and fail-root cases added at `a838de05`; CI 38223182503 and output/failure semantics remain |
+| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] NOT STARTED |
+| B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] NOT STARTED |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] NOT STARTED |
+| B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] NOT STARTED |
+| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] NOT STARTED |
+| B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] NOT STARTED |
+| F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] NOT STARTED |
+| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] NOT STARTED |
+| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] NOT STARTED |
+| K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
+| K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
+| K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
+| L1 | K3 | `phenix-plugin-logging` | Independent optional consumer of kernel diagnostics; logging formats, filtering, sinks, export and retention owned by plugin; zero logging code in kernel | [ ] NOT STARTED |
+| I1 | K3 | `phenix-plugin-introspection` | Independent optional typed, discoverable contract projection over authorized kernel query APIs; no direct unrestricted host handles, no dependency on L1 | [ ] NOT STARTED |
 
-G1-G4 refine the existing S4/S5 work, using one resolver and dispatcher.
-S6 parallel scheduling remains outside the Basic critical path. B1 can proceed
-after G1 and F1 after G3; the shipped Basic agent still requires G4.
+G1-G4 refine S4/S5 using one resolver and dispatcher. S6 remains outside the Basic critical path. B1 can proceed after G1, F1 after G3, and P1 requires G4. K1-K3 and L1/I1 are independent operations milestones, not Basic product blockers.
 
-G1/G2 work-in-progress: [PR #782](https://github.com/matthis-k/phenix-ai/pull/782) owns typed graph declarations, ELF section verification, the prepared multi-root DAG compiler and independent graph artifacts. [Its contract and remaining gates](m1-graph-declarations.md) distinguish implementation from verified acceptance. No exact-head green CI or stage acceptance is claimed.
+G1/G2: [PR #782](https://github.com/matthis-k/phenix-ai/pull/782) owns typed graph declarations, ELF verification and the prepared multi-root DAG. Full exact-head shipping CI 38220130161 passed at `1615ed52`, but definition-only and negative semantic evidence remain before acceptance. [Its contract](m1-graph-declarations.md) owns the gates.
 
-G3 execution slice: [PR #783](https://github.com/matthis-k/phenix-ai/pull/783) admits typed actions and runs graph-selected native operations under their declaring plugin grants in the existing serial root. The external conformance fixture asserts three real invocations and rejects malformed action IDs and event payloads. This is not G3 acceptance until exact-head CI, state-dependent join tests, failure policy and output event observation pass.
+G3: [PR #783](https://github.com/matthis-k/phenix-ai/pull/783) now includes typed scoped admission and a native state-backed join: A/B commit independent properties and C reads both. Exact-head CI for `a838de05` is run 38223182503. G3 still needs verified output observation, failure policy and acceptance evidence.
 
 ### Event admission and graph rules
 
@@ -306,7 +311,78 @@ context; replaceable providers; usage; streaming; durable session continuation;
 caller-selected limits; and denied imports with zero tool effects. Planning,
 compaction and MCP remain later plugin work.
 
-## 9. Evidence, closure, and PR discipline
+## 9. Kernel operations and independent plugins
+
+These stages add kernel management and observation without turning the kernel
+into a logger, inspection contract provider, storage backend or agent runtime.
+Their only acceptance checklist is the stage table above.
+
+### K1-K3: kernel-owned mechanisms
+
+**K1: dynamic plugin management.** Reuse `Prepared`, `Generations`,
+the verifier, root admission and retirement. The kernel accepts authorized
+composition changes and verified artifacts, stages candidates, trials, promotes,
+rolls back and drains removed instances. Plugin compilation, artifact fetching,
+CLI/UI policy and build tools remain external. Plugin callers cannot grant
+their own management authority.
+
+**K2: desired-state reconciliation.** Diff the desired composition against
+the active prepared generation. Preview without effects. Apply through the same
+resolver, graph compiler, authority checks and generation lifecycle. Retain
+already admitted roots and physical leases during replacement. No separate
+plugin registry, resolver, reconciliation executor or task manager.
+
+**K3: diagnostic events and raw inspection.** The kernel emits versioned
+structured facts about dispatch, lifecycle, state, scheduling, authorization
+and generations. Include stable correlation, root, call, plugin and generation
+identities where available. These are *diagnostic* events, separate from the
+triggered application events in G1-G4 and from B2's durable semantic event
+journal. Emission uses bounded, non-reentrant delivery; absent, slow or
+failing consumers do not affect execution. Report overflow and gaps rather
+than promising lossless diagnostic history.
+
+The kernel owns a narrow, authenticated host query API. It returns consistent
+snapshots of prepared bindings, selected graphs, live values, calls, tickets,
+generations and authority-filtered metadata. Read access does not mutate state.
+Callers receive only information authorized by their root/resource scopes.
+The API is an internal kernel boundary, not a public unchecked ABI.
+
+### L1/I1: independent optional plugins
+
+**L1: logging plugin.** `phenix-plugin-logging` consumes diagnostic events.
+It owns filtering, formatting, sinks, retention and optional file or telemetry
+export. The kernel holds no log store, formatter, sink configuration or tracing
+backend. The plugin can be absent or replaced without changing kernel outcomes.
+
+**I1: introspection plugin.** `phenix-plugin-introspection` calls authorized
+kernel query APIs, then projects selected results through ordinary versioned,
+typed Phenix contracts. It owns contract schemas, pagination, presentation and
+consumer-specific redaction. Agents and frontends receive only separately
+granted read operations, not a raw kernel handle. It queries the current kernel
+state rather than reconstructing it from logs.
+
+L1 and I1 each depend on K3, never on one another. Introspection is not a
+logging plugin; logging is not a contract API. B2's event journal remains the
+durable semantic replay mechanism for sessions, not a diagnostic sink.
+
+### Deferred plugin-owned work
+
+Durable storage and migrations belong to storage plugins, building on B2
+where appropriate. Remote or external language runtimes and OS isolation
+providers belong to plugins. Kernel authority must apply to all their effects;
+none may expand its own grants. None introduces a second kernel executor.
+
+### Acceptance evidence
+
+K1/K2 require denied-management, unchanged-root, rejected-candidate,
+no-effect-preview, rollback and pending-retirement fixtures. K3 requires
+no-consumer and slow-consumer equivalence, explicit gap reporting, consistent
+snapshots and denied-read tests. L1 and I1 must build independently against
+the public SDK. Removing either leaves the other and all kernel tests
+unchanged. Restricted introspection grants must not expose secret state
+or plugin-management authority.
+
+## 10. Evidence, closure, and PR discipline
 
 Each stage updates only its own source files, fixtures, the relevant RFC addendum, and this matrix. The owning PR body records exact head, targeted acceptance tests, unresolved blockers, and relation to the previous stage. Mark tasks `PROVEN` only with executable evidence from the exact head; use `NOT STARTED`, `IMPLEMENTED`, `TESTED`, and `PROVEN` consistently. A stage cannot claim acceptance based on green CI alone or unit tests that mirror declarations.
 
