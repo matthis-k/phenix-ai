@@ -1,5 +1,5 @@
 use object::{Object, ObjectSection};
-use phenix_contract::{Code, ContractMetadata, Failure, MetadataExecution, NATIVE_SECTION_BYTES};
+use phenix_contract::{Code, ContractMetadata, Failure, GraphContribution, MetadataExecution, NATIVE_SECTION_BYTES};
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -56,6 +56,38 @@ fn extract_section(data: &[u8]) -> Result<Vec<u8>, Failure> {
     Ok(payload.to_vec())
 }
 
+/**
+ * Inspect optional graph contributions in ELF bytes before dlopen.
+ * The artifact SHA-256 binds both sections to the verified package.
+ */
+pub fn extract_graph(bytes: &[u8]) -> Result<Option<GraphContribution>, Failure> {
+    let object = object::File::parse(bytes)
+        .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
+    let mut sections = object.sections().filter(|s| s.name().ok() == Some(".phenix.graph"));
+    let Some(section) = sections.next() else {
+        return Ok(None);
+    };
+    if sections.next().is_some() {
+        return Err(Failure::new(Code::DescriptorInvalid, "duplicate graph section"));
+    }
+    let data = section.data()
+        .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
+    if data.len() != NATIVE_SECTION_BYTES {
+        return Err(Failure::new(Code::DescriptorInvalid, "graph section has invalid size"));
+    }
+    let len = u32::from_be_bytes(data[..4].try_into().map_err(|_| {
+        Failure::new(Code::DescriptorInvalid, "graph section missing length")
+    })?) as usize;
+    let end = 4usize.checked_add(len)
+        .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "graph section overflow"))?;
+    let payload = data.get(4..end)
+        .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "graph section truncated"))?;
+    if data[end..].iter().any(|byte| *byte != 0) {
+        return Err(Failure::new(Code::DescriptorInvalid, "nonzero graph section padding"));
+    }
+    Ok(Some(GraphContribution::decode(payload)?))
+}
+
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +105,7 @@ pub struct VerifiedPackage {
     artifact: PathBuf,
     record: PackageRecord,
     metadata: ContractMetadata,
+    graph: Option<GraphContribution>,
 }
 fn read(path: &Path, code: Code) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| Failure::new(code, e.to_string()))
@@ -107,6 +140,9 @@ impl VerifiedPackage {
     pub fn metadata(&self) -> &ContractMetadata {
         &self.metadata
     }
+    pub fn graph(&self) -> Option<&GraphContribution> {
+        self.graph.as_ref()
+    }
     /// Trusted control-plane caller attests a read-only package source. The CLI
     /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
     pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
@@ -140,6 +176,7 @@ impl VerifiedPackage {
                 "descriptor digest mismatch",
             ));
         }
+        let graph = extract_graph(&executable)?;
         let extracted = extract(&executable)?;
         if extracted != metadata {
             return Err(Failure::new(
@@ -154,10 +191,14 @@ impl VerifiedPackage {
                 "native metadata execution profile",
             ));
         }
+        if graph.as_ref().is_some_and(|declaration| declaration.plugin != metadata.plugin) {
+            return Err(Failure::new(Code::DescriptorInvalid, "graph owner differs from artifact"));
+        }
         Ok(Self {
             artifact,
             record,
             metadata,
+            graph,
         })
     }
     pub fn recheck(&self) -> Result<(), Failure> {
