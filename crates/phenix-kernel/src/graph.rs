@@ -383,7 +383,8 @@ mod tests {
         bad[1].actions = bad[0].actions.clone();
         assert!(compile(&bad).is_err());
         let mut bad = fixtures();
-        bad[0].nodes.push(bad[0].nodes[0].clone());
+        let duplicate = bad[0].nodes[0].clone();
+        bad[0].nodes.push(duplicate);
         assert!(compile(&bad).is_err());
         let mut bad = fixtures();
         bad[1].plugin = "forbidden".into();
