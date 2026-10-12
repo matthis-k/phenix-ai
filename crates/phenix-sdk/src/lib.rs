@@ -47,7 +47,9 @@ mod graph_declaration_tests {
             actions: &[Submit::ACTION],
             nodes: &[],
         };
+        const GRAPH_BYTES: MetadataBytes = descriptor::static_metadata::graph(GRAPH);
         let metadata = GRAPH.owned().unwrap();
+        assert_eq!(GRAPH_BYTES.bytes(), metadata.encode().unwrap());
         assert_eq!(metadata.events[0].id, "example.prompt");
         assert_eq!(
             metadata.events[0].payload,
