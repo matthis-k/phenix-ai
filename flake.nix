@@ -250,6 +250,16 @@
         ${conformanceBinary}/bin/phenix-b3-memory reload ${basicMemory} ${storageSqlite} ${basicDefinitions} $out
         test -s "$out/memory-restart.json"
       '';
+      basicAgent = basicNativePlugin
+        "phenix-plugin-basic-agent"
+        "phenix_plugin_basic_agent"
+        ./crates/phenix-plugin-basic-agent;
+      basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
+        mkdir -p $out
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
+        ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModel} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        test -s "$out/agent.json"
+      '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -619,6 +629,7 @@
         ln -s ${basicSessionCheck} $out/basic-session
         ln -s ${sqliteRestartCheck} $out/sqlite-restart
         ln -s ${basicMemoryCheck} $out/basic-memory
+        ln -s ${basicAgentCheck} $out/basic-agent
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -645,6 +656,7 @@
         phenix-plugin-basic-session = basicSession;
         phenix-plugin-storage-sqlite = storageSqlite;
         phenix-plugin-basic-memory = basicMemory;
+        phenix-plugin-basic-agent = basicAgent;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -677,6 +689,7 @@
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
         b3-memory = basicMemoryCheck;
+        b5-agent = basicAgentCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
