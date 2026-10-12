@@ -53,7 +53,10 @@ pub fn action(
     } else {
         required.split(',').map(str::trim).collect()
     };
-    if operations.iter().any(|key| !phenix_contract::operation_key(key)) {
+    if operations
+        .iter()
+        .any(|key| !phenix_contract::operation_key(key))
+    {
         return Err(syn::Error::new(item.span(), "invalid required operation"));
     }
     operations.sort_unstable();
@@ -80,11 +83,43 @@ mod tests {
     use super::*;
     #[test]
     fn invalid_events_and_actions_reject_at_expansion() {
-        assert!(event(quote!(id = "invalid/name"), syn::parse_quote!(struct Bad;)).is_err());
-        assert!(action(quote!(id = "a", event = "e", description = "Do", requires = "invalid"),
-            syn::parse_quote!(struct Bad;)).is_err());
-        assert!(action(quote!(id = "a", event = "e", description = "Do", requires = "test.a@1/x,test.a@1/x"),
-            syn::parse_quote!(struct Bad;)).is_err());
-        assert!(event(quote!(id = "good.event"), syn::parse_quote!(struct Good;)).is_ok());
+        assert!(event(
+            quote!(id = "invalid/name"),
+            syn::parse_quote!(
+                struct Bad;
+            )
+        )
+        .is_err());
+        assert!(action(
+            quote!(
+                id = "a",
+                event = "e",
+                description = "Do",
+                requires = "invalid"
+            ),
+            syn::parse_quote!(
+                struct Bad;
+            )
+        )
+        .is_err());
+        assert!(action(
+            quote!(
+                id = "a",
+                event = "e",
+                description = "Do",
+                requires = "test.a@1/x,test.a@1/x"
+            ),
+            syn::parse_quote!(
+                struct Bad;
+            )
+        )
+        .is_err());
+        assert!(event(
+            quote!(id = "good.event"),
+            syn::parse_quote!(
+                struct Good;
+            )
+        )
+        .is_ok());
     }
 }
