@@ -140,11 +140,15 @@ fn main() {
     let mut denied = policy;
     denied.grants.clear();
     let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
+    // Admission must fail before a root is created or native code is invoked.
+    // Denials from prepared entry validation need not increment runtime
+    // invocation counters.
     assert_eq!(
-        invoke(&kernel, &request("hello")).unwrap_err().code,
+        kernel.admit_default_root().err().unwrap().code,
         Code::Denied
     );
-    assert_eq!(kernel.inspect()["denied_operations"], 1);
+    assert_eq!(kernel.inspect()["calls"], 0);
+    assert_eq!(kernel.inspect()["roots"]["completed"], 0);
     let result = serde_json::json!({
         "format": "phenix.b4.scripted.v1",
         "provider": "phenix.model.scripted",
