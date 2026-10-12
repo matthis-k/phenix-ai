@@ -221,6 +221,10 @@
         "phenix-plugin-storage-fixture"
         "phenix_plugin_storage_fixture"
         ./crates/phenix-plugin-storage-fixture;
+      basicSession = basicNativePlugin
+        "phenix-plugin-basic-session"
+        "phenix_plugin_basic_session"
+        ./crates/phenix-plugin-basic-session;
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -232,6 +236,10 @@
       eventJournalCheck = pkgs.runCommand "phenix-b2-journal" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b2-journal ${eventJournal} ${storageFixture} ${basicDefinitions} $out
+      '';
+      basicSessionCheck = pkgs.runCommand "phenix-b2-session" { } ''
+        mkdir -p $out
+        ${conformanceBinary}/bin/phenix-b2-session ${basicSession} ${storageFixture} ${basicDefinitions} $out
       '';
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
         mkdir -p $out
@@ -583,6 +591,7 @@
         ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${basicToolsCheck} $out/basic-tools
         ln -s ${eventJournalCheck} $out/event-journal
+        ln -s ${basicSessionCheck} $out/basic-session
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -606,6 +615,7 @@
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-basic-tools = basicTools;
         phenix-plugin-event-journal = eventJournal;
+        phenix-plugin-basic-session = basicSession;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -635,6 +645,7 @@
         b4-scripted = scriptedModelCheck;
         b3-tools = basicToolsCheck;
         b2-journal = eventJournalCheck;
+        b2-session = basicSessionCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
