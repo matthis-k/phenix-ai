@@ -249,7 +249,11 @@ fn main() {
     .enumerate()
     {
         assert_eq!(submitted[index].node, *name);
-        let value = if index == 2 { "A:triggered|B:triggered" } else { "triggered" };
+        let value = if index == 2 {
+            "A:triggered|B:triggered"
+        } else {
+            "triggered"
+        };
         assert_eq!(
             submitted[index].outcome,
             phenix_kernel::Outcome::Success(Value::String(value.into()))
