@@ -29,7 +29,10 @@ pub fn reconcile_snapshot(
         || snapshot.status != RunStatus::Indeterminate
         || resolution.call_id.is_empty()
     {
-        return Err(error(ErrorCode::InvalidInput, "session cannot be reconciled"));
+        return Err(error(
+            ErrorCode::InvalidInput,
+            "session cannot be reconciled",
+        ));
     }
     let position = snapshot
         .pending
@@ -59,8 +62,8 @@ pub fn reconcile_snapshot(
 mod plugin {
     use super::{empty, reconcile_snapshot, RECORD};
     use phenix_basic_contracts::{
-        decode, encode, error, BasicError, ErrorCode, RecordKey, ReconcileTool, RunStatus,
-        Session, SessionSnapshot, Scope, Storage, StorageEdit, StorageTransaction,
+        decode, encode, error, BasicError, ErrorCode, ReconcileTool, RecordKey, RunStatus, Scope,
+        Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
     use std::collections::BTreeSet;
@@ -160,9 +163,7 @@ mod plugin {
                 "stale session checkpoint",
             )));
         }
-        if prior.status == RunStatus::Indeterminate
-            && request.status != RunStatus::Indeterminate
-        {
+        if prior.status == RunStatus::Indeterminate && request.status != RunStatus::Indeterminate {
             return Err(CallError::Domain(error(
                 ErrorCode::Indeterminate,
                 "pending tools require reconciliation",
@@ -213,23 +214,67 @@ mod tests {
         state.status = RunStatus::Indeterminate;
         state.run = "r1".into();
         state.pending = vec![
-            ToolCall { id: "a".into(), tool: "uppercase".into(), arguments: "x".into() },
-            ToolCall { id: "b".into(), tool: "length".into(), arguments: "y".into() },
+            ToolCall {
+                id: "a".into(),
+                tool: "uppercase".into(),
+                arguments: "x".into(),
+            },
+            ToolCall {
+                id: "b".into(),
+                tool: "length".into(),
+                arguments: "y".into(),
+            },
         ];
-        assert_eq!(reconcile_snapshot(&mut state, &ReconcileTool {
-            session: "s2".into(), call_id: "a".into(), text: String::new(), error: None
-        }).unwrap_err().code, ErrorCode::InvalidInput);
-        assert_eq!(reconcile_snapshot(&mut state, &ReconcileTool {
-            session: "s1".into(), call_id: "unknown".into(), text: String::new(), error: None
-        }).unwrap_err().code, ErrorCode::NotFound);
-        reconcile_snapshot(&mut state, &ReconcileTool {
-            session: "s1".into(), call_id: "a".into(), text: "HELLO".into(), error: None
-        }).unwrap();
+        assert_eq!(
+            reconcile_snapshot(
+                &mut state,
+                &ReconcileTool {
+                    session: "s2".into(),
+                    call_id: "a".into(),
+                    text: String::new(),
+                    error: None
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            reconcile_snapshot(
+                &mut state,
+                &ReconcileTool {
+                    session: "s1".into(),
+                    call_id: "unknown".into(),
+                    text: String::new(),
+                    error: None
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::NotFound
+        );
+        reconcile_snapshot(
+            &mut state,
+            &ReconcileTool {
+                session: "s1".into(),
+                call_id: "a".into(),
+                text: "HELLO".into(),
+                error: None,
+            },
+        )
+        .unwrap();
         assert_eq!(state.status, RunStatus::Indeterminate);
         assert_eq!(state.history[0].role, Role::Tool);
-        reconcile_snapshot(&mut state, &ReconcileTool {
-            session: "s1".into(), call_id: "b".into(), text: String::new(), error: Some("tool failed".into())
-        }).unwrap();
+        reconcile_snapshot(
+            &mut state,
+            &ReconcileTool {
+                session: "s1".into(),
+                call_id: "b".into(),
+                text: String::new(),
+                error: Some("tool failed".into()),
+            },
+        )
+        .unwrap();
         assert_eq!(state.status, RunStatus::Running);
         assert_eq!(state.pending.len(), 0);
         assert_eq!(state.history[1].call_id, "b");
