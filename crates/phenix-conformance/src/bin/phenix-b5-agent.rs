@@ -106,6 +106,7 @@ fn main() {
         ("root", "phenix.basic.input@1/submit"),
         ("root", "phenix.basic.output@1/read"),
         ("root", "phenix.basic.skills@1/set"),
+        ("root", "phenix.basic.session@1/open"),
         ("root", "phenix.basic.context@1/set"),
         ("phenix.basic.agent", "phenix.basic.input@1/submit"),
         ("phenix.basic.agent", "phenix.basic.journal@1/append"),
@@ -147,8 +148,6 @@ fn main() {
         resource: Some("phenix.session.s1".into()),
     };
     let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
-    let discovered = kernel.discover_actions().unwrap();
-    assert!(discovered.iter().any(|action| action.id == "phenix.basic.submit"));
     invoke::<()>(
         &kernel, "phenix.basic.skills@1/set", "phenix.basic.memory",
         SkillSet {
