@@ -282,7 +282,7 @@ mod plugin {
                     error: None,
                 });
                 session.status = RunStatus::Completed;
-                session = checkpoint(host, session)?;
+                checkpoint(host, session)?;
                 event(
                     host,
                     &input.session,
