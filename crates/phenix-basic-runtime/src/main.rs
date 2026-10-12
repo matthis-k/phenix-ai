@@ -1,8 +1,7 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest,
-    Submission,
+    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest, Submission,
 };
 use phenix_contract::{Portable, Value};
 use phenix_kernel::{
@@ -36,7 +35,7 @@ fn invoke<T: Portable>(
     {
         Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
         Outcome::Domain(value) => Ok(Err(
-            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?,
+            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?
         )),
     }
 }
