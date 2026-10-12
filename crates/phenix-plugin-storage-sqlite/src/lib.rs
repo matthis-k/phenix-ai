@@ -19,20 +19,53 @@ use std::{
 mod ffi {
     use super::{c_char, c_int, c_void};
     #[repr(C)]
-    pub struct sqlite3 { _private: [u8; 0] }
+    pub struct sqlite3 {
+        _private: [u8; 0],
+    }
     #[repr(C)]
-    pub struct sqlite3_stmt { _private: [u8; 0] }
+    pub struct sqlite3_stmt {
+        _private: [u8; 0],
+    }
     #[link(name = "sqlite3")]
     unsafe extern "C" {
-        pub fn sqlite3_open_v2(path: *const c_char, db: *mut *mut sqlite3, flags: c_int, vfs: *const c_char) -> c_int;
+        pub fn sqlite3_open_v2(
+            path: *const c_char,
+            db: *mut *mut sqlite3,
+            flags: c_int,
+            vfs: *const c_char,
+        ) -> c_int;
         pub fn sqlite3_close(db: *mut sqlite3) -> c_int;
         pub fn sqlite3_busy_timeout(db: *mut sqlite3, millis: c_int) -> c_int;
-        pub fn sqlite3_exec(db: *mut sqlite3, sql: *const c_char, callback: *mut c_void, arg: *mut c_void, err: *mut *mut c_char) -> c_int;
+        pub fn sqlite3_exec(
+            db: *mut sqlite3,
+            sql: *const c_char,
+            callback: *mut c_void,
+            arg: *mut c_void,
+            err: *mut *mut c_char,
+        ) -> c_int;
         pub fn sqlite3_free(ptr: *mut c_void);
-        pub fn sqlite3_prepare_v2(db: *mut sqlite3, sql: *const c_char, n: c_int, stmt: *mut *mut sqlite3_stmt, tail: *mut *const c_char) -> c_int;
+        pub fn sqlite3_prepare_v2(
+            db: *mut sqlite3,
+            sql: *const c_char,
+            n: c_int,
+            stmt: *mut *mut sqlite3_stmt,
+            tail: *mut *const c_char,
+        ) -> c_int;
         pub fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> c_int;
-        pub fn sqlite3_bind_text(stmt: *mut sqlite3_stmt, idx: c_int, data: *const c_char, size: c_int, destructor: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
-        pub fn sqlite3_bind_blob(stmt: *mut sqlite3_stmt, idx: c_int, data: *const c_void, size: c_int, destructor: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
+        pub fn sqlite3_bind_text(
+            stmt: *mut sqlite3_stmt,
+            idx: c_int,
+            data: *const c_char,
+            size: c_int,
+            destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+        ) -> c_int;
+        pub fn sqlite3_bind_blob(
+            stmt: *mut sqlite3_stmt,
+            idx: c_int,
+            data: *const c_void,
+            size: c_int,
+            destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+        ) -> c_int;
         pub fn sqlite3_bind_int64(stmt: *mut sqlite3_stmt, idx: c_int, value: i64) -> c_int;
         pub fn sqlite3_step(stmt: *mut sqlite3_stmt) -> c_int;
         pub fn sqlite3_column_int64(stmt: *mut sqlite3_stmt, idx: c_int) -> i64;
@@ -72,7 +105,12 @@ impl Db {
         let mut raw = ptr::null_mut();
         // SQLite allocates a handle even when opening fails.
         let status = unsafe {
-            ffi::sqlite3_open_v2(path.as_ptr(), &mut raw, OPEN_READWRITE_CREATE_FULLMUTEX, ptr::null())
+            ffi::sqlite3_open_v2(
+                path.as_ptr(),
+                &mut raw,
+                OPEN_READWRITE_CREATE_FULLMUTEX,
+                ptr::null(),
+            )
         };
         if status != OK {
             if !raw.is_null() {
@@ -93,12 +131,22 @@ impl Db {
         let sql = cstr(sql)?;
         let mut err = ptr::null_mut();
         let status = unsafe {
-            ffi::sqlite3_exec(self.0.as_ptr(), sql.as_ptr(), ptr::null_mut(), ptr::null_mut(), &mut err)
+            ffi::sqlite3_exec(
+                self.0.as_ptr(),
+                sql.as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut err,
+            )
         };
         if !err.is_null() {
             unsafe { ffi::sqlite3_free(err.cast()) };
         }
-        if status == OK { Ok(()) } else { Err(failed()) }
+        if status == OK {
+            Ok(())
+        } else {
+            Err(failed())
+        }
     }
 
     fn stmt(&self, sql: &str) -> Result<Stmt<'_>, BasicError> {
@@ -140,7 +188,10 @@ impl Db {
                 } else {
                     unsafe { std::slice::from_raw_parts(value.cast::<u8>(), len as usize).to_vec() }
                 };
-                Ok(Some(StoredRecord { revision, data: Blob(bytes) }))
+                Ok(Some(StoredRecord {
+                    revision,
+                    data: Blob(bytes),
+                }))
             }
             DONE => Ok(None),
             _ => Err(failed()),
@@ -153,7 +204,11 @@ impl Db {
         stmt.text(2, &key.key)?;
         stmt.number(3, checked_i64(record.revision)?)?;
         stmt.blob(4, &record.data.0)?;
-        if stmt.step()? == DONE { Ok(()) } else { Err(failed()) }
+        if stmt.step()? == DONE {
+            Ok(())
+        } else {
+            Err(failed())
+        }
     }
 }
 impl Drop for Db {
@@ -173,16 +228,27 @@ impl Stmt<'_> {
         let status = unsafe {
             ffi::sqlite3_bind_text(self.ptr.as_ptr(), index, value.as_ptr().cast(), len, None)
         };
-        if status == OK { Ok(()) } else { Err(failed()) }
+        if status == OK {
+            Ok(())
+        } else {
+            Err(failed())
+        }
     }
     fn blob(&self, index: c_int, value: &[u8]) -> Result<(), BasicError> {
         static EMPTY: u8 = 0;
         let len = c_int::try_from(value.len()).map_err(|_| bad_key())?;
-        let raw = if value.is_empty() { &EMPTY as *const u8 } else { value.as_ptr() };
-        let status = unsafe {
-            ffi::sqlite3_bind_blob(self.ptr.as_ptr(), index, raw.cast(), len, None)
+        let raw = if value.is_empty() {
+            &EMPTY as *const u8
+        } else {
+            value.as_ptr()
         };
-        if status == OK { Ok(()) } else { Err(failed()) }
+        let status =
+            unsafe { ffi::sqlite3_bind_blob(self.ptr.as_ptr(), index, raw.cast(), len, None) };
+        if status == OK {
+            Ok(())
+        } else {
+            Err(failed())
+        }
     }
     fn number(&self, index: c_int, value: i64) -> Result<(), BasicError> {
         if unsafe { ffi::sqlite3_bind_int64(self.ptr.as_ptr(), index, value) } == OK {
@@ -213,9 +279,11 @@ fn transact(request: StorageTransaction) -> Result<Vec<StoredRecord>, BasicError
         if edit.key.is_empty() || !keys.insert(edit.key.as_str()) {
             return Err(bad_key());
         }
-        checked_i64(edit.expected.checked_add(1).ok_or_else(|| {
-            error(ErrorCode::Conflict, "storage revision overflow")
-        })?)?;
+        checked_i64(
+            edit.expected
+                .checked_add(1)
+                .ok_or_else(|| error(ErrorCode::Conflict, "storage revision overflow"))?,
+        )?;
     }
     if request.session.is_empty() {
         return Err(bad_key());
@@ -224,14 +292,25 @@ fn transact(request: StorageTransaction) -> Result<Vec<StoredRecord>, BasicError
     db.exec("BEGIN IMMEDIATE")?;
     let result = (|| {
         let mut records = Vec::with_capacity(request.edits.len());
-        for StorageEdit { key, expected, data } in request.edits {
-            let record_key = RecordKey { session: request.session.clone(), key };
+        for StorageEdit {
+            key,
+            expected,
+            data,
+        } in request.edits
+        {
+            let record_key = RecordKey {
+                session: request.session.clone(),
+                key,
+            };
             let current = db.get(&record_key)?;
             let revision = current.as_ref().map_or(0, |record| record.revision);
             if revision != expected {
                 return Err(error(ErrorCode::Conflict, "storage revision conflict"));
             }
-            let record = StoredRecord { revision: revision + 1, data };
+            let record = StoredRecord {
+                revision: revision + 1,
+                data,
+            };
             db.put(&record_key, &record)?;
             records.push(record);
         }
@@ -276,7 +355,10 @@ mod plugin {
     ) -> CallResult<StoredRecord, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         if request.key.is_empty() {
-            return Err(CallError::Domain(error(ErrorCode::InvalidInput, "empty storage key")));
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "empty storage key",
+            )));
         }
         Db::open()
             .and_then(|db| db.get(&request))
