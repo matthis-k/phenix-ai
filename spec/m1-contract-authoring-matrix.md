@@ -40,7 +40,8 @@ pending list envelopes. PR #780 passed all contemporary M1 gates at
 | `phenix-sdk/src/live.rs` compile-fail cases | TESTED locally | Wrong-contract pending and scoped indexed imports fail; existing authoring/ref restrictions remain |
 | `examples/pending-security`, `phenix-m1-imports.rs` | TESTED locally | Raw native ABI forgeries reject before poll/cancel/settlement; live descriptor, unchanged cancellation/delivery state, valid completion and release; read-only resource survives polling and scoped resource switches reject |
 | `examples/Cargo.toml`, `Cargo.lock`, `flake.nix`, workflow | IMPLEMENTED | Security fixture builds with public SDK only and runs inside existing imports gate; complete M1 release retains every behavioral gate |
-| Full S3b acceptance | NOT PROVEN | Exact-head Nix CI, downloaded artifact, matching commit and complete predecessor evidence |
+| `tests/shipping-product.py` | TESTED locally | Named adversarial producer requires recorded forged-handle evidence; ordinary authoring still rejects handwritten native glue |
+| Full S3b acceptance | NOT PROVEN | First CI 38203582708 passed native authoring and preceding semantic gates, then rejected the adversarial fixture in the ordinary-authoring shipping scan. Corrected classification requires a new exact-head full run and artifact. |
 
 The adversarial fixture writes its native table by hand to bypass SDK handle
 protections. Ordinary provider/client fixtures remain declarative. It imports
