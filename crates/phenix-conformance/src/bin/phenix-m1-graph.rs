@@ -242,9 +242,15 @@ fn main() {
         .unwrap();
     assert_eq!(later_failure.len(), 2, "B failure must stop downstream C");
     assert_eq!(later_failure[0].node, "example.graph-a/a");
-    assert_eq!(later_failure[0].outcome, phenix_kernel::Outcome::Success(Value::String("domain-b".into())));
+    assert_eq!(
+        later_failure[0].outcome,
+        phenix_kernel::Outcome::Success(Value::String("domain-b".into()))
+    );
     assert_eq!(later_failure[1].node, "example.graph-b/b");
-    assert_eq!(later_failure[1].outcome, phenix_kernel::Outcome::Domain(Value::String("domain fixture b".into())));
+    assert_eq!(
+        later_failure[1].outcome,
+        phenix_kernel::Outcome::Domain(Value::String("domain fixture b".into()))
+    );
     assert!(!successor_witness.exists(), "B failure must have zero C invocations");
     assert_eq!(
         kernel
