@@ -81,8 +81,13 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
         ),
     ]);
     if let Some(graph) = prepared.compiled_graph() {
-        let Value::Map(fields) = &mut canonical else { unreachable!() };
-        fields.insert("graph_identity".into(), Value::String(graph.identity.clone()));
+        let Value::Map(fields) = &mut canonical else {
+            unreachable!()
+        };
+        fields.insert(
+            "graph_identity".into(),
+            Value::String(graph.identity.clone()),
+        );
     }
     if !prepared.state_identity.is_empty() {
         let Value::Map(fields) = &mut canonical else {
