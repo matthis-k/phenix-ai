@@ -27,6 +27,9 @@ mod provider {
     use super::*;
     #[provide(Task::run)]
     fn run(input: Start) -> Result<String, String> {
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_C_WITNESS") {
+            std::fs::write(path, b"successor invoked").expect("graph-c invocation witness");
+        }
         Ok(input.text)
     }
 }

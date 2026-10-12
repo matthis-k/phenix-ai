@@ -27,6 +27,9 @@ mod provider {
     use super::*;
     #[provide(Task::run)]
     fn run(input: Start) -> Result<String, String> {
+        if input.text == "domain-b" {
+            return Err("domain fixture b".into());
+        }
         Ok(input.text)
     }
 }

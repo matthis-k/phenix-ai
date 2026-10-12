@@ -45,6 +45,8 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let witness = output.join("constructor-witness");
     std::env::set_var("PHENIX_GRAPH_CONSTRUCTOR_WITNESS", &witness);
+    let successor_witness = output.join("graph-c-invoked");
+    std::env::set_var("PHENIX_GRAPH_C_WITNESS", &successor_witness);
     let packages = args[1..4].to_vec();
     for (index, package) in packages.iter().enumerate() {
         let loaded =
@@ -217,6 +219,8 @@ fn main() {
             phenix_kernel::Outcome::Success(Value::String("triggered".into()))
         );
     }
+    assert!(successor_witness.exists(), "C must run after both successful roots");
+    fs::remove_file(&successor_witness).unwrap();
     let domain = kernel
         .submit_action(
             "example.graph.submit",
@@ -229,6 +233,19 @@ fn main() {
         domain[0].outcome,
         phenix_kernel::Outcome::Domain(Value::String("domain fixture".into()))
     );
+    assert!(!successor_witness.exists(), "A failure must stop downstream C");
+    let later_failure = kernel
+        .submit_action(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("domain-b".into()))]),
+        )
+        .unwrap();
+    assert_eq!(later_failure.len(), 2, "B failure must stop downstream C");
+    assert_eq!(later_failure[0].node, "example.graph-a/a");
+    assert_eq!(later_failure[0].outcome, phenix_kernel::Outcome::Success(Value::String("domain-b".into())));
+    assert_eq!(later_failure[1].node, "example.graph-b/b");
+    assert_eq!(later_failure[1].outcome, phenix_kernel::Outcome::Domain(Value::String("domain fixture b".into())));
+    assert!(!successor_witness.exists(), "B failure must have zero C invocations");
     assert_eq!(
         kernel
             .submit_action("example.graph.unknown", &Value::String("x".into()))
@@ -275,7 +292,9 @@ fn main() {
             "existing-direct-invocation",
             "serial-action-admission",
             "three-external-nodes-dispatched",
-            "schema-and-action-rejection"
+            "schema-and-action-rejection",
+            "successful-fanin-runs-c",
+            "predecessor-b-domain-prevents-c-effect"
         ]
         }))
         .unwrap(),
