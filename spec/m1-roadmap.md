@@ -260,7 +260,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: Session, EventJournal and SQLite-backed Storage plugins. A two-process test on impl/m1-basic-storage-sqlite checks persisted checkpoints, journal replay, CAS rollback and interrupted-tool reconciliation. CI, observer offset checkpoint storage and crash/fault-injection acceptance remain open |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
-| B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] NOT STARTED |
+| B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] NOT STARTED |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] NOT STARTED |
 | P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] NOT STARTED |
@@ -381,6 +381,29 @@ conformance fixture**. It does not prove durability, process restart, SQLite
 storage, independent observer checkpoint persistence, or session replay.
 Those are still B2 acceptance requirements. No persistence or journal
 logic enters the kernel.
+
+### B5 graph-driven Basic agent slice
+
+`impl/m1-basic-agent` declares a graph node triggered by the existing
+`phenix.basic.prompt` event and implements `BasicInput` and `BasicOutput`
+using public SDK calls. The frontend invokes the discovered
+`phenix.basic.submit` action through the kernel graph. The plugin imports the
+selected Model, ToolCatalog, ToolExecute, Skills, Context, Session and
+EventJournal providers. The kernel contains no Basic agent handlers.
+
+Before executing tool effects, the agent checkpoints assistant call IDs as
+pending. It appends each tool result and clears its pending ID only after the
+effect returns. A restart with unresolved IDs relies on the Session plugin's
+Indeterminate state and explicit reconciliation. Journal records cover accepted
+prompts, model calls, text updates, tool starts/results and terminal answers.
+History, resource admission and caller limits travel through the typed imports.
+
+The `phenix-b5-agent` native gate composes seven independently packaged
+plugins with the definition package and submits a real graph action. This is a
+scripted synchronous slice, not yet P1. It still needs pending streaming,
+cancellation while model/tool I/O is in progress, HTTP-backed model tests,
+reactive value triggers and shared terminal/JSONL/ACP product integration.
+Exact-head CI acceptance remains required.
 
 ### B3 persisted skills and context slice
 
