@@ -56,6 +56,60 @@ pub struct GraphContribution {
     pub nodes: Vec<GraphNode>,
 }
 
+
+/// Static SDK declarations contain no runtime handles or plugin code.
+#[derive(Debug, Clone, Copy)]
+pub struct StaticEventDefinition {
+    pub id: &'static str,
+    pub payload: crate::StaticSchema,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct StaticActionDefinition {
+    pub id: &'static str,
+    pub event: &'static str,
+    pub description: &'static str,
+    pub requires: &'static [&'static str],
+}
+#[derive(Debug, Clone, Copy)]
+pub struct StaticGraphNode {
+    pub id: &'static str,
+    pub triggers: &'static [&'static str],
+    pub after: &'static [&'static str],
+    pub selector: &'static str,
+    pub operation: &'static str,
+    pub writes: &'static [&'static str],
+    pub join: JoinPolicy,
+    pub failure: FailurePolicy,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct StaticGraphContribution {
+    pub plugin: &'static str,
+    pub events: &'static [StaticEventDefinition],
+    pub actions: &'static [StaticActionDefinition],
+    pub nodes: &'static [StaticGraphNode],
+}
+impl StaticGraphContribution {
+    pub fn owned(self) -> Result<GraphContribution, Failure> {
+        GraphContribution {
+            plugin: self.plugin.into(),
+            events: self.events.iter().map(|e| Ok(EventDefinition {
+                id: e.id.into(), payload: e.payload.owned()?,
+            })).collect::<Result<_, Failure>>()?,
+            actions: self.actions.iter().map(|a| ActionDefinition {
+                id: a.id.into(), event: a.event.into(), description: a.description.into(),
+                requires: a.requires.iter().map(|v| (*v).into()).collect(),
+            }).collect(),
+            nodes: self.nodes.iter().map(|n| GraphNode {
+                id: n.id.into(), triggers: n.triggers.iter().map(|v| (*v).into()).collect(),
+                after: n.after.iter().map(|v| (*v).into()).collect(),
+                selector: n.selector.into(), operation: n.operation.into(),
+                writes: n.writes.iter().map(|v| (*v).into()).collect(),
+                join: n.join, failure: n.failure,
+            }).collect(),
+        }.normalized()
+    }
+}
+
 fn bad(message: impl Into<String>) -> Failure {
     Failure::new(Code::DescriptorInvalid, message)
 }
@@ -273,6 +327,25 @@ mod tests {
                 join: JoinPolicy::AllActive, failure: FailurePolicy::FailRoot,
             }],
         }
+    }
+    #[test]
+    fn static_sdk_declarations_project_into_canonical_schema() {
+        const GRAPH: StaticGraphContribution = StaticGraphContribution {
+            plugin: "search",
+            events: &[StaticEventDefinition {
+                id: "prompt.submitted", payload: crate::StaticSchema::String,
+            }],
+            actions: &[StaticActionDefinition {
+                id: "prompt", event: "prompt.submitted",
+                description: "Submit a prompt", requires: &["agent.input@1/submit"],
+            }],
+            nodes: &[StaticGraphNode {
+                id: "retrieve", triggers: &["prompt.submitted"], after: &[],
+                operation: "search.api@1/retrieve", selector: "", writes: &["search/results"],
+                join: JoinPolicy::AllActive, failure: FailurePolicy::FailRoot,
+            }],
+        };
+        assert_eq!(GRAPH.owned().unwrap().encode().unwrap(), sample().encode().unwrap());
     }
     #[test]
     fn portable_roundtrip_and_authored_order() {
