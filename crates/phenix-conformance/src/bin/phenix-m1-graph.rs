@@ -196,6 +196,41 @@ fn main() {
     // Existing direct invocation is unchanged. G3 will replace frontend calls
     // with authenticated event admission and graph node dispatch.
     let kernel = prepared.load().unwrap();
+    let submitted = kernel
+        .submit_action(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("triggered".into()))]),
+        )
+        .unwrap();
+    assert_eq!(submitted.len(), 3);
+    for (index, name) in [
+        "example.graph-a/a",
+        "example.graph-b/b",
+        "example.graph-c/c",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(submitted[index].node, *name);
+        assert_eq!(
+            submitted[index].outcome,
+            phenix_kernel::Outcome::Success(Value::String("triggered".into()))
+        );
+    }
+    assert_eq!(
+        kernel
+            .submit_action("example.graph.unknown", &Value::String("x".into()))
+            .unwrap_err()
+            .code,
+        Code::MissingBinding
+    );
+    assert_eq!(
+        kernel
+            .submit_action("example.graph.submit", &Value::String("x".into()))
+            .unwrap_err()
+            .code,
+        Code::SchemaRejected
+    );
     let response = kernel
         .admit_default_root()
         .unwrap()
@@ -225,7 +260,10 @@ fn main() {
             "denied-graph-operation-no-constructor",
             "re-signed-graph-tamper-rejected",
             "dormant-predecessor-semantics",
-            "existing-direct-invocation"
+            "existing-direct-invocation",
+            "serial-action-admission",
+            "three-external-nodes-dispatched",
+            "schema-and-action-rejection"
         ]
         }))
         .unwrap(),
