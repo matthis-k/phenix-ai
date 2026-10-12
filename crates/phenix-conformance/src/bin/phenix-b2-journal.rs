@@ -1,7 +1,6 @@
 //! Independent native EventJournal and Storage ABI integration.
-use phenix_basic_contracts::{
-    Blob, Event, EventKind, EventPage, JournalAppend, JournalQuery,
-};
+use phenix_basic_contracts::{Event, EventKind, EventPage, JournalAppend, JournalQuery};
+use phenix_contract::Blob;
 use phenix_contract::{Authority, Portable};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
