@@ -1,9 +1,9 @@
 //! Process-boundary B2 acceptance fixture: seed SQLite in one process,
 //! reopen it with new native plugin instances and explicitly reconcile tools.
 use phenix_basic_contracts::{
-    BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery, Message,
-    ReconcileTool, Role, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
-    StoredRecord, ToolCall,
+    decode, BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery,
+    Message, ReconcileTool, Role, RunStatus, Scope, SessionSnapshot, StorageEdit,
+    StorageTransaction, StoredRecord, ToolCall,
 };
 use phenix_contract::{Authority, Blob, Portable};
 use phenix_kernel::{
@@ -259,6 +259,27 @@ fn main() {
         );
     } else if args[1] == "resume" {
         // This process has no in-memory plugin instances from the seed run.
+        let persisted: StoredRecord = call(
+            &kernel,
+            read,
+            storage,
+            phenix_basic_contracts::RecordKey {
+                session: "s1".into(),
+                key: "session.snapshot.v1".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let mut bypass: SessionSnapshot = decode(&persisted.data).unwrap();
+        bypass.pending.clear();
+        bypass.status = RunStatus::Completed;
+        assert_eq!(
+            call::<SessionSnapshot>(&kernel, checkpoint, session, bypass)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::Indeterminate
+        );
         let restored: SessionSnapshot = call(
             &kernel,
             open,
@@ -274,6 +295,26 @@ fn main() {
         assert_eq!(restored.checkpoint, 7);
         assert_eq!(restored.history[0].text, "prompt");
         assert_eq!(restored.pending.len(), 2);
+        let mut bypass = restored.clone();
+        bypass.pending.clear();
+        assert_eq!(
+            call::<SessionSnapshot>(&kernel, checkpoint, session, bypass)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::Indeterminate
+        );
+        let unchanged: SessionSnapshot = call(
+            &kernel,
+            open,
+            session,
+            Scope {
+                session: "s1".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(unchanged, restored);
         let a: EventPage = call(
             &kernel,
             replay,
@@ -372,7 +413,9 @@ fn main() {
                 "cases": ["session-checkpoint", "CAS-conflict", "atomic-batch-rollback",
                     "cross-session-denial", "ordered-journal-replay",
                     "independent-observer-offsets", "indeterminate-tool-recovery",
-                    "explicit-multiple-call-reconciliation"]
+                    "explicit-multiple-call-reconciliation",
+                    "checkpoint-before-open-recovery-denial",
+                    "indeterminate-checkpoint-no-effects"]
             }))
             .unwrap(),
         )

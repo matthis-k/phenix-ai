@@ -340,7 +340,9 @@ the same database. The first checkpoints a Running session with two pending
 call IDs, appends journal events and tests a failed multi-key CAS rollback.
 The second loads the persisted session, checks the Indeterminate transition,
 reads the journal with two independent cursors and explicitly reconciles both
-call IDs. The conformance and shipping checks include the resulting report.
+call IDs. Checkpoint attempts before recovery open and while Indeterminate
+must preserve the persisted revision and pending calls. The conformance and
+shipping checks include the resulting report.
 The original in-memory fixture remains separate.
 
 This is implementation evidence pending exact-head CI. B2 still needs durable
@@ -357,8 +359,10 @@ selected Storage implementation. A restarted provider's first open of a
 previously Running snapshot with unresolved tool calls marks it Indeterminate
 through a CAS transaction. It never silently repeats an indeterminate tool;
 the caller must reconcile its recorded call ID. A native fixture seeds a
-checkpoint in independently packaged Storage to verify the transition,
-stale revisions and cross-session denial.
+checkpoint in independently packaged Storage to verify recovery, stale
+revision rejection and cross-session denial. It also rejects checkpoint
+writes before recovery open and while Indeterminate, then verifies that
+the stored revision and pending calls remain unchanged.
 
 This is not process-restart or SQLite proof: the fixture is volatile and the
 simulated reload seeds the stored checkpoint explicitly. SQLite durability,

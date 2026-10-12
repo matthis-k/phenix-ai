@@ -177,6 +177,17 @@ fn main() {
     .unwrap()
     .unwrap();
     assert_eq!(seeded.len(), 1);
+    // Checkpoint must enforce recovery even when the caller skips open.
+    let mut bypass = saved.clone();
+    bypass.pending.clear();
+    bypass.status = RunStatus::Completed;
+    assert_eq!(
+        invoke::<SessionSnapshot>(&kernel, checkpoint, "phenix.basic.session", bypass)
+            .unwrap()
+            .unwrap_err()
+            .code,
+        ErrorCode::Indeterminate
+    );
     let interrupted: SessionSnapshot = invoke(
         &kernel,
         open,
@@ -189,6 +200,27 @@ fn main() {
     .unwrap();
     assert_eq!(interrupted.status, RunStatus::Indeterminate);
     assert_eq!(interrupted.revision, 2);
+    // Keeping the status Indeterminate must not allow pending IDs to vanish.
+    let mut bypass = interrupted.clone();
+    bypass.pending.clear();
+    assert_eq!(
+        invoke::<SessionSnapshot>(&kernel, checkpoint, "phenix.basic.session", bypass)
+            .unwrap()
+            .unwrap_err()
+            .code,
+        ErrorCode::Indeterminate
+    );
+    let unchanged: SessionSnapshot = invoke(
+        &kernel,
+        open,
+        "phenix.basic.session",
+        Scope {
+            session: session.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(unchanged, interrupted);
     let resolved: SessionSnapshot = invoke(
         &kernel,
         reconcile,
@@ -215,7 +247,9 @@ fn main() {
             "cases": [
                 "new-session", "checkpoint-CAS", "stale-revision",
                 "session-scoped-open", "interrupted-tool-indeterminate",
-                "explicit-reconciliation", "persisted-history"
+                "explicit-reconciliation", "persisted-history",
+                "checkpoint-before-open-recovery-denial",
+                "indeterminate-checkpoint-no-effects"
             ],
             "storage_backend": "volatile-native-fixture-with-seeded-checkpoint",
             "real_restart_or_sqlite_verified": false

@@ -76,6 +76,12 @@ mod plugin {
         live: BTreeSet<String>,
     }
 
+    fn interrupted(state: &State, snapshot: &SessionSnapshot) -> bool {
+        snapshot.status == RunStatus::Running
+            && !snapshot.pending.is_empty()
+            && !state.live.contains(&snapshot.session)
+    }
+
     fn load(host: &Host<'_>, session: &str) -> CallResult<SessionSnapshot, BasicError> {
         let result = host.invoke::<Storage::read>(
             "Storage",
@@ -139,10 +145,7 @@ mod plugin {
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         let mut current = load(host, &request.session)?;
-        if current.status == RunStatus::Running
-            && !current.pending.is_empty()
-            && !state.live.contains(&request.session)
-        {
+        if interrupted(state, &current) {
             current.status = RunStatus::Indeterminate;
             current = commit(host, current)?;
         }
@@ -163,7 +166,7 @@ mod plugin {
                 "stale session checkpoint",
             )));
         }
-        if prior.status == RunStatus::Indeterminate && request.status != RunStatus::Indeterminate {
+        if prior.status == RunStatus::Indeterminate || interrupted(state, &prior) {
             return Err(CallError::Domain(error(
                 ErrorCode::Indeterminate,
                 "pending tools require reconciliation",
