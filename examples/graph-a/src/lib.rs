@@ -1,4 +1,4 @@
-use example_graph_contracts::{Start, Task, Submit};
+use example_graph_contracts::{Start, Submit, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
