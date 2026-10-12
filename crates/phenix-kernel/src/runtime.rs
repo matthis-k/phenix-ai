@@ -82,12 +82,13 @@ pub(super) struct State {
 pub(super) enum Caller<'a> {
     Root,
     Plugin(&'a str, &'a str),
+    Graph(&'a str),
 }
 impl Caller<'_> {
     fn name(&self) -> &str {
         match self {
             Self::Root => "root",
-            Self::Plugin(id, _) => id,
+            Self::Plugin(id, _) | Self::Graph(id) => id,
         }
     }
 }
@@ -443,7 +444,7 @@ impl Kernel {
                 selection,
                 match caller {
                     Caller::Plugin(_, slot) => slot,
-                    Caller::Root => "",
+                    Caller::Root | Caller::Graph(_) => "",
                 },
                 input,
                 &guard,
@@ -638,6 +639,24 @@ impl Root<'_> {
     }
     pub fn invoke(&self, request: &Value) -> Result<Outcome, Failure> {
         self.invoke_selected(&self.entry, request)
+    }
+    /// Trusted graph execution inside the admitted root. The graph compiler
+    /// has already authenticated the declaring owner, target and grants.
+    /// Dispatch still applies the owner's grant and the root's exact scope.
+    pub(super) fn invoke_graph(
+        &self,
+        owner: &str,
+        selection: &Selection,
+        request: &Value,
+    ) -> Result<Outcome, Failure> {
+        self.kernel.prepared.check_entry(selection)?;
+        self.kernel.dispatch(
+            self.id,
+            Caller::Graph(owner),
+            selection,
+            &request.encode()?,
+            Some(&self.scope),
+        )
     }
     /// Trusted control-plane selection within this root's pinned generation.
     /// The selected call inherits this root's exact authority and resource.
