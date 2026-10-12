@@ -2,7 +2,6 @@
 //! This is one portable declaration model. The kernel decides authority and
 //! selected bindings; none of these strings grant execution rights.
 use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, MAX_COUNT};
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventDefinition {
@@ -41,6 +40,8 @@ pub struct GraphNode {
     pub after: Vec<String>,
     /// Operation key resolved through the existing selected binding map.
     pub operation: String,
+    /// Empty for the owning plugin; otherwise a selected import slot (or slot#index).
+    pub selector: String,
     /// Fully qualified property identities declared as written by this node.
     pub writes: Vec<String>,
     pub join: JoinPolicy,
@@ -121,6 +122,7 @@ impl GraphContribution {
         for node in &self.nodes {
             if !identifier(&node.id)
                 || !operation_key(&node.operation)
+                || (!node.selector.is_empty() && !identifier(&node.selector.replace('#', ".")))
                 || !sorted(node.after.iter().map(String::as_str))
                 || !sorted(node.triggers.iter().map(String::as_str))
                 || !sorted(node.writes.iter().map(String::as_str))
@@ -159,6 +161,7 @@ impl GraphContribution {
             Value::map([
                 ("id", Value::String(n.id.clone())),
                 ("operation", Value::String(n.operation.clone())),
+                ("selector", Value::String(n.selector.clone())),
                 ("triggers", strings(&n.triggers)),
                 ("after", strings(&n.after)),
                 ("writes", strings(&n.writes)),
@@ -207,6 +210,7 @@ impl GraphContribution {
             let mut f = fields(v)?;
             let id = text(&mut f, "id")?;
             let operation = text(&mut f, "operation")?;
+            let selector = text(&mut f, "selector")?;
             let triggers = text_list(&mut f, "triggers")?;
             let after = text_list(&mut f, "after")?;
             let writes = text_list(&mut f, "writes")?;
@@ -219,7 +223,7 @@ impl GraphContribution {
                 _ => return Err(bad("unknown graph failure policy")),
             };
             empty(f)?;
-            Ok(GraphNode { id, operation, triggers, after, writes, join: JoinPolicy::AllActive, failure })
+            Ok(GraphNode { id, operation, selector, triggers, after, writes, join: JoinPolicy::AllActive, failure })
         }).collect::<Result<Vec<_>, Failure>>()?;
         empty(root)?;
         let declaration = Self { plugin, events, actions, nodes };
@@ -265,7 +269,7 @@ mod tests {
             actions: vec![ActionDefinition { id: "prompt".into(), event: "prompt.submitted".into(), description: "Submit a prompt".into(), requires: vec!["agent.input@1/submit".into()] }],
             nodes: vec![GraphNode {
                 id: "retrieve".into(), triggers: vec!["prompt.submitted".into()], after: vec![],
-                operation: "search.api@1/retrieve".into(), writes: vec!["search/results".into()],
+                operation: "search.api@1/retrieve".into(), selector: String::new(), writes: vec!["search/results".into()],
                 join: JoinPolicy::AllActive, failure: FailurePolicy::FailRoot,
             }],
         }
@@ -278,7 +282,7 @@ mod tests {
         let mut reversed = source.clone();
         reversed.nodes.push(GraphNode {
             id: "archive".into(), triggers: vec![], after: vec![],
-            operation: "search.api@1/archive".into(), writes: vec![],
+            operation: "search.api@1/archive".into(), selector: String::new(), writes: vec![],
             join: JoinPolicy::AllActive, failure: FailurePolicy::Skip,
         });
         reversed.nodes.reverse();
