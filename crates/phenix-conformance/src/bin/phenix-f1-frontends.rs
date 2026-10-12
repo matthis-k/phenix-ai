@@ -1,7 +1,7 @@
 //! Two independently packaged frontend codecs with the same public types.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, ErrorCode, Event, EventKind, PromptSubmitted, RenderRequest,
-    Scope, Submission,
+    BasicError, ClientInput, ErrorCode, Event, EventKind, PromptSubmitted, RenderRequest, Scope,
+    Submission,
 };
 use phenix_contract::{Authority, Blob, Portable};
 use phenix_kernel::{
@@ -33,12 +33,15 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
     let resource = "phenix.session.s1";
     let ops = ["decode", "render", "cancel"];
     let resources = BTreeSet::from([resource.to_owned()]);
-    let grants = ops.into_iter().map(|op| ScopedGrant {
-        caller: "root".into(),
-        interface: "phenix.basic.frontend@1".into(),
-        operation: op.into(),
-        resources: resources.clone(),
-    }).collect();
+    let grants = ops
+        .into_iter()
+        .map(|op| ScopedGrant {
+            caller: "root".into(),
+            interface: "phenix.basic.frontend@1".into(),
+            operation: op.into(),
+            resources: resources.clone(),
+        })
+        .collect();
     let composition = Composition {
         format: "phenix.composition.v2".into(),
         artifacts: vec![path],
@@ -49,7 +52,10 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
         excluded: BTreeSet::new(),
         substitutions: vec![],
         authority: Authority {
-            operations: ops.into_iter().map(|op| format!("phenix.basic.frontend@1/{op}")).collect(),
+            operations: ops
+                .into_iter()
+                .map(|op| format!("phenix.basic.frontend@1/{op}"))
+                .collect(),
             resources,
         },
         resource: Some(resource.into()),
@@ -61,18 +67,29 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
         "hello"
     };
     let accepted: Submission = invoke(
-        &kernel, provider, "decode",
-        ClientInput { session: "s1".into(), line: line.into() },
-    ).unwrap().unwrap();
+        &kernel,
+        provider,
+        "decode",
+        ClientInput {
+            session: "s1".into(),
+            line: line.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(accepted.action, "phenix.basic.submit");
     assert!(!accepted.cancel);
-    let prompt: PromptSubmitted =
-        phenix_basic_contracts::decode(&accepted.payload).unwrap();
+    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
     assert_eq!(prompt.session, "s1");
     assert_eq!(prompt.text, "hello");
-    assert_eq!(prompt.limits.model_turns, if jsonl { Some(2) } else { None });
+    assert_eq!(
+        prompt.limits.model_turns,
+        if jsonl { Some(2) } else { None }
+    );
     let canceled: Submission = invoke(
-        &kernel, provider, "decode",
+        &kernel,
+        provider,
+        "decode",
         ClientInput {
             session: "s1".into(),
             line: if jsonl {
@@ -81,10 +98,14 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
                 "/cancel".into()
             },
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     assert!(canceled.cancel);
     let output: Vec<String> = invoke(
-        &kernel, provider, "render",
+        &kernel,
+        provider,
+        "render",
         RenderRequest {
             session: "s1".into(),
             events: vec![Event {
@@ -97,39 +118,75 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
                 data: Blob(vec![]),
             }],
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(output.len(), 1);
     assert!(output[0].contains("mock:hello"));
     if jsonl {
         assert_eq!(
             invoke::<Submission>(
-                &kernel, provider, "decode",
+                &kernel,
+                provider,
+                "decode",
                 ClientInput {
                     session: "s1".into(),
                     line: r#"{"type":"prompt","session":"s2","text":"forged"}"#.into(),
                 }
-            ).unwrap().unwrap_err().code,
+            )
+            .unwrap()
+            .unwrap_err()
+            .code,
             ErrorCode::Denied
         );
     }
     // The codec cannot cancel an active root by itself. It emits a typed
     // cancellation request for the controlling host, never a fake success.
-    assert_eq!(invoke::<()>(
-        &kernel, provider, "cancel",
-        Scope { session: "s1".into() },
-    ).unwrap().unwrap_err().code, ErrorCode::InvalidInput);
-    assert_eq!(invoke::<Submission>(
-        &kernel, provider, "decode",
-        ClientInput {
-            session: "s2".into(), line: String::from("unauthorized")
-        }
-    ).unwrap().unwrap_err().code, ErrorCode::Denied);
+    assert_eq!(
+        invoke::<()>(
+            &kernel,
+            provider,
+            "cancel",
+            Scope {
+                session: "s1".into()
+            },
+        )
+        .unwrap()
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        invoke::<Submission>(
+            &kernel,
+            provider,
+            "decode",
+            ClientInput {
+                session: "s2".into(),
+                line: String::from("unauthorized")
+            }
+        )
+        .unwrap()
+        .unwrap_err()
+        .code,
+        ErrorCode::Denied
+    );
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     assert_eq!(args.len(), 5, "TERMINAL JSONL DEFINITIONS OUTPUT");
-    verify(args[1].clone(), args[3].clone(), "phenix.basic.frontend-terminal", false);
-    verify(args[2].clone(), args[3].clone(), "phenix.basic.frontend-jsonl", true);
+    verify(
+        args[1].clone(),
+        args[3].clone(),
+        "phenix.basic.frontend-terminal",
+        false,
+    );
+    verify(
+        args[2].clone(),
+        args[3].clone(),
+        "phenix.basic.frontend-jsonl",
+        true,
+    );
     let output = Path::new(&args[4]);
     fs::create_dir_all(output).unwrap();
     fs::write(
@@ -140,6 +197,8 @@ fn main() {
                 "caller-limits", "cross-session-denial", "typed-cancellation",
                 "rendering", "cancel-does-not-fake-success"],
             "live_host_or_acp_integration": false
-        })).unwrap(),
-    ).unwrap();
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }
