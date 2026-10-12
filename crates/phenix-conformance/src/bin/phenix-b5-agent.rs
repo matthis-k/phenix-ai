@@ -4,7 +4,7 @@ use phenix_basic_contracts::{
     BasicError, ContextItem, ContextSet, ErrorCode, EventPage, JournalQuery, Limits,
     PromptSubmitted, RunResult, Scope, Skill, SkillSet,
 };
-use phenix_contract::{Authority, Portable};
+use phenix_contract::{Authority, Code, Portable, ScopedRequest};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Outcome,
@@ -142,8 +142,6 @@ fn main() {
         ("phenix.basic.agent", "phenix.basic.context@1/list"),
         ("phenix.basic.agent", "phenix.basic.session@1/open"),
         ("phenix.basic.agent", "phenix.basic.session@1/checkpoint"),
-        ("phenix.basic.agent", "phenix.basic.storage@1/read"),
-        ("phenix.basic.agent", "phenix.basic.storage@1/transact"),
     ];
     for owner in [
         "phenix.basic.memory",
@@ -180,7 +178,58 @@ fn main() {
         },
         resource: Some("phenix.session.s1".into()),
     };
+    // Reject duplicate and undeclared grants before any native code is loaded.
+    let mut invalid = composition.clone();
+    invalid.grants.push(invalid.grants[0].clone());
+    assert_eq!(
+        Prepared::prepare(invalid).err().unwrap().code,
+        Code::DescriptorInvalid
+    );
+    let mut invalid = composition.clone();
+    invalid.grants.push(ScopedGrant {
+        caller: "phenix.basic.agent".into(),
+        interface: "phenix.basic.tool@1".into(),
+        operation: "missing".into(),
+        resources: composition.authority.resources.clone(),
+    });
+    assert_eq!(
+        Prepared::prepare(invalid).err().unwrap().code,
+        Code::DescriptorInvalid
+    );
+
+    let mut restricted = composition.authority.clone();
+    restricted.operations.remove("phenix.basic.storage@1/read");
+    let resource = composition.resource.clone();
     let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
+    let denied = kernel
+        .submit_action_scoped(
+            "phenix.basic.submit",
+            &PromptSubmitted {
+                session: "s1".into(),
+                text: "denied storage".into(),
+                limits: Limits::default(),
+            }
+            .to_value(),
+            ScopedRequest {
+                authority: restricted,
+                resource,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(denied.code, Code::Denied);
+    let untouched = invoke::<phenix_basic_contracts::SessionSnapshot>(
+        &kernel,
+        "phenix.basic.session@1/open",
+        "phenix.basic.session",
+        Scope {
+            session: "s1".into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(untouched.status, phenix_basic_contracts::RunStatus::Idle);
+    assert_eq!(untouched.checkpoint, 0);
+    assert!(untouched.history.is_empty());
     invoke::<()>(
         &kernel,
         "phenix.basic.skills@1/set",
@@ -303,7 +352,8 @@ fn main() {
             "cases": ["graph-discovered-action", "complete-history", "multiple-tools",
                 "skills-and-context-imports", "durable-session-checkpoints",
                 "journal-output", "cross-session-denial", "model-error",
-                "caller-turn-limit", "usage"],
+                "caller-turn-limit", "usage", "invalid-grant-rejection",
+                "nested-storage-attenuation-no-effect"],
             "scripted_model_only": true,
             "pending_streaming_or_frontend_parity": false
         }))
