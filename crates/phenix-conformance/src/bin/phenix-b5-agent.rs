@@ -31,15 +31,22 @@ fn invoke<T: Portable>(
         Outcome::Domain(value) => Ok(Err(BasicError::from_value(value)?)),
     }
 }
-fn submit(kernel: &phenix_kernel::Kernel, prompt: &str, limits: Limits) -> Result<RunResult, BasicError> {
-    let steps = kernel.submit_action(
-        "phenix.basic.submit",
-        &PromptSubmitted {
-            session: "s1".into(),
-            text: prompt.into(),
-            limits,
-        }.to_value(),
-    ).expect("graph execution must have no kernel failures");
+fn submit(
+    kernel: &phenix_kernel::Kernel,
+    prompt: &str,
+    limits: Limits,
+) -> Result<RunResult, BasicError> {
+    let steps = kernel
+        .submit_action(
+            "phenix.basic.submit",
+            &PromptSubmitted {
+                session: "s1".into(),
+                text: prompt.into(),
+                limits,
+            }
+            .to_value(),
+        )
+        .expect("graph execution must have no kernel failures");
     assert_eq!(steps.len(), 1);
     assert_eq!(steps[0].node, "phenix.basic.agent/submit");
     match &steps[0].outcome {
@@ -49,7 +56,11 @@ fn submit(kernel: &phenix_kernel::Kernel, prompt: &str, limits: Limits) -> Resul
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 10, "AGENT MODEL TOOLS MEMORY SESSION JOURNAL SQLITE DEFINITIONS OUTPUT");
+    assert_eq!(
+        args.len(),
+        10,
+        "AGENT MODEL TOOLS MEMORY SESSION JOURNAL SQLITE DEFINITIONS OUTPUT"
+    );
     let paths = args[1..8].to_vec();
     let defs = args[8].clone();
     let output = Path::new(&args[9]);
@@ -68,10 +79,16 @@ fn main() {
         ("phenix.basic.session", "phenix.basic.session@1/open"),
         ("phenix.basic.session", "phenix.basic.session@1/checkpoint"),
         ("phenix.basic.session", "phenix.basic.session@1/reconcile"),
-        ("phenix.basic.event-journal", "phenix.basic.journal@1/append"),
+        (
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/append",
+        ),
         ("phenix.basic.event-journal", "phenix.basic.journal@1/read"),
         ("phenix.basic.storage-sqlite", "phenix.basic.storage@1/read"),
-        ("phenix.basic.storage-sqlite", "phenix.basic.storage@1/transact"),
+        (
+            "phenix.basic.storage-sqlite",
+            "phenix.basic.storage@1/transact",
+        ),
     ];
     let mut slots = Vec::new();
     for (index, (slot, provider, export)) in [
@@ -82,7 +99,10 @@ fn main() {
         ("Context", "phenix.basic.memory", "Context"),
         ("Session", "phenix.basic.session", "Session"),
         ("Journal", "phenix.basic.event-journal", "Journal"),
-    ].into_iter().enumerate() {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         slots.push(SlotBinding {
             caller: "phenix.basic.agent".into(),
             slot: slot.into(),
@@ -92,7 +112,11 @@ fn main() {
         });
         assert_eq!(index, slots.len() - 1);
     }
-    for caller in ["phenix.basic.memory", "phenix.basic.session", "phenix.basic.event-journal"] {
+    for caller in [
+        "phenix.basic.memory",
+        "phenix.basic.session",
+        "phenix.basic.event-journal",
+    ] {
         slots.push(SlotBinding {
             caller: caller.into(),
             slot: "Storage".into(),
@@ -119,19 +143,26 @@ fn main() {
         ("phenix.basic.agent", "phenix.basic.session@1/open"),
         ("phenix.basic.agent", "phenix.basic.session@1/checkpoint"),
     ];
-    for owner in ["phenix.basic.memory", "phenix.basic.session", "phenix.basic.event-journal"] {
+    for owner in [
+        "phenix.basic.memory",
+        "phenix.basic.session",
+        "phenix.basic.event-journal",
+    ] {
         permissions.push((owner, "phenix.basic.storage@1/read"));
         permissions.push((owner, "phenix.basic.storage@1/transact"));
     }
-    let grants = permissions.into_iter().map(|(caller, key)| {
-        let (interface, operation) = key.split_once('/').unwrap();
-        ScopedGrant {
-            caller: caller.into(),
-            interface: interface.into(),
-            operation: operation.into(),
-            resources: resources.clone(),
-        }
-    }).collect();
+    let grants = permissions
+        .into_iter()
+        .map(|(caller, key)| {
+            let (interface, operation) = key.split_once('/').unwrap();
+            ScopedGrant {
+                caller: caller.into(),
+                interface: interface.into(),
+                operation: operation.into(),
+                resources: resources.clone(),
+            }
+        })
+        .collect();
     let composition = Composition {
         format: "phenix.composition.v2".into(),
         artifacts: paths,
@@ -149,7 +180,9 @@ fn main() {
     };
     let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
     invoke::<()>(
-        &kernel, "phenix.basic.skills@1/set", "phenix.basic.memory",
+        &kernel,
+        "phenix.basic.skills@1/set",
+        "phenix.basic.memory",
         SkillSet {
             session: "s1".into(),
             skills: vec![Skill {
@@ -158,9 +191,13 @@ fn main() {
                 instructions: "Use Rust".into(),
             }],
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     invoke::<()>(
-        &kernel, "phenix.basic.context@1/set", "phenix.basic.memory",
+        &kernel,
+        "phenix.basic.context@1/set",
+        "phenix.basic.memory",
         ContextSet {
             session: "s1".into(),
             items: vec![ContextItem {
@@ -168,53 +205,98 @@ fn main() {
                 text: "Phenix".into(),
             }],
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
 
-    let direct = submit(&kernel, "hello", Limits {
-        model_turns: Some(2),
-        tool_calls: Some(2),
-        ..Limits::default()
-    }).unwrap();
+    let direct = submit(
+        &kernel,
+        "hello",
+        Limits {
+            model_turns: Some(2),
+            tool_calls: Some(2),
+            ..Limits::default()
+        },
+    )
+    .unwrap();
     assert_eq!(direct.answer, "mock:hello");
     assert_eq!(direct.model_turns, 1);
-    let tools = submit(&kernel, "tools:hello", Limits {
-        model_turns: Some(2),
-        tool_calls: Some(2),
-        ..Limits::default()
-    }).unwrap();
+    let tools = submit(
+        &kernel,
+        "tools:hello",
+        Limits {
+            model_turns: Some(2),
+            tool_calls: Some(2),
+            ..Limits::default()
+        },
+    )
+    .unwrap();
     assert_eq!(tools.answer, "mock:call-1:HELLO|call-2:5");
     assert_eq!(tools.tool_calls, 2);
     assert_eq!(tools.model_turns, 2);
     assert!(tools.usage.output_tokens > 0);
 
     let output_events: EventPage = invoke(
-        &kernel, "phenix.basic.output@1/read", "phenix.basic.agent",
-        JournalQuery { session: "s1".into(), after: 0, limit: 100 }
-    ).unwrap().unwrap();
-    assert!(output_events.events.iter().any(|event| event.text == tools.answer));
-    assert!(output_events.events.iter().any(|event| event.call_id == "call-1"));
+        &kernel,
+        "phenix.basic.output@1/read",
+        "phenix.basic.agent",
+        JournalQuery {
+            session: "s1".into(),
+            after: 0,
+            limit: 100,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert!(output_events
+        .events
+        .iter()
+        .any(|event| event.text == tools.answer));
+    assert!(output_events
+        .events
+        .iter()
+        .any(|event| event.call_id == "call-1"));
     let denied: Result<RunResult, BasicError> = invoke(
-        &kernel, "phenix.basic.input@1/submit", "phenix.basic.agent",
-        PromptSubmitted { session: "s2".into(), text: "bad".into(), limits: Limits::default() }
-    ).unwrap();
+        &kernel,
+        "phenix.basic.input@1/submit",
+        "phenix.basic.agent",
+        PromptSubmitted {
+            session: "s2".into(),
+            text: "bad".into(),
+            limits: Limits::default(),
+        },
+    )
+    .unwrap();
     assert_eq!(denied.unwrap_err().code, ErrorCode::Denied);
 
     let failed = submit(&kernel, "model-error", Limits::default()).unwrap_err();
     assert_eq!(failed.code, ErrorCode::ModelFailed);
-    let failed_turn = submit(&kernel, "tools:limit", Limits {
-        model_turns: Some(1),
-        tool_calls: Some(2),
-        ..Limits::default()
-    }).unwrap_err();
+    let failed_turn = submit(
+        &kernel,
+        "tools:limit",
+        Limits {
+            model_turns: Some(1),
+            tool_calls: Some(2),
+            ..Limits::default()
+        },
+    )
+    .unwrap_err();
     assert_eq!(failed_turn.code, ErrorCode::TurnLimit);
     let persistent = invoke::<phenix_basic_contracts::SessionSnapshot>(
-        &kernel, "phenix.basic.session@1/open", "phenix.basic.session",
-        Scope { session: "s1".into() }
-    ).unwrap().unwrap();
+        &kernel,
+        "phenix.basic.session@1/open",
+        "phenix.basic.session",
+        Scope {
+            session: "s1".into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(persistent.status, phenix_basic_contracts::RunStatus::Failed);
 
-    fs::write(output.join("agent.json"), serde_json::to_vec_pretty(
-        &serde_json::json!({
+    fs::write(
+        output.join("agent.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
             "format": "phenix.b5.graph-agent.v1",
             "cases": ["graph-discovered-action", "complete-history", "multiple-tools",
                 "skills-and-context-imports", "durable-session-checkpoints",
@@ -222,7 +304,9 @@ fn main() {
                 "caller-turn-limit", "usage"],
             "scripted_model_only": true,
             "pending_streaming_or_frontend_parity": false
-        })
-    ).unwrap()).unwrap();
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     println!("B5 scripted native graph gate passed");
 }
