@@ -1,0 +1,11 @@
+[package]
+name = "phenix-basic-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-contract.workspace = true
+phenix-kernel = { path = "../phenix-kernel" }
+serde_json.workspace = true
