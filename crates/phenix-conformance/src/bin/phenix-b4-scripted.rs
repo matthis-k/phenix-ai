@@ -2,7 +2,7 @@
 use phenix_basic_contracts::{
     BasicError, ErrorCode, Limits, Message, ModelReply, ModelRequest, Role, ToolInfo,
 };
-use phenix_contract::{Authority, Code, Portable, Value};
+use phenix_contract::{Authority, Code, Portable};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection},
     Outcome,
@@ -139,16 +139,9 @@ fn main() {
 
     let mut denied = policy;
     denied.grants.clear();
-    let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
-    // Admission must fail before a root is created or native code is invoked.
-    // Denials from prepared entry validation need not increment runtime
-    // invocation counters.
-    assert_eq!(
-        kernel.admit_default_root().err().unwrap().code,
-        Code::Denied
-    );
-    assert_eq!(kernel.inspect()["calls"], 0);
-    assert_eq!(kernel.inspect()["roots"]["completed"], 0);
+    // Preparation rejects an ungranted default entry before loading a native
+    // image. No constructor, admission or provider effect is possible.
+    assert_eq!(Prepared::prepare(denied).err().unwrap().code, Code::Denied);
     let result = serde_json::json!({
         "format": "phenix.b4.scripted.v1",
         "provider": "phenix.model.scripted",
