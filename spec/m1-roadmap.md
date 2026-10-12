@@ -262,7 +262,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
-| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: independently packaged ACP v1 Frontend codec on impl/m1-basic-acp. Native prompt/cancel/update and scope tests; connection initialize/session lifecycle, active cancellation and ACP product acceptance remain |
+| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and single-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Dynamic session allocation, active cancellation and full ACP product acceptance remain |
 | P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: native terminal/JSONL product host and SQLite-backed graph smoke on impl/m1-basic-runtime. Full streaming, host-controlled cancellation, ACP parity, multi-session and exact-head CI still open |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
@@ -391,11 +391,13 @@ rejects mismatched session IDs and unsupported content, and emits
 `session/update` notifications from journal events. The native F2 check loads
 the actual selected plugin and verifies this codec.
 
-ACP initialization, unique session allocation, lifecycle responses, active
-prompt cancellation, incremental delivery and stop-reason responses belong to
-the frontend connection host, not the decode/render provider. Those features
-remain unimplemented. F2 and P1 stay unchecked until a real ACP client fixture
-passes. Do not advertise protocol compliance based only on the codec.
+A first ACP connection host now handles initialize, a single static session/new,
+session/prompt with journal-backed update notifications and end_turn responses.
+The Nix host smoke drives all three methods through stdin and the shared
+M1 graph composition. Its session is fixed to s1 and it cannot interrupt a
+synchronous model call. Multiple independent sessions, active cancellation,
+optional load/resume, and a full ACP client fixture remain open. F2 and P1
+stay unchecked until those cases pass.
 
 ### P1 terminal and JSONL host smoke
 
