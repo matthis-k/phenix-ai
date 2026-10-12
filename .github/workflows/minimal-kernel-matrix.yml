@@ -1,0 +1,137 @@
+# Candidate workflow. The existing minimal-kernel.yml remains the acceptance gate
+# until cold/warm timing and exact-head report parity have been demonstrated.
+name: Minimal kernel matrix candidate
+on:
+  push:
+    branches: [impl/m1-ci-matrix]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m1-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Exactly one Nix-store cache writer. All matrix consumers restore that
+  # completed cache instead of racing to save the same key.
+  prebuild:
+    name: Shared toolchain and runner
+    runs-on: ubuntu-latest
+    cache-mode: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+      - name: Restore and publish shared Nix cache
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: phenix-m1-prebuild-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'examples/Cargo.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            phenix-m1-prebuild-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'examples/Cargo.lock') }}-
+          gc-max-store-size-linux: "4G"
+      - name: Build shared runner once
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          time nix build -L \
+            .#phenix-kernel \
+            .#phenix-describe \
+            .#phenix-m1-conformance-runner
+      - name: Record shared outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix path-info --json ./result ./result-1 ./result-2 > shared-nix-paths.json
+          nix --version
+          echo "Prebuilt three Nix outputs for exact head $(git rev-parse HEAD)"
+
+  verification:
+    name: ${{ matrix.suite }}
+    needs: prebuild
+    runs-on: ubuntu-latest
+    cache-mode: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: contracts
+            checks: "m1-contract m1-public-sdk m1-reference-wire m1-metadata-state m1-metadata-retention"
+          - suite: composition
+            checks: "m1-native m1-product m1-composition m1-composition-product m1-lifecycle m1-lifecycle-product"
+          - suite: coordination
+            checks: "m1-pending m1-pending-product m1-imports m1-generations m1-live-state m1-live-state-product"
+          - suite: graph-agent
+            checks: "m1-native-authoring m1-graph basic-contracts a0-agent a0-agent-product m1-value-sdk m1-value-sdk-product"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+      - name: Restore shared prebuild (read only)
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: phenix-m1-prebuild-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'examples/Cargo.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            phenix-m1-prebuild-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'examples/Cargo.lock') }}-
+          save: false
+      - name: Run exact-head Nix check shard
+        shell: bash
+        env:
+          CHECKS: ${{ matrix.checks }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -euo pipefail
+          read -r -a checks <<< "$CHECKS"
+          test "$${#checks[@]}" -gt 0
+          targets=()
+          for check in "${checks[@]}"; do
+            targets+=(".#checks.x86_64-linux.$check")
+          done
+          printf 'suite=%s\nhead=%s\n' "$SUITE" "$(git rev-parse HEAD)"
+          time nix build --no-link -L "${targets[@]}"
+          mkdir -p ci-evidence
+          git rev-parse HEAD > ci-evidence/kernel-commit.txt
+          printf '%s\n' "${checks[@]}" > ci-evidence/checks.txt
+          nix build --no-link --print-out-paths "${targets[@]}" > ci-evidence/store-paths.txt
+          mapfile -t outputs < ci-evidence/store-paths.txt
+          nix path-info --json "${outputs[@]}" > ci-evidence/nix-output.json
+          nix --version > ci-evidence/nix-version.txt
+      - name: Upload exact-head shard evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: m1-matrix-${{ matrix.suite }}-${{ github.sha }}
+          path: ci-evidence
+          if-no-files-found: error
+
+  result:
+    name: Matrix aggregate
+    if: ${{ always() }}
+    needs: [prebuild, verification]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all parallel checks
+        shell: bash
+        env:
+          PREBUILD: ${{ needs.prebuild.result }}
+          VERIFICATION: ${{ needs.verification.result }}
+        run: |
+          set -euo pipefail
+          printf 'prebuild=%s verification=%s\n' "$PREBUILD" "$VERIFICATION"
+          test "$PREBUILD" = success
+          test "$VERIFICATION" = success
