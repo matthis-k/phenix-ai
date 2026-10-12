@@ -62,7 +62,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 .map(|(index, tool)| ToolCall {
                     id: format!("call-{}", index + 1),
                     tool: tool.into(),
-                    arguments: input.into(),
+                    arguments: serde_json::to_string(input).expect("serialize string"),
                 })
                 .collect();
             (String::new(), calls)
