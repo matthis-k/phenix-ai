@@ -420,6 +420,15 @@ cancellation while model/tool I/O is in progress, HTTP-backed model tests,
 reactive value triggers and shared terminal/JSONL/ACP product integration.
 Exact-head CI acceptance remains required.
 
+The B5 grant fix declares an optional Storage requirement to retain the
+operation ceiling through nested Session, Journal and memory calls. The agent
+has no selected Storage slot or direct Storage grants. Storage-owning providers
+retain their explicit grants. Resolver and effect-admission rules are unchanged.
+The native gate also rejects duplicate and unknown grants, then narrows root
+Storage authority and verifies denial leaves the session idle with no history.
+Local workspace tests, formatting and the packaged debug native gate pass.
+Canonical Nix acceptance must still pass on the published commit.
+
 ### B3 persisted skills and context slice
 
 `impl/m1-basic-skills-context` is stacked on the SQLite Storage slice.
