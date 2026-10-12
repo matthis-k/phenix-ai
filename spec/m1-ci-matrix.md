@@ -35,10 +35,14 @@ push/dispatch benchmark workflow. The existing
   Previous matching snapshots can be restored; only the shared prebuild job
   saves new snapshots. The store budget is 4 GiB for the candidate.
 
-The candidate runs all 24 ordinary `flake.checks.x86_64-linux` entries.
-The 25th entry, `m1-shipping`, remains in the original full shipping job.
-The candidate cannot be accepted as the sole gate until `m1-shipping` and
-the exact-head release evidence are verified in the new workflow.
+At the original #790 benchmark the candidate had 24 ordinary checks, with
+`m1-shipping` in the serial acceptance job. On the later
+`impl/m1-basic-acp` head, the flake defines 35 checks: all 34 ordinary checks
+are listed in the matrix and `m1-shipping` remains in the serial gate.
+The matrix list is still maintained by hand. The generated planner must
+derive check inventory from the exact-head flake and reject omissions.
+The candidate cannot replace the serial gate until `m1-shipping` and the
+exact-head release evidence are verified in the generated workflow.
 
 ## Acceptance criteria
 
@@ -93,15 +97,52 @@ paths must still be addressed and verified by Nix. Caches must be keyed by
 the pinned inputs and compilation settings. Keep branch-specific and
 platform-specific outputs isolated.
 
-## Cutover sequence
+## Flake-aware CI redesign
 
-1. Run the benchmark on this branch. Record observed timing and cache
-   evidence in the PR. Treat cold and warm results separately.
-2. Fix fixture compilation and source invalidation, then benchmark again.
-3. Implement aggregate shipping verification and exact-head evidence
-   parity. Make the matrix required, then remove the redundant serial gate.
-4. Expand trusted shared-cache publication to the canonical branch and
-   downstream read-only consumers. Add conservative affected-check planning.
+[Phenix AI's M1 roadmap](m1-roadmap.md) now tracks AI-CI1 to AI-CI4 and
+cross-repository FC1 to FC4.
+[The generic CI-library design](https://github.com/matthis-k/phenix-flake-ci/pull/17)
+is owned by `phenix-flake-ci`; this file retains the measured matrix baseline
+and consumer acceptance rules. These stages remain planned.
 
-Do not mark this document complete or claim a latency improvement before
-the measured acceptance work passes.
+### Consumer and library boundaries
+
+- Phenix AI owns Nix checks and derivations, compatible Cargo build sharing,
+  fixture source narrowing, native package identity, fast profiles and
+  optimized shipping tests.
+- `phenix-flake-ci` owns the optional exact-head check inventory, conservative
+  Cargo/Nix impact planner, deterministic suite grouping, cache policy,
+  complete result gate and workflow generation.
+- Nix decides which derivations are reusable. Sharding cannot itself eliminate
+  compilation repeated by independent Cargo target directories.
+- Keep one conformance definition in the consumer flake. Generate the CI job
+  plan from that definition; never clone it into a second YAML checklist.
+
+### Implementation order
+
+1. AI-CI1: consolidate compatible fixture compilation and narrow source
+   inputs. Retain independent builds for ABI/adversarial/linker cases. Benchmark
+   the same head before and after.
+2. AI-CI2: test a fast semantic compilation profile while keeping the
+   optimized ABI, LTO, shipping and closure gates.
+3. FC1-FC3: implement a check-discovery manifest, provable impacted-check
+   planning and a generated exact-head evidence gate using the existing
+   `mkCi` DAG. FC4 prepares trusted cache policy and metrics in parallel.
+4. AI-CI3: prove full check coverage and shipping parity before the generated
+   workflow becomes required. Remove the parallel serial workflow only after
+   that proof.
+5. AI-CI4: activate selective PR checks and read-only shared-cache reuse.
+   Full main/release/manual validation always includes all checks.
+
+Benchmark cold and warm runs, compile counts, realized versus substituted Nix
+derivations, cache bytes, wall time and total runner time. Record skip proofs
+and negative/ABI test coverage alongside faster times. Initial warm-cache
+targets are 2-4 minutes for a small plugin PR and 5-8 minutes for a complete
+gate; these are unverified targets, not a claim of achieved speed.
+
+## Cutover criteria
+
+Maintain the old shipping workflow until AI-CI3 proves the complete check
+inventory, exact-head evidence and production closure match. Introduce
+selective PR skipping under AI-CI4 only after the full generated gate works.
+Mark milestones complete only after their measured acceptance work passes.
