@@ -87,9 +87,10 @@ roots and conflicting writers. Exact-head CI has not established acceptance.
   resource scopes and root authority, rather than trusting event ID strings.
 - An action's advertised authority requirements must be enforced when the
   frontend submits it. Discovery currently filters root-granted actions.
-- Node schemas and write declarations need comparison against their selected
-  operation and property definitions. The current compiler verifies existence
-  and authority but not all cross-schema constraints.
+- The prepared compiler now checks event payloads against selected handler
+  request schemas and resolves declared property writes to selected writable
+  properties with caller grants. Negative external fixtures for both rules
+  remain to be added.
 
 G3 owns activation and dispatch. G4 owns pending calls, cancellation and live
 state triggers. No agent-specific entry point or second dispatcher is added.
