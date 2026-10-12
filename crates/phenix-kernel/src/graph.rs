@@ -1,6 +1,10 @@
 //! Offline graph composition. Runtime execution and event admission belong to G3.
 //! The graph uses the shared DAG ordering algorithm but owns graph semantics.
-use crate::dag;
+use crate::{
+    dag,
+    resolve::Selection,
+    runtime::{Kernel, Outcome},
+};
 use phenix_contract::{
     graph_node_key, ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
     Value, ValueSchema,
@@ -320,6 +324,93 @@ impl crate::resolve::Prepared {
             }
         }
         Ok(graph)
+    }
+}
+
+/// One completed serial graph operation, identified by its contributing node.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GraphStep {
+    pub node: String,
+    pub outcome: Outcome,
+}
+
+impl Kernel {
+    /// Trusted control-plane action admission. Frontends submit the discovered
+    /// action rather than invoking a graph handler directly. This first G3
+    /// slice executes synchronous, fail-root nodes in topological order.
+    /// Pending calls, skip policies and state-change triggers belong to G4.
+    pub fn submit_action(
+        &self,
+        action_id: &str,
+        payload: &Value,
+    ) -> Result<Vec<GraphStep>, Failure> {
+        self.check_thread()?;
+        let graph = self
+            .prepared
+            .graph
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "no prepared graph"))?;
+        let action = graph
+            .actions
+            .get(action_id)
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "unknown action"))?;
+        if !action.payload.accepts(payload) {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "action payload does not match event schema",
+            ));
+        }
+        if !action.required_operations.iter().all(|key| {
+            self.prepared.authority.operations.contains(key)
+                && self
+                    .prepared
+                    .grants
+                    .contains_key(&("root".into(), key.clone()))
+        }) {
+            return Err(Failure::new(
+                Code::Denied,
+                "root has no grant for action requirements",
+            ));
+        }
+
+        let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
+        let selected = active
+            .iter()
+            .map(|id| {
+                let node = &graph.nodes[id];
+                if node.definition.failure != phenix_contract::FailurePolicy::FailRoot {
+                    return Err(Failure::new(
+                        Code::DescriptorInvalid,
+                        "serial G3 execution requires fail-root policy",
+                    ));
+                }
+                let (interface, operation) = node
+                    .definition
+                    .operation
+                    .split_once('/')
+                    .expect("validated operation key");
+                Ok((
+                    id.clone(),
+                    node.owner.clone(),
+                    Selection {
+                        interface: interface.into(),
+                        operation: operation.into(),
+                        provider: node.provider.clone(),
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        let root = self.admit_default_root()?;
+        let mut completed = Vec::with_capacity(selected.len());
+        for (node, owner, target) in selected {
+            let outcome = root.invoke_graph(&owner, &target, payload)?;
+            let failed = matches!(outcome, Outcome::Domain(_));
+            completed.push(GraphStep { node, outcome });
+            if failed {
+                break;
+            }
+        }
+        Ok(completed)
     }
 }
 
