@@ -217,6 +217,18 @@ fn main() {
             phenix_kernel::Outcome::Success(Value::String("triggered".into()))
         );
     }
+    let domain = kernel
+        .submit_action(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("domain".into()))]),
+        )
+        .unwrap();
+    assert_eq!(domain.len(), 1);
+    assert_eq!(domain[0].node, "example.graph-a/a");
+    assert_eq!(
+        domain[0].outcome,
+        phenix_kernel::Outcome::Domain(Value::String("domain fixture".into()))
+    );
     assert_eq!(
         kernel
             .submit_action("example.graph.unknown", &Value::String("x".into()))
