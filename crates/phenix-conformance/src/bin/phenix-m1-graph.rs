@@ -84,6 +84,10 @@ fn main() {
     assert_eq!(err.code, Code::Denied);
     assert!(!witness.exists(), "rejected graph activated native code");
 
+    let graph_identity = graph.identity.clone();
+    let graph_order = graph.order.clone();
+    let action_ids = prepared.discover_actions().iter().map(|a| a.id.clone()).collect::<Vec<_>>();
+
     // Existing direct invocation is unchanged. G3 will replace frontend calls
     // with authenticated event admission and graph node dispatch.
     let kernel = prepared.load().unwrap();
@@ -95,10 +99,10 @@ fn main() {
 
     fs::write(output.join("graph.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "format": "phenix.g2-evidence.v1",
-        "graph_identity": graph.identity,
+        "graph_identity": graph_identity,
         "generation_identity": digest.as_str(),
-        "nodes": graph.order,
-        "actions": prepared.discover_actions().iter().map(|a| a.id.clone()).collect::<Vec<_>>(),
+        "nodes": graph_order,
+        "actions": action_ids,
         "cases": [
             "three-native-artifact-contributions",
             "pre-dlopen-graph-verification",
