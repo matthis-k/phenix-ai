@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 mod contract;
 mod definitions;
+mod graph;
 mod property;
 mod state;
 use quote::quote;
@@ -39,6 +40,18 @@ fn args(
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::ItemTrait);
     contract::expand(attr.into(), item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+#[proc_macro_attribute]
+pub fn event(attr: TokenStream, item: TokenStream) -> TokenStream {
+    graph::event(attr.into(), parse_macro_input!(item as syn::ItemStruct))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+#[proc_macro_attribute]
+pub fn action(attr: TokenStream, item: TokenStream) -> TokenStream {
+    graph::action(attr.into(), parse_macro_input!(item as syn::ItemStruct))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
