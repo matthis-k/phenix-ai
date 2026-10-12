@@ -1,7 +1,7 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, BasicOutput, ClientInput, EventPage, Frontend, JournalQuery, RenderRequest,
+    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest,
     Submission,
 };
 use phenix_contract::{Portable, Value};
