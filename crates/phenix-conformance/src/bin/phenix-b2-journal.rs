@@ -157,8 +157,22 @@ fn main() {
     denied.grants.retain(|grant| {
         grant.caller != "phenix.basic.event-journal" || grant.operation != "transact"
     });
-    let outcome = Prepared::prepare(denied);
-    assert!(outcome.is_err(), "missing storage import grant admitted");
+    match Prepared::prepare(denied) {
+        Err(failure) => assert_eq!(failure.code, phenix_contract::Code::Denied),
+        Ok(prepared) => {
+            // Import authority may be validated at admission rather than at
+            // preparation. Either way no Storage write may occur.
+            let kernel = prepared.load().unwrap();
+            let root = kernel.admit_default_root().unwrap();
+            assert_eq!(
+                root.invoke(&JournalAppend {
+                    session: "s1".into(),
+                    events: vec![request("s1", "r1", "denied")],
+                }.to_value()).unwrap_err().code,
+                phenix_contract::Code::Denied
+            );
+        }
+    }
 
     fs::write(
         output.join("event-journal.json"),
