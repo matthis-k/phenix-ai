@@ -5,7 +5,7 @@ on:
   push:
     branches: [impl/m1-ci-matrix]
   pull_request:
-    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix]
+    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix, impl/m1-basic-providers]
   workflow_dispatch:
 
 permissions:
