@@ -57,7 +57,7 @@ fn main() {
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.events.len(), if index == 0 { 1 } else { 0 });
     }
-    let policy = composition(packages);
+    let policy = composition(packages.clone());
     let prepared = Prepared::prepare(policy.clone()).unwrap();
     assert!(
         !witness.exists(),
