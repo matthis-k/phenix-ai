@@ -111,7 +111,6 @@ fn main() {
         .expect("must deny ungranted graph node");
     assert_eq!(err.code, Code::Denied);
     assert!(!witness.exists(), "rejected graph activated native code");
-
     // An attacker who controls the package record can recompute its artifact
     // checksum. The graph decoder must still reject malformed graph bytes
     // without activating the library.
