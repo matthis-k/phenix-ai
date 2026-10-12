@@ -441,7 +441,10 @@ impl Prepared {
         {
             return Err(invalid("root ceiling operation absent"));
         }
-        let graph_inputs = packages.values().filter_map(|package| package.graph().cloned()).collect::<Vec<_>>();
+        let graph_inputs = packages
+            .values()
+            .filter_map(|package| package.graph().cloned())
+            .collect::<Vec<_>>();
         let mut prepared = Self {
             packages,
             entry: composition.entry,
@@ -476,12 +479,17 @@ impl Prepared {
     }
     /// Discover only actions whose declared admission requirements have root grants.
     pub fn discover_actions(&self) -> Vec<crate::graph::ActionInfo> {
-        self.graph.iter().flat_map(|graph| graph.discover()).filter(|action| {
-            action.required_operations.iter().all(|key| {
-                self.authority.operations.contains(key)
-                    && self.grants.contains_key(&("root".into(), key.clone()))
+        self.graph
+            .iter()
+            .flat_map(|graph| graph.discover())
+            .filter(|action| {
+                action.required_operations.iter().all(|key| {
+                    self.authority.operations.contains(key)
+                        && self.grants.contains_key(&("root".into(), key.clone()))
+                })
             })
-        }).cloned().collect()
+            .cloned()
+            .collect()
     }
     pub(crate) fn permits(&self, provider: &str, key: &str) -> bool {
         self.ceilings
