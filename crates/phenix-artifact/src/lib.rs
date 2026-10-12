@@ -1,5 +1,7 @@
 use object::{Object, ObjectSection};
-use phenix_contract::{Code, ContractMetadata, Failure, GraphContribution, MetadataExecution, NATIVE_SECTION_BYTES};
+use phenix_contract::{
+    Code, ContractMetadata, Failure, GraphContribution, MetadataExecution, NATIVE_SECTION_BYTES,
+};
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -63,27 +65,43 @@ fn extract_section(data: &[u8]) -> Result<Vec<u8>, Failure> {
 pub fn extract_graph(bytes: &[u8]) -> Result<Option<GraphContribution>, Failure> {
     let object = object::File::parse(bytes)
         .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
-    let mut sections = object.sections().filter(|s| s.name().ok() == Some(".phenix.graph"));
+    let mut sections = object
+        .sections()
+        .filter(|s| s.name().ok() == Some(".phenix.graph"));
     let Some(section) = sections.next() else {
         return Ok(None);
     };
     if sections.next().is_some() {
-        return Err(Failure::new(Code::DescriptorInvalid, "duplicate graph section"));
+        return Err(Failure::new(
+            Code::DescriptorInvalid,
+            "duplicate graph section",
+        ));
     }
-    let data = section.data()
+    let data = section
+        .data()
         .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
     if data.len() != NATIVE_SECTION_BYTES {
-        return Err(Failure::new(Code::DescriptorInvalid, "graph section has invalid size"));
+        return Err(Failure::new(
+            Code::DescriptorInvalid,
+            "graph section has invalid size",
+        ));
     }
-    let len = u32::from_be_bytes(data[..4].try_into().map_err(|_| {
-        Failure::new(Code::DescriptorInvalid, "graph section missing length")
-    })?) as usize;
-    let end = 4usize.checked_add(len)
+    let len = u32::from_be_bytes(
+        data[..4]
+            .try_into()
+            .map_err(|_| Failure::new(Code::DescriptorInvalid, "graph section missing length"))?,
+    ) as usize;
+    let end = 4usize
+        .checked_add(len)
         .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "graph section overflow"))?;
-    let payload = data.get(4..end)
+    let payload = data
+        .get(4..end)
         .ok_or_else(|| Failure::new(Code::DescriptorInvalid, "graph section truncated"))?;
     if data[end..].iter().any(|byte| *byte != 0) {
-        return Err(Failure::new(Code::DescriptorInvalid, "nonzero graph section padding"));
+        return Err(Failure::new(
+            Code::DescriptorInvalid,
+            "nonzero graph section padding",
+        ));
     }
     Ok(Some(GraphContribution::decode(payload)?))
 }
@@ -191,8 +209,14 @@ impl VerifiedPackage {
                 "native metadata execution profile",
             ));
         }
-        if graph.as_ref().is_some_and(|declaration| declaration.plugin != metadata.plugin) {
-            return Err(Failure::new(Code::DescriptorInvalid, "graph owner differs from artifact"));
+        if graph
+            .as_ref()
+            .is_some_and(|declaration| declaration.plugin != metadata.plugin)
+        {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "graph owner differs from artifact",
+            ));
         }
         Ok(Self {
             artifact,
