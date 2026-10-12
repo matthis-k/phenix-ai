@@ -142,6 +142,8 @@ fn main() {
         ("phenix.basic.agent", "phenix.basic.context@1/list"),
         ("phenix.basic.agent", "phenix.basic.session@1/open"),
         ("phenix.basic.agent", "phenix.basic.session@1/checkpoint"),
+        ("phenix.basic.agent", "phenix.basic.storage@1/read"),
+        ("phenix.basic.agent", "phenix.basic.storage@1/transact"),
     ];
     for owner in [
         "phenix.basic.memory",
