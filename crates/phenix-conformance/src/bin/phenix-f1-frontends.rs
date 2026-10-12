@@ -1,6 +1,6 @@
 //! Two independently packaged frontend codecs with the same public types.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, ErrorCode, Event, EventKind, Limits, PromptSubmitted, RenderRequest,
+    BasicError, ClientInput, ErrorCode, Event, EventKind, PromptSubmitted, RenderRequest,
     Scope, Submission,
 };
 use phenix_contract::{Authority, Blob, Portable};
