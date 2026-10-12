@@ -303,6 +303,8 @@
         { caller = "phenix.basic.agent"; key = "phenix.basic.context@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/open"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/checkpoint"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.storage@1/read"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.storage@1/transact"; }
         { caller = "phenix.basic.memory"; key = "phenix.basic.storage@1/read"; }
         { caller = "phenix.basic.memory"; key = "phenix.basic.storage@1/transact"; }
         { caller = "phenix.basic.session"; key = "phenix.basic.storage@1/read"; }
