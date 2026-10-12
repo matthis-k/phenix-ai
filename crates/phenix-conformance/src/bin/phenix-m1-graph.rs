@@ -1,5 +1,6 @@
 //! G2 external artifact gate. All three graph providers are independently built.
 use phenix_contract::{Authority, Code, ScopedRequest, Value};
+use phenix_kernel::graph::{GraphCompletion, GraphEvent};
 use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding};
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -9,13 +10,22 @@ const KEY: &str = "example.graph.task@1/run";
 
 fn composition(artifacts: Vec<String>) -> Composition {
     let ids = ["example.graph-a", "example.graph-b", "example.graph-c"];
+    let resources: BTreeSet<_> = ids[..2]
+        .iter()
+        .map(|id| {
+            phenix_contract::property_contract(id, "result")
+                .unwrap()
+                .trim_end_matches("@1")
+                .to_owned()
+        })
+        .collect();
     let mut grants = Vec::new();
     for caller in ["root", ids[0], ids[1], ids[2]] {
         grants.push(ScopedGrant {
             caller: caller.into(),
             interface: TASK.into(),
             operation: "run".into(),
-            resources: BTreeSet::new(),
+            resources: resources.clone(),
         });
     }
     // The graph nodes use the existing state host API. A and B commit their
@@ -33,7 +43,7 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 caller: caller.into(),
                 interface: interface.clone(),
                 operation: (*operation).into(),
-                resources: BTreeSet::new(),
+                resources: resources.clone(),
             });
             operations.insert(format!("{interface}/{operation}"));
         }
@@ -68,11 +78,12 @@ fn composition(artifacts: Vec<String>) -> Composition {
         substitutions: vec![],
         authority: Authority {
             operations,
-            resources: BTreeSet::new(),
+            resources,
         },
         resource: None,
     }
 }
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     assert_eq!(args.len(), 5, "GRAPH_A GRAPH_B GRAPH_C OUTPUT");
@@ -91,7 +102,7 @@ fn main() {
             graph.plugin,
             format!("example.graph-{}", ["a", "b", "c"][index])
         );
-        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes.len(), if index == 2 { 2 } else { 1 });
         assert_eq!(graph.events.len(), if index == 0 { 1 } else { 0 });
     }
     let policy = composition(packages.clone());
@@ -101,7 +112,7 @@ fn main() {
         "offline resolution ran native constructor"
     );
     let graph = prepared.compiled_graph().expect("verified graph");
-    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.nodes.len(), 4);
     assert_eq!(
         graph.events[EVENT].payload,
         phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
@@ -114,7 +125,8 @@ fn main() {
         [
             "example.graph-a/a",
             "example.graph-b/b",
-            "example.graph-c/c"
+            "example.graph-c/c",
+            "example.graph-c/d"
         ]
     );
     assert_eq!(graph.predecessors["example.graph-c/c"].len(), 2);
@@ -125,7 +137,8 @@ fn main() {
         [
             "example.graph-a/a",
             "example.graph-b/b",
-            "example.graph-c/c"
+            "example.graph-c/c",
+            "example.graph-c/d"
         ]
     );
     assert_eq!(prepared.discover_actions().len(), 1);
@@ -222,6 +235,14 @@ fn main() {
     );
     assert!(!witness.exists(), "rejected property activated native code");
 
+    let mut denied_write = declarations.clone();
+    denied_write[2].nodes[0].writes = vec!["example.graph-a/result".into()];
+    assert_eq!(
+        prepared.compile_graph(&denied_write).unwrap_err().code,
+        Code::Denied
+    );
+    assert!(!witness.exists(), "ungranted writer activated native code");
+
     let graph_identity = graph.identity.clone();
     let graph_order = graph.order.clone();
     let action_ids = prepared
@@ -230,26 +251,73 @@ fn main() {
         .map(|a| a.id.clone())
         .collect::<Vec<_>>();
 
-    // Existing direct invocation is unchanged. G3 will replace frontend calls
-    // with authenticated event admission and graph node dispatch.
+    // Observe results during execution, without invoking a handler from the host.
     let kernel = prepared.load().unwrap();
+    let scope = ScopedRequest {
+        authority: policy.authority.clone(),
+        resource: None,
+    };
+    let mut trace = Vec::new();
     let submitted = kernel
-        .submit_action(
+        .submit_action_observed(
             "example.graph.submit",
             &Value::map([("text", Value::String("triggered".into()))]),
+            scope.clone(),
+            |update| {
+                let label = match &update.event {
+                    GraphEvent::Admitted {
+                        action,
+                        event,
+                        graph,
+                        resource,
+                    } => {
+                        assert_eq!(*action, "example.graph.submit");
+                        assert_eq!(*event, EVENT);
+                        assert_eq!(*graph, graph_identity);
+                        assert!(resource.is_none());
+                        assert_eq!(
+                            kernel.admit_default_root().err().unwrap().code,
+                            Code::ReentrancyRejected,
+                            "observer must retain the admitted root"
+                        );
+                        "admitted".to_owned()
+                    }
+                    GraphEvent::NodeFinished(step) => {
+                        if step.node != "example.graph-c/c" && step.node != "example.graph-c/d" {
+                            assert!(
+                                !successor_witness.exists(),
+                                "result delivered after successor ran"
+                            );
+                        }
+                        step.node.clone()
+                    }
+                    GraphEvent::Finished(completion) => {
+                        assert_eq!(*completion, GraphCompletion::Success);
+                        assert!(successor_witness.exists());
+                        "success".to_owned()
+                    }
+                    GraphEvent::NodeSkipped { .. } => panic!("successful action skipped a node"),
+                };
+                trace.push((update.root, label));
+            },
         )
         .unwrap();
-    assert_eq!(submitted.len(), 3);
+    assert_eq!(trace.len(), 6);
+    assert!(trace.iter().all(|(root, _)| *root == trace[0].0));
+    assert_eq!(trace[0].1, "admitted");
+    assert_eq!(trace[5].1, "success");
+    assert_eq!(submitted.len(), 4);
     for (index, name) in [
         "example.graph-a/a",
         "example.graph-b/b",
         "example.graph-c/c",
+        "example.graph-c/d",
     ]
     .iter()
     .enumerate()
     {
         assert_eq!(submitted[index].node, *name);
-        let value = if index == 2 {
+        let value = if index >= 2 {
             "A:triggered|B:triggered"
         } else {
             "triggered"
@@ -265,28 +333,60 @@ fn main() {
         "C must read both committed predecessor values"
     );
     fs::remove_file(&successor_witness).unwrap();
+    let mut skipped = Vec::new();
+    let mut domain_root = None;
+    let mut domain_terminal = false;
     let domain = kernel
-        .submit_action(
+        .submit_action_observed(
             "example.graph.submit",
             &Value::map([("text", Value::String("domain".into()))]),
+            scope.clone(),
+            |update| {
+                assert_ne!(update.root, trace[0].0, "actions must have distinct roots");
+                assert_eq!(*domain_root.get_or_insert(update.root), update.root);
+                match &update.event {
+                    GraphEvent::NodeSkipped { node } => skipped.push((*node).to_owned()),
+                    GraphEvent::Finished(completion) => {
+                        assert_eq!(*completion, GraphCompletion::Domain);
+                        domain_terminal = true;
+                    }
+                    _ => {}
+                }
+            },
         )
         .unwrap();
-    assert_eq!(domain.len(), 1);
+    assert_eq!(skipped, ["example.graph-c/c", "example.graph-c/d"]);
+    assert!(domain_terminal);
+    assert_eq!(domain.len(), 2);
     assert_eq!(domain[0].node, "example.graph-a/a");
     assert_eq!(
         domain[0].outcome,
         phenix_kernel::Outcome::Domain(Value::String("domain fixture".into()))
     );
+    assert_eq!(domain[1].node, "example.graph-b/b");
+    assert_eq!(
+        domain[1].outcome,
+        phenix_kernel::Outcome::Success(Value::String("domain".into()))
+    );
     assert!(
         !successor_witness.exists(),
-        "A failure must stop downstream C"
+        "A skip must suppress C and its descendant while B succeeds"
     );
+    let mut fail_root_terminal = false;
     let later_failure = kernel
-        .submit_action(
+        .submit_action_observed(
             "example.graph.submit",
             &Value::map([("text", Value::String("domain-b".into()))]),
+            scope.clone(),
+            |update| {
+                if let GraphEvent::Finished(completion) = &update.event {
+                    assert_eq!(*completion, GraphCompletion::Domain);
+                    fail_root_terminal = true;
+                }
+            },
         )
         .unwrap();
+    assert!(fail_root_terminal);
     assert_eq!(later_failure.len(), 2, "B failure must stop downstream C");
     assert_eq!(later_failure[0].node, "example.graph-a/a");
     assert_eq!(
@@ -302,6 +402,64 @@ fn main() {
         !successor_witness.exists(),
         "B failure must have zero C invocations"
     );
+    // Skip handles domain results only. Resource denial must stop the action
+    // before A commits anything, without invoking B or either successor.
+    let before = kernel.inspect()["live_state"].clone();
+    let mut restricted = scope.clone();
+    restricted
+        .authority
+        .resources
+        .remove("example.graph-a.property.result");
+    let mut failed_terminal = false;
+    let mut denied_updates = 0;
+    assert_eq!(
+        kernel
+            .submit_action_observed(
+                "example.graph.submit",
+                &Value::map([("text", Value::String("denied-resource".into()))]),
+                restricted,
+                |update| {
+                    denied_updates += 1;
+                    match &update.event {
+                        GraphEvent::Admitted { .. } => {}
+                        GraphEvent::Finished(GraphCompletion::Failure(failure)) => {
+                            assert_eq!(failure.code, Code::PluginFailed);
+                            failed_terminal = true;
+                        }
+                        _ => panic!("resource denial must stop all remaining nodes"),
+                    }
+                },
+            )
+            .unwrap_err()
+            .code,
+        Code::PluginFailed
+    );
+    assert!(failed_terminal);
+    assert_eq!(denied_updates, 2);
+    assert_eq!(
+        kernel.inspect()["live_state"],
+        before,
+        "denied scope committed state"
+    );
+    assert!(!successor_witness.exists());
+    let calls_before = kernel.inspect()["calls"].as_u64().unwrap();
+    let mut rejected_updates = 0;
+    let mut invalid_resource = scope.clone();
+    invalid_resource.resource = Some("ungranted.resource".into());
+    assert_eq!(
+        kernel
+            .submit_action_observed(
+                "example.graph.submit",
+                &Value::map([("text", Value::String("invalid-resource".into()))]),
+                invalid_resource,
+                |_| rejected_updates += 1,
+            )
+            .unwrap_err()
+            .code,
+        Code::Denied
+    );
+    assert_eq!(rejected_updates, 0);
+    assert_eq!(kernel.inspect()["calls"].as_u64().unwrap(), calls_before);
     // A discovered action without the submitting root's authority must not
     // admit a root, invoke A, or write either predecessor's state.
     let calls_before = kernel.inspect()["calls"].as_u64().unwrap();
@@ -344,7 +502,52 @@ fn main() {
         response,
         phenix_kernel::Outcome::Success(Value::String("proof".into()))
     );
+    let mut resource_scope = scope.clone();
+    resource_scope.resource = Some("example.graph-a.property.result".into());
+    let mut observed_resource = false;
+    let contextual = kernel
+        .submit_action_observed(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("resource".into()))]),
+            resource_scope,
+            |update| {
+                if let GraphEvent::Admitted { resource, .. } = &update.event {
+                    assert_eq!(*resource, Some("example.graph-a.property.result"));
+                    observed_resource = true;
+                }
+            },
+        )
+        .unwrap();
+    assert!(observed_resource);
+    assert_eq!(contextual.len(), 4);
     kernel.shutdown().unwrap();
+
+    // The graph caller must inherit the root requirement's resource ceiling.
+    // Giving node owners broader resources must not restore root permissions.
+    let mut restricted_policy = policy.clone();
+    restricted_policy
+        .grants
+        .iter_mut()
+        .filter(|grant| grant.caller == "root")
+        .for_each(|grant| grant.resources.clear());
+    let restricted_kernel = Prepared::prepare(restricted_policy)
+        .unwrap()
+        .load()
+        .unwrap();
+    let before = restricted_kernel.inspect()["live_state"].clone();
+    assert_eq!(
+        restricted_kernel
+            .submit_action(
+                "example.graph.submit",
+                &Value::map([("text", Value::String("root-resource-ceiling".into()))]),
+            )
+            .unwrap_err()
+            .code,
+        Code::PluginFailed
+    );
+    assert_eq!(restricted_kernel.inspect()["live_state"], before);
+    assert_eq!(restricted_kernel.inspect()["calls"], 1);
+    restricted_kernel.shutdown().unwrap();
 
     fs::write(
         output.join("graph.json"),
@@ -366,16 +569,25 @@ fn main() {
             "dormant-predecessor-semantics",
             "existing-direct-invocation",
             "serial-action-admission",
-            "three-external-nodes-dispatched",
+            "four-external-nodes-dispatched",
             "schema-and-action-rejection",
             "successful-fanin-runs-c",
             "two-committed-property-values-read-by-successor",
             "narrow-action-scope-zero-effects",
-            "predecessor-b-domain-prevents-c-effect"
+            "predecessor-b-domain-prevents-c-effect",
+            "denied-property-writer-before-activation",
+            "skip-domain-continues-independent-node",
+            "skip-suppresses-transitive-successors",
+            "correlated-host-results-before-successor-effects",
+            "observer-retains-root-and-terminal-outcomes",
+            "resource-denial-zero-commits-and-no-successor",
+            "ungranted-event-resource-zero-invocations",
+            "root-resource-ceiling-bounds-graph-delegation",
+            "action-resource-inherited-by-four-native-nodes"
         ]
         }))
         .unwrap(),
     )
     .unwrap();
-    println!("G2 native graph preparation passed");
+    println!("G2/G3 native graph preparation and serial execution passed");
 }

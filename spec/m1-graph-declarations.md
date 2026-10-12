@@ -60,14 +60,15 @@ digest includes the graph identity, selected bindings and operation grants.
 The external examples workspace now includes one shared task-contract crate and
 three independent `cdylib` plugins: `example-graph-a`, `example-graph-b`,
 and `example-graph-c`. A and B trigger from `example.graph.start`.
-C depends on both. The shared event derives its schema from a Rust struct.
+C depends on both; D depends on C in the same external plugin. The shared event derives its schema from a Rust struct.
 
 `phenix-m1-graph` verifies each native artifact, compiles their contributed
 multi-root DAG with `Prepared::prepare`, compares graph and generation
 identities across selection permutations, discovers root-authorized actions,
 and rejects a missing graph-node grant. A Linux constructor witness checks
-that preparation executes no native constructor. It also checks a normal
-direct call after loading, which does **not** prove G3 event dispatch.
+that preparation executes no native constructor. G3 now submits a scoped action through the kernel, observes serial output
+updates, and checks committed-state fan-in, failure propagation and resource
+attenuation. The ordinary direct-call check remains separate evidence.
 
 Nix owns the conformance gate as `checks.x86_64-linux.m1-graph`; the
 release evidence includes the graph report.
@@ -90,7 +91,7 @@ roots and conflicting writers. Exact-head CI has not established acceptance.
 - The prepared compiler now checks event payloads against selected handler
   request schemas and resolves declared property writes to selected writable
   properties with caller grants. Negative external fixtures for both rules
-  remain to be added.
+  now run in the external gate; full follow-up shipping CI remains required.
 
 G3 owns activation and dispatch. G4 owns pending calls, cancellation and live
 state triggers. No agent-specific entry point or second dispatcher is added.

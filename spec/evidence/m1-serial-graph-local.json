@@ -1,0 +1,108 @@
+{
+  "architecture": {
+    "canonical_contract_models": 1,
+    "format": "phenix.m1.architecture.v1",
+    "kernel_source_lines": 4324,
+    "obsolete_declarations_absent": [
+      "Schema",
+      "SchemaSpec",
+      "Descriptor",
+      "Deployment",
+      "StateComposition",
+      "WireProfile",
+      "LivePortable",
+      "PluginTable",
+      "PendingPluginTable",
+      "HostApi",
+      "PendingHostApi"
+    ],
+    "preparation_input_shapes": 1,
+    "production_crates": 5,
+    "production_source_lines": 10596,
+    "public_contract_sdk_declarations": 75,
+    "semantic_guarantees_proven_here": false
+  },
+  "base_commit": "164f82595b7bad930650e2c062ac579344f71403",
+  "canonical_shipping_ci_proven": false,
+  "clippy_all_targets": "passed with -D warnings",
+  "format": "phenix.g3-serial-local.v1",
+  "native_fixture": {
+    "actions": [
+      "example.graph.submit"
+    ],
+    "cases": [
+      "three-native-artifact-contributions",
+      "pre-dlopen-graph-verification",
+      "multi-root-join",
+      "independent-order",
+      "permutation-invariant-generation",
+      "authorized-action-discovery",
+      "denied-graph-operation-no-constructor",
+      "re-signed-graph-tamper-rejected",
+      "dormant-predecessor-semantics",
+      "existing-direct-invocation",
+      "serial-action-admission",
+      "four-external-nodes-dispatched",
+      "schema-and-action-rejection",
+      "successful-fanin-runs-c",
+      "two-committed-property-values-read-by-successor",
+      "narrow-action-scope-zero-effects",
+      "predecessor-b-domain-prevents-c-effect",
+      "denied-property-writer-before-activation",
+      "skip-domain-continues-independent-node",
+      "skip-suppresses-transitive-successors",
+      "correlated-host-results-before-successor-effects",
+      "observer-retains-root-and-terminal-outcomes",
+      "resource-denial-zero-commits-and-no-successor",
+      "ungranted-event-resource-zero-invocations",
+      "root-resource-ceiling-bounds-graph-delegation",
+      "action-resource-inherited-by-four-native-nodes"
+    ],
+    "format": "phenix.g2-evidence.v1",
+    "generation_identity": "b49fda1ccd4b2ef1767d2aa514e3764a38b45336eb9cdf776f668e1cd31878d7",
+    "graph_identity": "4ea7ce7b84bb92a320ab5363283020a160a8d9408e9055fc7710c2e7fb825b78",
+    "nodes": [
+      "example.graph-a/a",
+      "example.graph-b/b",
+      "example.graph-c/c",
+      "example.graph-c/d"
+    ]
+  },
+  "package_records": {
+    "a": {
+      "artifact": "lib/plugin.so",
+      "artifact_sha256": "0b5c17388635f21d57076fe77f5f00318021995440fe08d5f1c30d7f19c8531f",
+      "descriptor": "descriptor.bin",
+      "descriptor_sha256": "4b35c168ebbf8576d64e08e5798bbcdd8b24eb585fcd4e079d467cf5356f4cf3",
+      "format": "phenix.native-package.v2",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    "b": {
+      "artifact": "lib/plugin.so",
+      "artifact_sha256": "5f5c048c283385e1c3ea272203d4b593fb21c123584da88da79cb26d5e4d84d1",
+      "descriptor": "descriptor.bin",
+      "descriptor_sha256": "0607c987a6c0ee70090bf3e052d1c63b4420edcf7da0a0b102eee1387fb41570",
+      "format": "phenix.native-package.v2",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    "c": {
+      "artifact": "lib/plugin.so",
+      "artifact_sha256": "18a13acade5ca6a9cef9c2454a2c2b2bb34808c599557e447a674a0cdadf6af0",
+      "descriptor": "descriptor.bin",
+      "descriptor_sha256": "4f7e369b4b98294ba2d7c02890aa82f32712e2d28188ce9af51d6d3278797dcf",
+      "format": "phenix.native-package.v2",
+      "target": "x86_64-unknown-linux-gnu"
+    }
+  },
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "sdk_only_external_source": true,
+  "source_sha256": {
+    "crates/phenix-conformance/src/bin/phenix-m1-graph.rs": "f7be6a2db447aed38f0162cab388ce8483dbaef2e62c103b5d63d6f7c09e6804",
+    "crates/phenix-kernel/src/graph.rs": "f8f83ec0184c55d12d8d9d13bf5bb6d5c549bd39669d64cbdfcbce148c468ee7",
+    "examples/graph-a/src/lib.rs": "71de3aca698b9318d6b84b3eeca78b7c9561c3da5453aa1cf1ceb8d71b2c840b",
+    "examples/graph-b/src/lib.rs": "81b80b37edc4a9e02087bfa6f01a04989d78cb1fd570c7a3de5ca58d237325c2",
+    "examples/graph-c/src/lib.rs": "390eab19ef1bc91be12d4b69d9a8d52317196031c1fe67caaf91d0ab15e80118",
+    "examples/graph-contracts/src/lib.rs": "0e48b58572d7c46c66ed44ca1caaf0582fa0da47af571369456aaaa15c07938e"
+  },
+  "workspace_tests_passed": 72
+}

@@ -35,6 +35,7 @@ mod provider {
 
     #[provide(Task::run)]
     fn run(state: &mut State, host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
+        example_graph_contracts::check_resource(host, &input)?;
         if input.text == "domain-b" {
             return Err(CallError::Domain("domain fixture b".into()));
         }

@@ -6,6 +6,20 @@ pub struct Start {
     pub text: String,
 }
 
+/// Native evidence that action resource context survives graph dispatch.
+pub fn check_resource(
+    host: &phenix_sdk::live::Host<'_>,
+    input: &Start,
+) -> Result<(), phenix_sdk::Failure> {
+    if input.text == "resource" {
+        assert_eq!(
+            host.resource()?.as_deref(),
+            Some("example.graph-a.property.result")
+        );
+    }
+    Ok(())
+}
+
 #[action(
     id = "example.graph.submit",
     event = "example.graph.start",

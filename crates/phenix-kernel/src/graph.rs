@@ -1,4 +1,4 @@
-//! Offline graph composition. Runtime execution and event admission belong to G3.
+//! Offline graph composition and serial action execution through the dispatcher.
 //! The graph uses the shared DAG ordering algorithm but owns graph semantics.
 use crate::{
     dag,
@@ -334,11 +334,41 @@ pub struct GraphStep {
     pub outcome: Outcome,
 }
 
+/// Borrowed serial execution updates for a trusted host observer.
+/// Delivery retains the admitted root; buffering and replay belong to consumers.
+#[derive(Debug)]
+pub struct GraphUpdate<'a> {
+    pub root: u64,
+    pub event: GraphEvent<'a>,
+}
+
+#[derive(Debug)]
+pub enum GraphEvent<'a> {
+    Admitted {
+        action: &'a str,
+        event: &'a str,
+        graph: &'a str,
+        resource: Option<&'a str>,
+    },
+    NodeFinished(&'a GraphStep),
+    NodeSkipped {
+        node: &'a str,
+    },
+    Finished(GraphCompletion<'a>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GraphCompletion<'a> {
+    Success,
+    /// At least one domain failure, including a handled skip.
+    Domain,
+    Failure(&'a Failure),
+}
+
 impl Kernel {
     /// Trusted control-plane action admission. Frontends submit the discovered
-    /// action rather than invoking a graph handler directly. This first G3
-    /// slice executes synchronous, fail-root nodes in topological order.
-    /// Pending calls, skip policies and state-change triggers belong to G4.
+    /// action rather than invoking a graph handler directly. Synchronous nodes
+    /// execute in active topological order. Pending and state triggers are G4.
     pub fn submit_action(
         &self,
         action_id: &str,
@@ -361,6 +391,18 @@ impl Kernel {
         action_id: &str,
         payload: &Value,
         scope: ScopedRequest,
+    ) -> Result<Vec<GraphStep>, Failure> {
+        self.submit_action_observed(action_id, payload, scope, |_| {})
+    }
+
+    /// Observe this serial action while its root remains admitted. Kernel
+    /// failures stop execution even when the affected node declares Skip.
+    pub fn submit_action_observed(
+        &self,
+        action_id: &str,
+        payload: &Value,
+        mut scope: ScopedRequest,
+        mut observe: impl FnMut(&GraphUpdate<'_>),
     ) -> Result<Vec<GraphStep>, Failure> {
         self.check_thread()?;
         let graph = self
@@ -392,43 +434,91 @@ impl Kernel {
             ));
         }
 
+        // Action requirements are root operations. Their resource grants must
+        // also bound delegation to graph owners, just as direct root dispatch.
+        scope.authority.resources.retain(|resource| {
+            action
+                .required_operations
+                .iter()
+                .all(|key| self.prepared.grants[&("root".into(), key.clone())].contains(resource))
+        });
+        if scope
+            .resource
+            .as_ref()
+            .is_some_and(|resource| !scope.authority.resources.contains(resource))
+        {
+            return Err(Failure::new(Code::Denied, "action resource is not granted"));
+        }
+
         let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
-        let selected = active
-            .iter()
-            .map(|id| {
-                let node = &graph.nodes[id];
-                if node.definition.failure != phenix_contract::FailurePolicy::FailRoot {
-                    return Err(Failure::new(
-                        Code::DescriptorInvalid,
-                        "serial G3 execution requires fail-root policy",
-                    ));
-                }
-                let (interface, operation) = node
-                    .definition
-                    .operation
-                    .split_once('/')
-                    .expect("validated operation key");
-                Ok((
-                    id.clone(),
-                    node.owner.clone(),
-                    Selection {
-                        interface: interface.into(),
-                        operation: operation.into(),
-                        provider: node.provider.clone(),
-                    },
-                ))
-            })
-            .collect::<Result<Vec<_>, Failure>>()?;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
-        let mut completed = Vec::with_capacity(selected.len());
-        for (node, owner, target) in selected {
-            let outcome = root.invoke_graph(&owner, &target, payload)?;
+        observe(&GraphUpdate {
+            root: root.id,
+            event: GraphEvent::Admitted {
+                action: &action.id,
+                event: &action.event,
+                graph: &graph.identity,
+                resource: root.scope.resource.as_deref(),
+            },
+        });
+        let mut completed = Vec::with_capacity(active.len());
+        let mut unsuccessful = BTreeSet::new();
+        for node in active {
+            if graph.predecessors[&node]
+                .iter()
+                .any(|id| unsuccessful.contains(id))
+            {
+                observe(&GraphUpdate {
+                    root: root.id,
+                    event: GraphEvent::NodeSkipped { node: &node },
+                });
+                unsuccessful.insert(node);
+                continue;
+            }
+            let compiled = &graph.nodes[&node];
+            let (interface, operation) = compiled
+                .definition
+                .operation
+                .split_once('/')
+                .expect("validated operation key");
+            let target = Selection {
+                interface: interface.into(),
+                operation: operation.into(),
+                provider: compiled.provider.clone(),
+            };
+            let outcome = match root.invoke_graph(&compiled.owner, &target, payload) {
+                Ok(outcome) => outcome,
+                Err(failure) => {
+                    observe(&GraphUpdate {
+                        root: root.id,
+                        event: GraphEvent::Finished(GraphCompletion::Failure(&failure)),
+                    });
+                    return Err(failure);
+                }
+            };
             let failed = matches!(outcome, Outcome::Domain(_));
-            completed.push(GraphStep { node, outcome });
+            let fail_root =
+                graph.nodes[&node].definition.failure == phenix_contract::FailurePolicy::FailRoot;
             if failed {
+                unsuccessful.insert(node.clone());
+            }
+            completed.push(GraphStep { node, outcome });
+            observe(&GraphUpdate {
+                root: root.id,
+                event: GraphEvent::NodeFinished(completed.last().unwrap()),
+            });
+            if failed && fail_root {
                 break;
             }
         }
+        observe(&GraphUpdate {
+            root: root.id,
+            event: GraphEvent::Finished(if unsuccessful.is_empty() {
+                GraphCompletion::Success
+            } else {
+                GraphCompletion::Domain
+            }),
+        });
         Ok(completed)
     }
 }

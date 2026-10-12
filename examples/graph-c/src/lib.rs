@@ -5,16 +5,28 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "example.graph-c",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "c",
-        triggers: &["example.graph.start"],
-        after: &["example.graph-a/a", "example.graph-b/b"],
-        selector: "",
-        operation: "example.graph.task@1/run",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[
+        StaticGraphNode {
+            id: "c",
+            triggers: &["example.graph.start"],
+            after: &["example.graph-a/a", "example.graph-b/b"],
+            selector: "",
+            operation: "example.graph.task@1/run",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
+            id: "d",
+            triggers: &["example.graph.start"],
+            after: &["example.graph-c/c"],
+            selector: "",
+            operation: "example.graph.task@1/run",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 #[plugin(
@@ -29,7 +41,7 @@ mod provider {
     use super::*;
     #[provide(Task::run)]
     fn run(host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
-        let _ = input;
+        example_graph_contracts::check_resource(host, &input)?;
         let first = ResultA::get::locate(host, "a")?;
         let second = ResultB::get::locate(host, "b")?;
         let a = first
