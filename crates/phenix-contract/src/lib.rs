@@ -1,5 +1,7 @@
 pub mod abi;
 pub mod descriptor;
+pub mod graph;
+pub use graph::*;
 pub mod reference;
 pub mod scope;
 pub mod state;
