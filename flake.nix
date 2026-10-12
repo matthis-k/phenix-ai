@@ -275,6 +275,103 @@
         ${conformanceBinary}/bin/phenix-f1-frontends ${frontendTerminal} ${frontendJsonl} ${basicDefinitions} $out
         test -s "$out/frontends.json"
       '';
+      basicRuntimeSource = subset [
+        ./Cargo.toml
+        ./Cargo.lock
+        ./crates/phenix-contract
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-sdk
+        ./crates/phenix-macros
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-basic-runtime
+        ./tests/generation-identity-v2.json
+      ];
+      basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
+      basicGrantSpecs = [
+        { caller = "root"; key = "phenix.basic.input@1/submit"; }
+        { caller = "root"; key = "phenix.basic.output@1/read"; }
+        { caller = "root"; key = "phenix.basic.frontend@1/decode"; }
+        { caller = "root"; key = "phenix.basic.frontend@1/render"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.input@1/submit"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/append"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/read"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.model@1/complete"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.catalog@1/list"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.tool@1/execute"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.skills@1/list"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.context@1/list"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/open"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/checkpoint"; }
+        { caller = "phenix.basic.memory"; key = "phenix.basic.storage@1/read"; }
+        { caller = "phenix.basic.memory"; key = "phenix.basic.storage@1/transact"; }
+        { caller = "phenix.basic.session"; key = "phenix.basic.storage@1/read"; }
+        { caller = "phenix.basic.session"; key = "phenix.basic.storage@1/transact"; }
+        { caller = "phenix.basic.event-journal"; key = "phenix.basic.storage@1/read"; }
+        { caller = "phenix.basic.event-journal"; key = "phenix.basic.storage@1/transact"; }
+      ];
+      basicGrants = map (item:
+        let key = pkgs.lib.splitString "/" item.key;
+        in {
+          inherit (item) caller;
+          interface = builtins.elemAt key 0;
+          operation = builtins.elemAt key 1;
+          resources = [ "phenix.session.s1" ];
+        }) basicGrantSpecs;
+      basicBinding = caller: slot: provider: export: {
+        inherit caller slot provider export;
+        index = 0;
+      };
+      basicComposition = pkgs.writeText "phenix-basic-composition.json" (builtins.toJSON {
+        format = "phenix.composition.v2";
+        entry = {
+          interface = "phenix.basic.input@1";
+          operation = "submit";
+          provider = "phenix.basic.agent";
+        };
+        artifacts = [
+          "${basicAgent}"
+          "${scriptedModel}"
+          "${basicTools}"
+          "${basicMemory}"
+          "${basicSession}"
+          "${eventJournal}"
+          "${storageSqlite}"
+          "${frontendTerminal}"
+          "${frontendJsonl}"
+        ];
+        definitions = [ "${basicDefinitions}" ];
+        slots = [
+          (basicBinding "phenix.basic.agent" "Model" "phenix.model.scripted" "Model")
+          (basicBinding "phenix.basic.agent" "Catalog" "phenix.basic.tools" "Catalog")
+          (basicBinding "phenix.basic.agent" "Tools" "phenix.basic.tools" "Tools")
+          (basicBinding "phenix.basic.agent" "Skills" "phenix.basic.memory" "Skills")
+          (basicBinding "phenix.basic.agent" "Context" "phenix.basic.memory" "Context")
+          (basicBinding "phenix.basic.agent" "Session" "phenix.basic.session" "Session")
+          (basicBinding "phenix.basic.agent" "Journal" "phenix.basic.event-journal" "Journal")
+          (basicBinding "phenix.basic.memory" "Storage" "phenix.basic.storage-sqlite" "Storage")
+          (basicBinding "phenix.basic.session" "Storage" "phenix.basic.storage-sqlite" "Storage")
+          (basicBinding "phenix.basic.event-journal" "Storage" "phenix.basic.storage-sqlite" "Storage")
+        ];
+        grants = basicGrants;
+        excluded = [];
+        substitutions = [];
+        authority = {
+          operations = pkgs.lib.unique (map (entry: entry.key) basicGrantSpecs);
+          resources = [ "phenix.session.s1" ];
+        };
+        resource = "phenix.session.s1";
+      });
+      basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { } ''
+        mkdir -p $out
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
+        printf 'hello\n' | ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} > $out/terminal.txt
+        grep -F 'answer: mock:hello' $out/terminal.txt
+        printf '%s\n' '{"type":"prompt","session":"s1","text":"tools:hello","limits":{"model_turns":2,"tool_calls":2}}' | ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} > $out/jsonl.txt
+        grep -F 'mock:call-1:HELLO|call-2:5' $out/jsonl.txt
+        test -s "$PHENIX_BASIC_SQLITE_PATH"
+        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"p1_accepted":false}' > $out/evidence.json
+      '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -647,6 +744,7 @@
         ln -s ${basicMemoryCheck} $out/basic-memory
         ln -s ${basicAgentCheck} $out/basic-agent
         ln -s ${frontendCheck} $out/frontends
+        ln -s ${basicProductCheck} $out/basic-host-smoke
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -676,6 +774,16 @@
         phenix-plugin-basic-agent = basicAgent;
         phenix-plugin-frontend-terminal = frontendTerminal;
         phenix-plugin-frontend-jsonl = frontendJsonl;
+        phenix-basic-runtime = basicRuntime;
+        phenix-basic-composition = basicComposition;
+        phenix-basic-terminal = pkgs.writeShellApplication {
+          name = "phenix-basic-terminal";
+          text = "exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition}";
+        };
+        phenix-basic-jsonl = pkgs.writeShellApplication {
+          name = "phenix-basic-jsonl";
+          text = "exec ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition}";
+        };
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -710,6 +818,7 @@
         b3-memory = basicMemoryCheck;
         b5-agent = basicAgentCheck;
         f1-frontends = frontendCheck;
+        basic-host-smoke = basicProductCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
