@@ -543,6 +543,8 @@
         example-provider = provider;
         example-consumer = consumer;
         phenix-m1-conformance = release;
+        # Expose the existing runner to the CI matrix without changing its semantics.
+        phenix-m1-conformance-runner = conformanceBinary;
         phenix-m1-release = release;
         phenix-basic-contracts = basicDefinitions;
         phenix-m1-deployment = deployment;
