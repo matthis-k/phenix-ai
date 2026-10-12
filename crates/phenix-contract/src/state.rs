@@ -1,7 +1,5 @@
 //! State request vocabulary; decoding a reference never grants live authority.
-use crate::{
-    identifier, Code, Failure, Revision, Value, ValueAccessError, ValueLocation,
-};
+use crate::{identifier, Code, Failure, Revision, Value, ValueAccessError, ValueLocation};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompareExchange {
     pub location: ValueLocation,

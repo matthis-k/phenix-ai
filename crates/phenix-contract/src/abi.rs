@@ -63,19 +63,41 @@ impl Reply {
         result
     }
     pub fn failure(f: Failure) -> Self {
-        Self::bytes(2, f.to_value().encode().unwrap_or_else(|_| vec![0x50,0x56,2,0,0]))
+        Self::bytes(
+            2,
+            f.to_value()
+                .encode()
+                .unwrap_or_else(|_| vec![0x50, 0x56, 2, 0, 0]),
+        )
     }
     /// # Safety
     /// Non-null buffers and callbacks must belong to the trusted ABI producer.
     /// A null callback rejects before reading the buffer; it cannot be released.
     pub unsafe fn consume(self) -> Result<(u32, Value), Failure> {
-        let release = self.release.ok_or_else(|| Failure::new(Code::AbiIncompatible, "null reply release callback"))?;
-        let decoded = unsafe { Bytes { ptr: self.ptr, len: self.len }.read() }.and_then(Value::decode);
+        let release = self
+            .release
+            .ok_or_else(|| Failure::new(Code::AbiIncompatible, "null reply release callback"))?;
+        let decoded = unsafe {
+            Bytes {
+                ptr: self.ptr,
+                len: self.len,
+            }
+            .read()
+        }
+        .and_then(Value::decode);
         unsafe { release(self.ptr, self.len) };
-        if self.status > 5 { return Err(Failure::new(Code::AbiIncompatible, "unknown reply status")); }
-        decoded.map(|value| (self.status, value))
+        if self.status > 5 {
+            return Err(Failure::new(Code::AbiIncompatible, "unknown reply status"));
+        }
+        let value = decoded?;
+        if self.status == 4 && value != Value::Null {
+            return Err(Failure::new(
+                Code::AbiIncompatible,
+                "cancellation reply must be Null",
+            ));
+        }
+        Ok((self.status, value))
     }
-
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -123,10 +145,7 @@ mod tests {
         for status in 3..=5 {
             let mut reply = Reply::value(status, Value::Null);
             reply.release = Some(counted_release);
-            assert_eq!(
-                unsafe { reply.consume() }.unwrap(),
-                (status, Value::Null)
-            );
+            assert_eq!(unsafe { reply.consume() }.unwrap(), (status, Value::Null));
         }
         let mut reply = Reply::value(6, Value::Null);
         reply.release = Some(counted_release);

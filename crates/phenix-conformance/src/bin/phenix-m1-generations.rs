@@ -14,7 +14,7 @@ fn selection() -> Selection {
 fn policy(path: &str) -> Composition {
     Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: vec![path.into()],
         entry: selection(),
         slots: vec![],
@@ -66,16 +66,10 @@ fn main() {
     std::env::set_var("PHENIX_REVISION_LOAD_TRACE", &trace);
     let mut owner = Generations::default();
     let a = owner
-        .install_candidate(
-            Prepared::prepare(a_policy.clone()).unwrap(),
-            "local.test",
-        )
+        .install_candidate(Prepared::prepare(a_policy.clone()).unwrap(), "local.test")
         .unwrap();
     let b = owner
-        .install_candidate(
-            Prepared::prepare(b_policy.clone()).unwrap(),
-            "local.test",
-        )
+        .install_candidate(Prepared::prepare(b_policy.clone()).unwrap(), "local.test")
         .unwrap();
     assert_ne!(a, b);
     assert!(!trace.exists(), "candidate preparation loaded code");
@@ -179,10 +173,7 @@ fn main() {
     ));
     let mut invalid = b_policy.clone();
     invalid.grants.clear();
-    assert_eq!(
-        Prepared::prepare(invalid).err().unwrap().code,
-        Code::Denied
-    );
+    assert_eq!(Prepared::prepare(invalid).err().unwrap().code, Code::Denied);
     assert_eq!(owner.default_identity(), Some(&a));
     owner.promote(&b).unwrap();
     let draining = owner.admit_root_on(&a, selection()).unwrap();
@@ -236,10 +227,7 @@ fn main() {
     drop(owner);
     let mut dropped = Generations::default();
     let id = dropped
-        .install_candidate(
-            Prepared::prepare(a_policy).unwrap(),
-            "local.owner-drop",
-        )
+        .install_candidate(Prepared::prepare(a_policy).unwrap(), "local.owner-drop")
         .unwrap();
     dropped.promote(&id).unwrap();
     let root = dropped.admit_default_root().unwrap();
@@ -251,5 +239,5 @@ fn main() {
     root.release(&t).unwrap();
     drop(root);
     assert_eq!(fds(), baseline);
-    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m03.generations.v1","revision_a":ai,"revision_b":bi,"cases":["offline candidate","equal descriptors different executable identities","environment identity","explicit trial","concurrent revisions","old root across promotion","new root uses promoted revision","rollback","failed promotion preserves default","invalid policy","active root retirement blocker","abandoned physical lease blocker","stale wake rejection","real resource release","root survives owner drop","generation retains imported child tree"],"inspection":report})).unwrap()).unwrap();
+    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m1.generations.generations.v1","revision_a":ai,"revision_b":bi,"cases":["offline candidate","equal descriptors different executable identities","environment identity","explicit trial","concurrent revisions","old root across promotion","new root uses promoted revision","rollback","failed promotion preserves default","invalid policy","active root retirement blocker","abandoned physical lease blocker","stale wake rejection","real resource release","root survives owner drop","generation retains imported child tree"],"inspection":report})).unwrap()).unwrap();
 }

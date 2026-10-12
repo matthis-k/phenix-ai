@@ -7,7 +7,8 @@ use phenix_sdk::{
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 struct Counter;
 impl live::Operation for Counter {
     type Request = String;

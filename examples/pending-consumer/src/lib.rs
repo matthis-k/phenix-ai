@@ -1,9 +1,18 @@
 use example_contracts::{PendingConsumer, PendingRun, Text, TransformError};
 use phenix_sdk::{
-    Authority, Code, Failure, ImportCall, ImportPoll, Host, PendingImport, PendingResult,
+    Authority, Code, Failure, Host, ImportCall, ImportPoll, PendingImport, PendingResult,
     ScopedRequest,
 };
-#[phenix_sdk::plugin(id = "example.pending-consumer", version = "1.0.0", define(example_contracts::PendingConsumerContract), define(example_contracts::PendingRunContract), define(example_contracts::TransformContract), provide(example_contracts::PendingConsumerContract, slot = "PendingConsumer"), require(example_contracts::PendingRunContract, slot = "Worker"), require(example_contracts::TransformContract, slot = "TransitiveEffect"))]
+#[phenix_sdk::plugin(
+    id = "example.pending-consumer",
+    version = "1.0.0",
+    define(example_contracts::PendingConsumerContract),
+    define(example_contracts::PendingRunContract),
+    define(example_contracts::TransformContract),
+    provide(example_contracts::PendingConsumerContract, slot = "PendingConsumer"),
+    require(example_contracts::PendingRunContract, slot = "Worker"),
+    require(example_contracts::TransformContract, slot = "TransitiveEffect")
+)]
 mod plugin {
     use super::*;
     type Worker = PendingRun;
@@ -37,7 +46,8 @@ mod plugin {
             },
         };
         let call = if state.mode == "attenuated" {
-            host.begin_scoped::<Worker>("Worker", 
+            host.begin_scoped::<Worker>(
+                "Worker",
                 &ScopedRequest {
                     authority: Authority {
                         operations: ["example.pending@1/run".into()].into(),
@@ -77,7 +87,9 @@ mod plugin {
             Ok(ImportPoll::Ready(result)) => {
                 assert_eq!(child.poll(host).err().unwrap().code, Code::ScopeRejected);
                 match result {
-                    Err(phenix_sdk::CallError::Kernel(error)) => PendingResult::QuiescentFailure(error),
+                    Err(phenix_sdk::CallError::Kernel(error)) => {
+                        PendingResult::QuiescentFailure(error)
+                    }
                     result => PendingResult::Ready(result),
                 }
             }

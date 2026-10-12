@@ -1,13 +1,13 @@
 //! Authenticated state effects and ABI 3 imports enter the existing runtime.
 use crate::{
     resolve::{CellOperation, Selection},
-    runtime::{authenticate_scope, authenticate_import_scope, Caller, Kernel},
+    runtime::{authenticate_import_scope, authenticate_scope, Caller, Kernel},
     Call, Outcome,
 };
 use phenix_contract::{
     abi::{Bytes, Reply},
     Code, CompareExchange, Failure, StateRequest, Value, ValueAccessError as Error, ValueLocation,
-    };
+};
 
 impl Kernel {
     pub(super) fn require_property_resource(
@@ -45,7 +45,17 @@ impl Kernel {
         let key = format!("{interface}/{operation}");
         let selected = caller == "root"
             || caller == owner
-            || self.prepared.bindings.iter().any(|((principal,identity),provider)| principal==caller && provider==owner && identity.split_once(':').is_some_and(|(_,operation)|operation==key));
+            || self
+                .prepared
+                .bindings
+                .iter()
+                .any(|((principal, identity), provider)| {
+                    principal == caller
+                        && provider == owner
+                        && identity
+                            .split_once(':')
+                            .is_some_and(|(_, operation)| operation == key)
+                });
         if !enabled || !selected {
             let _ = self.fail::<()>(Code::Denied, "state access is not selected");
             return Err(Error::Denied);
@@ -267,21 +277,50 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             .map_err(|_| Failure::new(Code::SchemaRejected, "invalid slot selector"))?;
         let key = std::str::from_utf8(unsafe { key.read() }?)
             .map_err(|_| Failure::new(Code::SchemaRejected, "invalid operation key"))?;
-        let cleanup=key=="phenix.host.pending.poll.v2" || key=="phenix.host.pending.cancel.v2";
-        if kernel.state.borrow().stack.last().is_some_and(|frame|frame.revoked) && !cleanup {
-            return Err(Failure::new(Code::ScopeRejected,"cancelled host scope"));
+        let cleanup =
+            key == "phenix.host.pending.poll.v2" || key == "phenix.host.pending.cancel.v2";
+        if kernel
+            .state
+            .borrow()
+            .stack
+            .last()
+            .is_some_and(|frame| frame.revoked)
+            && !cleanup
+        {
+            return Err(Failure::new(Code::ScopeRejected, "cancelled host scope"));
         }
         let bytes = unsafe { input.read() }?;
         if key.starts_with("phenix.host.pending.") {
-            let parent=kernel.state.borrow().stack.last().and_then(|frame|frame.ticket).ok_or_else(||Failure::new(Code::ScopeRejected,"pending command needs a native ticket"))?;
-            return Ok(match kernel.import_pending(record.root,&record.caller,slot,parent,key,bytes) {
-                Ok(reply)=>reply,Err(error)=>Reply::value(5,error.to_value()),
-            });
+            let parent = kernel
+                .state
+                .borrow()
+                .stack
+                .last()
+                .and_then(|frame| frame.ticket)
+                .ok_or_else(|| {
+                    Failure::new(Code::ScopeRejected, "pending command needs a native ticket")
+                })?;
+            return Ok(
+                match kernel.import_pending(record.root, &record.caller, slot, parent, key, bytes) {
+                    Ok(reply) => reply,
+                    Err(error) => Reply::value(5, error.to_value()),
+                },
+            );
         }
-        if key==phenix_contract::RESOURCE_CONTEXT {
-            if !slot.is_empty() || Value::decode(bytes)?!=Value::Null { return Err(Failure::new(Code::SchemaRejected,"resource context expects Null and no slot")); }
-            let resource=kernel.state.borrow().stack.last().and_then(|frame|frame.resource.clone());
-            return Ok(Reply::value(0,resource.map_or(Value::Null,Value::String)));
+        if key == phenix_contract::RESOURCE_CONTEXT {
+            if !slot.is_empty() || Value::decode(bytes)? != Value::Null {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "resource context expects Null and no slot",
+                ));
+            }
+            let resource = kernel
+                .state
+                .borrow()
+                .stack
+                .last()
+                .and_then(|frame| frame.resource.clone());
+            return Ok(Reply::value(0, resource.map_or(Value::Null, Value::String)));
         }
         if key == "phenix.host.slots@1/count" {
             if Value::decode(bytes)? != Value::Null {
@@ -329,16 +368,39 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 Err(error) => Reply::value(1, error.to_value()),
             });
         }
-        let scoped=if key==phenix_contract::SCOPED_IMPORT { Some(phenix_contract::ScopedRequest::decode(bytes)?) } else { None };
-        let (key,bytes,restriction)=match &scoped { Some((key,input,scope))=>(key.as_str(),input.as_slice(),Some(scope)),None=>(key,bytes,None) };
+        let scoped = if key == phenix_contract::SCOPED_IMPORT {
+            Some(phenix_contract::ScopedRequest::decode(bytes)?)
+        } else {
+            None
+        };
+        let (key, bytes, restriction) = match &scoped {
+            Some((key, input, scope)) => (key.as_str(), input.as_slice(), Some(scope)),
+            None => (key, bytes, None),
+        };
         let identity = phenix_contract::import_identity(slot, key);
-        let provider=match kernel.prepared.bindings.get(&(record.caller.clone(),identity)) {
-            Some(provider)=>provider,
-            None=>{
-                let base=slot.split_once('#').map_or(slot,|(base,_)|base);
-                let declared=kernel.prepared.slot_counts.contains_key(&(record.caller.clone(),base.into()));
-                let failure=kernel.fail::<()>(if declared {Code::MissingBinding} else {Code::Denied},"slot operation is not selected").unwrap_err();
-                kernel.observe_import_failure(&record.caller,Some(key),None,&failure);
+        let provider = match kernel
+            .prepared
+            .bindings
+            .get(&(record.caller.clone(), identity))
+        {
+            Some(provider) => provider,
+            None => {
+                let base = slot.split_once('#').map_or(slot, |(base, _)| base);
+                let declared = kernel
+                    .prepared
+                    .slot_counts
+                    .contains_key(&(record.caller.clone(), base.into()));
+                let failure = kernel
+                    .fail::<()>(
+                        if declared {
+                            Code::MissingBinding
+                        } else {
+                            Code::Denied
+                        },
+                        "slot operation is not selected",
+                    )
+                    .unwrap_err();
+                kernel.observe_import_failure(&record.caller, Some(key), None, &failure);
                 return Err(failure);
             }
         };
@@ -358,7 +420,13 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             restriction,
             false,
         );
-        let outcome=match outcome { Ok(outcome)=>outcome,Err(failure)=>{kernel.observe_import_failure(&record.caller,Some(key),Some(provider),&failure);return Err(failure);} };
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(failure) => {
+                kernel.observe_import_failure(&record.caller, Some(key), Some(provider), &failure);
+                return Err(failure);
+            }
+        };
         Ok(match outcome {
             Call::Ready(Outcome::Success(v)) => Reply::value(0, v),
             Call::Ready(Outcome::Domain(v)) => Reply::value(1, v),

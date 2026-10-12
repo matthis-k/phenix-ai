@@ -1,4 +1,11 @@
-#[phenix_sdk::plugin(id = "example.resources", version = "1.0.0", define(example_contracts::BumpContract), define(example_contracts::ResourceCountContract), provide(example_contracts::BumpContract, slot = "Bump"), provide(example_contracts::ResourceCountContract, slot = "ResourceCount"))]
+#[phenix_sdk::plugin(
+    id = "example.resources",
+    version = "1.0.0",
+    define(example_contracts::BumpContract),
+    define(example_contracts::ResourceCountContract),
+    provide(example_contracts::BumpContract, slot = "Bump"),
+    provide(example_contracts::ResourceCountContract, slot = "ResourceCount")
+)]
 mod resources {
     use example_contracts::{Bump, Count, ResourceCount, TransformError};
     use phenix_sdk::{CallResult, Code, Failure, Host};

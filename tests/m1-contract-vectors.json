@@ -2,29 +2,12 @@
   "format": "phenix.m1.contract-vectors.v1",
   "values": [
     {
-      "name": "null/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "null"
-      },
-      "hex": "00"
-    },
-    {
       "name": "null/phenix.value.v2",
       "profile": "phenix.value.v2",
       "value": {
         "kind": "null"
       },
       "hex": "5056020000"
-    },
-    {
-      "name": "false/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "bool",
-        "value": false
-      },
-      "hex": "01"
     },
     {
       "name": "false/phenix.value.v2",
@@ -36,15 +19,6 @@
       "hex": "5056020001"
     },
     {
-      "name": "true/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "bool",
-        "value": true
-      },
-      "hex": "02"
-    },
-    {
       "name": "true/phenix.value.v2",
       "profile": "phenix.value.v2",
       "value": {
@@ -52,15 +26,6 @@
         "value": true
       },
       "hex": "5056020002"
-    },
-    {
-      "name": "i64-min/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "i64",
-        "value": -9223372036854775808
-      },
-      "hex": "038000000000000000"
     },
     {
       "name": "i64-min/phenix.value.v2",
@@ -72,15 +37,6 @@
       "hex": "50560200038000000000000000"
     },
     {
-      "name": "u64-max/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "u64",
-        "value": 18446744073709551615
-      },
-      "hex": "04ffffffffffffffff"
-    },
-    {
       "name": "u64-max/phenix.value.v2",
       "profile": "phenix.value.v2",
       "value": {
@@ -90,34 +46,13 @@
       "hex": "5056020004ffffffffffffffff"
     },
     {
-      "name": "utf8/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "string",
-        "value": "Grüße 🌍"
-      },
-      "hex": "050000000c4772c3bcc39f6520f09f8c8d"
-    },
-    {
       "name": "utf8/phenix.value.v2",
       "profile": "phenix.value.v2",
       "value": {
         "kind": "string",
-        "value": "Grüße 🌍"
+        "value": "Gr\u00fc\u00dfe \ud83c\udf0d"
       },
       "hex": "50560200050000000c4772c3bcc39f6520f09f8c8d"
-    },
-    {
-      "name": "bytes/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "bytes",
-        "value": [
-          0,
-          255
-        ]
-      },
-      "hex": "060000000200ff"
     },
     {
       "name": "bytes/phenix.value.v2",
@@ -130,32 +65,6 @@
         ]
       },
       "hex": "50560200060000000200ff"
-    },
-    {
-      "name": "map/phenix.value.v1",
-      "profile": "phenix.value.v1",
-      "value": {
-        "kind": "map",
-        "value": {
-          "z": {
-            "kind": "u64",
-            "value": 1
-          },
-          "a": {
-            "kind": "list",
-            "value": [
-              {
-                "kind": "null"
-              },
-              {
-                "kind": "bool",
-                "value": true
-              }
-            ]
-          }
-        }
-      },
-      "hex": "0800000002000000016107000000020002000000017a040000000000000001"
     },
     {
       "name": "map/phenix.value.v2",

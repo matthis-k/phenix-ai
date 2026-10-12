@@ -6,7 +6,12 @@ use std::{
 };
 const REVISION: &str = "A";
 static LATE: Mutex<Option<WakePermit>> = Mutex::new(None);
-#[phenix_sdk::plugin(id = "example.revision", version = "1.0.0", define(example_contracts::RevisionContract), provide(example_contracts::RevisionContract, slot = "Revision"))]
+#[phenix_sdk::plugin(
+    id = "example.revision",
+    version = "1.0.0",
+    define(example_contracts::RevisionContract),
+    provide(example_contracts::RevisionContract, slot = "Revision")
+)]
 mod plugin {
     use super::*;
     #[derive(Default)]

@@ -1,4 +1,11 @@
-#[phenix_sdk::plugin(id = "example.consumer", version = "1.0.0", define(example_contracts::RunContract), define(example_contracts::TransformContract), provide(example_contracts::RunContract, slot = "Run"), require(example_contracts::TransformContract, slot = "Provider"))]
+#[phenix_sdk::plugin(
+    id = "example.consumer",
+    version = "1.0.0",
+    define(example_contracts::RunContract),
+    define(example_contracts::TransformContract),
+    provide(example_contracts::RunContract, slot = "Run"),
+    require(example_contracts::TransformContract, slot = "Provider")
+)]
 mod consumer {
     use example_contracts::{Count, ReadCount, Run, Text, Transform, TransformError};
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
@@ -30,9 +37,12 @@ mod consumer {
         }
         if request.text == "replace-failure" {
             let error = host
-                .invoke::<Provider>("Provider", &Text {
-                    text: "panic".into(),
-                })
+                .invoke::<Provider>(
+                    "Provider",
+                    &Text {
+                        text: "panic".into(),
+                    },
+                )
                 .unwrap_err();
             if !matches!(error, CallError::Kernel(_)) {
                 return Err(Failure::new(Code::PluginFailed, "expected host failure").into());

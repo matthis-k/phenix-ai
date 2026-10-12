@@ -57,7 +57,7 @@ def export(slot, contract):
 
 
 def require(slot, contract, cardinality="one"):
-    return dict(slot=slot, contract=contract, revision_min=1, revision_max=1,
+    return dict(slot=slot, contract=contract, revision_min=1, revision_max=1, provider=None,
                 cardinality=cardinality, minimum=1)
 
 
@@ -83,7 +83,7 @@ metadata_hashes = {}
 alternative=copy.deepcopy(provider)
 alternative["plugin"]="test.state-alternative"
 for expected in [provider, client, alternative]:
-    package = next(Path(p) for p in policy["composition"]["artifacts"]
+    package = next(Path(p) for p in policy["artifacts"]
                    if Path(p, "descriptor.bin").read_bytes() == b"PV\x02\x00" + encode(expected))
     record = json.loads((package / "package.json").read_text())
     assert record["format"] == "phenix.native-package.v2"
@@ -128,7 +128,7 @@ for command, error in [("bad-batch", "Conflict"), ("schema", "SchemaMismatch"),
     assert report["outcome"] == dict(kind="domain_error", value=error), report
     reports[command] = report
 denied = copy.deepcopy(policy)
-denied["composition"]["grants"] = [g for g in denied["composition"]["grants"]
+denied["grants"] = [g for g in denied["grants"]
     if not (g["caller"] == "test.state-client" and g["interface"].endswith(".counter@1")
             and g["operation"] == "set")]
 report = run("denied", denied)

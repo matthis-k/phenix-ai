@@ -12,7 +12,7 @@ output.mkdir(parents=True, exist_ok=True)
 witness = output / "constructor-witness"
 environment = dict(os.environ, PHENIX_CONSTRUCTOR_WITNESS=str(witness))
 offline = json.loads(subprocess.check_output([kernel, "inspect", deployment], env=environment, text=True))
-assert offline["format"] == "phenix.inspect.v1"
+assert offline["format"] == "phenix.inspect.v2"
 assert not witness.exists()
 assert all(p["offline_verified"] and not p["abi_negotiated"] for p in offline["plugins"])
 loaded = json.loads(subprocess.check_output([kernel, "invoke", deployment, request], env=environment, text=True))
@@ -20,7 +20,7 @@ assert witness.exists()
 assert loaded["outcome"] == dict(kind="success", value=dict(text="PHENIX"))
 assert loaded["calls"] == 2
 assert loaded["roots"]["completed"] == 1
-assert loaded["bindings"] == {"example.transform.apply@1/apply": "example.provider"}
+assert loaded["bindings"] == [dict(caller="example.consumer", operation="Provider:example.transform.apply@1/apply", provider="example.provider")]
 assert all(p["abi_negotiated"] for p in loaded["plugins"])
 for plugin in loaded["plugins"]:
     assert len(plugin["artifact_sha256"]) == 64 and len(plugin["descriptor_sha256"]) == 64
@@ -62,7 +62,7 @@ assert not witness.exists()
 
 def text_request(text):
     payload = text.encode()
-    return (bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big") + b"text"
+    return (b"PV\x02\0" + bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big") + b"text"
             + bytes([5]) + len(payload).to_bytes(4, "big") + payload)
 
 handled = invoke_cli(policy, text_request("handled-denial"), expected_exit=0)
@@ -95,4 +95,4 @@ compare_golden(handled, golden["handled"])
 (output / "failures.json").write_text(json.dumps(dict(denied=denied, offline=offline_failure,
                                                      malformed=malformed, handled=handled,
                                                      replaced=replaced), sort_keys=True, indent=2))
-print("M0.0 product CLI passed")
+print("M1 product CLI passed")

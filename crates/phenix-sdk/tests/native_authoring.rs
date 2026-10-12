@@ -118,10 +118,7 @@ unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, input: Bytes) -
     assert_eq!(scope, 9);
     assert_eq!(unsafe { slot.read() }.unwrap(), b"primary");
     assert_eq!(unsafe { key.read() }.unwrap(), b"test.dependency@1/echo");
-    Reply::value(
-        0,
-        Value::decode(unsafe { input.read() }.unwrap()).unwrap(),
-    )
+    Reply::value(0, Value::decode(unsafe { input.read() }.unwrap()).unwrap())
 }
 unsafe extern "C" fn wake(_: u64, _: u64) -> u32 {
     0
@@ -151,9 +148,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     );
     assert_eq!(CREATES.load(Ordering::SeqCst), 1);
     let synchronous_host = StateHostApi { ticket: 0, ..host };
-    let input = Value::String("pending".into())
-        .encode()
-        .unwrap();
+    let input = Value::String("pending".into()).encode().unwrap();
     let (status, failure) = unsafe {
         table.invoke.unwrap()(
             instance,
@@ -177,9 +172,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     );
     assert_eq!(CREATES.load(Ordering::SeqCst), 1);
     let call = |text: &str| {
-        let bytes = Value::String(text.into())
-            .encode()
-            .unwrap();
+        let bytes = Value::String(text.into()).encode().unwrap();
         unsafe {
             table.invoke.unwrap()(
                 instance,
@@ -205,8 +198,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(call("pending"), (3, Value::Null));
     assert_eq!(
         unsafe {
-            table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
-                .consume()
+            table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes())).consume()
         }
         .unwrap(),
         (0, Value::String("drained".into()))
@@ -215,8 +207,7 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     assert_eq!(call("echo").0, 5);
     assert_eq!(
         unsafe {
-            table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
-                .consume()
+            table.poll.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes())).consume()
         }
         .unwrap(),
         (0, Value::String("drained".into()))

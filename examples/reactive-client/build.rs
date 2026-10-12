@@ -25,7 +25,8 @@ fn refs() -> ContractDefinition {
     }
 }
 fn main() {
-    let property = |slot: &str, name: &str| ImportSlot { provider:None,
+    let property = |slot: &str, name: &str| ImportSlot {
+        provider: None,
         slot: slot.into(),
         contract: format!("test.state-provider.property.{name}@1"),
         revision_min: 1,
@@ -60,14 +61,16 @@ fn main() {
         requires: vec![
             property("counter", "counter"),
             property("notes", "notes"),
-            ImportSlot { provider:None,
+            ImportSlot {
+                provider: None,
                 slot: "refs".into(),
                 contract: "test.refs@1".into(),
                 revision_min: 1,
                 revision_max: 1,
                 cardinality: Cardinality::One,
             },
-            ImportSlot { provider:None,
+            ImportSlot {
+                provider: None,
                 slot: "many".into(),
                 contract: "test.refs@1".into(),
                 revision_min: 1,

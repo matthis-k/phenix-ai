@@ -1,6 +1,4 @@
-use crate::{
-    Code, Failure, GenerationDigest, OwnerId, SchemaId, ValueId, ValueLocation,
-};
+use crate::{Code, Failure, GenerationDigest, OwnerId, SchemaId, ValueId, ValueLocation};
 use std::collections::BTreeMap;
 pub const MAX_BYTES: usize = 1 << 20;
 pub const MAX_DEPTH: usize = 32;
@@ -48,7 +46,9 @@ impl Value {
     pub fn encode(&self) -> Result<Vec<u8>, Failure> {
         let mut bytes = V2_PREFIX.to_vec();
         bytes.extend(self.encode_schema()?);
-        if bytes.len() > MAX_BYTES { return Err(invalid("payload limit")); }
+        if bytes.len() > MAX_BYTES {
+            return Err(invalid("payload limit"));
+        }
         Ok(bytes)
     }
     pub(crate) fn encode_schema(&self) -> Result<Vec<u8>, Failure> {
@@ -60,11 +60,7 @@ impl Value {
             );
             Ok(())
         }
-        fn put(
-            v: &Value,
-            out: &mut Vec<u8>,
-            depth: usize,
-        ) -> Result<(), Failure> {
+        fn put(v: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), Failure> {
             if depth > MAX_DEPTH {
                 return Err(invalid("depth limit"));
             }
@@ -130,7 +126,9 @@ impl Value {
         Ok(out)
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
-        if bytes.len() > MAX_BYTES || !bytes.starts_with(&V2_PREFIX) { return Err(invalid("invalid value prefix or payload limit")); }
+        if bytes.len() > MAX_BYTES || !bytes.starts_with(&V2_PREFIX) {
+            return Err(invalid("invalid value prefix or payload limit"));
+        }
         Self::decode_schema(&bytes[4..])
     }
     pub(crate) fn decode_schema(bytes: &[u8]) -> Result<Self, Failure> {
@@ -234,7 +232,10 @@ mod tests {
     use super::*;
     #[test]
     fn wire_vectors_and_rejections() {
-        assert_eq!(Value::U64(1).encode().unwrap(), [0x50, 0x56, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            Value::U64(1).encode().unwrap(),
+            [0x50, 0x56, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
         let value = Value::map([("z", Value::Bytes(vec![0, 255])), ("a", Value::I64(-4))]);
         assert_eq!(Value::decode(&value.encode().unwrap()).unwrap(), value);
         for bad in [

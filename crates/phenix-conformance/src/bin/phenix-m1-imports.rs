@@ -43,7 +43,7 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let policy = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[1..4].to_vec(),
         entry: selection(PARENT, "example.pending-consumer"),
         slots: [
@@ -54,7 +54,11 @@ fn main() {
         .into_iter()
         .map(|(caller, key, provider)| {
             let s = selection(key, provider);
-            phenix_conformance::binding(&(caller), &format!("{}/{}", s.interface, s.operation), &(s.provider))
+            phenix_conformance::binding(
+                caller,
+                &format!("{}/{}", s.interface, s.operation),
+                &(s.provider),
+            )
         })
         .collect(),
         grants: vec![
@@ -76,10 +80,7 @@ fn main() {
     )
     .unwrap();
     let baseline = fds();
-    let kernel = Prepared::prepare(policy.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     for (mode, expected) in [
         ("hello", Some("HELLO")),
@@ -130,10 +131,7 @@ fn main() {
     root.release(&t).unwrap();
     drop(root);
     kernel.shutdown().unwrap();
-    let abandoned = Prepared::prepare(policy.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let abandoned = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
     let root = abandoned.admit_default_root().unwrap();
     let _t = ticket(root.begin(&request("cancel-tree")).unwrap());
     drop(root);
@@ -144,10 +142,7 @@ fn main() {
     abandoned.shutdown().unwrap();
     let mut immediate_policy = policy.clone();
     immediate_policy.artifacts[1] = args[4].clone();
-    let immediate = Prepared::prepare(immediate_policy)
-        .unwrap()
-        .load()
-        .unwrap();
+    let immediate = Prepared::prepare(immediate_policy).unwrap().load().unwrap();
     let root = immediate.admit_default_root().unwrap();
     let t = ticket(root.begin(&request("immediate")).unwrap());
     assert!(
@@ -160,10 +155,7 @@ fn main() {
     denied_policy
         .grants
         .retain(|g| g.caller != "example.pending-consumer");
-    let denied = Prepared::prepare(denied_policy)
-        .unwrap()
-        .load()
-        .unwrap();
+    let denied = Prepared::prepare(denied_policy).unwrap().load().unwrap();
     let root = denied.admit_default_root().unwrap();
     let t = ticket(root.begin(&request("denied")).unwrap());
     assert_eq!(fds(), baseline);
@@ -171,5 +163,5 @@ fn main() {
     root.release(&t).unwrap();
     drop(root);
     denied.shutdown().unwrap();
-    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m02.imports.v1","cases":["typed completion","immediate provider","denial before worker acquisition","domain error","child failure","frozen attenuation","ancestor wake","double settlement","wrong parent without handle consumption","live-child completion rejected","native-quiescent parent not reentered","recursive cancellation","caller-drop tree draining","actual resource release"],"inspection":kernel.inspect()})).unwrap()).unwrap();
+    fs::write(output.join("evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m1.imports.v1","cases":["typed completion","immediate provider","denial before worker acquisition","domain error","child failure","frozen attenuation","ancestor wake","double settlement","wrong parent without handle consumption","live-child completion rejected","native-quiescent parent not reentered","recursive cancellation","caller-drop tree draining","actual resource release"],"inspection":kernel.inspect()})).unwrap()).unwrap();
 }

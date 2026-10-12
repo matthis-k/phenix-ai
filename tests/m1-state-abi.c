@@ -58,5 +58,6 @@ PhenixReply m1_fixture_bad_reply(uint32_t kind) {
   if (kind==1) return reply(99,null_v2,5);
   if (kind==2) return reply(0,null_v2+4,1);
   if (kind==3) return (PhenixReply){0,NULL,1,NULL};
-  return reply(0,null_v2,5);
+  const uint8_t reserved[]={0x50,0x56,2,1,0};
+  return reply(0,reserved,5);
 }

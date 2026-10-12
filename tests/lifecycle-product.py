@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as directory:
     directory = Path(directory)
     request = directory / "request.bin"
     text = b"lifecycle"
-    request.write_bytes(bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
+    request.write_bytes(b"PV\x02\0" + bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
                        + b"text" + bytes([5]) + len(text).to_bytes(4, "big") + text)
     trace = directory / "trace"
     environment = dict(os.environ, PHENIX_LIFECYCLE_TRACE=str(trace), PHENIX_LIFECYCLE_FAULTS="consumer:start")
@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
     full = ["provider:start", "consumer:start", "provider:invoke", "consumer:stop", "consumer:drop", "provider:stop", "provider:drop"]
     for faults, fail_call in [("", False), ("consumer:start", False), ("consumer:stop", False), ("consumer:stop-panic", False), ("consumer:stop", True)]:
         text = b"fail" if fail_call else b"lifecycle"
-        request.write_bytes(bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
+        request.write_bytes(b"PV\x02\0" + bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
                            + b"text" + bytes([5]) + len(text).to_bytes(4, "big") + text)
         trace.unlink(missing_ok=True)
         environment["PHENIX_LIFECYCLE_FAULTS"] = faults
@@ -59,4 +59,4 @@ with tempfile.TemporaryDirectory() as directory:
                 assert "shutdown_failure" not in report
         reports.append(dict(faults=faults, fail_call=fail_call, report=report, events=observed))
 (output / "product.json").write_text(json.dumps(reports, sort_keys=True, indent=2))
-print("M0.2 synchronous lifecycle CLI slice passed")
+print("M1 synchronous lifecycle CLI slice passed")

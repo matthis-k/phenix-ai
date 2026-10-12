@@ -1,7 +1,5 @@
 use object::{Object, ObjectSection};
-use phenix_contract::{
-    Code, ContractMetadata, Failure, MetadataExecution, NATIVE_SECTION_BYTES,
-};
+use phenix_contract::{Code, ContractMetadata, Failure, MetadataExecution, NATIVE_SECTION_BYTES};
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -106,7 +104,9 @@ impl VerifiedPackage {
     pub fn record(&self) -> &PackageRecord {
         &self.record
     }
-    pub fn metadata(&self) -> &ContractMetadata { &self.metadata }
+    pub fn metadata(&self) -> &ContractMetadata {
+        &self.metadata
+    }
     /// Trusted control-plane caller attests a read-only package source. The CLI
     /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
     pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
@@ -116,7 +116,8 @@ impl VerifiedPackage {
         let record: PackageRecord =
             serde_json::from_slice(&read(&root.join("package.json"), Code::ArtifactInvalid)?)
                 .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
-        if record.format != "phenix.native-package.v2" || record.target != "x86_64-unknown-linux-gnu"
+        if record.format != "phenix.native-package.v2"
+            || record.target != "x86_64-unknown-linux-gnu"
         {
             return Err(Failure::new(
                 Code::ArtifactInvalid,
@@ -148,7 +149,10 @@ impl VerifiedPackage {
         }
         let metadata = ContractMetadata::decode(&metadata)?;
         if metadata.execution != MetadataExecution::StatePending {
-            return Err(Failure::new(Code::DescriptorInvalid, "native metadata execution profile"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "native metadata execution profile",
+            ));
         }
         Ok(Self {
             artifact,
@@ -235,4 +239,3 @@ impl VerifiedContractPackage {
         })
     }
 }
-

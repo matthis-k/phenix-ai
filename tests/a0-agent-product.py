@@ -26,7 +26,7 @@ def run(prompt, limit=0, selected_policy=None, expected_exit=0):
     deployment = output / "deployment.json"
     request = output / "request.bin"
     deployment.write_text(json.dumps(selected_policy or policy))
-    request.write_bytes(encode(dict(prompt=prompt, max_turns=limit)))
+    request.write_bytes(b"PV\x02\0" + encode(dict(prompt=prompt, max_turns=limit)))
     result = subprocess.run(
         [str(kernel), "invoke", str(deployment), str(request)],
         text=True, capture_output=True,
@@ -56,7 +56,7 @@ limited = run("phenix", limit=1)
 assert limited["outcome"] == dict(kind="domain_error", value="TurnLimit"), limited
 reports["turn-limit"] = limited
 denied_policy = dict(policy, grants=[g for g in policy["grants"] if not (
-    g["caller"] == "example.agent" and g["interface"] == "example.tool@1"
+    g["caller"] == "example.agent" and g["interface"] == "example.tool.execute@1"
 )])
 denied = run("phenix", selected_policy=denied_policy, expected_exit=1)
 assert denied["outcome"]["kind"] == "kernel_failure"

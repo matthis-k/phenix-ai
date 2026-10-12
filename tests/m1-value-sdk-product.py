@@ -8,7 +8,7 @@ def request(command):
 cases=[]
 for command,expected in [('typed',[1,2,2,1]),('denied',[1])]:
  selected=copy.deepcopy(policy)
- if command=='denied':selected['composition']['grants']=[g for g in selected['composition']['grants'] if g['operation']!='set']
+ if command=='denied':selected['grants']=[g for g in selected['grants'] if g['operation']!='set']
  deployment=output/'deployment.json';deployment.write_text(json.dumps(selected));input_path=output/'input.bin';input_path.write_bytes(request(command))
  result=json.loads(subprocess.check_output([str(kernel),'invoke',str(deployment),str(input_path)],text=True))
  assert result['outcome']=={'kind':'success','value':expected},result

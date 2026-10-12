@@ -288,8 +288,21 @@ impl Kernel {
             context,
         });
     }
-    pub(super) fn observe_import_failure(&self,caller:&str,key:Option<&str>,provider:Option<&str>,failure:&Failure) {
-        self.observe_propagation(failure,FailureContext {caller:caller.into(),provider:provider.map(str::to_owned),operation:key.map(str::to_owned)});
+    pub(super) fn observe_import_failure(
+        &self,
+        caller: &str,
+        key: Option<&str>,
+        provider: Option<&str>,
+        failure: &Failure,
+    ) {
+        self.observe_propagation(
+            failure,
+            FailureContext {
+                caller: caller.into(),
+                provider: provider.map(str::to_owned),
+                operation: key.map(str::to_owned),
+            },
+        );
     }
     pub(super) fn observe_propagation(&self, failure: &Failure, context: FailureContext) {
         // Preserve a nested observation only while the same failure propagates.
@@ -348,15 +361,24 @@ impl Kernel {
             );
         }
         if let Caller::Plugin(plugin, import_slot) = caller {
-            if self.prepared.bindings.get(&(plugin.into(),phenix_contract::import_identity(import_slot,&key))) != Some(&selection.provider) {
-                return self.fail(Code::Denied,"undeclared import or unselected provider");
+            if self.prepared.bindings.get(&(
+                plugin.into(),
+                phenix_contract::import_identity(import_slot, &key),
+            )) != Some(&selection.provider)
+            {
+                return self.fail(Code::Denied, "undeclared import or unselected provider");
             }
         }
         let operation = self.prepared.operation(selection)?;
         let target = &operation.target;
         let contract = &operation.schema;
         let request = Value::decode(input)?;
-        if !contract.request.accepts(&request) { return self.fail(Code::SchemaRejected,"request does not match declared schema"); }
+        if !contract.request.accepts(&request) {
+            return self.fail(
+                Code::SchemaRejected,
+                "request does not match declared schema",
+            );
+        }
         let ScopedRequest {
             authority,
             resource,
@@ -416,9 +438,23 @@ impl Kernel {
             false,
         )?;
         if pending {
-            return self.begin_pending(root, selection, match caller { Caller::Plugin(_,slot)=>slot,Caller::Root=>"" }, input, &guard, authority, resource);
+            return self.begin_pending(
+                root,
+                selection,
+                match caller {
+                    Caller::Plugin(_, slot) => slot,
+                    Caller::Root => "",
+                },
+                input,
+                &guard,
+                ScopedRequest {
+                    authority,
+                    resource,
+                },
+            );
         }
-        let (status,value)=self.images.borrow()[&selection.provider].invoke(guard.scope,&key,input)?;
+        let (status, value) =
+            self.images.borrow()[&selection.provider].invoke(guard.scope, &key, input)?;
         match status {
             0 if contract.response.accepts(&value) => {
                 Ok(super::pending::Call::Ready(Outcome::Success(value)))
@@ -466,13 +502,14 @@ impl Kernel {
             .get(&(caller.to_owned(), key.to_owned()));
         let operation_allowed = grant.is_some()
             && authority.operations.contains(key)
-            && self.prepared.permits(provider,key)
-            && state.stack.iter().all(|f| {
-                self.prepared.permits(&f.provider,key)
-            });
+            && self.prepared.permits(provider, key)
+            && state
+                .stack
+                .iter()
+                .all(|f| self.prepared.permits(&f.provider, key));
         authority
             .operations
-            .retain(|op| self.prepared.permits(provider,op));
+            .retain(|op| self.prepared.permits(provider, op));
         if let Some(resources) = grant {
             authority.resources = authority
                 .resources
@@ -695,7 +732,9 @@ impl<'a> CallGuard<'a> {
                 },
             );
         let mut state = kernel.state.borrow_mut();
-        if root != 0 { state.calls += 1; }
+        if root != 0 {
+            state.calls += 1;
+        }
         state.stack.push(Frame {
             ticket: None,
             revoked,
@@ -726,9 +765,13 @@ impl Drop for CallGuard<'_> {
         self.kernel.state.borrow_mut().stack.pop();
     }
 }
-pub(super) fn authenticate_scope(scope:u64)->Result<ScopeRecord,Failure> { authenticate_scope_inner(scope,false) }
-pub(super) fn authenticate_import_scope(scope:u64)->Result<ScopeRecord,Failure> { authenticate_scope_inner(scope,true) }
-fn authenticate_scope_inner(scope: u64, allow_cleanup:bool) -> Result<ScopeRecord, Failure> {
+pub(super) fn authenticate_scope(scope: u64) -> Result<ScopeRecord, Failure> {
+    authenticate_scope_inner(scope, false)
+}
+pub(super) fn authenticate_import_scope(scope: u64) -> Result<ScopeRecord, Failure> {
+    authenticate_scope_inner(scope, true)
+}
+fn authenticate_scope_inner(scope: u64, allow_cleanup: bool) -> Result<ScopeRecord, Failure> {
     let record = scopes()
         .lock()
         .map_err(|_| Failure::new(Code::InfrastructureFailure, "scope registry poisoned"))?
@@ -784,7 +827,14 @@ mod tests {
             },
         );
         let code = thread::spawn(move || {
-            let reply = unsafe { crate::state_effects::invoke(scope, Bytes::new(b"slot"), Bytes::new(b"not/read"), Bytes::new(&[])) };
+            let reply = unsafe {
+                crate::state_effects::invoke(
+                    scope,
+                    Bytes::new(b"slot"),
+                    Bytes::new(b"not/read"),
+                    Bytes::new(&[]),
+                )
+            };
             let (status, value) = unsafe { reply.consume() }.unwrap();
             assert_eq!(status, 2);
             Failure::from_value(value).unwrap().code
@@ -808,7 +858,14 @@ mod tests {
         .join()
         .unwrap();
         scopes().lock().unwrap().remove(&scope);
-        let reply = unsafe { crate::state_effects::invoke(scope, Bytes::new(b"slot"), Bytes::new(b"not/read"), Bytes::new(&[])) };
+        let reply = unsafe {
+            crate::state_effects::invoke(
+                scope,
+                Bytes::new(b"slot"),
+                Bytes::new(b"not/read"),
+                Bytes::new(&[]),
+            )
+        };
         let (_, value) = unsafe { reply.consume() }.unwrap();
         assert_eq!(
             Failure::from_value(value).unwrap().code,
@@ -820,7 +877,10 @@ mod tests {
         let reply = unsafe {
             crate::state_effects::invoke(
                 u64::MAX,
-                Bytes { ptr:std::ptr::null(),len:8 },
+                Bytes {
+                    ptr: std::ptr::null(),
+                    len: 8,
+                },
                 Bytes {
                     ptr: std::ptr::null(),
                     len: 8,

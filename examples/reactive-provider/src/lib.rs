@@ -3,7 +3,8 @@ use phenix_sdk::{abi::*, *};
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 #[derive(Default)]
 struct State {
     counter: Option<ValueLocation>,
@@ -76,10 +77,7 @@ unsafe extern "C" fn invoke(
                 0,
                 Value::Ref(Box::new(state.counter.unwrap())),
             )),
-            "test.refs@1/notes" => Ok(Reply::value(
-                0,
-                Value::Ref(Box::new(state.notes.unwrap())),
-            )),
+            "test.refs@1/notes" => Ok(Reply::value(0, Value::Ref(Box::new(state.notes.unwrap())))),
             "test.provider@1/run" if request == Value::String("pending".into()) => {
                 state.pending = true;
                 Ok(Reply::value(3, Value::Null))

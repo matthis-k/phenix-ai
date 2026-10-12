@@ -1,4 +1,11 @@
-#[phenix_sdk::plugin(id = "example.relay", version = "1.0.0", define(example_contracts::RelayContract), define(example_contracts::BumpContract), provide(example_contracts::RelayContract, slot = "Relay"), require(example_contracts::BumpContract, slot = "Effect"))]
+#[phenix_sdk::plugin(
+    id = "example.relay",
+    version = "1.0.0",
+    define(example_contracts::RelayContract),
+    define(example_contracts::BumpContract),
+    provide(example_contracts::RelayContract, slot = "Relay"),
+    require(example_contracts::BumpContract, slot = "Effect")
+)]
 mod relay {
     use example_contracts::{Bump, Count, Relay, Text, TransformError};
     use phenix_sdk::{Authority, CallResult, Host, ScopedRequest};

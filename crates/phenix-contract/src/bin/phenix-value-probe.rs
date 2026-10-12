@@ -99,22 +99,25 @@ impl Input {
     }
 }
 fn require_profile(profile: &str) -> Result<(), Failure> {
-    if profile == "phenix.value.v2" { Ok(()) } else { Err(Failure::new(Code::AbiIncompatible, "unsupported wire format")) }
+    if profile == "phenix.value.v2" {
+        Ok(())
+    } else {
+        Err(Failure::new(
+            Code::AbiIncompatible,
+            "unsupported wire format",
+        ))
+    }
 }
 fn handle(request: Request) -> Result<serde_json::Value, Failure> {
     match request {
         Request::Decode { profile, hex: text } => {
             require_profile(&profile)?;
             let value = Value::decode(&unhex(&text)?)?;
-            Ok(
-                serde_json::json!({"hex": hex(&value.encode()?), "value": value.to_json()}),
-            )
+            Ok(serde_json::json!({"hex": hex(&value.encode()?), "value": value.to_json()}))
         }
         Request::Encode { profile, value } => {
             let value = value.portable()?;
-            Ok(
-                serde_json::json!({"hex": hex(&{ require_profile(&profile)?; value.encode()? })}),
-            )
+            Ok(serde_json::json!({"hex": hex(&{ require_profile(&profile)?; value.encode()? })}))
         }
         Request::Schema { hex: text } => {
             let schema = ValueSchema::decode(&unhex(&text)?)?;
@@ -128,8 +131,10 @@ fn handle(request: Request) -> Result<serde_json::Value, Failure> {
             value_hex,
         } => {
             let schema = ValueSchema::decode(&unhex(&schema_hex)?)?;
-            let value =
-                { require_profile(&profile)?; Value::decode(&unhex(&value_hex)?)? };
+            let value = {
+                require_profile(&profile)?;
+                Value::decode(&unhex(&value_hex)?)?
+            };
             let dynamic = DynValue::new(&schema, value)?;
             Ok(
                 serde_json::json!({"id": hex(dynamic.schema().as_bytes()), "value": dynamic.value().to_json()}),

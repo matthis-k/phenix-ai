@@ -1,4 +1,4 @@
-"""Exercise the real CLI against packaged M0.1 native fixtures."""
+"""Exercise the real CLI against packaged M1 native fixtures."""
 import json
 import subprocess
 import sys
@@ -14,7 +14,7 @@ def invoke(policy, text, success=True):
         request = Path(tmp) / "request.bin"
         deployment.write_text(json.dumps(policy))
         value = text.encode()
-        request.write_bytes(bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
+        request.write_bytes(b"PV\x02\0" + bytes([8]) + (1).to_bytes(4, "big") + (4).to_bytes(4, "big")
                             + b"text" + bytes([5]) + len(value).to_bytes(4, "big") + value)
         result = subprocess.run([kernel, "invoke", str(deployment), str(request)], text=True, capture_output=True)
         assert result.returncode == (0 if success else 1), result.stderr
@@ -38,7 +38,7 @@ for text, calls, provider in [("blue", 1, "example.relay"), ("switch", 2, "examp
     assert denied["denied_operations"] == 1
     (output / (text + ".json")).write_text(json.dumps(denied, sort_keys=True, indent=2))
 (output / "product.json").write_text(json.dumps(dict(choices=choice, scoped=scoped), sort_keys=True, indent=2))
-print("M0.1 CLI product conformance passed")
+print("M1 CLI product conformance passed")
 
 def compare(actual, expected):
     if isinstance(expected, dict):

@@ -145,9 +145,17 @@ pub fn expand(
                 }
             }
             let slot = required(&mut options, "slot")?;
-            let provider=options.remove("provider");
-            if !require && provider.is_some() { return Err(syn::Error::new(list.span(),"provider identity belongs to require")); }
-            let provider=match provider { Some(id)=>quote!(Some(#id)),None=>quote!(None) };
+            let provider = options.remove("provider");
+            if !require && provider.is_some() {
+                return Err(syn::Error::new(
+                    list.span(),
+                    "provider identity belongs to require",
+                ));
+            }
+            let provider = match provider {
+                Some(id) => quote!(Some(#id)),
+                None => quote!(None),
+            };
             no_extra(&options)?;
             let symbol: syn::Ident = syn::parse_str(&slot).map_err(|_| {
                 syn::Error::new(list.span(), "slot symbol must be a Rust identifier")
@@ -156,9 +164,20 @@ pub fn expand(
                 return Err(syn::Error::new(list.span(), "duplicate slot"));
             }
             if require {
-                let mut import_api=api.clone();
-                if api.segments.first().is_some_and(|segment|segment.ident=="super") { import_api.segments.insert(0,syn::parse_quote!(super)); }
-                else if api.segments.first().is_some_and(|segment|segment.ident=="self") { import_api.segments.first_mut().unwrap().ident=syn::parse_quote!(super); }
+                let mut import_api = api.clone();
+                if api
+                    .segments
+                    .first()
+                    .is_some_and(|segment| segment.ident == "super")
+                {
+                    import_api.segments.insert(0, syn::parse_quote!(super));
+                } else if api
+                    .segments
+                    .first()
+                    .is_some_and(|segment| segment.ident == "self")
+                {
+                    import_api.segments.first_mut().unwrap().ident = syn::parse_quote!(super);
+                }
                 let selector = if indexed {
                     format!("{slot}#0")
                 } else {
@@ -413,7 +432,10 @@ pub fn expand(
             let request = <<#op as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::from_value(value)?;
             #unit_request
             let result = ::phenix_sdk::live::handler_result::<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error, _>(#name(#arguments));
-            return Ok(::phenix_sdk::live::reply(result));
+            return Ok(match result {
+                Err(::phenix_sdk::CallError::Kernel(error)) => ::phenix_sdk::abi::Reply::value(5, error.to_value()),
+                result => ::phenix_sdk::live::reply(result),
+            });
         }});
     }
     for (op, name, arguments, has_request) in pending {

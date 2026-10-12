@@ -1,4 +1,11 @@
-#[phenix_sdk::plugin(id = "example.agent-tool", version = "1.0.0", define(example_agent_contracts::ExecuteContract), define(example_agent_contracts::ToolCountContract), provide(example_agent_contracts::ExecuteContract, slot = "Execute"), provide(example_agent_contracts::ToolCountContract, slot = "ToolCount"))]
+#[phenix_sdk::plugin(
+    id = "example.agent-tool",
+    version = "1.0.0",
+    define(example_agent_contracts::ExecuteContract),
+    define(example_agent_contracts::ToolCountContract),
+    provide(example_agent_contracts::ExecuteContract, slot = "Execute"),
+    provide(example_agent_contracts::ToolCountContract, slot = "ToolCount")
+)]
 mod plugin {
     use example_agent_contracts::{AgentError, Execute, ToolCount, ToolRequest};
     use phenix_sdk::{CallError, CallResult, Host};

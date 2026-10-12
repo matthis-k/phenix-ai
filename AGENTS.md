@@ -1,23 +1,9 @@
-# Minimal kernel implementation
+# M1 kernel implementation
 
-The 12 October M1-only decision supersedes the compatibility requirements below
-for consolidation work. Use `spec/m1-consolidation-contract.md` for this
-transition and `spec/m1-consolidation-audit.md` for its verified file matrix.
-Historical M0 evidence stays in Git history. Port semantic guarantees to M1 as
-their old production interfaces and fixtures are removed. C1/C2 replace the
-descriptor model and its consumers together; S3b pending imports and graph work
-follow that removal. Keep the stack unmerged.
+M1 is the sole supported product. Follow [the M1-only transition contract](spec/m1-only-runtime-contract.md), [the consolidation contract](spec/m1-consolidation-contract.md) and [the roadmap](spec/m1-roadmap.md). They supersede historical M0 compatibility requirements. Preserve behavioral guarantees in contemporary M1 conformance tests. Historical commits and acceptance documents retain evidence for retired formats.
 
-`spec/clean-start-rfc.md` is normative. `spec/m0-contracts.md` fixes the trusted-native x86_64 Linux profile. P0 and M0.0 through M0.4 are accepted. Each milestone's acceptance document and matrix record its semantic proof. PR #771 owns current-head CI status.
+Keep one canonical ContractMetadata/ValueSchema model, one declarative Composition, one preparation mechanism, one dispatcher, one authority lineage, one pending-ticket manager and one generation lifecycle. StaticSchema is a compile-time encoding. Native and cell operations share preparation and authority while retaining distinct effect semantics. Lifecycle and future reactive graphs share algorithms, with separate semantic projections. Agent logic belongs in plugins.
 
-Use `nix flake check -L` for acceptance. All fourteen gates and the release evidence product passed on implementation commit `f4fbe2ffd14a6ef7c71dcfc8694e5f073392b23d` in CI run 38110344943. `nix run .#phenix-m0-demo` exercises the packaged CLI. `nix build .#phenix-m0-release` materializes the complete evidence product. The public SDK and external examples build without private kernel sources.
+Use `nix flake check -L` for canonical acceptance. `nix run .#phenix-m1-demo` exercises the packaged CLI. `nix build .#phenix-m1-release` materializes all contemporary conformance and shipping evidence. The public SDK and external fixtures must build without private kernel sources. Keep implementation PRs ready and unmerged. Record exact-head CI and changed files, semantic tests, evidence and remaining tasks in the owning matrix and PR.
 
-Update the affected milestone matrix with changed files, semantic tests, evidence and remaining work. Record current-head CI in the PR body. CI evidence includes the commit, package digests and realized Nix outputs. The existing M0.0 through M0.4 matrices have no remaining implementation or acceptance tasks. Agent API and domain plugins are subsequent work; new facilities need their own contract gates.
-
-Keep one provider resolver, one dispatcher and one effect authority boundary. Typed annotations own contributions and ABI glue. A new kernel mechanism needs an executable non-AI fixture and a reason an ordinary plugin cannot supply it. Freeze each addendum before implementing its mechanisms.
-
-The branch starts at the original root commit. Preserve reference branches and closed PR histories. PR #771 is the sole open M0 implementation PR and stays ready for review so full conformance CI runs. Keep it unmerged.
-## M1 specification and task ownership
-
-M1 live runtime and DAG stages remain proposed. S1a and S1b portable gates are accepted; S1b evidence is bound to `51017e07067bae786131775e18686044b78eb625` in CI 38128644908. [Contract/macro semantics](spec/m1-plugin-contracts-rfc.md) and [value/reactive DAG semantics](spec/m1-values-reactive-dag-rfc.md) own the M1 requirements. [The single M1 task/evidence tracker](spec/m1-roadmap.md) owns the stage order, exact affected files, negative tests, and acceptance states. Implement each stage in its own PR based on the accepted baseline or on its explicitly named predecessor. Do not revise M0 milestone status to claim M1 functionality. Keep implementation out of the specification-only PR. Reuse the existing resolver, dispatcher, authority lineage, tickets, and generation manager; no duplicate reactive executor. Before marking a stage PROVEN, record executable evidence from its exact commit and ensure existing M0 conformance still passes.
-
+Freeze addenda before implementing new mechanisms. C1/C2 replace legacy representations and consumers together. S3b pending imports and G1-G4 follow consolidation acceptance. Do not add compatibility adapters, registries, workflow interpreters, graph-patch engines or another executor during consolidation. Reuse tickets, leases, dispatch, attenuation and generations.

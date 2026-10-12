@@ -1,4 +1,13 @@
-#[phenix_sdk::plugin(id = "example.restricted", version = "1.0.0", define(example_contracts::ScopedRunContract), define(example_contracts::RelayContract), define(example_contracts::BumpContract), provide(example_contracts::ScopedRunContract, slot = "ScopedRun"), require(example_contracts::RelayContract, slot = "Delegate"), require(example_contracts::BumpContract, slot = "EffectLimit", optional))]
+#[phenix_sdk::plugin(
+    id = "example.restricted",
+    version = "1.0.0",
+    define(example_contracts::ScopedRunContract),
+    define(example_contracts::RelayContract),
+    define(example_contracts::BumpContract),
+    provide(example_contracts::ScopedRunContract, slot = "ScopedRun"),
+    require(example_contracts::RelayContract, slot = "Delegate"),
+    require(example_contracts::BumpContract, slot = "EffectLimit", optional)
+)]
 mod restricted {
     use example_contracts::{Bump, Count, Relay, ScopedRun, Text, TransformError};
     use phenix_sdk::{Authority, CallResult, Host, ScopedRequest};

@@ -1,10 +1,11 @@
 pub mod live;
+pub use live::{Host, ImportCall, ImportPoll, PendingImport, PendingResult};
 pub use phenix_contract::*;
 pub use phenix_macros::{contract, plugin, property, Portable};
-pub use live::{Host, PendingResult, PendingImport, ImportCall, ImportPoll};
 #[doc(hidden)]
-pub fn lifecycle(hook:impl FnOnce()->Result<(),Failure>)->Result<(),Failure> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook)).unwrap_or_else(|_|Err(Failure::new(Code::PluginFailed,"caught lifecycle panic")))
+pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
+        .unwrap_or_else(|_| Err(Failure::new(Code::PluginFailed, "caught lifecycle panic")))
 }
 /// A copied worker permit authorizes wake only, never ordinary host imports.
 #[derive(Clone, Copy)]

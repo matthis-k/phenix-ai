@@ -1,4 +1,13 @@
-#[phenix_sdk::plugin(id = "example.agent", version = "1.0.0", define(example_agent_contracts::RunContract), define(example_agent_contracts::CompleteContract), define(example_agent_contracts::ExecuteContract), provide(example_agent_contracts::RunContract, slot = "Run"), require(example_agent_contracts::CompleteContract, slot = "Model"), require(example_agent_contracts::ExecuteContract, slot = "Tool"))]
+#[phenix_sdk::plugin(
+    id = "example.agent",
+    version = "1.0.0",
+    define(example_agent_contracts::RunContract),
+    define(example_agent_contracts::CompleteContract),
+    define(example_agent_contracts::ExecuteContract),
+    provide(example_agent_contracts::RunContract, slot = "Run"),
+    require(example_agent_contracts::CompleteContract, slot = "Model"),
+    require(example_agent_contracts::ExecuteContract, slot = "Tool")
+)]
 mod plugin {
     use example_agent_contracts::{
         AgentError, Complete, Execute, Feedback, FeedbackStatus, ModelRequest, ReplyKind, Run,
@@ -29,12 +38,15 @@ mod plugin {
             model_turns = model_turns.checked_add(1).ok_or_else(|| {
                 Failure::new(Code::InfrastructureFailure, "model turn counter exhausted")
             })?;
-            let reply = host.invoke::<Model>("Model", &ModelRequest {
-                prompt: request.prompt.clone(),
-                turn: model_turns,
-                available_tool: "uppercase".into(),
-                feedback,
-            })?;
+            let reply = host.invoke::<Model>(
+                "Model",
+                &ModelRequest {
+                    prompt: request.prompt.clone(),
+                    turn: model_turns,
+                    available_tool: "uppercase".into(),
+                    feedback,
+                },
+            )?;
             match reply.kind {
                 ReplyKind::Final => {
                     if !reply.call_id.is_empty() || !reply.tool.is_empty() {
@@ -56,10 +68,13 @@ mod plugin {
                     tool_calls = tool_calls.checked_add(1).ok_or_else(|| {
                         Failure::new(Code::InfrastructureFailure, "tool call counter exhausted")
                     })?;
-                    feedback = match host.invoke::<Tool>("Tool", &ToolRequest {
-                        call_id: reply.call_id.clone(),
-                        text: reply.text,
-                    }) {
+                    feedback = match host.invoke::<Tool>(
+                        "Tool",
+                        &ToolRequest {
+                            call_id: reply.call_id.clone(),
+                            text: reply.text,
+                        },
+                    ) {
                         Ok(text) => Feedback {
                             status: FeedbackStatus::Success,
                             call_id: reply.call_id,

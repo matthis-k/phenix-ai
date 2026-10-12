@@ -47,10 +47,14 @@ fn main() {
     let s = selection(SERVICE, "example.provider");
     let policy = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, "example.pending"),
-        slots: vec![phenix_conformance::binding(&("example.pending"), &format!("{}/{}", s.interface, s.operation), &(s.provider))],
+        slots: vec![phenix_conformance::binding(
+            "example.pending",
+            &format!("{}/{}", s.interface, s.operation),
+            &(s.provider),
+        )],
         grants: vec![
             grant("root", RUN),
             grant("root", COUNT),
@@ -131,10 +135,7 @@ fn main() {
         Code::ReentrancyRejected
     );
     // A different selected kernel/root cannot poll another kernel's handle.
-    let other = Prepared::prepare(policy.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let other = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
     let other_root = other.admit_default_root().unwrap();
     assert_eq!(
         other_root.poll(&call).unwrap_err().code,
@@ -217,10 +218,7 @@ fn main() {
     drop(counter);
     kernel.shutdown().unwrap();
     // Drop initiates cancellation. Physical work pins the root until draining.
-    let draining = Prepared::prepare(policy.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let draining = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
     let root = draining.admit_default_root().unwrap();
     let _ticket = ticket(root.begin(&request("stubborn")).unwrap());
     drop(root);
@@ -235,10 +233,7 @@ fn main() {
     denied_policy
         .grants
         .retain(|g| g.caller != "example.pending");
-    let denied = Prepared::prepare(denied_policy)
-        .unwrap()
-        .load()
-        .unwrap();
+    let denied = Prepared::prepare(denied_policy).unwrap().load().unwrap();
     let root = denied.admit_default_root().unwrap();
     let call = ticket(root.begin(&request("denied")).unwrap());
     assert!(matches!(
@@ -280,6 +275,6 @@ fn main() {
         "poll-authority-denied",
         "kernel-drop-retains-image",
     ];
-    fs::write(output.join("evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m02.pending.evidence.v1","passed":cases,"baseline_fds":baseline,"inspection":draining.inspect(),"full_m02_accepted":false})).unwrap()).unwrap();
-    println!("M0.2 pending native conformance passed");
+    fs::write(output.join("evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.m1.pending.evidence.v1","passed":cases,"baseline_fds":baseline,"inspection":draining.inspect(),"full_m02_accepted":false})).unwrap()).unwrap();
+    println!("M1 pending native conformance passed");
 }

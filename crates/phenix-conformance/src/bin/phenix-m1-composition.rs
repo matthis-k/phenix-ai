@@ -1,6 +1,6 @@
 use phenix_contract::{Authority, Code, ScopedRequest, Value};
 use phenix_kernel::{
-    resolve::{Composition, SlotBinding, Prepared, ScopedGrant, Selection, Substitution},
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding, Substitution},
     Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -12,7 +12,9 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn bind(caller: &str, key: &str, provider: &str) -> SlotBinding { phenix_conformance::binding(caller,key,provider) }
+fn bind(caller: &str, key: &str, provider: &str) -> SlotBinding {
+    phenix_conformance::binding(caller, key, provider)
+}
 fn grant(caller: &str, key: &str, resources: &[&str]) -> ScopedGrant {
     let s = selection(key, "");
     ScopedGrant {
@@ -50,7 +52,7 @@ fn main() {
     let other = "example.other@1/run";
     let mut c = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(choice, "example.choice"),
         slots: vec![
@@ -81,10 +83,7 @@ fn main() {
     reordered.artifacts.reverse();
     reordered.slots.reverse();
     reordered.grants.reverse();
-    assert_eq!(
-        Prepared::prepare(reordered).unwrap().inspect(),
-        baseline
-    );
+    assert_eq!(Prepared::prepare(reordered).unwrap().inspect(), baseline);
     let mut bad = c.clone();
     bad.slots[1].provider = "example.alternate".into();
     fail(bad, Code::MissingBinding);
@@ -147,10 +146,7 @@ fn main() {
     drop(kernel);
     c.slots
         .push(bind("example.choice", counter, "example.provider"));
-    let kernel = Prepared::prepare(c.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     assert_eq!(
         root.invoke(&text("optional")).unwrap(),
@@ -163,10 +159,7 @@ fn main() {
         from: "example.alternate".into(),
         to: "example.provider".into(),
     });
-    let kernel = Prepared::prepare(c.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(c.clone()).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     assert_eq!(
         root.invoke(&text("substituted")).unwrap(),
@@ -188,10 +181,7 @@ fn main() {
         grant("example.choice", transform, &[]),
     ];
     optional.authority.operations = [choice, transform].map(str::to_owned).into();
-    let kernel = Prepared::prepare(optional)
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(optional).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     assert_eq!(
         root.invoke(&text("optional")).unwrap_err().code,
@@ -202,7 +192,7 @@ fn main() {
     let cycle = "example.cycle@1/run";
     let cycle_policy = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: vec![args[8].clone()],
         entry: selection(cycle, "example.cycle"),
         slots: vec![bind("example.cycle", cycle, "example.cycle")],
@@ -229,7 +219,7 @@ fn main() {
     let read = "example.resource.count@1/count";
     let scoped = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[5..8].to_vec(),
         entry: selection(run, "example.restricted"),
         slots: vec![
@@ -250,10 +240,7 @@ fn main() {
         },
         resource: None,
     };
-    let kernel = Prepared::prepare(scoped.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(scoped.clone()).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     assert_eq!(
         root.invoke(&text("red")).unwrap(),
@@ -294,10 +281,7 @@ fn main() {
     // A root pinned to red also rejects a plugin request to switch to blue.
     read_policy.entry = selection(run, "example.restricted");
     read_policy.resource = Some("red".into());
-    let kernel = Prepared::prepare(read_policy)
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(read_policy).unwrap().load().unwrap();
     let root = kernel.admit_default_root().unwrap();
     assert_eq!(root.invoke(&text("blue")).unwrap_err().code, Code::Denied);
     drop(root);
@@ -313,5 +297,5 @@ fn main() {
         serde_json::to_vec(&scoped).unwrap(),
     )
     .unwrap();
-    println!("M0.1 composition conformance passed");
+    println!("M1 composition conformance passed");
 }

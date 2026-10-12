@@ -1,6 +1,6 @@
 use phenix_sdk::{
     contract, live::Operation, Cardinality, ContractDefinition, ContractMetadata, ImportSlot,
-    Portable, MetadataExecution, OperationSchema, ValueSchema,
+    MetadataExecution, OperationSchema, Portable, ValueSchema,
 };
 
 #[derive(Portable)]
@@ -132,7 +132,8 @@ fn external_types_and_raw_identifiers_have_portable_identity() {
     );
     let mut native = metadata(definition);
     native.execution = MetadataExecution::StatePending;
-    native.requires.push(ImportSlot { provider:None,
+    native.requires.push(ImportSlot {
+        provider: None,
         slot: "search".into(),
         contract: "example.search@2".into(),
         revision_min: 2,

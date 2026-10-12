@@ -114,10 +114,10 @@ fn main() {
     assert_eq!(unsafe { m1_fixture_releases() }, 9);
     assert!(unsafe { m1_fixture_bad_reply(4).consume() }.is_err());
     assert_eq!(unsafe { m1_fixture_releases() }, 10);
-    assert!(unsafe { Reply::value(0, Value::Null).consume() }.is_err());
-    for status in [3, 4] {
-        assert!(unsafe { Reply::value(status, Value::U64(1)).consume() }.is_err());
-    }
+    assert_eq!(unsafe { Reply::value(0, Value::Null).consume() }.unwrap(), (0, Value::Null));
+    // Pending import commands return an authenticated child ticket in status 3.
+    assert_eq!(unsafe { Reply::value(3, Value::U64(1)).consume() }.unwrap(), (3, Value::U64(1)));
+    assert!(unsafe { Reply::value(4, Value::U64(1)).consume() }.is_err());
     let mut rejected = 0;
     assert!(unsafe { StatePluginTable::negotiate(std::ptr::null()) }.is_err());
     rejected += 1;

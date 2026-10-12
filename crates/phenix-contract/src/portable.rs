@@ -1,5 +1,7 @@
-use crate::{Portable,StaticSchema,Value as WireValue,Failure,Code};
-fn invalid()->Failure { Failure::new(Code::SchemaRejected,"invalid typed portable value") }
+use crate::{Code, Failure, Portable, StaticSchema, Value as WireValue};
+fn invalid() -> Failure {
+    Failure::new(Code::SchemaRejected, "invalid typed portable value")
+}
 macro_rules! scalar {
     ($t:ty,$variant:ident,$schema:ident) => {
         impl Portable for $t {

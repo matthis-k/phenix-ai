@@ -69,14 +69,22 @@ pub struct RunResponse {
     pub tool_calls: u64,
 }
 #[phenix_sdk::contract(id = "example.agent@1")]
-pub trait RunContract { fn run(&self, request: RunRequest) -> Result<RunResponse, AgentError>; }
+pub trait RunContract {
+    fn run(&self, request: RunRequest) -> Result<RunResponse, AgentError>;
+}
 pub type Run = RunContract::run;
 #[phenix_sdk::contract(id = "example.model@1")]
-pub trait CompleteContract { fn complete(&self, request: ModelRequest) -> Result<ModelReply, AgentError>; }
+pub trait CompleteContract {
+    fn complete(&self, request: ModelRequest) -> Result<ModelReply, AgentError>;
+}
 pub type Complete = CompleteContract::complete;
 #[phenix_sdk::contract(id = "example.tool.execute@1")]
-pub trait ExecuteContract { fn execute(&self, request: ToolRequest) -> Result<String, AgentError>; }
+pub trait ExecuteContract {
+    fn execute(&self, request: ToolRequest) -> Result<String, AgentError>;
+}
 pub type Execute = ExecuteContract::execute;
 #[phenix_sdk::contract(id = "example.tool.count@1")]
-pub trait ToolCountContract { fn count(&self, request: String) -> Result<u64, AgentError>; }
+pub trait ToolCountContract {
+    fn count(&self, request: String) -> Result<u64, AgentError>;
+}
 pub type ToolCount = ToolCountContract::count;

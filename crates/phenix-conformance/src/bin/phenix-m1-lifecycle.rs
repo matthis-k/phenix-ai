@@ -55,10 +55,14 @@ fn main() {
     let s = selection(SERVICE, PROVIDER);
     let policy = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, CONSUMER),
-        slots: vec![phenix_conformance::binding(&(CONSUMER), &format!("{}/{}", s.interface, s.operation), &(s.provider))],
+        slots: vec![phenix_conformance::binding(
+            CONSUMER,
+            &format!("{}/{}", s.interface, s.operation),
+            &(s.provider),
+        )],
         grants: vec![grant("root", RUN), grant(CONSUMER, SERVICE)],
         excluded: BTreeSet::new(),
         substitutions: vec![],
@@ -149,10 +153,7 @@ fn main() {
         "explicit shutdown leaked resources"
     );
     reset(&trace, "");
-    let kernel = Prepared::prepare(policy.clone())
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
     drop(kernel);
     let dropped = assert_events(&trace, &full);
     assert_eq!(fd_count(), baseline_fds, "drop shutdown leaked resources");
@@ -208,10 +209,7 @@ fn main() {
         "consumer:stop,consumer:drop-panic",
     ] {
         reset(&trace, faults);
-        let kernel = Prepared::prepare(policy.clone())
-            .unwrap()
-            .load()
-            .unwrap();
+        let kernel = Prepared::prepare(policy.clone()).unwrap().load().unwrap();
         let error = kernel.shutdown().unwrap_err();
         assert_eq!(error.code, Code::PluginFailed);
         let first = faults.split(',').next().unwrap();
@@ -263,5 +261,5 @@ fn main() {
         serde_json::to_vec(&policy).unwrap(),
     )
     .unwrap();
-    println!("M0.2 synchronous lifecycle slice passed; asynchronous gate remains open");
+    println!("M1 synchronous lifecycle slice passed; asynchronous gate remains open");
 }

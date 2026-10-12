@@ -9,23 +9,45 @@ fn main() {
     if let Err(error) = run(&mut phase) {
         println!(
             "{}",
-            serde_json::json!({"format":"phenix.inspect.v1","phase":phase,"last_failure":{"code":error.code,"message":error.message,"phase":phase,"context":null}})
+            serde_json::json!({"format":"phenix.inspect.v2","phase":phase,"last_failure":{"code":error.code,"message":error.message,"phase":phase,"context":null}})
         );
         std::process::exit(1);
     }
 }
 fn run(phase: &mut Phase) -> Result<(), Failure> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len()<3 || args.len()>5 || !["inspect","invoke"].contains(&args[1].as_str()) {
+    if args.len() < 3 || args.len() > 5 || !["inspect", "invoke"].contains(&args[1].as_str()) {
         return Err(Failure::new(Code::InfrastructureFailure,"usage: phenix-kernel inspect COMPOSITION | invoke COMPOSITION REQUEST.bin [--poll-limit=N]"));
     }
-    let composition:Composition=serde_json::from_slice(&std::fs::read(&args[2]).map_err(|e|Failure::new(Code::InfrastructureFailure,e.to_string()))?).map_err(|e|Failure::new(Code::DescriptorInvalid,e.to_string()))?;
+    let composition: Composition = serde_json::from_slice(
+        &std::fs::read(&args[2])
+            .map_err(|e| Failure::new(Code::InfrastructureFailure, e.to_string()))?,
+    )
+    .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
     for artifact in composition.artifacts.iter().chain(&composition.definitions) {
-        let path=Path::new(artifact).canonicalize().map_err(|e|Failure::new(Code::ArtifactInvalid,e.to_string()))?;
-        if !path.starts_with("/nix/store") { return Err(Failure::new(Code::ArtifactInvalid,"CLI requires trusted immutable Nix store packages")); }
+        let path = Path::new(artifact)
+            .canonicalize()
+            .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
+        if !path.starts_with("/nix/store") {
+            return Err(Failure::new(
+                Code::ArtifactInvalid,
+                "CLI requires trusted immutable Nix store packages",
+            ));
+        }
     }
-    let poll_limit=args.get(4).map(|arg|arg.strip_prefix("--poll-limit=").ok_or_else(||Failure::new(Code::SchemaRejected,"unknown CLI option")).and_then(|limit|limit.parse::<u64>().map_err(|_|Failure::new(Code::SchemaRejected,"invalid poll limit")))).transpose()?;
-    let prepared=Prepared::prepare(composition)?;
+    let poll_limit = args
+        .get(4)
+        .map(|arg| {
+            arg.strip_prefix("--poll-limit=")
+                .ok_or_else(|| Failure::new(Code::SchemaRejected, "unknown CLI option"))
+                .and_then(|limit| {
+                    limit
+                        .parse::<u64>()
+                        .map_err(|_| Failure::new(Code::SchemaRejected, "invalid poll limit"))
+                })
+        })
+        .transpose()?;
+    let prepared = Prepared::prepare(composition)?;
     if args[1] == "inspect" {
         println!("{}", prepared.inspect());
         return Ok(());
@@ -47,13 +69,16 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
             Call::Ready(outcome) => Ok(outcome),
             Call::Pending(ticket) => {
                 // Explicit limits request cancellation; leases survive caller drop.
-                let mut polls=0;
+                let mut polls = 0;
                 loop {
-                    if poll_limit.is_some_and(|limit|polls>=limit) {
-                        let _=root.cancel(&ticket);
-                        return Err(Failure::new(Code::Cancelled,"explicit CLI poll limit exhausted"));
+                    if poll_limit.is_some_and(|limit| polls >= limit) {
+                        let _ = root.cancel(&ticket);
+                        return Err(Failure::new(
+                            Code::Cancelled,
+                            "explicit CLI poll limit exhausted",
+                        ));
                     }
-                    polls+=1;
+                    polls += 1;
                     match root.poll(&ticket)? {
                         Poll::Ready(result) => {
                             if kernel.inspect()["pending"]["physical_leases"] != 0 {
@@ -70,7 +95,6 @@ fn run(phase: &mut Phase) -> Result<(), Failure> {
                         Poll::Pending | Poll::Draining => {}
                     }
                 }
-
             }
         }
     })();

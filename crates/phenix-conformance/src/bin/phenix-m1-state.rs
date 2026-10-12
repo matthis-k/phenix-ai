@@ -82,17 +82,17 @@ fn composition(provider: &str, client: &str, alternative: &str) -> Composition {
                 export: "refs".into(),
             },
         ],
-        
-            artifacts: vec![provider.into(), client.into(), alternative.into()],
-            entry: selection("test.state@1/run", CLIENT),
-            grants,
-            excluded: BTreeSet::new(),
-            substitutions: vec![],
-            authority: Authority {
-                operations,
-                resources,
-            },
-            resource: None,
+
+        artifacts: vec![provider.into(), client.into(), alternative.into()],
+        entry: selection("test.state@1/run", CLIENT),
+        grants,
+        excluded: BTreeSet::new(),
+        substitutions: vec![],
+        authority: Authority {
+            operations,
+            resources,
+        },
+        resource: None,
     }
 }
 fn run(kernel: &Kernel, command: &str) -> Outcome {
@@ -381,10 +381,7 @@ fn main() {
     cases.push(serde_json::json!({"case":"root-intersection-zero-effects","passed":true}));
     let mut no_resources = c.clone();
     no_resources.authority.resources.clear();
-    let no_resources = Prepared::prepare(no_resources)
-        .unwrap()
-        .load()
-        .unwrap();
+    let no_resources = Prepared::prepare(no_resources).unwrap().load().unwrap();
     assert_eq!(run(&no_resources, "count"), domain("Denied"));
     no_resources.shutdown().unwrap();
     cases.push(serde_json::json!({"case":"resource-grant-required","passed":true}));
@@ -406,10 +403,7 @@ fn main() {
     for grant in &mut session_context.grants {
         grant.resources.insert("session.root".into());
     }
-    let session_context = Prepared::prepare(session_context)
-        .unwrap()
-        .load()
-        .unwrap();
+    let session_context = Prepared::prepare(session_context).unwrap().load().unwrap();
     assert_eq!(run(&session_context, "batch"), success(&[1, 1, 1, 1]));
     session_context.shutdown().unwrap();
     cases.push(serde_json::json!({"case":"resource-context-retained-across-batch","passed":true}));
@@ -479,10 +473,7 @@ fn main() {
     missing_get
         .grants
         .retain(|g| !(g.caller == CLIENT && g.key() == format!("{NOTES}/get")));
-    let missing_get = Prepared::prepare(missing_get)
-        .unwrap()
-        .load()
-        .unwrap();
+    let missing_get = Prepared::prepare(missing_get).unwrap().load().unwrap();
     let Outcome::Domain(denied_snapshot) = run(&missing_get, "snapshot") else {
         panic!("snapshot authority");
     };

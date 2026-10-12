@@ -96,7 +96,7 @@ fn stateless_handlers_have_typed_results_and_generated_v3_lifecycle() {
         (0, Value::String("ok".into()))
     );
     let (status, error) = invoke(Text::kernel_error::KEY, Value::String(String::new()));
-    assert_eq!(status, 2);
+    assert_eq!(status, 5);
     assert_eq!(Failure::from_value(error).unwrap().code, Code::Denied);
     assert_eq!(
         invoke(Text::constant::KEY, <() as live::Portable>::to_value(&())),

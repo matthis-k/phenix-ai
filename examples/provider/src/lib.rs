@@ -1,4 +1,11 @@
-#[phenix_sdk::plugin(id = "example.provider", version = "1.0.0", define(example_contracts::TransformContract), define(example_contracts::ReadCountContract), provide(example_contracts::TransformContract, slot = "Transform"), provide(example_contracts::ReadCountContract, slot = "ReadCount"))]
+#[phenix_sdk::plugin(
+    id = "example.provider",
+    version = "1.0.0",
+    define(example_contracts::TransformContract),
+    define(example_contracts::ReadCountContract),
+    provide(example_contracts::TransformContract, slot = "Transform"),
+    provide(example_contracts::ReadCountContract, slot = "ReadCount")
+)]
 mod provider {
     use example_contracts::{Count, ReadCount, Text, Transform, TransformError};
     use phenix_sdk::{CallError, CallResult, Host};

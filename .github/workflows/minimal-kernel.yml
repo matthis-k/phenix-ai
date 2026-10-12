@@ -26,15 +26,15 @@ jobs:
           if [[ "${{ github.head_ref }}" == impl/m1-value-sdk ]]; then
             nix build .#checks.x86_64-linux.m1-value-sdk-product -L
           fi
-          if [[ "${{ github.head_ref }}" == impl/m1-contract-authoring || "${{ github.head_ref }}" == impl/m1-architecture-consolidation ]]; then
-            nix build .#checks.x86_64-linux.m0-contract -L
+          if [[ "${{ github.head_ref }}" == impl/m1-contract-authoring || "${{ github.head_ref }}" == impl/m1-architecture-consolidation || "${{ github.head_ref }}" == impl/m1-only-runtime ]]; then
+            nix build .#checks.x86_64-linux.m1-contract -L
             nix build .#checks.x86_64-linux.m1-native-authoring -L
           fi
           nix build .#checks.x86_64-linux.m1-metadata-state -L
           nix flake check -L
       - name: Record realized conformance outputs and commit
         run: |
-          nix build .#phenix-m0-conformance --out-link result-conformance
+          nix build .#phenix-m1-conformance --out-link result-conformance
           mkdir ci-evidence
           if [[ "${{ github.head_ref }}" == impl/m1-* ]]; then
             nix build .#checks.x86_64-linux.m1-reference-wire --out-link result-m1-wire
@@ -65,7 +65,7 @@ jobs:
             cp -RL result-m1-sdk-product ci-evidence/m1-value-sdk-product
             nix path-info --json ./result-m1-sdk ./result-m1-sdk-product > ci-evidence/m1-sdk-nix-output.json
           fi
-          if [[ "${{ github.head_ref }}" == impl/m1-contract-authoring || "${{ github.head_ref }}" == impl/m1-architecture-consolidation ]]; then
+          if [[ "${{ github.head_ref }}" == impl/m1-contract-authoring || "${{ github.head_ref }}" == impl/m1-architecture-consolidation || "${{ github.head_ref }}" == impl/m1-only-runtime ]]; then
             nix build .#checks.x86_64-linux.m1-native-authoring --out-link result-m1-authoring
             cp -RL result-m1-authoring ci-evidence/m1-native-authoring
             nix path-info --json ./result-m1-authoring > ci-evidence/m1-authoring-nix-output.json

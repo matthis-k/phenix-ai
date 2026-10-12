@@ -1,6 +1,6 @@
 use phenix_contract::{Authority, Code, Value};
 use phenix_kernel::{
-    resolve::{Composition, SlotBinding, Prepared, ScopedGrant, Selection},
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Kernel, Outcome,
 };
 use std::{collections::BTreeSet, fs, path::Path};
@@ -13,7 +13,9 @@ fn selection(key: &str, provider: &str) -> Selection {
         provider: provider.into(),
     }
 }
-fn binding(key: &str, provider: &str) -> SlotBinding { phenix_conformance::binding("example.agent",key,provider) }
+fn binding(key: &str, provider: &str) -> SlotBinding {
+    phenix_conformance::binding("example.agent", key, provider)
+}
 fn grant(caller: &str, key: &str) -> ScopedGrant {
     let s = selection(key, "");
     ScopedGrant {
@@ -42,7 +44,10 @@ fn invoke(kernel: &Kernel, prompt: &str, limit: u64) -> Result<Outcome, phenix_c
 }
 fn count(kernel: &Kernel) -> u64 {
     let root = kernel
-        .admit_root(selection("example.tool.count@1/count", "example.agent-tool"))
+        .admit_root(selection(
+            "example.tool.count@1/count",
+            "example.agent-tool",
+        ))
         .unwrap();
     let Outcome::Success(Value::U64(count)) = root.invoke(&Value::String(String::new())).unwrap()
     else {
@@ -61,7 +66,7 @@ fn main() {
     let audit = "example.tool.count@1/count";
     let composition = Composition {
         format: "phenix.composition.v2".into(),
-        definitions:vec![],
+        definitions: vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(run, "example.agent"),
         slots: vec![
@@ -93,10 +98,7 @@ fn main() {
     reversed.artifacts.reverse();
     reversed.slots.reverse();
     reversed.grants.reverse();
-    assert_eq!(
-        Prepared::prepare(reversed).unwrap().inspect(),
-        inspection
-    );
+    assert_eq!(Prepared::prepare(reversed).unwrap().inspect(), inspection);
     let kernel = prepared.load().unwrap();
     let mut cases = Vec::new();
     for (prompt, answer, turns, calls) in [
@@ -145,10 +147,7 @@ fn main() {
         denied
             .grants
             .retain(|g| !(g.caller == "example.agent" && g.key() == denied_key));
-        let kernel = Prepared::prepare(denied)
-            .unwrap()
-            .load()
-            .unwrap();
+        let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
         assert_eq!(invoke(&kernel, "phenix", 0).unwrap_err().code, Code::Denied);
         assert_eq!(count(&kernel), 0);
         assert_eq!(kernel.inspect()["denied_operations"], 1);
@@ -156,10 +155,7 @@ fn main() {
     }
     let mut alternate = composition.clone();
     alternate.slots[0].provider = "example.agent-alternate".into();
-    let kernel = Prepared::prepare(alternate)
-        .unwrap()
-        .load()
-        .unwrap();
+    let kernel = Prepared::prepare(alternate).unwrap().load().unwrap();
     assert_eq!(
         invoke(&kernel, "phenix", 0).unwrap(),
         response("alternate:phenix", 1, 0)

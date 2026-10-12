@@ -1,14 +1,35 @@
 {
   "format": "phenix.inspect.v2",
-  "entry": {"interface": "example.choice@1", "operation": "run", "provider": "example.choice"},
+  "entry": {
+    "interface": "example.choice@1",
+    "operation": "run",
+    "provider": "example.choice"
+  },
   "bindings": [
-    {"caller": "example.choice", "operation": "example.transform.apply@1/apply", "provider": "example.provider"},
-    {"caller": "example.other", "operation": "example.transform.apply@1/apply", "provider": "example.provider"}
+    {
+      "caller": "example.choice",
+      "operation": "Provider:example.transform.apply@1/apply",
+      "provider": "example.provider"
+    },
+    {
+      "caller": "example.other",
+      "operation": "Provider:example.transform.apply@1/apply",
+      "provider": "example.provider"
+    }
   ],
-  "roots": {"active": null, "completed": 1, "last_root_id": 1},
+  "roots": {
+    "active": null,
+    "completed": 1,
+    "last_root_id": 1
+  },
   "calls": 2,
   "denied_operations": 0,
   "last_failure": null,
   "resource": null,
-  "outcome": {"kind": "success", "value": {"text": "PRODUCT"}}
+  "outcome": {
+    "kind": "success",
+    "value": {
+      "text": "PRODUCT"
+    }
+  }
 }

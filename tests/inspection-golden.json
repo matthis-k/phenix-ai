@@ -1,16 +1,35 @@
 {
   "success": {
-    "format": "phenix.inspect.v1",
-    "bindings": {"example.transform.apply@1/apply": "example.provider"},
-    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "format": "phenix.inspect.v2",
+    "bindings": [
+      {
+        "caller": "example.consumer",
+        "operation": "Provider:example.transform.apply@1/apply",
+        "provider": "example.provider"
+      }
+    ],
+    "roots": {
+      "active": null,
+      "completed": 1,
+      "last_root_id": 1
+    },
     "calls": 2,
     "denied_operations": 0,
     "last_failure": null,
-    "outcome": {"kind": "success", "value": {"text": "PHENIX"}}
+    "outcome": {
+      "kind": "success",
+      "value": {
+        "text": "PHENIX"
+      }
+    }
   },
   "handled": {
-    "format": "phenix.inspect.v1",
-    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "format": "phenix.inspect.v2",
+    "roots": {
+      "active": null,
+      "completed": 1,
+      "last_root_id": 1
+    },
     "calls": 1,
     "denied_operations": 1,
     "last_failure": {
@@ -22,11 +41,20 @@
         "operation": "example.transform.count@1/count"
       }
     },
-    "outcome": {"kind": "success", "value": {"text": "handled"}}
+    "outcome": {
+      "kind": "success",
+      "value": {
+        "text": "handled"
+      }
+    }
   },
   "denied": {
-    "format": "phenix.inspect.v1",
-    "roots": {"active": null, "completed": 1, "last_root_id": 1},
+    "format": "phenix.inspect.v2",
+    "roots": {
+      "active": null,
+      "completed": 1,
+      "last_root_id": 1
+    },
     "calls": 1,
     "denied_operations": 1,
     "last_failure": {
@@ -38,6 +66,8 @@
         "operation": "example.transform.apply@1/apply"
       }
     },
-    "outcome": {"kind": "kernel_failure"}
+    "outcome": {
+      "kind": "kernel_failure"
+    }
   }
 }

@@ -1,4 +1,17 @@
-#[phenix_sdk::plugin(id = "example.choice", version = "1.0.0", define(example_contracts::ChoiceContract), define(example_contracts::TransformContract), define(example_contracts::ReadCountContract), provide(example_contracts::ChoiceContract, slot = "Choice"), require(example_contracts::TransformContract, slot = "Provider"), require(example_contracts::ReadCountContract, slot = "OptionalCounter", optional))]
+#[phenix_sdk::plugin(
+    id = "example.choice",
+    version = "1.0.0",
+    define(example_contracts::ChoiceContract),
+    define(example_contracts::TransformContract),
+    define(example_contracts::ReadCountContract),
+    provide(example_contracts::ChoiceContract, slot = "Choice"),
+    require(example_contracts::TransformContract, slot = "Provider"),
+    require(
+        example_contracts::ReadCountContract,
+        slot = "OptionalCounter",
+        optional
+    )
+)]
 mod choice {
     use example_contracts::{Choice, Count, ReadCount, Text, Transform, TransformError};
     use phenix_sdk::{CallResult, Host};

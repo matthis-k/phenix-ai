@@ -3,7 +3,8 @@ use phenix_sdk::{abi::*, *};
 use std::ffi::c_void;
 #[used]
 #[unsafe(link_section = ".phenix")]
-static METADATA: [u8; NATIVE_SECTION_BYTES] = *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
+static METADATA: [u8; NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/metadata.bin"));
 #[derive(Default)]
 struct State {
     leaked: u64,
@@ -33,9 +34,7 @@ fn state(api: &StateHostApi, r: StateRequest) -> Result<Value, String> {
     }
 }
 fn imported(api: &StateHostApi, slot: &str, key: &str, request: Value) -> Result<Value, String> {
-    let bytes = request
-        .encode()
-        .map_err(|e| e.to_string())?;
+    let bytes = request.encode().map_err(|e| e.to_string())?;
     let (status, value) = unsafe {
         (api.invoke.unwrap())(
             api.scope,
@@ -255,9 +254,8 @@ unsafe extern "C" fn invoke(
         let api = unsafe { StateHostApi::negotiate(api.cast()) }.map_err(|e| e.to_string())?;
         let key = std::str::from_utf8(unsafe { key.read() }.map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        let input = Value::decode(
-            unsafe { input.read() }.map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+        let input = Value::decode(unsafe { input.read() }.map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         if key == "test.state@1/read" {
             let Value::Ref(r) = input else {
                 return Err("request".into());

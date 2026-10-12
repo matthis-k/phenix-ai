@@ -82,17 +82,17 @@ fn composition(provider: &str, client: &str, alternative: &str) -> Composition {
                 export: "refs".into(),
             },
         ],
-        
-            artifacts: vec![provider.into(), client.into(), alternative.into()],
-            entry: selection("test.state@1/run", CLIENT),
-            grants,
-            excluded: BTreeSet::new(),
-            substitutions: vec![],
-            authority: Authority {
-                operations,
-                resources,
-            },
-            resource: None,
+
+        artifacts: vec![provider.into(), client.into(), alternative.into()],
+        entry: selection("test.state@1/run", CLIENT),
+        grants,
+        excluded: BTreeSet::new(),
+        substitutions: vec![],
+        authority: Authority {
+            operations,
+            resources,
+        },
+        resource: None,
     }
 }
 

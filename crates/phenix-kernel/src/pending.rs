@@ -1,9 +1,6 @@
 use super::runtime::{CallGuard, Kernel, Root};
 use crate::resolve::Selection;
-use phenix_contract::{
-    abi::StateHostApi,
-    Authority, Code, Failure, Value,
-};
+use phenix_contract::{abi::StateHostApi, Authority, Code, Failure, Value};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -106,9 +103,12 @@ impl Kernel {
         import_slot: &str,
         input: &[u8],
         guard: &CallGuard<'_>,
-        authority: Authority,
-        resource: Option<String>,
+        scope: phenix_contract::ScopedRequest,
     ) -> Result<Call, Failure> {
+        let phenix_contract::ScopedRequest {
+            authority,
+            resource,
+        } = scope;
         let parent = self
             .state
             .borrow()
@@ -142,7 +142,7 @@ impl Kernel {
         let record = Record {
             root,
             parent,
-            import_slot:import_slot.into(),
+            import_slot: import_slot.into(),
             native_quiescent: false,
             selection: selection.clone(),
             authority,
@@ -166,14 +166,26 @@ impl Kernel {
             false,
         );
         self.accept_reply(id, reply);
-        let ready={let mut state=self.state.borrow_mut();let record=state.tickets.get_mut(&id).unwrap();
-            if parent.is_some() && record.quiescent && record.result.as_ref().is_some_and(Result::is_ok) { record.result.take() } else { None }
+        let ready = {
+            let mut state = self.state.borrow_mut();
+            let record = state.tickets.get_mut(&id).unwrap();
+            if parent.is_some()
+                && record.quiescent
+                && record.result.as_ref().is_some_and(Result::is_ok)
+            {
+                record.result.take()
+            } else {
+                None
+            }
         };
-        if let Some(Ok(outcome))=ready { self.release_tree(id);return Ok(Call::Ready(outcome)); }
+        if let Some(Ok(outcome)) = ready {
+            self.release_tree(id);
+            return Ok(Call::Ready(outcome));
+        }
         Ok(Call::Pending(Ticket { id, root }))
     }
-    fn pending_api(&self,id:u64,scope:u64)->StateHostApi {
-        super::runtime::state_host(scope,id,self.state.borrow().tickets[&id].permit)
+    fn pending_api(&self, id: u64, scope: u64) -> StateHostApi {
+        super::runtime::state_host(scope, id, self.state.borrow().tickets[&id].permit)
     }
     fn accept_reply(&self, id: u64, reply: Result<(u32, Value), Failure>) {
         let live_children = self
@@ -542,11 +554,12 @@ impl Kernel {
                     };
                     (key, input, None)
                 };
-                let Some(provider) = self.prepared.bindings.get(&(caller.into(),phenix_contract::import_identity(slot,&key)))
+                let Some(provider) = self
+                    .prepared
+                    .bindings
+                    .get(&(caller.into(), phenix_contract::import_identity(slot, &key)))
                 else {
-                    return self.fail(Code::MissingBinding,
-                        "pending import is not selected",
-                    );
+                    return self.fail(Code::MissingBinding, "pending import is not selected");
                 };
                 let (interface, operation) = key.split_once('/').ok_or_else(malformed)?;
                 let selection = Selection {
@@ -589,7 +602,14 @@ impl Kernel {
                 let authenticated = {
                     let state = self.state.borrow();
                     state.tickets.get(&id).is_some_and(|r| {
-                        r.root == root && r.parent == Some(parent) && r.selection.key() == operation && r.import_slot==slot && self.prepared.bindings.get(&(caller.into(),phenix_contract::import_identity(slot,&operation)))==Some(&r.selection.provider)
+                        r.root == root
+                            && r.parent == Some(parent)
+                            && r.selection.key() == operation
+                            && r.import_slot == slot
+                            && self.prepared.bindings.get(&(
+                                caller.into(),
+                                phenix_contract::import_identity(slot, &operation),
+                            )) == Some(&r.selection.provider)
                     }) && state
                         .tickets
                         .get(&parent)

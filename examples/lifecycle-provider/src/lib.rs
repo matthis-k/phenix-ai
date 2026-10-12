@@ -1,7 +1,12 @@
 use example_contracts::*;
 use phenix_sdk::{CallResult, Code, Failure, Host};
 
-#[phenix_sdk::plugin(id = "example.lifecycle.z-provider", version = "1.0.0", define(example_contracts::LifecycleServiceContract), provide(example_contracts::LifecycleServiceContract, slot = "LifecycleService"))]
+#[phenix_sdk::plugin(
+    id = "example.lifecycle.z-provider",
+    version = "1.0.0",
+    define(example_contracts::LifecycleServiceContract),
+    provide(example_contracts::LifecycleServiceContract, slot = "LifecycleService")
+)]
 mod plugin {
     use super::*;
     #[derive(Default)]

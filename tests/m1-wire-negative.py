@@ -15,7 +15,7 @@ def value(kind, data=None):
     return {"kind": kind} if kind == "null" else {"kind": kind, "value": data}
 
 
-def encode(item, profile="phenix.value.v1"):
+def encode(item, profile="phenix.value.v2", *, schema=False):
     def put(item, depth):
         if depth > MAX_DEPTH:
             raise ValueError("depth")
@@ -48,9 +48,9 @@ def encode(item, profile="phenix.value.v1"):
             return b"\11" + b"".join(fields)
         raise ValueError("unsupported tag/profile")
 
-    if profile not in ("phenix.value.v1", "phenix.value.v2"):
+    if profile != "phenix.value.v2":
         raise ValueError("profile")
-    result = (PREFIX if profile == "phenix.value.v2" else b"") + put(item, 0)
+    result = (b"" if schema else PREFIX) + put(item, 0)
     if len(result) > MAX_BYTES:
         raise ValueError("payload")
     return result
@@ -112,7 +112,7 @@ def decode(raw, profile):
     if profile == "phenix.value.v2":
         if take(4) != PREFIX:
             raise ValueError("prefix")
-    elif profile != "phenix.value.v1":
+    else:
         raise ValueError("profile")
     result = get(0)
     if at != len(raw):
@@ -133,9 +133,10 @@ def run(probe, fixture_path):
         assert encode(vector["value"], profile).hex() == expected, name
         assert decode(bytes.fromhex(expected), profile) == vector["value"], name
         case(name + "/decode", dict(kind="decode", profile=profile, hex=expected), {"hex": expected})
+        case(name + "/bare-rejected", dict(kind="decode", profile=profile, hex=expected[8:]))
         case(name + "/encode", dict(kind="encode", profile=profile, value=vector["value"]), {"hex": expected})
     for vector in fixture["schemas"]:
-        assert encode(vector["descriptor"]).hex() == vector["hex"], vector["name"]
+        assert encode(vector["descriptor"], schema=True).hex() == vector["hex"], vector["name"]
         digest = hashlib.sha256(b"phenix.schema.v2\0" + bytes.fromhex(vector["hex"])).hexdigest()
         assert digest == vector["id"], vector["name"]
         case(vector["name"], dict(kind="schema", hex=vector["hex"]), {"hex": vector["hex"], "id": digest})
@@ -181,7 +182,7 @@ def run(probe, fixture_path):
     case("depth-boundary", dict(kind="decode", profile="phenix.value.v2", hex=(PREFIX + b"\7\0\0\0\1" * MAX_DEPTH + b"\0").hex()), {"hex": (PREFIX + b"\7\0\0\0\1" * MAX_DEPTH + b"\0").hex()})
     case("count-boundary", dict(kind="decode", profile="phenix.value.v2", hex=(PREFIX + b"\7" + struct.pack(">I", MAX_COUNT) + bytes(MAX_COUNT)).hex()), {"hex": (PREFIX + b"\7" + struct.pack(">I", MAX_COUNT) + bytes(MAX_COUNT)).hex()})
     for descriptor in [value("string", "Unknown"), value("list", [value("string", "Ref"), value("bytes", [1] * 31)]), value("list", [value("string", "Variants"), value("list", [value("string", "Z"), value("string", "A")])]), value("list", [value("string", "Variants"), value("list", [])]), value("list", [value("string", "Struct"), value("map", {"invalid/name": value("string", "Bool")})])]:
-        case("invalid-schema", dict(kind="schema", hex=encode(descriptor).hex()))
+        case("invalid-schema", dict(kind="schema", hex=encode(descriptor, schema=True).hex()))
     schemas = {s["name"]: s for s in fixture["schemas"]}
     for name, schema, item, valid in [
         ("ref-valid", "ref-string", reference["value"], True),
@@ -216,7 +217,7 @@ def run(probe, fixture_path):
         "cases": len(requests),
         "accepted": sum(e is not None for _, e in expectations),
         "rejected": sum(e is None for _, e in expectations),
-        "profiles": ["phenix.value.v1", "phenix.value.v2"],
+        "profiles": ["phenix.value.v2"],
         "live_authority_proven": False,
     }, sort_keys=True))
 

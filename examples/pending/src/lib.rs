@@ -5,7 +5,14 @@ use std::{
     thread::JoinHandle,
 };
 static LATE: Mutex<Option<WakePermit>> = Mutex::new(None);
-#[phenix_sdk::plugin(id = "example.pending", version = "1.0.0", define(example_contracts::PendingRunContract), define(example_contracts::TransformContract), provide(example_contracts::PendingRunContract, slot = "PendingRun"), require(example_contracts::TransformContract, slot = "Service"))]
+#[phenix_sdk::plugin(
+    id = "example.pending",
+    version = "1.0.0",
+    define(example_contracts::PendingRunContract),
+    define(example_contracts::TransformContract),
+    provide(example_contracts::PendingRunContract, slot = "PendingRun"),
+    require(example_contracts::TransformContract, slot = "Service")
+)]
 mod plugin {
     use super::*;
     type Service = Transform;
@@ -73,9 +80,12 @@ mod plugin {
         if state.mode == "stubborn" && state.drain_polls == 0 {
             state.drain_polls += 1;
             // Cancellation revoked all protected imports before this poll.
-            let reply = host.invoke::<Service>("Service", &Text {
-                text: "denied".into(),
-            });
+            let reply = host.invoke::<Service>(
+                "Service",
+                &Text {
+                    text: "denied".into(),
+                },
+            );
             assert!(matches!(
                 reply,
                 Err(CallError::Kernel(Failure {

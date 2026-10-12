@@ -1,7 +1,10 @@
 pub mod metadata;
 pub mod static_metadata;
 pub use metadata::*;
-pub use static_metadata::{MetadataBytes, StaticContract, StaticExport, StaticImport, StaticOperation, StaticProperty, NATIVE_SECTION_BYTES};
+pub use static_metadata::{
+    MetadataBytes, StaticContract, StaticExport, StaticImport, StaticOperation, StaticProperty,
+    NATIVE_SECTION_BYTES,
+};
 pub fn identifier(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256

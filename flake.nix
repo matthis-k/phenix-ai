@@ -1,5 +1,5 @@
 {
-  description = "Phenix minimal typed-service kernel through M0.4";
+  description = "Phenix M1 typed contract kernel";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
   outputs =
     { self, nixpkgs }:
@@ -83,7 +83,7 @@
         import json, sys
         from pathlib import Path
         out = Path(sys.argv[1])
-        profile = "phenix.native-package.v2" if (out / "descriptor.bin").read_bytes().startswith(b"PV\x02\x00") else "phenix.package.v1"
+        profile = "phenix.native-package.v2"
         record = dict(format=profile, artifact="lib/plugin.so", descriptor="descriptor.bin", target="x86_64-unknown-linux-gnu", **json.load(open("digests.json")))
         (out / "package.json").write_text(json.dumps(record, sort_keys=True))
       '';
@@ -207,7 +207,7 @@
             b = s.encode()
             return bytes([5]) + len(b).to_bytes(4, "big") + b
         fields = [("max_turns", bytes([4]) + bytes(8)), ("prompt", string("phenix"))]
-        open(sys.argv[1], "wb").write(bytes([8]) + len(fields).to_bytes(4, "big") + b"".join(len(k).to_bytes(4, "big") + k.encode() + v for k, v in fields))
+        open(sys.argv[1], "wb").write(b"PV\x02\0"+bytes([8]) + len(fields).to_bytes(4, "big") + b"".join(len(k).to_bytes(4, "big") + k.encode() + v for k, v in fields))
         PYCODE
       '';
       pendingPlugin = plugin "example-pending";
@@ -270,7 +270,7 @@
         pname = "example-provider-repeat";
       });
       descriptorCheck =
-        pkgs.runCommand "phenix-m0-descriptor"
+        pkgs.runCommand "phenix-m1-metadata-retention"
           {
             nativeBuildInputs = [
               pkgs.python3
@@ -347,9 +347,9 @@
           python -m json.tool $out/native.json > /dev/null
         '';
       });
-      deployment = pkgs.writeText "phenix-m0-deployment.json" (
+      deployment = pkgs.writeText "phenix-m1-deployment.json" (
         builtins.toJSON {
-          format = "phenix.deployment.v1";
+          format = "phenix.composition.v2";
           artifacts = [
             "${provider}"
             "${consumer}"
@@ -359,58 +359,59 @@
             operation = "run";
             provider = "example.consumer";
           };
-          bindings = [
-            {
-              interface = "example.transform@1";
-              operation = "apply";
-              provider = "example.provider";
-            }
-          ];
+          definitions = [ ];
+          slots = [{ caller = "example.consumer"; slot = "Provider"; index = 0; provider = "example.provider"; export = "Transform"; }];
+          excluded = [ ];
+          substitutions = [ ];
+          resource = null;
+          authority = { operations = [ "example.consumer@1/run" "example.transform.apply@1/apply" ]; resources = [ ]; };
           grants = [
             {
               caller = "root";
+              resources = [ ];
               interface = "example.consumer@1";
               operation = "run";
             }
             {
               caller = "example.consumer";
-              interface = "example.transform@1";
+              resources = [ ];
+              interface = "example.transform.apply@1";
               operation = "apply";
             }
           ];
         }
       );
-      request = pkgs.runCommand "phenix-m0-request" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      request = pkgs.runCommand "phenix-m1-request" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         python - "$out" <<'PY'
         import sys
         # Canonical value {"text": "phenix"} from the normative value profile.
-        open(sys.argv[1], "wb").write(bytes([8])+ (1).to_bytes(4,"big")+(4).to_bytes(4,"big")+b"text"+bytes([5])+(6).to_bytes(4,"big")+b"phenix")
+        open(sys.argv[1], "wb").write(b"PV\x02\0"+bytes([8])+ (1).to_bytes(4,"big")+(4).to_bytes(4,"big")+b"text"+bytes([5])+(6).to_bytes(4,"big")+b"phenix")
         PY
       '';
-      nativeCheck = pkgs.runCommand "phenix-m0-native" { } ''
+      nativeCheck = pkgs.runCommand "phenix-m1-native" { } ''
         ${conformanceBinary}/bin/phenix-conformance ${provider} ${consumer} ${alternate} ${cycle} ${badAbi 1} ${badAbi 2} ${badAbi 3} ${badAbi 4} ${badAbi 5} $out
       '';
-      productCheck = pkgs.runCommand "phenix-m0-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      productCheck = pkgs.runCommand "phenix-m1-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         python ${./tests/product.py} ${kernel}/bin/phenix-kernel ${deployment} ${request} ${./tests/inspection-golden.json} $out
       '';
-      compositionCheck = pkgs.runCommand "phenix-m01-composition" { } ''
-        ${conformanceBinary}/bin/phenix-m01-conformance ${provider} ${alternate} ${choice} ${other} ${restricted} ${relay} ${resources} ${cycle} $out
+      compositionCheck = pkgs.runCommand "phenix-m1-composition" { } ''
+        ${conformanceBinary}/bin/phenix-m1-composition ${provider} ${alternate} ${choice} ${other} ${restricted} ${relay} ${resources} ${cycle} $out
       '';
       compositionProduct =
-        pkgs.runCommand "phenix-m01-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+        pkgs.runCommand "phenix-m1-composition-product" { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
             python ${./tests/composition-product.py} ${kernel}/bin/phenix-kernel ${compositionCheck} ${./tests/composition-golden.json} $out
           '';
-      lifecycleCheck = pkgs.runCommand "phenix-m02-lifecycle" { } ''
-        ${conformanceBinary}/bin/phenix-m02-lifecycle ${lifecycleProvider} ${lifecycleConsumer} $out
+      lifecycleCheck = pkgs.runCommand "phenix-m1-lifecycle" { } ''
+        ${conformanceBinary}/bin/phenix-m1-lifecycle ${lifecycleProvider} ${lifecycleConsumer} $out
       '';
       lifecycleProduct =
-        pkgs.runCommand "phenix-m02-lifecycle-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+        pkgs.runCommand "phenix-m1-lifecycle-product" { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
             python ${./tests/lifecycle-product.py} ${kernel}/bin/phenix-kernel ${lifecycleCheck} $out
           '';
       pendingCheck =
-        pkgs.runCommand "phenix-m02-pending"
+        pkgs.runCommand "phenix-m1-pending"
           {
             nativeBuildInputs = [
               pkgs.python3
@@ -422,22 +423,22 @@
             export PHENIX_PENDING_TRACE=$TMPDIR/offline-trace
             python ${./tests/descriptor.py} ${describe}/bin/phenix-describe ${pendingPlugin} ${pendingFat} ${pendingOff} ${pendingLld} ${pendingRepeat} > $out/descriptor-evidence.json
             test ! -e "$PHENIX_PENDING_TRACE"
-            ${conformanceBinary}/bin/phenix-m02-pending ${pendingPlugin} ${provider} $out
+            ${conformanceBinary}/bin/phenix-m1-pending ${pendingPlugin} ${provider} $out
           '';
       pendingProduct =
-        pkgs.runCommand "phenix-m02-pending-product" { nativeBuildInputs = [ pkgs.python3 ]; }
+        pkgs.runCommand "phenix-m1-pending-product" { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
             python ${./tests/pending-product.py} ${kernel}/bin/phenix-kernel ${pendingCheck} $out
           '';
-      importsCheck = pkgs.runCommand "phenix-m02-imports" { } ''
-        ${conformanceBinary}/bin/phenix-m02-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} $out
+      importsCheck = pkgs.runCommand "phenix-m1-imports" { } ''
+        ${conformanceBinary}/bin/phenix-m1-imports ${pendingConsumer} ${pendingPlugin} ${provider} ${pendingImmediate} $out
       '';
       generationsCheck =
-        pkgs.runCommand "phenix-m03-generations" { nativeBuildInputs = [ pkgs.python3 ]; }
+        pkgs.runCommand "phenix-m1-generations" { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
             mkdir -p $out
             python ${./tests/generation-identity.py} ${./tests/generation-identity-v2.json} > $out/identity-vector.json
-            ${conformanceBinary}/bin/phenix-m03-generations ${revisionA} ${revisionB} ${importsCheck} $out
+            ${conformanceBinary}/bin/phenix-m1-generations ${revisionA} ${revisionB} ${importsCheck} $out
           '';
       publicSdkCheck = (build "phenix-public-sdk-check" publicSource).overrideAttrs (_: {
         cargoBuildFlags = [ ];
@@ -451,17 +452,17 @@
         installPhase = "mkdir -p $out; echo passed > $out/public-sdk";
       });
       productionClosure = pkgs.closureInfo { rootPaths = [ kernel ]; };
-      shippingCheck = pkgs.runCommand "phenix-m04-shipping" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      shippingCheck = pkgs.runCommand "phenix-m1-shipping" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         python ${./tests/shipping-product.py} ${kernel} ${publicSdkCheck} ${conformance} ${productionClosure} ${exampleSource}/examples $out
       '';
-      release = pkgs.runCommand "phenix-m0-release" { } ''
+      release = pkgs.runCommand "phenix-m1-release" { } ''
         mkdir -p $out
         cp -rs ${conformance}/. $out/
         ln -s ${publicSdkCheck} $out/public-sdk
         ln -s ${shippingCheck} $out/shipping
         ln -s ${productionClosure} $out/production-closure
       '';
-      conformance = pkgs.runCommand "phenix-m0-conformance" { } ''
+      conformance = pkgs.runCommand "phenix-m1-conformance" { } ''
         mkdir -p $out
         ln -s ${descriptorCheck} $out/descriptor
         ln -s ${contractCheck} $out/contract
@@ -484,9 +485,9 @@
         phenix-describe = describe;
         example-provider = provider;
         example-consumer = consumer;
-        phenix-m0-conformance = release;
-        phenix-m0-release = release;
-        phenix-m0-deployment = deployment;
+        phenix-m1-conformance = release;
+        phenix-m1-release = release;
+        phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
         phenix-m1-value-sdk-product = valueSdkProduct;
@@ -498,13 +499,13 @@
           name = "phenix-a0-demo";
           text = "exec ${kernel}/bin/phenix-kernel invoke ${agentCheck}/composition.json ${agentRequest}";
         };
-        phenix-m0-plugins = pkgs.runCommand "phenix-m0-plugins" { } ''
+        phenix-m1-plugins = pkgs.runCommand "phenix-m1-plugins" { } ''
           mkdir -p $out
           ln -s ${provider} $out/provider
           ln -s ${consumer} $out/consumer
         '';
-        phenix-m0-demo = pkgs.writeShellApplication {
-          name = "phenix-m0-demo";
+        phenix-m1-demo = pkgs.writeShellApplication {
+          name = "phenix-m1-demo";
           text = "exec ${kernel}/bin/phenix-kernel invoke ${deployment} ${request}";
         };
       };
@@ -518,20 +519,20 @@
         a0-agent-product = agentProduct;
         m1-reference-wire = referenceWireCheck;
         m1-metadata-state = metadataStateCheck;
-        m0-descriptor = descriptorCheck;
-        m0-contract = contractCheck;
-        m0-native = nativeCheck;
-        m0-product = productCheck;
-        m01-composition = compositionCheck;
-        m01-product = compositionProduct;
-        m04-public-sdk = publicSdkCheck;
-        m04-shipping = shippingCheck;
-        m03-generations = generationsCheck;
-        m02-imports = importsCheck;
-        m02-pending = pendingCheck;
-        m02-pending-product = pendingProduct;
-        m02-lifecycle = lifecycleCheck;
-        m02-lifecycle-product = lifecycleProduct;
+        m1-metadata-retention = descriptorCheck;
+        m1-contract = contractCheck;
+        m1-native = nativeCheck;
+        m1-product = productCheck;
+        m1-composition = compositionCheck;
+        m1-composition-product = compositionProduct;
+        m1-public-sdk = publicSdkCheck;
+        m1-shipping = shippingCheck;
+        m1-generations = generationsCheck;
+        m1-imports = importsCheck;
+        m1-pending = pendingCheck;
+        m1-pending-product = pendingProduct;
+        m1-lifecycle = lifecycleCheck;
+        m1-lifecycle-product = lifecycleProduct;
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [

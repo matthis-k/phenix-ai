@@ -38,7 +38,7 @@ def definition():
                 requires=[], provides=[], properties=[])
 def native():
     return dict(format="phenix.contract-metadata.v2", plugin="example.counter", version="1.0.0", execution="state-pending", definitions=[],
-                requires=[dict(slot=slot, contract="example.counter@1", revision_min=1, revision_max=3, cardinality=kind, minimum=n) for slot, kind, n in [("all", "many", 0), ("fallback", "optional", 0), ("primary", "one", 1)]],
+                requires=[dict(slot=slot, contract="example.counter@1", revision_min=1, revision_max=3, provider=None, cardinality=kind, minimum=n) for slot, kind, n in [("all", "many", 0), ("fallback", "optional", 0), ("primary", "one", 1)]],
                 provides=[dict(slot="service", contract="example.counter@1", revision=1)],
                 properties=[dict(id="counter", schema=schema("U64"), get=True, set=True, watch=True), dict(id="history", schema=schema(["List", "String"]), get=True, set=False, watch=False)])
 
@@ -100,6 +100,9 @@ def run(probe, describe, fixture, vectors):
         data = obj if raw else encode(obj)
         cases.append((name, accepted, dict(kind=kind, bytes=data.hex(), opcode=opcode)))
     for n, obj in enumerate(positive): case(f"metadata-{n}", "metadata", obj, True)
+    obj = native(); obj["requires"][0]["provider"] = "example.selected"; case("exact-provider", "metadata", obj, True)
+    for provider in ["root", "bad/path", 1]:
+        obj = native(); obj["requires"][0]["provider"] = provider; case("invalid-exact-provider", "metadata", obj, False)
     # Each schema tag is externally authored, including nested Ref schemas.
     for s in ["Bool", "I64", "String", "Bytes", ["Option", "U64"], ["Struct", {"count": "U64"}], ["Ref", bytes([4])*32]]:
         obj = native(); obj["properties"][0]["schema"] = schema(s); case("schema-"+str(s), "metadata", obj, True)

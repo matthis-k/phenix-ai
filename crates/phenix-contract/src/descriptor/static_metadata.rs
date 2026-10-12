@@ -556,7 +556,16 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
         output.key("minimum");
         output.number(minimum);
         output.key("provider");
-        match import.provider { Some(provider)=>{ assert!(identity(provider) && crate::static_schema::compare(provider,"root")!=0,"invalid import provider"); output.text(provider); },None=>output.byte(0) }
+        match import.provider {
+            Some(provider) => {
+                assert!(
+                    identity(provider) && crate::static_schema::compare(provider, "root") != 0,
+                    "invalid import provider"
+                );
+                output.text(provider);
+            }
+            None => output.byte(0),
+        }
         output.key("revision_max");
         output.number(import.revision_max);
         output.key("revision_min");

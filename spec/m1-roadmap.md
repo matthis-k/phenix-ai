@@ -15,8 +15,16 @@ matrix](m1-consolidation-audit.md) record corrections, executable changes and
 remaining removal work. M0 acceptance below is historical evidence. C1 and C2
 must replace descriptors and their consumers together, while migrating semantic
 conformance to M1. S3b pending imports and G1 follow that coordinated removal.
-The current intervention implements prepared native/cell effects, shared ordering
-and concise stateless handlers. It does not claim M1-only format acceptance.
+PR #779 implements prepared native/cell effects, shared ordering and concise
+stateless handlers. Its exact head `712b9898` passed full CI 38193609248.
+The `impl/m1-only-runtime` transition now removes legacy schemas, descriptors,
+wire/ABI profiles, macros, synthetic normalization and preparation input forms.
+[Its frozen contract](m1-only-runtime-contract.md) owns the coordinated C1/C2
+migration. Local M1 native, lifecycle, pending/import, generation, state, SDK,
+authoring and agent suites pass. Independent wire, metadata and C ABI gates pass.
+Exact-head full Nix CI is still required. No G1-G4 implementation is authorized
+before that acceptance. Historical profiles and acceptance claims below describe
+their pinned commits, not the active product.
 
 ## 1. Branch and PR ownership
 

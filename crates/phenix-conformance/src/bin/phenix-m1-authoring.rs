@@ -50,17 +50,17 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 export: "counter".into(),
             })
             .into(),
-        
-            artifacts,
-            entry: selection(RELAY, "run", CLIENT),
-            grants,
-            excluded: BTreeSet::new(),
-            substitutions: vec![],
-            authority: Authority {
-                operations,
-                resources,
-            },
-            resource: None,
+
+        artifacts,
+        entry: selection(RELAY, "run", CLIENT),
+        grants,
+        excluded: BTreeSet::new(),
+        substitutions: vec![],
+        authority: Authority {
+            operations,
+            resources,
+        },
+        resource: None,
     }
 }
 fn main() {
@@ -262,10 +262,7 @@ fn main() {
                 }
             }
         }
-        let kernel = Prepared::prepare(denied.clone())
-            .unwrap()
-            .load()
-            .unwrap();
+        let kernel = Prepared::prepare(denied.clone()).unwrap().load().unwrap();
         let Outcome::Success(reference) = kernel
             .admit_root(selection(COUNTER, "reference", PROVIDER))
             .unwrap()

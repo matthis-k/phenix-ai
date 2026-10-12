@@ -5,13 +5,13 @@ use crate::{
     CallError, CallResult, Code, CompareExchange, Epoch, Failure, Revision, StateRequest,
     StaticSchema, ValueAccessError, ValueLocation,
 };
+pub use crate::{Operation, Portable};
 use std::{
     marker::PhantomData,
     ops::{Deref, DerefMut},
     rc::Rc,
     sync::Arc,
 };
-pub use crate::{Portable, Operation};
 fn invalid() -> Failure {
     Failure::new(Code::SchemaRejected, "invalid typed live value")
 }
@@ -250,9 +250,8 @@ impl<'call> Host<'call> {
             .api
             .state
             .ok_or_else(|| Failure::new(Code::AbiIncompatible, "missing state callback"))?;
-        let (status, value) = unsafe {
-            callback(self.api.scope, request.opcode(), AbiBytes::new(&bytes)).consume()
-        }?;
+        let (status, value) =
+            unsafe { callback(self.api.scope, request.opcode(), AbiBytes::new(&bytes)).consume() }?;
         match status {
             0 => Ok(value),
             1 => Err(AccessError::State(ValueAccessError::from_value(value)?)),
@@ -595,9 +594,7 @@ pub fn pending_reply<T: Portable, E: Portable>(result: PendingResult<T, E>) -> c
     match result {
         PendingResult::Ready(result) => reply(result),
         PendingResult::Pending => crate::abi::Reply::value(3, WireValue::Null),
-        PendingResult::QuiescentFailure(error) => {
-            crate::abi::Reply::value(5, error.to_value())
-        }
+        PendingResult::QuiescentFailure(error) => crate::abi::Reply::value(5, error.to_value()),
     }
 }
 #[doc(hidden)]
@@ -810,56 +807,167 @@ pub struct UnsupportedAuthoring;
 /// #[phenix_sdk::contract(id="test.pending@1")] trait Api { fn run(&self)->Result<String,String>; }
 /// type O=Api::run;
 /// ```
-pub struct PendingImport<O:Operation> { slot:String,ticket:u64,settled:bool,_operation:PhantomData<O>,_serial:PhantomData<Rc<()>> }
-pub enum ImportCall<O:Operation> { Ready(CallResult<O::Response,O::Error>),Pending(PendingImport<O>) }
-pub enum ImportPoll<T,E> { Pending,Ready(CallResult<T,E>),Cancelled,Draining }
-fn import_result<O:Operation>(status:u32,value:WireValue)->Result<CallResult<O::Response,O::Error>,Failure> {
-    Ok(match status { 0=>Ok(O::Response::from_value(value)?),1=>Err(CallError::Domain(O::Error::from_value(value)?)),2=>Err(CallError::Kernel(Failure::from_value(value)?)),_=>return Err(Failure::new(Code::AbiIncompatible,"invalid imported result")) })
+/// Opaque pending child tied to its named import and native parent.
+/// It cannot be serialized as an authority-bearing value or sent to another thread.
+/// ```compile_fail
+/// use phenix_sdk::{Operation, PendingImport, Portable};
+/// fn require_portable<T: Portable>() {}
+/// fn check<O: Operation>() { require_portable::<PendingImport<O>>(); }
+/// ```
+/// ```compile_fail
+/// use phenix_sdk::{Operation, PendingImport};
+/// fn require_send<T: Send>() {}
+/// fn check<O: Operation>() { require_send::<PendingImport<O>>(); }
+/// ```
+pub struct PendingImport<O: Operation> {
+    slot: String,
+    ticket: u64,
+    settled: bool,
+    _operation: PhantomData<O>,
+    _serial: PhantomData<Rc<()>>,
+}
+pub enum ImportCall<O: Operation> {
+    Ready(CallResult<O::Response, O::Error>),
+    Pending(PendingImport<O>),
+}
+pub enum ImportPoll<T, E> {
+    Pending,
+    Ready(CallResult<T, E>),
+    Cancelled,
+    Draining,
+}
+fn import_result<O: Operation>(
+    status: u32,
+    value: WireValue,
+) -> Result<CallResult<O::Response, O::Error>, Failure> {
+    Ok(match status {
+        0 => Ok(O::Response::from_value(value)?),
+        1 => Err(CallError::Domain(O::Error::from_value(value)?)),
+        2 => Err(CallError::Kernel(Failure::from_value(value)?)),
+        _ => {
+            return Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported result",
+            ))
+        }
+    })
 }
 impl Host<'_> {
-    pub fn resource(&self)->Result<Option<String>,Failure> {
-        let (status,value)=self.raw("",crate::RESOURCE_CONTEXT,WireValue::Null)?;
-        match (status,value) { (0,WireValue::Null)=>Ok(None),(0,WireValue::String(id)) if crate::identifier(&id)=>Ok(Some(id)),(2,value)=>Err(Failure::from_value(value)?),_=>Err(invalid()) }
+    pub fn resource(&self) -> Result<Option<String>, Failure> {
+        let (status, value) = self.raw("", crate::RESOURCE_CONTEXT, WireValue::Null)?;
+        match (status, value) {
+            (0, WireValue::Null) => Ok(None),
+            (0, WireValue::String(id)) if crate::identifier(&id) => Ok(Some(id)),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(invalid()),
+        }
     }
-    pub fn invoke_scoped<O:Operation>(&self,slot:&str,scope:&crate::ScopedRequest,request:&O::Request)->CallResult<O::Response,O::Error> {
-        let bytes=scope.encode(O::KEY,request.to_value().encode()?)?;
-        let (status,value)=self.raw(slot,crate::SCOPED_IMPORT,WireValue::decode(&bytes)?)?;
-        import_result::<O>(status,value)?
+    pub fn invoke_scoped<O: Operation>(
+        &self,
+        slot: &str,
+        scope: &crate::ScopedRequest,
+        request: &O::Request,
+    ) -> CallResult<O::Response, O::Error> {
+        let bytes = scope.encode(O::KEY, request.to_value().encode()?)?;
+        let (status, value) = self.raw(slot, crate::SCOPED_IMPORT, WireValue::decode(&bytes)?)?;
+        import_result::<O>(status, value)?
     }
-    fn pending_command(&self,slot:&str,key:&str,value:WireValue)->Result<(u32,WireValue),Failure> {
-        let (status,value)=self.raw(slot,key,value)?;
-        if status==5 && value!=WireValue::Null { return Err(Failure::from_value(value)?); }
-        Ok((status,value))
+    fn pending_command(
+        &self,
+        slot: &str,
+        key: &str,
+        value: WireValue,
+    ) -> Result<(u32, WireValue), Failure> {
+        let (status, value) = self.raw(slot, key, value)?;
+        if status == 5 && value != WireValue::Null {
+            return Err(Failure::from_value(value)?);
+        }
+        Ok((status, value))
     }
-    pub fn begin<O:Operation>(&self,slot:&str,request:&O::Request)->Result<ImportCall<O>,Failure> {
-        self.begin_command::<O>(slot,"phenix.host.pending.begin.v2",WireValue::map([("operation",WireValue::String(O::KEY.into())),("request",WireValue::Bytes(request.to_value().encode()?))]))
+    pub fn begin<O: Operation>(
+        &self,
+        slot: &str,
+        request: &O::Request,
+    ) -> Result<ImportCall<O>, Failure> {
+        self.begin_command::<O>(
+            slot,
+            "phenix.host.pending.begin.v2",
+            WireValue::map([
+                ("operation", WireValue::String(O::KEY.into())),
+                ("request", WireValue::Bytes(request.to_value().encode()?)),
+            ]),
+        )
     }
-    pub fn begin_scoped<O:Operation>(&self,slot:&str,scope:&crate::ScopedRequest,request:&O::Request)->Result<ImportCall<O>,Failure> {
-        self.begin_command::<O>(slot,"phenix.host.pending.scoped.v2",WireValue::decode(&scope.encode(O::KEY,request.to_value().encode()?)?)?)
+    pub fn begin_scoped<O: Operation>(
+        &self,
+        slot: &str,
+        scope: &crate::ScopedRequest,
+        request: &O::Request,
+    ) -> Result<ImportCall<O>, Failure> {
+        self.begin_command::<O>(
+            slot,
+            "phenix.host.pending.scoped.v2",
+            WireValue::decode(&scope.encode(O::KEY, request.to_value().encode()?)?)?,
+        )
     }
-    fn begin_command<O:Operation>(&self,slot:&str,key:&str,value:WireValue)->Result<ImportCall<O>,Failure> {
-        let (status,value)=self.pending_command(slot,key,value)?;
-        match (status,value) {
-            (3,WireValue::U64(ticket))=>Ok(ImportCall::Pending(PendingImport { slot:slot.into(),ticket,settled:false,_operation:PhantomData,_serial:PhantomData })),
-            (2,value)=>Err(Failure::from_value(value)?),
-            (status,value)=>Ok(ImportCall::Ready(import_result::<O>(status,value)?)),
+    fn begin_command<O: Operation>(
+        &self,
+        slot: &str,
+        key: &str,
+        value: WireValue,
+    ) -> Result<ImportCall<O>, Failure> {
+        let (status, value) = self.pending_command(slot, key, value)?;
+        match (status, value) {
+            (3, WireValue::U64(ticket)) => Ok(ImportCall::Pending(PendingImport {
+                slot: slot.into(),
+                ticket,
+                settled: false,
+                _operation: PhantomData,
+                _serial: PhantomData,
+            })),
+            (2, value) => Err(Failure::from_value(value)?),
+            (status, value) => Ok(ImportCall::Ready(import_result::<O>(status, value)?)),
         }
     }
 }
-impl<O:Operation> PendingImport<O> {
-    fn value(&self)->Result<WireValue,Failure> {
-        if self.settled { return Err(Failure::new(Code::ScopeRejected,"imported result already settled")); }
-        Ok(WireValue::map([("operation",WireValue::String(O::KEY.into())),("ticket",WireValue::U64(self.ticket))]))
+impl<O: Operation> PendingImport<O> {
+    fn value(&self) -> Result<WireValue, Failure> {
+        if self.settled {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "imported result already settled",
+            ));
+        }
+        Ok(WireValue::map([
+            ("operation", WireValue::String(O::KEY.into())),
+            ("ticket", WireValue::U64(self.ticket)),
+        ]))
     }
-    pub fn poll(&mut self,host:&Host<'_>)->Result<ImportPoll<O::Response,O::Error>,Failure> {
-        match host.pending_command(&self.slot,"phenix.host.pending.poll.v2",self.value()?)? {
-            (3,WireValue::Null)=>Ok(ImportPoll::Pending),(5,WireValue::Null)=>Ok(ImportPoll::Draining),
-            (4,WireValue::Null)=>{self.settled=true;Ok(ImportPoll::Cancelled)},
-            (status @ 0..=2,value)=>{self.settled=true;Ok(ImportPoll::Ready(import_result::<O>(status,value)?))},
-            _=>Err(Failure::new(Code::AbiIncompatible,"invalid imported poll reply")),
+    pub fn poll(&mut self, host: &Host<'_>) -> Result<ImportPoll<O::Response, O::Error>, Failure> {
+        match host.pending_command(&self.slot, "phenix.host.pending.poll.v2", self.value()?)? {
+            (3, WireValue::Null) => Ok(ImportPoll::Pending),
+            (5, WireValue::Null) => Ok(ImportPoll::Draining),
+            (4, WireValue::Null) => {
+                self.settled = true;
+                Ok(ImportPoll::Cancelled)
+            }
+            (status @ 0..=2, value) => {
+                self.settled = true;
+                Ok(ImportPoll::Ready(import_result::<O>(status, value)?))
+            }
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported poll reply",
+            )),
         }
     }
-    pub fn cancel(&self,host:&Host<'_>)->Result<bool,Failure> {
-        match host.pending_command(&self.slot,"phenix.host.pending.cancel.v2",self.value()?)? { (0,WireValue::Bool(quiet))=>Ok(quiet),_=>Err(Failure::new(Code::AbiIncompatible,"invalid imported cancel reply")) }
+    pub fn cancel(&self, host: &Host<'_>) -> Result<bool, Failure> {
+        match host.pending_command(&self.slot, "phenix.host.pending.cancel.v2", self.value()?)? {
+            (0, WireValue::Bool(quiet)) => Ok(quiet),
+            _ => Err(Failure::new(
+                Code::AbiIncompatible,
+                "invalid imported cancel reply",
+            )),
+        }
     }
 }

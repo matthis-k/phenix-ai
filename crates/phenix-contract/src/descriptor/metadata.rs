@@ -137,7 +137,11 @@ impl ContractMetadata {
                 let mut f = Fields::new(v)?;
                 let slot = f.text("slot")?;
                 let contract = f.text("contract")?;
-                let provider = match f.take("provider")? { Value::Null=>None,Value::String(id)=>Some(id),_=>return Err(invalid("import provider identity")) };
+                let provider = match f.take("provider")? {
+                    Value::Null => None,
+                    Value::String(id) => Some(id),
+                    _ => return Err(invalid("import provider identity")),
+                };
                 let revision_min = f.number("revision_min")?;
                 let revision_max = f.number("revision_max")?;
                 let kind = f.text("cardinality")?;
@@ -247,7 +251,10 @@ impl ContractMetadata {
         for slot in &self.requires {
             if !identifier(&slot.slot)
                 || !contract(&slot.contract)
-                || slot.provider.as_ref().is_some_and(|id| !identifier(id) || id=="root")
+                || slot
+                    .provider
+                    .as_ref()
+                    .is_some_and(|id| !identifier(id) || id == "root")
                 || slot.revision_min == 0
                 || slot.revision_max < slot.revision_min
                 || matches!(slot.cardinality, Cardinality::Many { minimum } if minimum > MAX_COUNT as u64)
@@ -304,7 +311,10 @@ impl ContractMetadata {
                 Value::map([
                     ("slot", string(&s.slot)),
                     ("contract", string(&s.contract)),
-                    ("provider", s.provider.as_ref().map_or(Value::Null,|id|string(id))),
+                    (
+                        "provider",
+                        s.provider.as_ref().map_or(Value::Null, |id| string(id)),
+                    ),
                     ("revision_min", Value::U64(s.revision_min)),
                     ("revision_max", Value::U64(s.revision_max)),
                     ("cardinality", string(kind)),

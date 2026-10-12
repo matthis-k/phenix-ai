@@ -1,178 +1,487 @@
 use phenix_artifact::{VerifiedContractPackage, VerifiedPackage};
-use phenix_contract::{identifier, operation_key, property_contract, property_definitions, import_identity, Authority, Cardinality, Code, ContractDefinition, Failure, OperationSchema};
+use phenix_contract::{
+    identifier, import_identity, operation_key, property_contract, property_definitions, Authority,
+    Cardinality, Code, ContractDefinition, Failure, OperationSchema,
+};
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Selection { pub interface: String, pub operation: String, pub provider: String }
-impl Selection { pub fn key(&self) -> String { format!("{}/{}", self.interface, self.operation) } }
+pub struct Selection {
+    pub interface: String,
+    pub operation: String,
+    pub provider: String,
+}
+impl Selection {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.interface, self.operation)
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScopedGrant { pub caller: String, pub interface: String, pub operation: String, pub resources: BTreeSet<String> }
-impl ScopedGrant { pub fn key(&self) -> String { format!("{}/{}", self.interface, self.operation) } }
+pub struct ScopedGrant {
+    pub caller: String,
+    pub interface: String,
+    pub operation: String,
+    pub resources: BTreeSet<String>,
+}
+impl ScopedGrant {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.interface, self.operation)
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Substitution { pub from: String, pub to: String }
+pub struct Substitution {
+    pub from: String,
+    pub to: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SlotBinding { pub caller: String, pub slot: String, pub index: u64, pub provider: String, pub export: String }
+pub struct SlotBinding {
+    pub caller: String,
+    pub slot: String,
+    pub index: u64,
+    pub provider: String,
+    pub export: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Composition {
-    pub format: String, pub artifacts: Vec<String>, pub definitions: Vec<String>, pub entry: Selection,
-    pub slots: Vec<SlotBinding>, pub grants: Vec<ScopedGrant>, pub excluded: BTreeSet<String>,
-    pub substitutions: Vec<Substitution>, pub authority: Authority, pub resource: Option<String>,
+    pub format: String,
+    pub artifacts: Vec<String>,
+    pub definitions: Vec<String>,
+    pub entry: Selection,
+    pub slots: Vec<SlotBinding>,
+    pub grants: Vec<ScopedGrant>,
+    pub excluded: BTreeSet<String>,
+    pub substitutions: Vec<Substitution>,
+    pub authority: Authority,
+    pub resource: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CellOperation { Get, Set, Watch }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum EffectTarget { Native, Cell { property: String, operation: CellOperation } }
-#[derive(Clone, Debug)]
-pub(crate) struct PreparedOperation { pub(crate) schema: OperationSchema, pub(crate) target: EffectTarget }
-pub struct Prepared {
-    pub(crate) packages: BTreeMap<String, VerifiedPackage>, pub(crate) entry: Selection,
-    pub(crate) bindings: BTreeMap<(String, String), String>, pub(crate) grants: BTreeMap<(String, String), BTreeSet<String>>,
-    pub(crate) authority: Authority, pub(crate) resource: Option<String>, pub(crate) slot_counts: BTreeMap<(String, String), u64>,
-    pub(crate) state_identity: Vec<String>, pub(crate) startup_order: Vec<String>,
-    pub(crate) operations: BTreeMap<(String, String), PreparedOperation>, pub(crate) ceilings: BTreeMap<String, BTreeSet<String>>,
+pub(crate) enum CellOperation {
+    Get,
+    Set,
+    Watch,
 }
-fn error(code: Code, message: impl Into<String>) -> Failure { Failure::new(code,message) }
-fn invalid(message: &str) -> Failure { error(Code::DescriptorInvalid,message) }
-type Definitions = BTreeMap<(String,u64),ContractDefinition>;
-fn add_definition(definitions: &mut Definitions, definition: ContractDefinition) -> Result<(),Failure> {
-    let identity=(definition.contract.clone(),definition.revision);
-    if let Some(previous)=definitions.insert(identity,definition.clone()) { if previous!=definition { return Err(invalid("conflicting contract definitions")); } }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EffectTarget {
+    Native,
+    Cell {
+        property: String,
+        operation: CellOperation,
+    },
+}
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedOperation {
+    pub(crate) schema: OperationSchema,
+    pub(crate) target: EffectTarget,
+}
+pub struct Prepared {
+    pub(crate) packages: BTreeMap<String, VerifiedPackage>,
+    pub(crate) entry: Selection,
+    pub(crate) bindings: BTreeMap<(String, String), String>,
+    pub(crate) grants: BTreeMap<(String, String), BTreeSet<String>>,
+    pub(crate) authority: Authority,
+    pub(crate) resource: Option<String>,
+    pub(crate) slot_counts: BTreeMap<(String, String), u64>,
+    pub(crate) state_identity: Vec<String>,
+    pub(crate) startup_order: Vec<String>,
+    pub(crate) operations: BTreeMap<(String, String), PreparedOperation>,
+    pub(crate) ceilings: BTreeMap<String, BTreeSet<String>>,
+}
+fn error(code: Code, message: impl Into<String>) -> Failure {
+    Failure::new(code, message)
+}
+fn invalid(message: &str) -> Failure {
+    error(Code::DescriptorInvalid, message)
+}
+type Definitions = BTreeMap<(String, u64), ContractDefinition>;
+fn add_definition(
+    definitions: &mut Definitions,
+    definition: ContractDefinition,
+) -> Result<(), Failure> {
+    let identity = (definition.contract.clone(), definition.revision);
+    if let Some(previous) = definitions.insert(identity, definition.clone()) {
+        if previous != definition {
+            return Err(invalid("conflicting contract definitions"));
+        }
+    }
     Ok(())
 }
-fn definition<'a>(definitions: &'a Definitions, contract: &str, revision: u64) -> Result<&'a ContractDefinition,Failure> {
-    definitions.get(&(contract.into(),revision)).ok_or_else(||error(Code::MissingBinding,format!("missing contract definition {contract} revision {revision}")))
+fn definition<'a>(
+    definitions: &'a Definitions,
+    contract: &str,
+    revision: u64,
+) -> Result<&'a ContractDefinition, Failure> {
+    definitions
+        .get(&(contract.into(), revision))
+        .ok_or_else(|| {
+            error(
+                Code::MissingBinding,
+                format!("missing contract definition {contract} revision {revision}"),
+            )
+        })
 }
 impl Prepared {
-    pub fn prepare(mut composition: Composition) -> Result<Self,Failure> {
-        if composition.format!="phenix.composition.v2" || !composition.authority.valid() || composition.resource.as_ref().is_some_and(|id|!identifier(id)) {
+    pub fn prepare(mut composition: Composition) -> Result<Self, Failure> {
+        if composition.format != "phenix.composition.v2"
+            || !composition.authority.valid()
+            || composition
+                .resource
+                .as_ref()
+                .is_some_and(|id| !identifier(id))
+        {
             return Err(invalid("unsupported composition or invalid root authority"));
         }
-        if composition.artifacts.len()>phenix_contract::MAX_COUNT || composition.definitions.len()>phenix_contract::MAX_COUNT || composition.slots.len()>phenix_contract::MAX_COUNT || composition.grants.len()>phenix_contract::MAX_COUNT {
+        if composition.artifacts.len() > phenix_contract::MAX_COUNT
+            || composition.definitions.len() > phenix_contract::MAX_COUNT
+            || composition.slots.len() > phenix_contract::MAX_COUNT
+            || composition.grants.len() > phenix_contract::MAX_COUNT
+        {
             return Err(invalid("composition count limit"));
         }
         composition.artifacts.sort();
-        let mut packages=BTreeMap::new();
+        let mut packages = BTreeMap::new();
         for path in &composition.artifacts {
-            let package=VerifiedPackage::verify_trusted_read_only(Path::new(path))?;
-            if packages.insert(package.metadata().plugin.clone(),package).is_some() { return Err(invalid("duplicate selected plugin identity")); }
+            let package = VerifiedPackage::verify_trusted_read_only(Path::new(path))?;
+            if packages
+                .insert(package.metadata().plugin.clone(), package)
+                .is_some()
+            {
+                return Err(invalid("duplicate selected plugin identity"));
+            }
         }
-        for id in &composition.excluded { if !identifier(id) || packages.remove(id).is_none() { return Err(invalid("excluded plugin absent")); } }
-        let mut replacements=BTreeMap::new();
+        for id in &composition.excluded {
+            if !identifier(id) || packages.remove(id).is_none() {
+                return Err(invalid("excluded plugin absent"));
+            }
+        }
+        let mut replacements = BTreeMap::new();
         for substitution in composition.substitutions {
-            if !identifier(&substitution.from) || substitution.from==substitution.to || !packages.contains_key(&substitution.to) || replacements.insert(substitution.from,substitution.to).is_some() { return Err(invalid("invalid or duplicate substitution")); }
+            if !identifier(&substitution.from)
+                || substitution.from == substitution.to
+                || !packages.contains_key(&substitution.to)
+                || replacements
+                    .insert(substitution.from, substitution.to)
+                    .is_some()
+            {
+                return Err(invalid("invalid or duplicate substitution"));
+            }
         }
-        if replacements.values().any(|id|replacements.contains_key(id)) { return Err(invalid("chained substitution")); }
-        let substitute=|id: &str| replacements.get(id).cloned().unwrap_or_else(||id.into());
-        composition.entry.provider=substitute(&composition.entry.provider);
-        let mut definitions=Definitions::new();
-        let mut owners: BTreeSet<_>=packages.keys().cloned().collect();
-        let mut state_identity=BTreeSet::new();
+        if replacements
+            .values()
+            .any(|id| replacements.contains_key(id))
+        {
+            return Err(invalid("chained substitution"));
+        }
+        let substitute = |id: &str| replacements.get(id).cloned().unwrap_or_else(|| id.into());
+        composition.entry.provider = substitute(&composition.entry.provider);
+        let mut definitions = Definitions::new();
+        let mut owners: BTreeSet<_> = packages.keys().cloned().collect();
+        let mut state_identity = BTreeSet::new();
         composition.definitions.sort();
         for path in composition.definitions {
-            let package=VerifiedContractPackage::verify_trusted_read_only(Path::new(&path))?;
-            let metadata=package.metadata();
-            if !owners.insert(metadata.plugin.clone()) { return Err(invalid("duplicate definition package owner")); }
-            state_identity.insert(format!("{}:{}",metadata.plugin,package.package_sha256()));
-            for d in &metadata.definitions { add_definition(&mut definitions,d.clone())?; }
+            let package = VerifiedContractPackage::verify_trusted_read_only(Path::new(&path))?;
+            let metadata = package.metadata();
+            if !owners.insert(metadata.plugin.clone()) {
+                return Err(invalid("duplicate definition package owner"));
+            }
+            state_identity.insert(format!("{}:{}", metadata.plugin, package.package_sha256()));
+            for d in &metadata.definitions {
+                add_definition(&mut definitions, d.clone())?;
+            }
         }
         for package in packages.values() {
-            let metadata=package.metadata();
-            state_identity.insert(format!("{}:{}",metadata.plugin,package.record().descriptor_sha256));
-            for d in metadata.definitions.iter().cloned().chain(property_definitions(metadata)?) { add_definition(&mut definitions,d)?; }
+            let metadata = package.metadata();
+            state_identity.insert(format!(
+                "{}:{}",
+                metadata.plugin,
+                package.record().descriptor_sha256
+            ));
+            for d in metadata
+                .definitions
+                .iter()
+                .cloned()
+                .chain(property_definitions(metadata)?)
+            {
+                add_definition(&mut definitions, d)?;
+            }
         }
-        let mut operations=BTreeMap::<(String,String),PreparedOperation>::new();
-        let mut ceilings=BTreeMap::<String,BTreeSet<String>>::new();
-        for (id,package) in &packages {
-            let metadata=package.metadata();
-            let ceiling=ceilings.entry(id.clone()).or_default();
-            for d in &metadata.definitions { for op in &d.operations { ceiling.insert(format!("{}/{}",d.contract,op.name)); } }
-            for export in &metadata.provides {
-                let d=definition(&definitions,&export.contract,export.revision)?;
+        let mut operations = BTreeMap::<(String, String), PreparedOperation>::new();
+        let mut ceilings = BTreeMap::<String, BTreeSet<String>>::new();
+        for (id, package) in &packages {
+            let metadata = package.metadata();
+            let ceiling = ceilings.entry(id.clone()).or_default();
+            for d in &metadata.definitions {
                 for op in &d.operations {
-                    let key=format!("{}/{}",d.contract,op.name);
+                    ceiling.insert(format!("{}/{}", d.contract, op.name));
+                }
+            }
+            for export in &metadata.provides {
+                let d = definition(&definitions, &export.contract, export.revision)?;
+                for op in &d.operations {
+                    let key = format!("{}/{}", d.contract, op.name);
                     ceiling.insert(key.clone());
-                    if let Some(previous)=operations.insert((id.clone(),key),PreparedOperation { schema:op.clone(),target:EffectTarget::Native }) {
-                        if previous.schema!=*op { return Err(error(Code::SchemaRejected,"conflicting selected operation schemas")); }
+                    if let Some(previous) = operations.insert(
+                        (id.clone(), key),
+                        PreparedOperation {
+                            schema: op.clone(),
+                            target: EffectTarget::Native,
+                        },
+                    ) {
+                        if previous.schema != *op {
+                            return Err(error(
+                                Code::SchemaRejected,
+                                "conflicting selected operation schemas",
+                            ));
+                        }
                     }
                 }
             }
             for property in &metadata.properties {
-                let contract=property_contract(id,&property.id)?;
-                let d=definition(&definitions,&contract,1)?;
+                let contract = property_contract(id, &property.id)?;
+                let d = definition(&definitions, &contract, 1)?;
                 for op in &d.operations {
-                    let operation=match op.name.as_str() { "get"=>CellOperation::Get,"set"=>CellOperation::Set,"watch"=>CellOperation::Watch,_=>return Err(invalid("unknown property operation")) };
-                    let key=format!("{contract}/{}",op.name);
+                    let operation = match op.name.as_str() {
+                        "get" => CellOperation::Get,
+                        "set" => CellOperation::Set,
+                        "watch" => CellOperation::Watch,
+                        _ => return Err(invalid("unknown property operation")),
+                    };
+                    let key = format!("{contract}/{}", op.name);
                     ceiling.insert(key.clone());
-                    if operations.insert((id.clone(),key),PreparedOperation { schema:op.clone(),target:EffectTarget::Cell {property:property.id.clone(),operation} }).is_some() { return Err(invalid("property conflicts with native export")); }
+                    if operations
+                        .insert(
+                            (id.clone(), key),
+                            PreparedOperation {
+                                schema: op.clone(),
+                                target: EffectTarget::Cell {
+                                    property: property.id.clone(),
+                                    operation,
+                                },
+                            },
+                        )
+                        .is_some()
+                    {
+                        return Err(invalid("property conflicts with native export"));
+                    }
                 }
             }
         }
-        let mut selections=BTreeMap::<(String,String),BTreeMap<u64,SlotBinding>>::new();
+        let mut selections = BTreeMap::<(String, String), BTreeMap<u64, SlotBinding>>::new();
         for mut selection in composition.slots {
-            selection.provider=substitute(&selection.provider);
-            if !identifier(&selection.slot) || !identifier(&selection.export) || !packages.get(&selection.caller).is_some_and(|p|p.metadata().requires.iter().any(|r|r.slot==selection.slot)) || selections.entry((selection.caller.clone(),selection.slot.clone())).or_default().insert(selection.index,selection).is_some() {
+            selection.provider = substitute(&selection.provider);
+            if !identifier(&selection.slot)
+                || !identifier(&selection.export)
+                || !packages.get(&selection.caller).is_some_and(|p| {
+                    p.metadata()
+                        .requires
+                        .iter()
+                        .any(|r| r.slot == selection.slot)
+                })
+                || selections
+                    .entry((selection.caller.clone(), selection.slot.clone()))
+                    .or_default()
+                    .insert(selection.index, selection)
+                    .is_some()
+            {
                 return Err(invalid("invalid, undeclared or duplicate slot selection"));
             }
         }
-        let mut bindings=BTreeMap::new();
-        let mut slot_counts=BTreeMap::new();
-        let mut predecessors: BTreeMap<String,BTreeSet<String>>=packages.keys().cloned().map(|id|(id,BTreeSet::new())).collect();
-        for (caller,package) in &packages {
+        let mut bindings = BTreeMap::new();
+        let mut slot_counts = BTreeMap::new();
+        let mut predecessors: BTreeMap<String, BTreeSet<String>> = packages
+            .keys()
+            .cloned()
+            .map(|id| (id, BTreeSet::new()))
+            .collect();
+        for (caller, package) in &packages {
             for import in &package.metadata().requires {
-                let chosen=selections.remove(&(caller.clone(),import.slot.clone())).unwrap_or_default();
-                let count=chosen.len() as u64;
-                let valid=match import.cardinality { Cardinality::One=>count==1,Cardinality::Optional=>count<=1,Cardinality::Many {minimum}=>count>=minimum };
-                if !valid || chosen.keys().copied().ne(0..count) { return Err(error(Code::MissingBinding,"slot cardinality or noncontiguous indices")); }
-                slot_counts.insert((caller.clone(),import.slot.clone()),count);
-                let mut unique=BTreeSet::new();
-                if count==0 {
-                    let d=definition(&definitions,&import.contract,import.revision_min)?;
-                    for op in &d.operations { ceilings.get_mut(caller).unwrap().insert(format!("{}/{}",d.contract,op.name)); }
+                let chosen = selections
+                    .remove(&(caller.clone(), import.slot.clone()))
+                    .unwrap_or_default();
+                let count = chosen.len() as u64;
+                let valid = match import.cardinality {
+                    Cardinality::One => count == 1,
+                    Cardinality::Optional => count <= 1,
+                    Cardinality::Many { minimum } => count >= minimum,
+                };
+                if !valid || chosen.keys().copied().ne(0..count) {
+                    return Err(error(
+                        Code::MissingBinding,
+                        "slot cardinality or noncontiguous indices",
+                    ));
                 }
-                for (index,selected) in chosen {
-                    if import.provider.as_ref().is_some_and(|provider| provider!=&selected.provider) { return Err(error(Code::MissingBinding,"selected provider violates exact import identity")); }
-                    if !unique.insert((selected.provider.clone(),selected.export.clone())) { return Err(invalid("duplicate provider/provide-slot selection")); }
-                    let provider=packages.get(&selected.provider).ok_or_else(||error(Code::MissingBinding,"selected provider absent"))?.metadata();
-                    let (contract,revision)=if let Some(export)=provider.provides.iter().find(|e|e.slot==selected.export) { (export.contract.clone(),export.revision) }
-                    else if let Some(property)=selected.export.strip_prefix("property.").and_then(|id|provider.properties.iter().find(|p|p.id==id)) { (property_contract(&provider.plugin,&property.id)?,1) }
-                    else { return Err(error(Code::MissingBinding,"selected provide slot is absent")); };
-                    if contract!=import.contract || revision<import.revision_min || revision>import.revision_max { return Err(error(Code::SchemaRejected,"slot contract/revision mismatch")); }
-                    let d=definition(&definitions,&contract,revision)?;
-                    let selector=if matches!(import.cardinality,Cardinality::Many {..}) { format!("{}#{index}",import.slot) } else { import.slot.clone() };
+                slot_counts.insert((caller.clone(), import.slot.clone()), count);
+                let mut unique = BTreeSet::new();
+                if count == 0 {
+                    let d = definition(&definitions, &import.contract, import.revision_min)?;
                     for op in &d.operations {
-                        let key=format!("{contract}/{}",op.name);
-                        let prepared=operations.get(&(selected.provider.clone(),key.clone())).ok_or_else(||error(Code::MissingBinding,"selected operation absent"))?;
-                        if prepared.schema!=*op { return Err(error(Code::SchemaRejected,"selected schema mismatch")); }
-                        ceilings.get_mut(caller).unwrap().insert(key.clone());
-                        bindings.insert((caller.clone(),import_identity(&selector,&key)),selected.provider.clone());
-                        if import.cardinality!=Cardinality::Optional && prepared.target==EffectTarget::Native { predecessors.get_mut(caller).unwrap().insert(selected.provider.clone()); }
+                        ceilings
+                            .get_mut(caller)
+                            .unwrap()
+                            .insert(format!("{}/{}", d.contract, op.name));
                     }
-                    state_identity.insert(format!("{caller}:{}:{index}:{}:{}:{revision}",import.slot,selected.provider,selected.export));
+                }
+                for (index, selected) in chosen {
+                    if import
+                        .provider
+                        .as_ref()
+                        .is_some_and(|provider| provider != &selected.provider)
+                    {
+                        return Err(error(
+                            Code::MissingBinding,
+                            "selected provider violates exact import identity",
+                        ));
+                    }
+                    if !unique.insert((selected.provider.clone(), selected.export.clone())) {
+                        return Err(invalid("duplicate provider/provide-slot selection"));
+                    }
+                    let provider = packages
+                        .get(&selected.provider)
+                        .ok_or_else(|| error(Code::MissingBinding, "selected provider absent"))?
+                        .metadata();
+                    let (contract, revision) = if let Some(export) =
+                        provider.provides.iter().find(|e| e.slot == selected.export)
+                    {
+                        (export.contract.clone(), export.revision)
+                    } else if let Some(property) = selected
+                        .export
+                        .strip_prefix("property.")
+                        .and_then(|id| provider.properties.iter().find(|p| p.id == id))
+                    {
+                        (property_contract(&provider.plugin, &property.id)?, 1)
+                    } else {
+                        return Err(error(
+                            Code::MissingBinding,
+                            "selected provide slot is absent",
+                        ));
+                    };
+                    if contract != import.contract
+                        || revision < import.revision_min
+                        || revision > import.revision_max
+                    {
+                        return Err(error(
+                            Code::SchemaRejected,
+                            "slot contract/revision mismatch",
+                        ));
+                    }
+                    let d = definition(&definitions, &contract, revision)?;
+                    let selector = if matches!(import.cardinality, Cardinality::Many { .. }) {
+                        format!("{}#{index}", import.slot)
+                    } else {
+                        import.slot.clone()
+                    };
+                    for op in &d.operations {
+                        let key = format!("{contract}/{}", op.name);
+                        let prepared = operations
+                            .get(&(selected.provider.clone(), key.clone()))
+                            .ok_or_else(|| {
+                                error(Code::MissingBinding, "selected operation absent")
+                            })?;
+                        if prepared.schema != *op {
+                            return Err(error(Code::SchemaRejected, "selected schema mismatch"));
+                        }
+                        ceilings.get_mut(caller).unwrap().insert(key.clone());
+                        bindings.insert(
+                            (caller.clone(), import_identity(&selector, &key)),
+                            selected.provider.clone(),
+                        );
+                        if import.cardinality != Cardinality::Optional
+                            && prepared.target == EffectTarget::Native
+                        {
+                            predecessors
+                                .get_mut(caller)
+                                .unwrap()
+                                .insert(selected.provider.clone());
+                        }
+                    }
+                    state_identity.insert(format!(
+                        "{caller}:{}:{index}:{}:{}:{revision}",
+                        import.slot, selected.provider, selected.export
+                    ));
                 }
             }
         }
-        let startup_order=crate::dag::order(&predecessors).map_err(|cycle|error(Code::MissingBinding,format!("required dependency cycle: {}",cycle.join(" -> "))))?;
-        let exports=|key:&str| operations.keys().any(|(_,operation)|operation==key);
-        let mut grants=BTreeMap::new();
+        let startup_order = crate::dag::order(&predecessors).map_err(|cycle| {
+            error(
+                Code::MissingBinding,
+                format!("required dependency cycle: {}", cycle.join(" -> ")),
+            )
+        })?;
+        let exports = |key: &str| operations.keys().any(|(_, operation)| operation == key);
+        let mut grants = BTreeMap::new();
         for grant in composition.grants {
-            let key=grant.key();
-            if !operation_key(&key) || !exports(&key) || grant.resources.iter().any(|id|!identifier(id)) || (grant.caller!="root" && !ceilings.get(&grant.caller).is_some_and(|ceiling|ceiling.contains(&key))) || grants.insert((grant.caller,key),grant.resources).is_some() { return Err(invalid("invalid or duplicate operation grant")); }
+            let key = grant.key();
+            if !operation_key(&key)
+                || !exports(&key)
+                || grant.resources.iter().any(|id| !identifier(id))
+                || (grant.caller != "root"
+                    && !ceilings
+                        .get(&grant.caller)
+                        .is_some_and(|ceiling| ceiling.contains(&key)))
+                || grants
+                    .insert((grant.caller, key), grant.resources)
+                    .is_some()
+            {
+                return Err(invalid("invalid or duplicate operation grant"));
+            }
         }
-        if composition.authority.operations.iter().any(|key|!exports(key)) { return Err(invalid("root ceiling operation absent")); }
-        let prepared=Self { packages,entry:composition.entry,bindings,grants,authority:composition.authority,resource:composition.resource,slot_counts,state_identity:state_identity.into_iter().collect(),startup_order,operations,ceilings };
+        if composition
+            .authority
+            .operations
+            .iter()
+            .any(|key| !exports(key))
+        {
+            return Err(invalid("root ceiling operation absent"));
+        }
+        let prepared = Self {
+            packages,
+            entry: composition.entry,
+            bindings,
+            grants,
+            authority: composition.authority,
+            resource: composition.resource,
+            slot_counts,
+            state_identity: state_identity.into_iter().collect(),
+            startup_order,
+            operations,
+            ceilings,
+        };
         prepared.check_entry(&prepared.entry)?;
-        if !prepared.grants.contains_key(&("root".into(),prepared.entry.key())) { return Err(error(Code::Denied,"default root entry lacks admission grant")); }
+        if !prepared
+            .grants
+            .contains_key(&("root".into(), prepared.entry.key()))
+        {
+            return Err(error(
+                Code::Denied,
+                "default root entry lacks admission grant",
+            ));
+        }
         Ok(prepared)
     }
-    pub(crate) fn permits(&self,provider:&str,key:&str)->bool { self.ceilings.get(provider).is_some_and(|ceiling|ceiling.contains(key)) }
-    pub(crate) fn operation(&self,selection:&Selection)->Result<&PreparedOperation,Failure> { self.operations.get(&(selection.provider.clone(),selection.key())).ok_or_else(||error(Code::MissingBinding,"operation is not a prepared export")) }
-    pub(crate) fn check_entry(&self,entry:&Selection)->Result<(),Failure> { if !operation_key(&entry.key()) { return Err(error(Code::MissingBinding,"invalid root entry")); } self.operation(entry).map(|_|()) }
-    pub fn inspect(&self)->serde_json::Value {
+    pub(crate) fn permits(&self, provider: &str, key: &str) -> bool {
+        self.ceilings
+            .get(provider)
+            .is_some_and(|ceiling| ceiling.contains(key))
+    }
+    pub(crate) fn operation(&self, selection: &Selection) -> Result<&PreparedOperation, Failure> {
+        self.operations
+            .get(&(selection.provider.clone(), selection.key()))
+            .ok_or_else(|| error(Code::MissingBinding, "operation is not a prepared export"))
+    }
+    pub(crate) fn check_entry(&self, entry: &Selection) -> Result<(), Failure> {
+        if !operation_key(&entry.key()) {
+            return Err(error(Code::MissingBinding, "invalid root entry"));
+        }
+        self.operation(entry).map(|_| ())
+    }
+    pub fn inspect(&self) -> serde_json::Value {
         serde_json::json!({"format":"phenix.inspect.v2","plugins":self.packages.iter().map(|(id,p)|serde_json::json!({"id":id,"artifact_sha256":p.record().artifact_sha256,"descriptor_sha256":p.record().descriptor_sha256,"offline_verified":true,"abi_negotiated":false})).collect::<Vec<_>>(),"entry":self.entry,
         "bindings":self.bindings.iter().map(|((caller,key),provider)|serde_json::json!({"caller":caller,"operation":key,"provider":provider})).collect::<Vec<_>>(),"authority":self.authority,"resource":self.resource,
         "lifecycle":{"startup_order":self.startup_order,"stopped":false,"stop_failures":[]},"state":{"definition_inputs":self.state_identity,"slots":self.slot_counts.iter().map(|((caller,slot),count)|serde_json::json!({"caller":caller,"slot":slot,"count":count})).collect::<Vec<_>>()},
