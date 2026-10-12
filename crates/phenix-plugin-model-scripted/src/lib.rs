@@ -1,7 +1,7 @@
 //! Deterministic model provider for the public Basic Model contract.
 //! All behavior is derived from the request's transcript; no hidden turn state.
 use phenix_basic_contracts::{
-    error, session_resource, BasicError, ErrorCode, Message, ModelReply, ModelRequest, Role,
+    error, session_resource, BasicError, ErrorCode, ModelReply, ModelRequest, Role,
     ToolCall, Usage,
 };
 use std::collections::BTreeSet;
@@ -153,7 +153,7 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_basic_contracts::{Limits, ToolInfo};
+    use phenix_basic_contracts::{Limits, Message, ToolInfo};
 
     fn request(text: &str) -> ModelRequest {
         ModelRequest {
