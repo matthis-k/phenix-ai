@@ -31,7 +31,10 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
     }
     let offset = if let Some(cursor) = &request.cursor {
         if cursor.query != request.query || cursor.revision != REVISION {
-            return Err(error(ErrorCode::InvalidCursor, "stale or foreign query cursor"));
+            return Err(error(
+                ErrorCode::InvalidCursor,
+                "stale or foreign query cursor",
+            ));
         }
         usize::try_from(cursor.offset)
             .map_err(|_| error(ErrorCode::InvalidCursor, "invalid cursor offset"))?
@@ -84,8 +87,7 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
 mod plugin {
     use super::*;
     use phenix_basic_contracts::{
-        BasicError, Scope, ToolCatalog, ToolExecute, ToolQuery, ToolPage, ToolRequest,
-        ToolResult,
+        BasicError, Scope, ToolCatalog, ToolExecute, ToolPage, ToolQuery, ToolRequest, ToolResult,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -112,32 +114,37 @@ mod plugin {
     ) -> CallResult<ToolResult, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         if request.run.is_empty() {
-            return Err(CallError::Domain(error(ErrorCode::InvalidInput, "missing run")));
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "missing run",
+            )));
         }
         // Unknown tools and invalid JSON fail without consuming a tool effect.
         if !NAMES.contains(&request.call.tool.as_str()) {
-            return Err(CallError::Domain(error(ErrorCode::NotFound, "tool not found")));
+            return Err(CallError::Domain(error(
+                ErrorCode::NotFound,
+                "tool not found",
+            )));
         }
         let _: String = serde_json::from_str(&request.call.arguments)
             .map_err(|_| CallError::Domain(error(ErrorCode::InvalidInput, "invalid tool JSON")))?;
         if request.call.id.is_empty() {
-            return Err(CallError::Domain(error(ErrorCode::InvalidInput, "missing call id")));
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "missing call id",
+            )));
         }
         let counter = state.counts.entry(request.session.clone()).or_default();
-        *counter = counter
-            .checked_add(1)
-            .ok_or_else(|| CallError::Domain(error(ErrorCode::ToolFailed, "call count overflow")))?;
+        *counter = counter.checked_add(1).ok_or_else(|| {
+            CallError::Domain(error(ErrorCode::ToolFailed, "call count overflow"))
+        })?;
         super::execute(&request.call)
             .map(|text| ToolResult { text })
             .map_err(CallError::Domain)
     }
 
     #[provide(ToolExecute::count)]
-    fn count(
-        state: &mut State,
-        host: &Host<'_>,
-        request: Scope,
-    ) -> CallResult<u64, BasicError> {
+    fn count(state: &mut State, host: &Host<'_>, request: Scope) -> CallResult<u64, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         Ok(*state.counts.get(&request.session).unwrap_or(&0))
     }
@@ -162,15 +169,26 @@ mod tests {
         assert_eq!(first.tools[0].id, "fail");
         assert_eq!(first.revision, 1);
         let next = first.next.unwrap();
-        assert_eq!(catalog(&page("", Some(next.clone()), 1)).unwrap().tools[0].id, "length");
         assert_eq!(
-            catalog(&page("up", Some(next.clone()), 1)).unwrap_err().code,
+            catalog(&page("", Some(next.clone()), 1)).unwrap().tools[0].id,
+            "length"
+        );
+        assert_eq!(
+            catalog(&page("up", Some(next.clone()), 1))
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidCursor
         );
         let mut stale = next;
         stale.revision = 0;
-        assert_eq!(catalog(&page("", Some(stale), 1)).unwrap_err().code, ErrorCode::InvalidCursor);
-        assert_eq!(catalog(&page("", None, 0)).unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            catalog(&page("", Some(stale), 1)).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
+        assert_eq!(
+            catalog(&page("", None, 0)).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
     }
 
     #[test]
