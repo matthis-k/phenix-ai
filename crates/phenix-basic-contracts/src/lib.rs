@@ -55,6 +55,7 @@ pub struct Scope {
     pub session: String,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Portable, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Limits {
     pub model_turns: Option<u64>,
     pub tool_calls: Option<u64>,
