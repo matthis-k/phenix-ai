@@ -1,7 +1,7 @@
 //! ACP v1 turn-codec conformance through native selected Frontend.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, ErrorCode, Event, EventKind, PromptSubmitted, RenderRequest,
-    Scope, Submission,
+    BasicError, ClientInput, ErrorCode, Event, EventKind, PromptSubmitted, RenderRequest, Scope,
+    Submission,
 };
 use phenix_contract::{Authority, Blob, Portable};
 use phenix_kernel::{
@@ -39,35 +39,56 @@ fn main() {
         definitions: vec![args[2].clone()],
         entry: selection("decode"),
         slots: vec![],
-        grants: ops.into_iter().map(|op| ScopedGrant {
-            caller: "root".into(),
-            interface: "phenix.basic.frontend@1".into(),
-            operation: op.into(),
-            resources: resources.clone(),
-        }).collect(),
+        grants: ops
+            .into_iter()
+            .map(|op| ScopedGrant {
+                caller: "root".into(),
+                interface: "phenix.basic.frontend@1".into(),
+                operation: op.into(),
+                resources: resources.clone(),
+            })
+            .collect(),
         excluded: BTreeSet::new(),
         substitutions: vec![],
         authority: Authority {
-            operations: ops.into_iter().map(|op| format!("phenix.basic.frontend@1/{op}")).collect(),
+            operations: ops
+                .into_iter()
+                .map(|op| format!("phenix.basic.frontend@1/{op}"))
+                .collect(),
             resources,
         },
         resource: Some("phenix.session.s1".into()),
-    }).unwrap().load().unwrap();
+    })
+    .unwrap()
+    .load()
+    .unwrap();
 
     let message = r#"{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"hello"}]}}"#;
-    let accepted: Submission = call(&kernel, "decode", ClientInput {
-        session: "s1".into(),
-        line: message.into(),
-    }).unwrap().unwrap();
+    let accepted: Submission = call(
+        &kernel,
+        "decode",
+        ClientInput {
+            session: "s1".into(),
+            line: message.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(accepted.action, "phenix.basic.submit");
-    let prompt: PromptSubmitted =
-        phenix_basic_contracts::decode(&accepted.payload).unwrap();
+    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
     assert_eq!(prompt.text, "hello");
     assert_eq!(prompt.session, "s1");
-    let cancel: Submission = call(&kernel, "decode", ClientInput {
-        session: "s1".into(),
-        line: r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}"#.into(),
-    }).unwrap().unwrap();
+    let cancel: Submission = call(
+        &kernel,
+        "decode",
+        ClientInput {
+            session: "s1".into(),
+            line: r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}"#
+                .into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
     assert!(cancel.cancel);
     assert_eq!(call::<Submission>(
         &kernel, "decode", ClientInput {
@@ -96,26 +117,47 @@ fn main() {
                 data: Blob(vec![]),
             }],
         },
-    ).unwrap().unwrap();
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(output.len(), 1);
     let notification: serde_json::Value = serde_json::from_str(&output[0]).unwrap();
     assert_eq!(notification["method"], "session/update");
     assert_eq!(notification["params"]["sessionId"], "s1");
-    assert_eq!(notification["params"]["update"]["sessionUpdate"], "agent_message_chunk");
-    assert_eq!(notification["params"]["update"]["content"]["text"], "mock:hello");
-    assert_eq!(call::<()>(
-        &kernel, "cancel", Scope { session: "s1".into() }
-    ).unwrap().unwrap_err().code, ErrorCode::InvalidInput);
+    assert_eq!(
+        notification["params"]["update"]["sessionUpdate"],
+        "agent_message_chunk"
+    );
+    assert_eq!(
+        notification["params"]["update"]["content"]["text"],
+        "mock:hello"
+    );
+    assert_eq!(
+        call::<()>(
+            &kernel,
+            "cancel",
+            Scope {
+                session: "s1".into()
+            }
+        )
+        .unwrap()
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
 
     let output_dir = Path::new(&args[3]);
     fs::create_dir_all(output_dir).unwrap();
-    fs::write(output_dir.join("acp-codec.json"), serde_json::to_vec_pretty(
-        &serde_json::json!({
+    fs::write(
+        output_dir.join("acp-codec.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
             "format": "phenix.f2.acp-codec.v1",
             "cases": ["acp-v1-text-prompt", "cancel-notification",
                 "session-scope-denial", "unsupported-content-rejection",
                 "session-update-notification", "cancel-no-fake-success"],
             "connection_lifecycle_or_streaming_verified": false
-        })
-    ).unwrap()).unwrap();
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }
