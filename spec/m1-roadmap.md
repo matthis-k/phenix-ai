@@ -1,6 +1,6 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 definition contribution follow-up tested locally; G3 serial CI passed; G4 pending
+Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 accepted at fbe55d3d; G3 serial CI passed; G4 pending
 Updated: 2026-10-12
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
@@ -251,11 +251,11 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | Stage | Depends on | Concrete ownership | Acceptance | State |
 | --- | --- | --- | --- | --- |
 | S3b | S3a | `phenix-macros/src/`, `phenix-sdk/src/live.rs`, `phenix-contract/src/descriptor/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/native.rs`, `pending.rs`, `runtime.rs`, external examples | SDK annotations generate complete native metadata, fields, typed imports and ABI 3 hooks; independently built provider/decorator/field-only/pending caller | [x] PROVEN at `75a255b9`, CI 38205255204 |
-| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | [ ] IMPLEMENTED, NOT ACCEPTED (#782): shipping CI 38220130161 passed at `1615ed52`; definition-only events/actions, owner tampering and native dormant-node gates now tested on impl/m1-graph-definition-packages; follow-up CI pending |
-| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [ ] IMPLEMENTED, NOT ACCEPTED (#782): native prepared graph and shipping CI passed; definition-only contribution and schema/write/owner negative gates now tested locally; follow-up CI pending |
-| G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant follow-up CI pending |
+| G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
+| G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
+| G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant CI 38231650549 passed; generation-aware admission context remains |
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation tested locally on impl/m1-pending-graph; live state triggers and full shipping evidence remain |
-| B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] NOT STARTED |
+| B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] NOT STARTED |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] NOT STARTED |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] NOT STARTED |
@@ -421,7 +421,7 @@ does not block C and that an ordering edge alone does not activate D. Schema and
 write-grant negatives remain in the same gate. The
 [frozen definition contract](m1-definition-graph-contract.md) owns this scope.
 Local native execution, Rust workspace tests, Clippy and formatting pass.
-Follow-up shipping CI remains required before G1/G2/G3 stage acceptance.
+Full follow-up shipping CI 38231650549 passed at `fbe55d3d`; the downloaded artifact binds 30 native cases to that checkout. G1/G2 are accepted. G3 serial semantics are proven; admitted generation context remains before its full stage closure.
 
 ### Pending graph coordination follow-up
 
@@ -439,3 +439,19 @@ update and ticket release. Domain and kernel failures in B cancel pending A.
 The [frozen pending contract](m1-pending-graph-contract.md) owns this scope. Local
 workspace tests, Clippy and the SDK-only native gate pass. Full follow-up shipping
 CI and live committed-state triggers remain before G4 acceptance.
+
+### Basic contracts
+
+`phenix-basic-contracts` defines eleven provider/frontend contracts and the
+`phenix.basic.submit` prompt action in one definition-only package. All schemas
+derive from Rust types. Model requests carry full messages, assistant call IDs,
+tool results, tools, skills, context and caller-selected limits. Storage uses
+revision-checked transactions; journal/query, session replay and frontend types
+remain plugin-owned. The shared Blob SDK type uses the existing byte value.
+
+The Nix definition package builds from public SDK and Basic contracts only. The
+existing verifier checks it without loading code. Definition packaging now uses
+one shared Nix helper for the authored, graph and Basic packages. Shipping's
+required evidence set includes the Basic contract gate. The
+[Basic product contract](basic-agent-contract.md) owns provider semantics. Runtime
+providers and the composed agent are the next implementation stages.

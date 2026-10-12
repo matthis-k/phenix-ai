@@ -105,6 +105,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-basic-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
+]
+
+[[package]]
 name = "phenix-conformance"
 version = "0.1.0"
 dependencies = [

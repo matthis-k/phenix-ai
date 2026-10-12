@@ -149,15 +149,35 @@
         doCheck = false;
         installPhase = "mkdir -p $out/bin; cp target/*/release/example-graph-contracts $out/bin/";
       };
-      graphDefinitions = pkgs.runCommand "phenix-graph-definitions" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      definitionPackage = name: emitter: hasGraph:
+        pkgs.runCommand name { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          mkdir -p $out
+          ${emitter} $out/descriptor.bin ${pkgs.lib.optionalString hasGraph "$out/graph.bin"}
+          python - "$out" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          out = Path(sys.argv[1])
+          digest = lambda name: hashlib.sha256((out / name).read_bytes()).hexdigest()
+          record = dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest("descriptor.bin"))
+          if (out / "graph.bin").exists():
+              record["graph"] = dict(file="graph.bin", sha256=digest("graph.bin"))
+          (out / "package.json").write_text(json.dumps(record))
+          PY
+          ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
+        '';
+      graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts" true;
+      basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
+      basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
+      basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" true;
+      basicContractsCheck = pkgs.runCommand "phenix-basic-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
-        ${graphDefinitionsBinary}/bin/example-graph-contracts $out/descriptor.bin $out/graph.bin
-        python - "$out" <<'PY'
-        import hashlib, json, sys
+        python - "${basicDefinitions}/inspection.json" "$out" <<'PY'
+        import json, sys
         from pathlib import Path
-        out = Path(sys.argv[1])
-        digest = lambda name: hashlib.sha256((out / name).read_bytes()).hexdigest()
-        (out / "package.json").write_text(json.dumps(dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest("descriptor.bin"), graph=dict(file="graph.bin", sha256=digest("graph.bin")))))
+        report = json.load(open(sys.argv[1]))
+        assert len(report["definitions"]) == 11
+        assert report["plugin"] == "phenix.basic-contracts"
+        (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
@@ -184,18 +204,7 @@
           cp target/*/release/example-authoring-api $out/bin/
         '';
       };
-      authoredDefinitions = pkgs.runCommand "phenix-authored-definitions" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-        mkdir -p $out
-        ${authoredApi}/bin/example-authoring-api $out/descriptor.bin
-        python - "$out" <<'PY'
-        import hashlib, json, sys
-        from pathlib import Path
-        out = Path(sys.argv[1])
-        digest = hashlib.sha256((out / "descriptor.bin").read_bytes()).hexdigest()
-        (out / "package.json").write_text(json.dumps(dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest)))
-        PY
-        ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
-      '';
+      authoredDefinitions = definitionPackage "phenix-authored-definitions" "${authoredApi}/bin/example-authoring-api" false;
       authoringCheck = pkgs.runCommand "phenix-m1-native-authoring" { } ''
         ${conformanceBinary}/bin/phenix-m1-authoring ${authoredProvider} ${authoredClient} ${authoredField} ${authoredDefinitions} $out
       '';
@@ -517,6 +526,7 @@
         ln -s ${metadataStateCheck} $out/metadata-state
         ln -s ${authoringCheck} $out/authoring
         ln -s ${graphCheck} $out/graph
+        ln -s ${basicContractsCheck} $out/basic-contracts
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -534,6 +544,7 @@
         example-consumer = consumer;
         phenix-m1-conformance = release;
         phenix-m1-release = release;
+        phenix-basic-contracts = basicDefinitions;
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
@@ -559,6 +570,7 @@
       checks.${system} = {
         m1-native-authoring = authoringCheck;
         m1-graph = graphCheck;
+        basic-contracts = basicContractsCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;

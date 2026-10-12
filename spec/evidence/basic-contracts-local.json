@@ -1,0 +1,22 @@
+{
+  "base_commit": "98a1790e24c8de5687ee86826d54e27b1a406846",
+  "definitions": [
+    "phenix.basic.catalog@1",
+    "phenix.basic.context@1",
+    "phenix.basic.frontend@1",
+    "phenix.basic.input@1",
+    "phenix.basic.journal@1",
+    "phenix.basic.model@1",
+    "phenix.basic.output@1",
+    "phenix.basic.session@1",
+    "phenix.basic.skills@1",
+    "phenix.basic.storage@1",
+    "phenix.basic.tool@1"
+  ],
+  "descriptor_sha256": "d097cb7077c85d74374b630f785ff39d9b1aafd7207f07e0cefe87b796e96073",
+  "format": "phenix.basic.b1-local.v1",
+  "graph_sha256": "9b6ec585ba409207611d6ab7254d8afec9603cc7ca76315129c2d10bdc779bae",
+  "package_sha256": "fd159dc46125933a8ec38943b7a67e39d7b05bcad4d4f6331b3a9545ce1d35fa",
+  "sdk_only_build": true,
+  "shipping_ci_proven": false
+}

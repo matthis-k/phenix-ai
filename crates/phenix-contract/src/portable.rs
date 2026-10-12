@@ -1,4 +1,21 @@
 use crate::{Code, Failure, Portable, StaticSchema, Value as WireValue};
+
+/// Canonical opaque bytes, distinct from a portable list of scalar values.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Blob(pub Vec<u8>);
+impl Portable for Blob {
+    const SCHEMA: StaticSchema = StaticSchema::Bytes;
+    fn to_value(&self) -> WireValue {
+        WireValue::Bytes(self.0.clone())
+    }
+    fn from_value(value: WireValue) -> Result<Self, Failure> {
+        if let WireValue::Bytes(bytes) = value {
+            Ok(Self(bytes))
+        } else {
+            Err(invalid())
+        }
+    }
+}
 fn invalid() -> Failure {
     Failure::new(Code::SchemaRejected, "invalid typed portable value")
 }
