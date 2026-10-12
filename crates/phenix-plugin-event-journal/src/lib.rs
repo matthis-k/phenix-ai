@@ -35,10 +35,7 @@ pub fn append_checked(
     validate(existing, &request.session)?;
     let mut updated = existing.to_vec();
     for event in &request.events {
-        if event.sequence != 0
-            || event.session != request.session
-            || event.run.is_empty()
-        {
+        if event.sequence != 0 || event.session != request.session || event.run.is_empty() {
             return Err(error(
                 ErrorCode::InvalidInput,
                 "invalid submitted journal event",
@@ -59,9 +56,14 @@ pub fn append_checked(
 pub fn page_from(events: &[Event], query: &JournalQuery) -> Result<EventPage, BasicError> {
     validate(events, &query.session)?;
     if query.limit == 0 {
-        return Err(error(ErrorCode::InvalidInput, "page limit must be positive"));
+        return Err(error(
+            ErrorCode::InvalidInput,
+            "page limit must be positive",
+        ));
     }
-    let start = usize::try_from(query.after).unwrap_or(usize::MAX).min(events.len());
+    let start = usize::try_from(query.after)
+        .unwrap_or(usize::MAX)
+        .min(events.len());
     let limit = usize::try_from(query.limit).unwrap_or(usize::MAX);
     let end = start.saturating_add(limit).min(events.len());
     Ok(EventPage {
@@ -103,9 +105,7 @@ mod plugin {
                 record.revision,
                 decode(&record.data).map_err(|_| CallError::Domain(storage_error()))?,
             )),
-            Err(CallError::Domain(error)) if error.code == ErrorCode::NotFound => {
-                Ok((0, vec![]))
-            }
+            Err(CallError::Domain(error)) if error.code == ErrorCode::NotFound => Ok((0, vec![])),
             Err(error) => Err(error),
         }
     }
@@ -181,52 +181,94 @@ mod tests {
             events: vec![event("s1", "r1", "one"), event("s1", "r1", "two")],
         };
         let events = append_checked(&[], &first).unwrap();
-        assert_eq!(events.iter().map(|e| e.sequence).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+            [1, 2]
+        );
         let next = JournalAppend {
             session: "s1".into(),
             events: vec![event("s1", "r2", "three")],
         };
         let events = append_checked(&events, &next).unwrap();
-        let a = page_from(&events, &JournalQuery {
-            session: "s1".into(),
-            after: 0,
-            limit: 2,
-        })
+        let a = page_from(
+            &events,
+            &JournalQuery {
+                session: "s1".into(),
+                after: 0,
+                limit: 2,
+            },
+        )
         .unwrap();
-        let b = page_from(&events, &JournalQuery {
-            session: "s1".into(),
-            after: 0,
-            limit: 1,
-        })
+        let b = page_from(
+            &events,
+            &JournalQuery {
+                session: "s1".into(),
+                after: 0,
+                limit: 1,
+            },
+        )
         .unwrap();
         assert_eq!(a.events.len(), 2);
         assert_eq!(a.next, 2);
         assert_eq!(b.events.len(), 1);
         assert_eq!(b.next, 1);
-        assert_eq!(page_from(&events, &JournalQuery {
-            session: "s1".into(),
-            after: a.next,
-            limit: 2,
-        }).unwrap().events[0].text, "three");
+        assert_eq!(
+            page_from(
+                &events,
+                &JournalQuery {
+                    session: "s1".into(),
+                    after: a.next,
+                    limit: 2,
+                }
+            )
+            .unwrap()
+            .events[0]
+                .text,
+            "three"
+        );
     }
 
     #[test]
     fn reject_cross_session_events_and_corrupt_persisted_sequences() {
         let mut item = event("s2", "run", "wrong");
-        assert_eq!(append_checked(&[], &JournalAppend {
-            session: "s1".into(),
-            events: vec![item.clone()],
-        }).unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            append_checked(
+                &[],
+                &JournalAppend {
+                    session: "s1".into(),
+                    events: vec![item.clone()],
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
         item.session = "s1".into();
         item.sequence = 7;
-        assert_eq!(append_checked(&[], &JournalAppend {
-            session: "s1".into(),
-            events: vec![item.clone()],
-        }).unwrap_err().code, ErrorCode::InvalidInput);
-        assert_eq!(page_from(&[item], &JournalQuery {
-            session: "s1".into(),
-            after: 0,
-            limit: 1,
-        }).unwrap_err().code, ErrorCode::StorageFailed);
+        assert_eq!(
+            append_checked(
+                &[],
+                &JournalAppend {
+                    session: "s1".into(),
+                    events: vec![item.clone()],
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            page_from(
+                &[item],
+                &JournalQuery {
+                    session: "s1".into(),
+                    after: 0,
+                    limit: 1,
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::StorageFailed
+        );
     }
 }

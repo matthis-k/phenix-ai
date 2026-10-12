@@ -334,8 +334,10 @@ selected Storage implementation. A restarted provider's first open of a
 previously Running snapshot with unresolved tool calls marks it Indeterminate
 through a CAS transaction. It never silently repeats an indeterminate tool;
 the caller must reconcile its recorded call ID. A native fixture seeds a
-checkpoint in independently packaged Storage to verify the transition,
-stale revisions and cross-session denial.
+checkpoint in independently packaged Storage to verify recovery, stale
+revision rejection and cross-session denial. It also rejects checkpoint
+writes before recovery open and while Indeterminate, then verifies that
+the stored revision and pending calls remain unchanged.
 
 This is not process-restart or SQLite proof: the fixture is volatile and the
 simulated reload seeds the stored checkpoint explicitly. SQLite durability,
