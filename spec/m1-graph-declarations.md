@@ -40,6 +40,11 @@ detection and stable ordering. A missing predecessor is an error. Two nodes
 that write the same state destination must have a transitive order between
 them. Static topological order is diagnostic data, not an execution schedule.
 
+`activation_order` projects the graph onto nodes whose trigger set intersects a
+supplied admitted event set. It removes dormant predecessors before ordering.
+An `after` edge alone never activates its successor. This is a pure planner,
+not the G3 event dispatcher.
+
 `Prepared::compile_graph` resolves each node's operation using the existing
 M1 selected import bindings, operation table and caller grants. The exported
 compiler also accepts a trusted target lookup for isolated tests. Caller
