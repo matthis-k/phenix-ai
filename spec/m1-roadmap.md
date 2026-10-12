@@ -258,7 +258,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: Session, EventJournal and SQLite-backed Storage plugins. A two-process test on impl/m1-basic-storage-sqlite checks persisted checkpoints, journal replay, CAS rollback and interrupted-tool reconciliation. CI, observer offset checkpoint storage and crash/fault-injection acceptance remain open |
-| B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: independently packaged typed tool catalog + executor with resource scoped calls, query-bound cursors, actual native denial test on impl/m1-basic-tools; persistent Skills/Context and B2 storage integration pending |
+| B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] NOT STARTED |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] NOT STARTED |
@@ -381,6 +381,26 @@ conformance fixture**. It does not prove durability, process restart, SQLite
 storage, independent observer checkpoint persistence, or session replay.
 Those are still B2 acceptance requirements. No persistence or journal
 logic enters the kernel.
+
+### B3 persisted skills and context slice
+
+`impl/m1-basic-skills-context` is stacked on the SQLite Storage slice.
+`phenix-plugin-basic-memory` provides the existing typed Skills and Context
+contracts and requires the selected Storage provider. Both contracts can be
+selected independently. The plugin stores declarations under separate
+session-scoped keys, rejects empty or duplicate IDs before writing, verifies
+persisted session identity and propagates CAS conflicts. It does not scan the
+filesystem or assemble model prompts.
+
+The `phenix-b3-memory` gate executes two independent processes against
+one SQLite database. It proves a new session starts empty, skills and context
+survive process restart, unauthorized cross-session changes reject and invalid
+updates leave the stored records unchanged. This is implementation evidence
+until exact-head Nix CI, shipping and negative gates pass.
+
+B3 still needs Basic-agent integration for selected skill/context use, tools
+with durable counts and other Basic parity cases. Optional shell execution is
+a separate plugin and requires a real selected workspace execution provider.
 
 ### B3 native tools slice
 
