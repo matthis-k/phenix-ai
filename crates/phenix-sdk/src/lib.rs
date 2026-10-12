@@ -1,7 +1,7 @@
 pub mod live;
 pub use live::{Host, ImportCall, ImportPoll, PendingImport, PendingResult};
 pub use phenix_contract::*;
-pub use phenix_macros::{contract, plugin, property, Portable};
+pub use phenix_macros::{action, contract, event, plugin, property, Portable};
 #[doc(hidden)]
 pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
