@@ -118,19 +118,40 @@ fn main() {
             arguments: arguments.into(),
         },
     };
-    let uppercase: ToolResult =
-        success(invoke(&kernel, execute, call("c1", "uppercase", r#""hello""#).to_value()).unwrap());
+    let uppercase: ToolResult = success(
+        invoke(
+            &kernel,
+            execute,
+            call("c1", "uppercase", r#""hello""#).to_value(),
+        )
+        .unwrap(),
+    );
     assert_eq!(uppercase.text, "HELLO");
     let length: ToolResult =
         success(invoke(&kernel, execute, call("c2", "length", r#""aß""#).to_value()).unwrap());
     assert_eq!(length.text, "2");
     assert_eq!(
-        domain(invoke(&kernel, execute, call("c3", "fail", r#""hello""#).to_value()).unwrap())
-            .code,
+        domain(
+            invoke(
+                &kernel,
+                execute,
+                call("c3", "fail", r#""hello""#).to_value()
+            )
+            .unwrap()
+        )
+        .code,
         ErrorCode::ToolFailed
     );
     let total: u64 = success(
-        invoke(&kernel, count, Scope { session: "s1".into() }.to_value()).unwrap(),
+        invoke(
+            &kernel,
+            count,
+            Scope {
+                session: "s1".into(),
+            }
+            .to_value(),
+        )
+        .unwrap(),
     );
     assert_eq!(total, 3);
 
@@ -140,14 +161,27 @@ fn main() {
     ] {
         assert_eq!(
             domain(
-                invoke(&kernel, execute, call("invalid", tool, arguments).to_value()).unwrap()
+                invoke(
+                    &kernel,
+                    execute,
+                    call("invalid", tool, arguments).to_value()
+                )
+                .unwrap()
             )
             .code,
             expected
         );
     }
     let after: u64 = success(
-        invoke(&kernel, count, Scope { session: "s1".into() }.to_value()).unwrap(),
+        invoke(
+            &kernel,
+            count,
+            Scope {
+                session: "s1".into(),
+            }
+            .to_value(),
+        )
+        .unwrap(),
     );
     assert_eq!(after, total, "rejected tool caused a side effect");
     let mut cross = call("x1", "uppercase", r#""denied""#);
@@ -157,7 +191,15 @@ fn main() {
         ErrorCode::Denied
     );
     let after_cross: u64 = success(
-        invoke(&kernel, count, Scope { session: "s1".into() }.to_value()).unwrap(),
+        invoke(
+            &kernel,
+            count,
+            Scope {
+                session: "s1".into(),
+            }
+            .to_value(),
+        )
+        .unwrap(),
     );
     assert_eq!(after_cross, total);
     drop(kernel);
@@ -166,13 +208,25 @@ fn main() {
     denied.grants.retain(|grant| grant.operation != "execute");
     let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
     assert_eq!(
-        invoke(&kernel, execute, call("denied", "uppercase", r#""hello""#).to_value())
-            .unwrap_err()
-            .code,
+        invoke(
+            &kernel,
+            execute,
+            call("denied", "uppercase", r#""hello""#).to_value()
+        )
+        .unwrap_err()
+        .code,
         Code::Denied
     );
     let zero: u64 = success(
-        invoke(&kernel, count, Scope { session: "s1".into() }.to_value()).unwrap(),
+        invoke(
+            &kernel,
+            count,
+            Scope {
+                session: "s1".into(),
+            }
+            .to_value(),
+        )
+        .unwrap(),
     );
     assert_eq!(zero, 0, "denied execution reached the plugin");
     fs::write(
