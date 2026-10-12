@@ -47,25 +47,49 @@ fn main() {
     std::env::set_var("PHENIX_GRAPH_CONSTRUCTOR_WITNESS", &witness);
     let packages = args[1..4].to_vec();
     for (index, package) in packages.iter().enumerate() {
-        let loaded = phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(package)).unwrap();
+        let loaded =
+            phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(package)).unwrap();
         let graph = loaded.graph().expect("compiled graph section");
-        assert_eq!(graph.plugin, format!("example.graph-{}", ["a", "b", "c"][index]));
+        assert_eq!(
+            graph.plugin,
+            format!("example.graph-{}", ["a", "b", "c"][index])
+        );
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.events.len(), if index == 0 { 1 } else { 0 });
     }
     let policy = composition(packages);
     let prepared = Prepared::prepare(policy.clone()).unwrap();
-    assert!(!witness.exists(), "offline resolution ran native constructor");
+    assert!(
+        !witness.exists(),
+        "offline resolution ran native constructor"
+    );
     let graph = prepared.compiled_graph().expect("verified graph");
     assert_eq!(graph.nodes.len(), 3);
-    assert_eq!(graph.events[EVENT].payload, phenix_contract::ValueSchema::Struct(
-        std::collections::BTreeMap::from([("text".into(), phenix_contract::ValueSchema::String)])
-    ));
-    assert_eq!(graph.order, ["example.graph-a/a", "example.graph-b/b", "example.graph-c/c"]);
+    assert_eq!(
+        graph.events[EVENT].payload,
+        phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
+            "text".into(),
+            phenix_contract::ValueSchema::String
+        )]))
+    );
+    assert_eq!(
+        graph.order,
+        [
+            "example.graph-a/a",
+            "example.graph-b/b",
+            "example.graph-c/c"
+        ]
+    );
     assert_eq!(graph.predecessors["example.graph-c/c"].len(), 2);
     assert_eq!(
-        graph.activation_order(&BTreeSet::from([EVENT.into()])).unwrap(),
-        ["example.graph-a/a", "example.graph-b/b", "example.graph-c/c"]
+        graph
+            .activation_order(&BTreeSet::from([EVENT.into()]))
+            .unwrap(),
+        [
+            "example.graph-a/a",
+            "example.graph-b/b",
+            "example.graph-c/c"
+        ]
     );
     assert_eq!(prepared.discover_actions().len(), 1);
     assert_eq!(prepared.discover_actions()[0].id, "example.graph.submit");
@@ -79,8 +103,12 @@ fn main() {
     assert!(!witness.exists(), "graph composition activated native code");
 
     let mut denied = policy.clone();
-    denied.grants.retain(|grant| grant.caller != "example.graph-b");
-    let err = Prepared::prepare(denied).err().expect("must deny ungranted graph node");
+    denied
+        .grants
+        .retain(|grant| grant.caller != "example.graph-b");
+    let err = Prepared::prepare(denied)
+        .err()
+        .expect("must deny ungranted graph node");
     assert_eq!(err.code, Code::Denied);
     assert!(!witness.exists(), "rejected graph activated native code");
 
