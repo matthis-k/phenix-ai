@@ -155,6 +155,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-graph-a"
+version = "0.1.0"
+dependencies = [
+ "example-graph-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-graph-b"
+version = "0.1.0"
+dependencies = [
+ "example-graph-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-graph-c"
+version = "0.1.0"
+dependencies = [
+ "example-graph-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "example-graph-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+]
+
+[[package]]
 name = "example-lifecycle-consumer"
 version = "0.1.0"
 dependencies = [
