@@ -68,12 +68,12 @@ S3b pending imports on the compatibility representation would add throwaway work
 | C1/C2, conformance main.rs, phenix-m01-conformance, phenix-m02-lifecycle, phenix-m02-pending, phenix-m02-imports and phenix-m03-generations | Contemporary M1 suite retains each semantic assertion before old interface tests retire. | PROVEN at 367420e33b, CI 38197645494 |
 | C1/C2, examples/agent-contracts/agent/agent-model/agent-alternate/agent-tool and phenix-a0-agent | Port accepted synchronous preflight to M1 selected contracts. Keep agent logic outside the kernel. | PROVEN at 367420e33b, CI 38197645494 |
 | C1/C2, tests descriptor.py/abi.c/abi-negative.c/product.py/composition-product.py/lifecycle-product.py/pending-product.py/generation-identity.py/shipping-product.py, flake.nix and workflow | Replace obsolete format-specific vectors; retain independent ABI, offline, packaged CLI, generation and shipping checks. Remove old active gates after migration. | PROVEN at 367420e33b, CI 38197645494 |
-| C3, resolve.rs/runtime.rs/state_effects.rs | Prepared native/cell targets; one dispatch scope calculation; cell owner/identity/resource checks; common atomic storage. | TESTED locally |
-| C3, Root::invoke_selected | Trusted calls retain admitted root ID, narrowed authority/resource and pinned generation. Unknown selections reject before provider-dependent encoding. | TESTED locally |
-| C3, authoring-provider and phenix-m1-authoring | Actual worker and FD remain live during get/set/watch. Native reentry, conflicting/forged cell requests and grant/resource/root-scope denials have no unauthorized effects. Poll/cancel join the worker; root drop clears watches. | TESTED locally |
-| C4, dag.rs/resolve.rs | Resolver uses one extracted deterministic cycle/order function. Joined and disconnected projections have ordering tests. | TESTED locally; trigger/readiness integration remains |
-| C5, macros state.rs and SDK live.rs | Generated empty State, optional State/Host parameters, owned request or unit request, ordinary response/Result/CallResult. | TESTED locally |
-| C5, SDK stateless_authoring.rs and authoring-client | Generated ABI 3 works with stateless business handlers and a stateless native importing client. Four new compile failures retain request/response/parameter checks. | TESTED locally |
+| C3, resolve.rs/runtime.rs/state_effects.rs | Prepared native/cell targets; one dispatch scope calculation; cell owner/identity/resource checks; common atomic storage. | PROVEN at 367420e33b, CI 38197645494 |
+| C3, Root::invoke_selected | Trusted calls retain admitted root ID, narrowed authority/resource and pinned generation. Unknown selections reject before provider-dependent encoding. | PROVEN at 367420e33b, CI 38197645494 |
+| C3, authoring-provider and phenix-m1-authoring | Actual worker and FD remain live during get/set/watch. Native reentry, conflicting/forged cell requests and grant/resource/root-scope denials have no unauthorized effects. Poll/cancel join the worker; root drop clears watches. | PROVEN at 367420e33b, CI 38197645494 |
+| C4, dag.rs/resolve.rs | Resolver uses one extracted deterministic cycle/order function. Joined and disconnected projections have ordering tests. | PROVEN ordering at 367420e33b; trigger/readiness integration remains G2/G3 |
+| C5, macros state.rs and SDK live.rs | Generated empty State, optional State/Host parameters, owned request or unit request, ordinary response/Result/CallResult. | PROVEN at 367420e33b, CI 38197645494 |
+| C5, SDK stateless_authoring.rs and authoring-client | Generated ABI 3 works with stateless business handlers and a stateless native importing client. Four new compile failures retain request/response/parameter checks. | PROVEN at 367420e33b, CI 38197645494 |
 | Full M1-only acceptance | External provider/consumer, all migrated semantic gates, obsolete symbol absence, exact-head CI evidence. | PROVEN at 367420e33b, CI 38197645494 |
 
 ## Measurements
@@ -126,5 +126,7 @@ protocol gates, plus the standalone public SDK and shipping closure.
 M1-only acceptance passed at `367420e33bbaaa55b6d680394b9cc99a3c6f43e6`
 in [CI 38197645494](https://github.com/matthis-k/phenix-ai/actions/runs/38197645494).
 Artifact 11724252850 contains the complete contemporary evidence product.
+[Saved CI evidence](evidence/m1-consolidation-ci.json) verifies its archive digest,
+exact commit and 56 JSON report hashes.
 S3b stage acceptance and reactive trigger/readiness integration remain subsequent
 work; this migration does not declare those stages complete.

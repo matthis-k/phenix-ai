@@ -24,6 +24,12 @@ mod plugin {
 
 Use `nix flake check -L` for the complete M1 conformance suite, `nix run .#phenix-m1-demo` for the packaged provider/consumer example and `nix build .#phenix-m1-release` for the evidence product. SDK, fixtures and inspection tools remain separate from the production kernel closure.
 
-[The transition contract](spec/m1-only-runtime-contract.md), [verified audit](spec/m1-consolidation-audit.md) and [roadmap](spec/m1-roadmap.md) record scope and acceptance. M0 acceptance documents are historical evidence. Their authority, cancellation, ordering, generation and retirement guarantees have been migrated to M1 tests. Exact-head full CI remains the acceptance gate for the current transition.
+[The transition contract](spec/m1-only-runtime-contract.md),
+[verified audit](spec/m1-consolidation-audit.md) and [roadmap](spec/m1-roadmap.md)
+record scope and acceptance. M0 acceptance documents retain historical evidence.
+Their authority, cancellation, ordering, generation and retirement guarantees now
+have M1 tests. The transition passed exact-head CI at `367420e33b`. S3b completion
+follows in [PR #781](https://github.com/matthis-k/phenix-ai/pull/781), with its own
+acceptance gate.
 
-Reactive G1-G4 development follows consolidation acceptance. The synchronous A0 agent remains an ordinary plugin fixture, exercised by `nix run .#phenix-a0-demo`. The final Basic agent will compose triggered graph nodes through the kernel's existing execution machinery.
+Reactive G1-G4 development follows consolidation and S3b acceptance. The synchronous A0 agent remains an ordinary plugin fixture, exercised by `nix run .#phenix-a0-demo`. The final Basic agent will compose triggered graph nodes through the kernel's existing execution machinery.

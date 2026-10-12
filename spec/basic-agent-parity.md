@@ -21,10 +21,12 @@ run the minimal loop. Real model transport is a replaceable provider.
 | Session aggregate and restart restoration | original basic_suite | ordinary storage provider and session tests |
 | Progress, pause/resume/cancel and pending provider work | original agent_loop | existing ticket/cancellation integration |
 | Model usage and provider metadata | original basic-model/agent_loop | provider-neutral typed results |
-| Live exposed state and reactive contributions | M1 target | S2, S3, S4, S5 |
+| Live exposed state and reactive contributions | S2/S3 values and native authoring | G1-G4 triggered graph integration |
 | Real model I/O | follow-on product requirement | local HTTP fixture, credentials external to code |
-| CLI profile and independent external providers | M0/A0 packaged tests | complete Basic composition and product gate |
+| CLI profile and independent external providers | Contemporary M1/A0 packaged tests | complete Basic composition and product gate |
 
-S2-S5 retain focused PR ownership in `m1-roadmap.md`. Agent services follow in
-A1. Memory, compaction and ACP/MCP adapters remain separately replaceable
-follow-ons and are not silently counted as original Basic group behavior.
+The [roadmap](m1-roadmap.md) owns stage order and PR scope. G1-G4 supply
+triggered execution; B1-B5 restore Basic contracts and services; F1/F2 add terminal,
+JSONL and ACP frontends. P1 proves the complete product. Memory, compaction and
+MCP remain later plugins. A0 supplies synchronous model/tool regression evidence;
+it does not replace the final triggered agent.

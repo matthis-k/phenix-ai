@@ -1,23 +1,34 @@
 # Development and validation
 
-Enter `nix develop`. Run `nix flake check -L` for acceptance. All dependencies are pinned by `flake.lock` and the two Cargo lockfiles.
+Enter `nix develop`. Dependencies are pinned by `flake.lock` and the two Cargo
+lockfiles. M1 is the sole supported contract, value wire format and native ABI.
 
 | Command | Behavior |
 | --- | --- |
-| `nix run .#phenix-m0-demo` | Invoke the Nix-built consumer and provider through the CLI |
-| `nix build .#phenix-m0-conformance` | Materialize all four checks and their evidence |
-| `nix build .#checks.x86_64-linux.m0-contract` | Formatting, clippy, Rust semantics, compile-fail cases and C ABI layout |
-| `nix build .#checks.x86_64-linux.m0-descriptor` | Release/linker/strip retention and descriptor identity |
-| `nix build .#checks.x86_64-linux.m0-native` | Real native artifacts, resolution, authority and failure behavior |
-| `nix build .#checks.x86_64-linux.m0-product` | Trusted immutable deployment and CLI JSON |
+| `nix flake check -L` | Run all contemporary protocol and semantic gates |
+| `nix run .#phenix-m1-demo` | Invoke packaged external provider and consumer through the CLI |
+| `nix build .#phenix-m1-release` | Collect conformance, public SDK and shipping evidence |
+| `nix build .#checks.x86_64-linux.m1-contract` | Formatting, warnings-denied Clippy, Rust semantics and compile failures |
+| `nix build .#checks.x86_64-linux.m1-native-authoring` | Generated native contracts, fields, typed imports and pending property control |
+| `nix build .#checks.x86_64-linux.m1-imports` | Pending child authentication, cancellation, attenuation and adversarial ABI commands |
 | `nix fmt -- flake.nix` | Format the Nix definition |
 
-Kernel, artifact tooling and public SDK have separate source inputs. Fixture builds start from the SDK distribution and their own workspace. They cannot resolve private kernel crates because those files are absent. Nix emits package records after ELF fixups. Logical bindings and grants live in explicit deployment data consumed by the kernel.
+Kernel, artifact tooling and public SDK have separate source inputs. External
+fixtures build from the public SDK distribution with private kernel crates
+absent. Nix writes package records after ELF fixups. Composition supplies explicit
+named provider selections and operation/resource grants.
 
-Inspection accepts a deployment document without loading its artifacts. Invocation adds a canonical binary request. The CLI accepts immutable Nix store packages. The trusted Rust control-plane API also accepts caller-attested read-only sources; mutable files cannot provide a safe validation-to-load boundary.
+The CLI inspects a composition without loading native artifacts. Invocation adds
+a canonical binary request. CLI packages must live in the immutable Nix store.
+The trusted Rust control API also accepts caller-attested read-only sources.
+Mutable files cannot provide a safe validation-to-load boundary.
 
-A caught invocation panic poisons that instance. A new process can construct a fresh instance. Abort, signals and process termination provide no cleanup or recovery guarantee. Native code shares the process and its operating-system privileges.
+A caught invocation panic poisons that instance. Poll/cancel remain available to
+drain physical work. Native code shares the process and its OS privileges.
+Physical leases retain executable images until work drains; process termination
+provides no cleanup guarantee.
 
-The CI workflow checks out the exact branch head even for PR events. It stores `kernel-commit.txt`, `ci-run.txt`, Nix paths and parsed native/descriptor/product JSON as an artifact. Report that run before claiming milestone acceptance.
-
-The complete suite has fourteen gates. Added gates are m02-imports, m03-generations, m04-public-sdk and m04-shipping. `nix build .#phenix-m0-release` collects all realized outputs. The default package contains the kernel; source distributions and native fixtures remain separate products.
+CI checks out the exact PR head. Its artifact records `kernel-commit.txt`,
+`ci-run.txt`, realized Nix paths and the full conformance/release reports. Bind
+acceptance to that commit and evidence. Historical M0 documents describe retired
+profiles; the M1 matrices own current behavior and remaining stage gates.

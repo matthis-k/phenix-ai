@@ -23,7 +23,6 @@ Frozen contract: m1-contract-authoring-contract.md, preceding implementation
 | `phenix-conformance/src/bin/phenix-m1-authoring.rs`, `flake.nix`, workflow evidence | TESTED locally | Existing kernel loads independent native packages; named slots, Optional/Many, synthetic property read, pending/cancel, ceiling and resource/import/operation denial with zero committed effects; new m1-native-authoring full-CI gate and artifact |
 | External pending caller and complete import security fixtures | TESTED locally on completion branch | M1 parent/child, immediate child, frozen attenuation, domain errors, wrong-parent handle reuse, cancellation, wake propagation and abandonment pass. Completion branch adds raw-ABI slot, Many index, operation, selected-provider, parent-ticket, unknown-ticket and cancel forgeries; live-child state and valid completion prove zero effects |
 | Stateless handlers and prepared cell execution | TESTED locally in consolidation branch | Generated empty state, concise typed arguments and ordinary results; selected get/set/watch during a real native worker; denied cell grants/resources/root scopes produce no writes or subscriptions; see `m1-consolidation-audit.md` |
-| Full S3b acceptance | NOT PROVEN | Exact-commit CI, downloaded artifact and all predecessor gates |
 
 ## Completion after consolidation
 
