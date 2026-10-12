@@ -1,0 +1,19 @@
+[package]
+name = "phenix-plugin-basic-frontends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["terminal"]
+terminal = []
+jsonl = []
+
+[dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+serde = { workspace = true }
+serde_json = { workspace = true }
