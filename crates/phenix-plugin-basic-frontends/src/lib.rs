@@ -5,7 +5,7 @@ compile_error!("select exactly one Basic frontend adapter");
 
 use phenix_basic_contracts::{
     encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits,
-    PromptSubmitted, RenderRequest, Scope, Submission,
+    PromptSubmitted, RenderRequest, Submission,
 };
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
