@@ -7,4 +7,5 @@ license.workspace = true
 phenix-contract.workspace = true
 phenix-artifact = { path = "../phenix-artifact" }
 phenix-kernel = { path = "../phenix-kernel" }
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 serde_json.workspace = true
