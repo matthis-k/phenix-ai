@@ -1,9 +1,10 @@
 [workspace]
-members = ["authoring-api", "authoring-provider", "authoring-client", "authoring-field", "value-provider", "value-client", "reactive-provider", "reactive-client", "agent-contracts", "agent", "agent-model", "agent-alternate", "agent-tool", "reactive-contracts", "contracts", "provider", "consumer", "alternate", "cycle", "choice", "other", "resource-provider", "relay", "scoped-client", "lifecycle-provider", "lifecycle-consumer", "pending", "pending-consumer", "pending-security", "pending-immediate", "revision-a", "revision-b"]
+members = ["graph-contracts", "graph-a", "graph-b", "graph-c", "authoring-api", "authoring-provider", "authoring-client", "authoring-field", "value-provider", "value-client", "reactive-provider", "reactive-client", "agent-contracts", "agent", "agent-model", "agent-alternate", "agent-tool", "reactive-contracts", "contracts", "provider", "consumer", "alternate", "cycle", "choice", "other", "resource-provider", "relay", "scoped-client", "lifecycle-provider", "lifecycle-consumer", "pending", "pending-consumer", "pending-security", "pending-immediate", "revision-a", "revision-b"]
 resolver = "2"
 [workspace.dependencies]
 phenix-sdk = { path = "../crates/phenix-sdk", version = "0.1.0" }
 example-contracts = { path = "contracts" }
+example-graph-contracts = { path = "graph-contracts" }
 example-agent-contracts = { path = "agent-contracts" }
 [profile.release]
 lto = "thin"
