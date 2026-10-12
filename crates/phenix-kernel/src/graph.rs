@@ -3,7 +3,8 @@
 use crate::{
     dag,
     resolve::Selection,
-    runtime::{Kernel, Outcome},
+    runtime::{Kernel, Outcome, Root},
+    Call, Poll, Ticket,
 };
 use phenix_contract::{
     graph_node_key, ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
@@ -351,6 +352,9 @@ pub enum GraphEvent<'a> {
         resource: Option<&'a str>,
     },
     NodeFinished(&'a GraphStep),
+    NodePending {
+        node: &'a str,
+    },
     NodeSkipped {
         node: &'a str,
     },
@@ -362,6 +366,7 @@ pub enum GraphCompletion<'a> {
     Success,
     /// At least one domain failure, including a handled skip.
     Domain,
+    Cancelled,
     Failure(&'a Failure),
 }
 
@@ -401,9 +406,34 @@ impl Kernel {
         &self,
         action_id: &str,
         payload: &Value,
-        mut scope: ScopedRequest,
+        scope: ScopedRequest,
         mut observe: impl FnMut(&GraphUpdate<'_>),
     ) -> Result<Vec<GraphStep>, Failure> {
+        let mut execution = self.begin_action_inner(action_id, payload, scope, false)?;
+        execution.pump(&mut observe)?;
+        if let Some(failure) = execution.failure.take() {
+            return Err(failure);
+        }
+        Ok(std::mem::take(&mut execution.completed))
+    }
+
+    /// Admit pending-capable graph work. The host drives this same root with pump.
+    pub fn begin_action_scoped(
+        &self,
+        action_id: &str,
+        payload: &Value,
+        scope: ScopedRequest,
+    ) -> Result<GraphExecution<'_>, Failure> {
+        self.begin_action_inner(action_id, payload, scope, true)
+    }
+
+    fn begin_action_inner(
+        &self,
+        action_id: &str,
+        payload: &Value,
+        mut scope: ScopedRequest,
+        pending_allowed: bool,
+    ) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
         let graph = self
             .prepared
@@ -452,74 +482,290 @@ impl Kernel {
 
         let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
-        observe(&GraphUpdate {
-            root: root.id,
-            event: GraphEvent::Admitted {
-                action: &action.id,
-                event: &action.event,
-                graph: &graph.identity,
-                resource: root.scope.resource.as_deref(),
-            },
-        });
-        let mut completed = Vec::with_capacity(active.len());
-        let mut unsuccessful = BTreeSet::new();
-        for node in active {
-            if graph.predecessors[&node]
-                .iter()
-                .any(|id| unsuccessful.contains(id))
-            {
-                observe(&GraphUpdate {
-                    root: root.id,
-                    event: GraphEvent::NodeSkipped { node: &node },
-                });
-                unsuccessful.insert(node);
-                continue;
-            }
-            let compiled = &graph.nodes[&node];
-            let (interface, operation) = compiled
-                .definition
-                .operation
-                .split_once('/')
-                .expect("validated operation key");
-            let target = Selection {
-                interface: interface.into(),
-                operation: operation.into(),
-                provider: compiled.provider.clone(),
-            };
-            let outcome = match root.invoke_graph(&compiled.owner, &target, payload) {
-                Ok(outcome) => outcome,
-                Err(failure) => {
-                    observe(&GraphUpdate {
-                        root: root.id,
-                        event: GraphEvent::Finished(GraphCompletion::Failure(&failure)),
-                    });
-                    return Err(failure);
-                }
-            };
-            let failed = matches!(outcome, Outcome::Domain(_));
-            let fail_root =
-                graph.nodes[&node].definition.failure == phenix_contract::FailurePolicy::FailRoot;
-            if failed {
-                unsuccessful.insert(node.clone());
-            }
-            completed.push(GraphStep { node, outcome });
-            observe(&GraphUpdate {
-                root: root.id,
-                event: GraphEvent::NodeFinished(completed.last().unwrap()),
-            });
-            if failed && fail_root {
-                break;
-            }
-        }
-        observe(&GraphUpdate {
-            root: root.id,
-            event: GraphEvent::Finished(if unsuccessful.is_empty() {
+        Ok(GraphExecution {
+            root,
+            action: action_id.into(),
+            payload: payload.clone(),
+            waiting: active.iter().cloned().collect(),
+            active,
+            pending: BTreeMap::new(),
+            draining: Vec::new(),
+            unsuccessful: BTreeSet::new(),
+            completed: Vec::new(),
+            failure: None,
+            cancelled: false,
+            stopped: false,
+            admitted: false,
+            terminal: false,
+            pending_allowed,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GraphStatus {
+    Pending,
+    Draining,
+    Finished,
+}
+
+/// Readiness bookkeeping around one existing Root and its Ticket handles.
+/// The host controls polling; no timeout or busy loop is imposed by the kernel.
+pub struct GraphExecution<'a> {
+    root: Root<'a>,
+    action: String,
+    payload: Value,
+    active: Vec<String>,
+    waiting: BTreeSet<String>,
+    pending: BTreeMap<String, Ticket>,
+    draining: Vec<Ticket>,
+    unsuccessful: BTreeSet<String>,
+    completed: Vec<GraphStep>,
+    failure: Option<Failure>,
+    cancelled: bool,
+    stopped: bool,
+    admitted: bool,
+    terminal: bool,
+    pending_allowed: bool,
+}
+
+impl GraphExecution<'_> {
+    /// Trusted same-root control, using the existing selected-operation API.
+    pub fn invoke_selected(
+        &self,
+        selection: &Selection,
+        request: &Value,
+    ) -> Result<Outcome, Failure> {
+        self.root.invoke_selected(selection, request)
+    }
+    pub fn steps(&self) -> &[GraphStep] {
+        &self.completed
+    }
+    pub fn completion(&self) -> Option<GraphCompletion<'_>> {
+        self.terminal.then_some({
+            if let Some(failure) = &self.failure {
+                GraphCompletion::Failure(failure)
+            } else if self.cancelled {
+                GraphCompletion::Cancelled
+            } else if self.unsuccessful.is_empty() {
                 GraphCompletion::Success
             } else {
                 GraphCompletion::Domain
-            }),
+            }
+        })
+    }
+    fn emit(&self, event: GraphEvent<'_>, observe: &mut impl FnMut(&GraphUpdate<'_>)) {
+        observe(&GraphUpdate {
+            root: self.root.id,
+            event,
         });
-        Ok(completed)
+    }
+    fn finish_node(
+        &mut self,
+        node: String,
+        result: Result<Outcome, Failure>,
+        observe: &mut impl FnMut(&GraphUpdate<'_>),
+    ) {
+        match result {
+            Ok(outcome) => {
+                if matches!(outcome, Outcome::Domain(_)) {
+                    self.unsuccessful.insert(node.clone());
+                    if self.root.kernel.prepared.graph.as_ref().unwrap().nodes[&node]
+                        .definition
+                        .failure
+                        == phenix_contract::FailurePolicy::FailRoot
+                    {
+                        self.stopped = true;
+                    }
+                }
+                self.completed.push(GraphStep { node, outcome });
+                self.emit(
+                    GraphEvent::NodeFinished(self.completed.last().unwrap()),
+                    observe,
+                );
+            }
+            Err(failure) => {
+                self.failure = Some(failure);
+                self.stopped = true;
+            }
+        }
+    }
+    fn quiescent(&self, ticket: &Ticket) -> bool {
+        self.root.kernel.state.borrow().tickets[&ticket.id].quiescent
+    }
+    fn accept_poll(
+        &mut self,
+        node: String,
+        ticket: Ticket,
+        observe: &mut impl FnMut(&GraphUpdate<'_>),
+    ) -> Result<(), Failure> {
+        match self.root.poll(&ticket)? {
+            Poll::Pending => {
+                self.pending.insert(node, ticket);
+            }
+            Poll::Ready(result) => {
+                if self.quiescent(&ticket) {
+                    self.root.release(&ticket)?;
+                } else {
+                    self.draining.push(ticket);
+                }
+                self.finish_node(node, result, observe);
+            }
+            Poll::Cancelled { quiescent } => {
+                if quiescent {
+                    self.root.release(&ticket)?;
+                } else {
+                    self.draining.push(ticket);
+                }
+                self.cancelled = true;
+                self.stopped = true;
+            }
+            Poll::Draining => {
+                self.draining.push(ticket);
+            }
+        }
+        Ok(())
+    }
+    fn cancel_pending(&mut self) -> Result<(), Failure> {
+        for (_, ticket) in std::mem::take(&mut self.pending) {
+            if !self.quiescent(&ticket) {
+                self.root.cancel(&ticket)?;
+            }
+            if self.quiescent(&ticket) {
+                self.root.release(&ticket)?;
+            } else {
+                self.draining.push(ticket);
+            }
+        }
+        Ok(())
+    }
+    /// Revoke future graph work and cancel the existing ticket trees immediately.
+    pub fn cancel(&mut self) -> Result<(), Failure> {
+        if !self.terminal {
+            self.cancelled = true;
+            self.stopped = true;
+            self.cancel_pending()?;
+        }
+        Ok(())
+    }
+    pub fn pump(
+        &mut self,
+        mut observe: impl FnMut(&GraphUpdate<'_>),
+    ) -> Result<GraphStatus, Failure> {
+        self.root.kernel.check_thread()?;
+        if !self.admitted {
+            let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+            let action = &graph.actions[&self.action];
+            self.emit(
+                GraphEvent::Admitted {
+                    action: &action.id,
+                    event: &action.event,
+                    graph: &graph.identity,
+                    resource: self.root.scope.resource.as_deref(),
+                },
+                &mut observe,
+            );
+            self.admitted = true;
+        }
+        // Poll each retained physical lease once; cleanup cannot admit nodes.
+        for ticket in std::mem::take(&mut self.draining) {
+            if !self.quiescent(&ticket) {
+                let _ = self.root.poll(&ticket)?;
+            }
+            if self.quiescent(&ticket) {
+                self.root.release(&ticket)?;
+            } else {
+                self.draining.push(ticket);
+            }
+        }
+        if !self.stopped {
+            for node in self.pending.keys().cloned().collect::<Vec<_>>() {
+                let ticket = self.pending.remove(&node).unwrap();
+                self.accept_poll(node, ticket, &mut observe)?;
+                if self.stopped {
+                    break;
+                }
+            }
+            for node in self.active.clone() {
+                if self.stopped {
+                    break;
+                }
+                if !self.waiting.contains(&node) {
+                    continue;
+                }
+                let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+                let predecessors = &graph.predecessors[&node];
+                if predecessors.iter().any(|id| self.unsuccessful.contains(id)) {
+                    self.waiting.remove(&node);
+                    self.unsuccessful.insert(node.clone());
+                    self.emit(GraphEvent::NodeSkipped { node: &node }, &mut observe);
+                    continue;
+                }
+                if predecessors
+                    .iter()
+                    .any(|id| self.waiting.contains(id) || self.pending.contains_key(id))
+                {
+                    continue;
+                }
+                let compiled = &graph.nodes[&node];
+                if self
+                    .root
+                    .kernel
+                    .state
+                    .borrow()
+                    .tickets
+                    .values()
+                    .any(|r| !r.quiescent && r.selection.provider == compiled.provider)
+                {
+                    continue;
+                }
+                let (interface, operation) = compiled.definition.operation.split_once('/').unwrap();
+                let target = Selection {
+                    interface: interface.into(),
+                    operation: operation.into(),
+                    provider: compiled.provider.clone(),
+                };
+                let owner = compiled.owner.clone();
+                self.waiting.remove(&node);
+                match self
+                    .root
+                    .call_graph(&owner, &target, &self.payload, self.pending_allowed)
+                {
+                    Ok(Call::Ready(outcome)) => self.finish_node(node, Ok(outcome), &mut observe),
+                    Ok(Call::Pending(ticket)) => {
+                        let ready = self.root.kernel.state.borrow().tickets[&ticket.id].logical
+                            != crate::pending::Logical::Pending;
+                        if ready {
+                            self.accept_poll(node, ticket, &mut observe)?;
+                        } else {
+                            self.emit(GraphEvent::NodePending { node: &node }, &mut observe);
+                            self.pending.insert(node, ticket);
+                        }
+                    }
+                    Err(failure) => self.finish_node(node, Err(failure), &mut observe),
+                }
+            }
+        }
+        if self.stopped {
+            self.cancel_pending()?;
+        }
+        if !self.terminal && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
+        {
+            self.terminal = true;
+            self.emit(
+                GraphEvent::Finished(self.completion().unwrap()),
+                &mut observe,
+            );
+        }
+        Ok(if self.terminal {
+            if self.draining.is_empty() {
+                GraphStatus::Finished
+            } else {
+                GraphStatus::Draining
+            }
+        } else {
+            GraphStatus::Pending
+        })
     }
 }
 

@@ -1,6 +1,6 @@
 //! G2 external artifact gate. All three graph providers are independently built.
 use phenix_contract::{Authority, Code, ScopedRequest, Value};
-use phenix_kernel::graph::{GraphCompletion, GraphEvent};
+use phenix_kernel::graph::{GraphCompletion, GraphEvent, GraphStatus};
 use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding};
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -30,7 +30,15 @@ fn composition(artifacts: Vec<String>) -> Composition {
     }
     // The graph nodes use the existing state host API. A and B commit their
     // own properties; C reads those values through selected property imports.
-    let mut operations = BTreeSet::from([KEY.into()]);
+    let mut operations = BTreeSet::from([KEY.into(), "example.graph.slow@1/run".into()]);
+    for caller in ["root", "example.graph-a"] {
+        grants.push(ScopedGrant {
+            caller: caller.into(),
+            interface: "example.graph.slow@1".into(),
+            operation: "run".into(),
+            resources: resources.clone(),
+        });
+    }
     for (owner, caller, actions) in [
         ("example.graph-a", "example.graph-a", &["get", "set"][..]),
         ("example.graph-b", "example.graph-b", &["get", "set"][..]),
@@ -102,7 +110,7 @@ fn main() {
             graph.plugin,
             format!("example.graph-{}", ["a", "b", "c"][index])
         );
-        assert_eq!(graph.nodes.len(), if index == 2 { 2 } else { 1 });
+        assert_eq!(graph.nodes.len(), if index == 1 { 1 } else { 2 });
         assert!(graph.events.is_empty());
     }
     let mut policy = composition(packages.clone());
@@ -113,7 +121,7 @@ fn main() {
         "offline resolution ran native constructor"
     );
     let graph = prepared.compiled_graph().expect("verified graph");
-    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(graph.nodes.len(), 5);
     assert_eq!(
         graph.events[EVENT].payload,
         phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
@@ -125,12 +133,13 @@ fn main() {
         graph.order,
         [
             "example.graph-a/a",
+            "example.graph-a/slow",
             "example.graph-b/b",
             "example.graph-c/c",
             "example.graph-c/d"
         ]
     );
-    assert_eq!(graph.predecessors["example.graph-c/c"].len(), 2);
+    assert_eq!(graph.predecessors["example.graph-c/c"].len(), 3);
     assert_eq!(
         graph
             .activation_order(&BTreeSet::from([EVENT.into()]))
@@ -142,7 +151,7 @@ fn main() {
             "example.graph-c/d"
         ]
     );
-    assert_eq!(prepared.discover_actions().len(), 2);
+    assert_eq!(prepared.discover_actions().len(), 3);
     assert_eq!(prepared.discover_actions()[0].id, "example.graph.submit");
     let digest = prepared.generation_identity("test.graph").unwrap();
     let mut reversed = policy.clone();
@@ -380,7 +389,9 @@ fn main() {
                         assert!(successor_witness.exists());
                         "success".to_owned()
                     }
-                    GraphEvent::NodeSkipped { .. } => panic!("successful action skipped a node"),
+                    GraphEvent::NodeSkipped { .. } | GraphEvent::NodePending { .. } => {
+                        panic!("synchronous action skipped or suspended a node")
+                    }
                 };
                 trace.push((update.root, label));
             },
@@ -623,6 +634,137 @@ fn main() {
         .unwrap();
     assert!(observed_resource);
     assert_eq!(contextual.len(), 4);
+    fs::remove_file(&successor_witness).unwrap();
+    {
+        let descriptors_before = fs::read_dir("/proc/self/fd").unwrap().count();
+        let mut execution = kernel
+            .begin_action_scoped(
+                "example.graph.submit-slow",
+                &Value::map([("text", Value::String("slow".into()))]),
+                scope.clone(),
+            )
+            .unwrap();
+        let mut pending_root = None;
+        assert_eq!(
+            execution
+                .pump(|update| {
+                    assert_eq!(*pending_root.get_or_insert(update.root), update.root);
+                })
+                .unwrap(),
+            GraphStatus::Pending
+        );
+        assert_eq!(execution.steps().len(), 1);
+        assert_eq!(execution.steps()[0].node, "example.graph-b/b");
+        assert!(
+            !successor_witness.exists(),
+            "join ran before slow source settled"
+        );
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+        assert_eq!(
+            fs::read_dir("/proc/self/fd").unwrap().count(),
+            descriptors_before + 1
+        );
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert!(!successor_witness.exists());
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Finished);
+        assert_eq!(execution.completion(), Some(GraphCompletion::Success));
+        assert_eq!(execution.steps().len(), 4);
+        assert_eq!(execution.steps()[1].node, "example.graph-a/slow");
+        assert_eq!(
+            execution.steps()[2].outcome,
+            phenix_kernel::Outcome::Success(Value::String("A:slow|B:slow".into()))
+        );
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+        assert_eq!(
+            fs::read_dir("/proc/self/fd").unwrap().count(),
+            descriptors_before
+        );
+    }
+    fs::remove_file(&successor_witness).unwrap();
+    for input in ["slow-cancel", "slow-drain"] {
+        let descriptors_before = fs::read_dir("/proc/self/fd").unwrap().count();
+        let mut execution = kernel
+            .begin_action_scoped(
+                "example.graph.submit-slow",
+                &Value::map([("text", Value::String(input.into()))]),
+                scope.clone(),
+            )
+            .unwrap();
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        let committed_before_cancel = kernel.inspect()["live_state"].clone();
+        execution.cancel().unwrap();
+        let mut terminal_updates = 0;
+        let first = execution
+            .pump(|update| {
+                if let GraphEvent::Finished(completion) = &update.event {
+                    assert_eq!(*completion, GraphCompletion::Cancelled);
+                    terminal_updates += 1;
+                }
+            })
+            .unwrap();
+        if input == "slow-drain" {
+            assert_eq!(first, GraphStatus::Draining);
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+            assert_eq!(
+                fs::read_dir("/proc/self/fd").unwrap().count(),
+                descriptors_before + 1
+            );
+            assert!(
+                kernel.shutdown().is_err(),
+                "physical worker lease allowed shutdown"
+            );
+            assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Draining);
+            assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Finished);
+        } else {
+            assert_eq!(first, GraphStatus::Finished);
+        }
+        assert_eq!(terminal_updates, 1);
+        assert_eq!(
+            execution
+                .pump(|_| panic!("terminal update repeated"))
+                .unwrap(),
+            GraphStatus::Finished
+        );
+        assert_eq!(execution.completion(), Some(GraphCompletion::Cancelled));
+        assert_eq!(
+            execution.steps().len(),
+            1,
+            "cancelled source or successors ran"
+        );
+        assert_eq!(kernel.inspect()["live_state"], committed_before_cancel);
+        assert!(
+            !successor_witness.exists(),
+            "cancelled graph invoked successor"
+        );
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+        assert_eq!(
+            fs::read_dir("/proc/self/fd").unwrap().count(),
+            descriptors_before
+        );
+    }
+    for input in ["domain-b", "kernel-b"] {
+        let mut execution = kernel
+            .begin_action_scoped(
+                "example.graph.submit-slow",
+                &Value::map([("text", Value::String(input.into()))]),
+                scope.clone(),
+            )
+            .unwrap();
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Finished);
+        if input == "domain-b" {
+            assert_eq!(execution.completion(), Some(GraphCompletion::Domain));
+        } else {
+            assert!(
+                matches!(execution.completion(), Some(GraphCompletion::Failure(failure)) if failure.code == Code::PluginFailed)
+            );
+        }
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+        assert!(
+            !successor_witness.exists(),
+            "failed branch allowed successor"
+        );
+    }
     kernel.shutdown().unwrap();
 
     // The graph caller must inherit the root requirement's resource ceiling.
@@ -690,7 +832,14 @@ fn main() {
             "resource-denial-zero-commits-and-no-successor",
             "ungranted-event-resource-zero-invocations",
             "root-resource-ceiling-bounds-graph-delegation",
-            "action-resource-inherited-by-four-native-nodes"
+            "action-resource-inherited-by-four-native-nodes",
+            "pending-a-independent-b-and-delayed-c",
+            "same-root-cancellation-before-successor-effects",
+            "retained-worker-lease-draining-and-shutdown-rejection",
+            "cancelled-cleanup-state-write-rejected",
+            "one-terminal-update-and-final-ticket-release"
+            ,"failed-independent-branch-cancels-pending-source"
+            ,"real-worker-file-descriptor-held-until-drain"
         ]
         }))
         .unwrap(),

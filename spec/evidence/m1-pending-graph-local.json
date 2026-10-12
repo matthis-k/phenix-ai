@@ -1,0 +1,70 @@
+{
+  "base_commit": "fbe55d3df8531e48e424b8c32a209653fc375687",
+  "format": "phenix.g4-pending-local.v1",
+  "native_fixture": {
+    "actions": [
+      "example.graph.submit",
+      "example.graph.submit-partial",
+      "example.graph.submit-slow"
+    ],
+    "cases": [
+      "three-native-artifact-contributions",
+      "definition-only-event-action-contributor",
+      "definition-graph-digest-owner-and-executable-node-rejection",
+      "pre-dlopen-graph-verification",
+      "multi-root-join",
+      "independent-order",
+      "permutation-invariant-generation",
+      "authorized-action-discovery",
+      "denied-graph-operation-no-constructor",
+      "re-signed-graph-tamper-rejected",
+      "re-signed-native-graph-owner-rejected",
+      "dormant-predecessor-semantics",
+      "native-dormant-b-does-not-block-c-and-after-does-not-trigger-d",
+      "existing-direct-invocation",
+      "serial-action-admission",
+      "four-external-nodes-dispatched",
+      "schema-and-action-rejection",
+      "successful-fanin-runs-c",
+      "two-committed-property-values-read-by-successor",
+      "narrow-action-scope-zero-effects",
+      "predecessor-b-domain-prevents-c-effect",
+      "denied-property-writer-before-activation",
+      "skip-domain-continues-independent-node",
+      "skip-suppresses-transitive-successors",
+      "correlated-host-results-before-successor-effects",
+      "observer-retains-root-and-terminal-outcomes",
+      "resource-denial-zero-commits-and-no-successor",
+      "ungranted-event-resource-zero-invocations",
+      "root-resource-ceiling-bounds-graph-delegation",
+      "action-resource-inherited-by-four-native-nodes",
+      "pending-a-independent-b-and-delayed-c",
+      "same-root-cancellation-before-successor-effects",
+      "retained-worker-lease-draining-and-shutdown-rejection",
+      "cancelled-cleanup-state-write-rejected",
+      "one-terminal-update-and-final-ticket-release",
+      "failed-independent-branch-cancels-pending-source",
+      "real-worker-file-descriptor-held-until-drain"
+    ],
+    "format": "phenix.g2-evidence.v1",
+    "generation_identity": "b67b24355e88de9e9b5f75c36f206a9a60e799f96eabebb451bce872f7ffee9f",
+    "graph_identity": "aa793b0a6a71ea875fcadc73a27285a12caa305c62909cffd68d8f50b5d8111e",
+    "nodes": [
+      "example.graph-a/a",
+      "example.graph-a/slow",
+      "example.graph-b/b",
+      "example.graph-c/c",
+      "example.graph-c/d"
+    ]
+  },
+  "shipping_ci_proven": false,
+  "source_sha256": {
+    "crates/phenix-conformance/src/bin/phenix-m1-graph.rs": "9232828fa102c982bb4176851fb269484d488f5a2a5e56b940298566b14056e3",
+    "crates/phenix-kernel/src/graph.rs": "6027f8ceb84f84e56ad70898bcde7d5cbba77c0efbde2861528fefd0d6bc9159",
+    "crates/phenix-kernel/src/runtime.rs": "9c67f281c5ca22b9d2907b04f179ddc579920c33cab8a546d6ea6e686d64ad70",
+    "examples/graph-a/src/lib.rs": "c4e78750936465b575cf6ddab9e5e6e458dae7f9030a1381752d913edcaa74ee",
+    "examples/graph-b/src/lib.rs": "1006a403746d91411173a8347844f4c0a4b7dd7e1cb39e606423ad9ee62051cc",
+    "examples/graph-c/src/lib.rs": "796228c64bda600b8d2d7713aefd6de61e56b291240543b5eab04a2afea18688",
+    "examples/graph-contracts/src/lib.rs": "6639b874e79310e3b1cfb5a83e7bb192e76e07479cb1689d08293a9c8b02e90c"
+  }
+}

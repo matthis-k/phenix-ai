@@ -643,20 +643,27 @@ impl Root<'_> {
     /// Trusted graph execution inside the admitted root. The graph compiler
     /// has already authenticated the declaring owner, target and grants.
     /// Dispatch still applies the owner's grant and the root's exact scope.
-    pub(super) fn invoke_graph(
+    pub(super) fn call_graph(
         &self,
         owner: &str,
         selection: &Selection,
         request: &Value,
-    ) -> Result<Outcome, Failure> {
+        pending_allowed: bool,
+    ) -> Result<super::pending::Call, Failure> {
         self.kernel.prepared.check_entry(selection)?;
-        self.kernel.dispatch(
+        let result = self.kernel.dispatch_call(
             self.id,
             Caller::Graph(owner),
             selection,
             &request.encode()?,
             Some(&self.scope),
-        )
+            pending_allowed,
+        );
+        if let Err(failure) = &result {
+            self.kernel
+                .observe_propagation(failure, Kernel::context(Caller::Graph(owner), selection));
+        }
+        result
     }
     /// Trusted control-plane selection within this root's pinned generation.
     /// The selected call inherits this root's exact authority and resource.

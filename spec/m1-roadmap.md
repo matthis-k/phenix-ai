@@ -254,7 +254,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | [ ] IMPLEMENTED, NOT ACCEPTED (#782): shipping CI 38220130161 passed at `1615ed52`; definition-only events/actions, owner tampering and native dormant-node gates now tested on impl/m1-graph-definition-packages; follow-up CI pending |
 | G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [ ] IMPLEMENTED, NOT ACCEPTED (#782): native prepared graph and shipping CI passed; definition-only contribution and schema/write/owner negative gates now tested locally; follow-up CI pending |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant follow-up CI pending |
-| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] NOT STARTED |
+| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation tested locally on impl/m1-pending-graph; live state triggers and full shipping evidence remain |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] NOT STARTED |
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] NOT STARTED |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] NOT STARTED |
@@ -422,3 +422,20 @@ write-grant negatives remain in the same gate. The
 [frozen definition contract](m1-definition-graph-contract.md) owns this scope.
 Local native execution, Rust workspace tests, Clippy and formatting pass.
 Follow-up shipping CI remains required before G1/G2/G3 stage acceptance.
+
+### Pending graph coordination follow-up
+
+`impl/m1-pending-graph` replaces the serial graph loop with one readiness pump
+around the existing Root and Ticket handles. Synchronous action submission uses
+that same pump with pending admission disabled. Ready independent providers can
+run while another source is pending; active joins wait for successful outcomes.
+Cancellation and failures stop future node admission and cancel existing ticket
+trees. Logical completion is distinct from retained physical draining.
+
+The independent native fixture holds a worker file descriptor while A is
+pending, completes B, and delays C. It proves immediate and delayed cancellation,
+rejected cleanup writes, shutdown rejection during a retained lease, one terminal
+update and ticket release. Domain and kernel failures in B cancel pending A.
+The [frozen pending contract](m1-pending-graph-contract.md) owns this scope. Local
+workspace tests, Clippy and the SDK-only native gate pass. Full follow-up shipping
+CI and live committed-state triggers remain before G4 acceptance.

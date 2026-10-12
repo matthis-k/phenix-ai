@@ -8,8 +8,16 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     nodes: &[
         StaticGraphNode {
             id: "c",
-            triggers: &["example.graph.partial", "example.graph.start"],
-            after: &["example.graph-a/a", "example.graph-b/b"],
+            triggers: &[
+                "example.graph.partial",
+                "example.graph.slow",
+                "example.graph.start",
+            ],
+            after: &[
+                "example.graph-a/a",
+                "example.graph-a/slow",
+                "example.graph-b/b",
+            ],
             selector: "",
             operation: "example.graph.task@1/run",
             writes: &[],
@@ -18,7 +26,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
         },
         StaticGraphNode {
             id: "d",
-            triggers: &["example.graph.start"],
+            triggers: &["example.graph.slow", "example.graph.start"],
             after: &["example.graph-c/c"],
             selector: "",
             operation: "example.graph.task@1/run",

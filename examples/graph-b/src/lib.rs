@@ -7,7 +7,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     actions: &[],
     nodes: &[StaticGraphNode {
         id: "b",
-        triggers: &["example.graph.start"],
+        triggers: &["example.graph.slow", "example.graph.start"],
         after: &[],
         selector: "",
         operation: "example.graph.task@1/run",
@@ -36,6 +36,9 @@ mod provider {
     #[provide(Task::run)]
     fn run(state: &mut State, host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
         example_graph_contracts::check_resource(host, &input)?;
+        if input.text == "kernel-b" {
+            return Err(Failure::new(Code::PluginFailed, "kernel failure fixture b").into());
+        }
         if input.text == "domain-b" {
             return Err(CallError::Domain("domain fixture b".into()));
         }
