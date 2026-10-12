@@ -114,18 +114,29 @@ fn main() {
 
     let graph_identity = graph.identity.clone();
     let graph_order = graph.order.clone();
-    let action_ids = prepared.discover_actions().iter().map(|a| a.id.clone()).collect::<Vec<_>>();
+    let action_ids = prepared
+        .discover_actions()
+        .iter()
+        .map(|a| a.id.clone())
+        .collect::<Vec<_>>();
 
     // Existing direct invocation is unchanged. G3 will replace frontend calls
     // with authenticated event admission and graph node dispatch.
     let kernel = prepared.load().unwrap();
-    let response = kernel.admit_default_root().unwrap()
+    let response = kernel
+        .admit_default_root()
+        .unwrap()
         .invoke(&Value::map([("text", Value::String("proof".into()))]))
         .unwrap();
-    assert_eq!(response, phenix_kernel::Outcome::Success(Value::String("proof".into())));
+    assert_eq!(
+        response,
+        phenix_kernel::Outcome::Success(Value::String("proof".into()))
+    );
     kernel.shutdown().unwrap();
 
-    fs::write(output.join("graph.json"), serde_json::to_vec_pretty(&serde_json::json!({
+    fs::write(
+        output.join("graph.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
         "format": "phenix.g2-evidence.v1",
         "graph_identity": graph_identity,
         "generation_identity": digest.as_str(),
@@ -142,6 +153,9 @@ fn main() {
             "dormant-predecessor-semantics",
             "existing-direct-invocation"
         ]
-    })).unwrap()).unwrap();
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     println!("G2 native graph preparation passed");
 }
