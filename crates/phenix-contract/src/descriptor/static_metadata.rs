@@ -578,3 +578,118 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
     output.text(version);
     output
 }
+
+
+/**
+ * Embed static graph declarations without initializing a native plugin.
+ * This writer uses the same canonical Value envelope as GraphContribution.
+ * Authored graph members must be ordered; cross-plugin order is normalized by
+ * CompiledGraph at preparation time.
+ */
+pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataBytes {
+    use crate::static_schema::compare;
+    assert!(identity(contribution.plugin), "invalid graph contributor");
+    let mut output = MetadataBytes { data: [0; METADATA_BYTES], len: 0 };
+    output.raw(&crate::value::V2_PREFIX);
+    output.map(5);
+    output.key("actions");
+    output.list(contribution.actions.len());
+    let mut i = 0;
+    while i < contribution.actions.len() {
+        let action = contribution.actions[i];
+        assert!(identity(action.id) && identity(action.event), "invalid graph action identity");
+        assert!(!action.description.is_empty() && action.description.len() <= 4096, "invalid action description");
+        if i > 0 {
+            assert!(compare(contribution.actions[i - 1].id, action.id) < 0, "duplicate or unordered actions");
+        }
+        output.map(4);
+        output.key("description");
+        output.text(action.description);
+        output.key("event");
+        output.text(action.event);
+        output.key("id");
+        output.text(action.id);
+        output.key("requires");
+        output.list(action.requires.len());
+        let mut j = 0;
+        while j < action.requires.len() {
+            assert!(operation_key_str(action.requires[j]), "invalid action authority requirement");
+            if j > 0 {
+                assert!(compare(action.requires[j - 1], action.requires[j]) < 0, "duplicate or unordered required operation");
+            }
+            output.text(action.requires[j]);
+            j += 1;
+        }
+        i += 1;
+    }
+    output.key("events");
+    output.list(contribution.events.len());
+    i = 0;
+    while i < contribution.events.len() {
+        let event = contribution.events[i];
+        assert!(identity(event.id), "invalid event identity");
+        if i > 0 {
+            assert!(compare(contribution.events[i - 1].id, event.id) < 0, "duplicate or unordered events");
+        }
+        output.map(2);
+        output.key("id");
+        output.text(event.id);
+        output.key("payload");
+        output.schema(event.payload);
+        i += 1;
+    }
+    output.key("format");
+    output.text("phenix.graph.v1");
+    output.key("nodes");
+    output.list(contribution.nodes.len());
+    i = 0;
+    while i < contribution.nodes.len() {
+        let node = contribution.nodes[i];
+        assert!(identity(node.id) && operation_key_str(node.operation), "invalid graph node identity or operation");
+        if i > 0 {
+            assert!(compare(contribution.nodes[i - 1].id, node.id) < 0, "duplicate or unordered graph nodes");
+        }
+        output.map(8);
+        output.key("after");
+        output_graph_keys(&mut output, node.after);
+        output.key("failure");
+        output.text(match node.failure {
+            crate::FailurePolicy::Skip => "skip",
+            crate::FailurePolicy::FailRoot => "fail-root",
+        });
+        output.key("id");
+        output.text(node.id);
+        output.key("join");
+        output.text("all-active");
+        output.key("operation");
+        output.text(node.operation);
+        output.key("selector");
+        output.text(node.selector);
+        output.key("triggers");
+        output_graph_keys(&mut output, node.triggers);
+        output.key("writes");
+        output_graph_keys(&mut output, node.writes);
+        i += 1;
+    }
+    output.key("plugin");
+    output.text(contribution.plugin);
+    output
+}
+
+const fn output_graph_keys(output: &mut MetadataBytes, values: &[&str]) {
+    output.list(values.len());
+    let mut i = 0;
+    while i < values.len() {
+        if i > 0 {
+            assert!(crate::static_schema::compare(values[i - 1], values[i]) < 0, "duplicate or unordered graph keys");
+        }
+        output.text(values[i]);
+        i += 1;
+    }
+}
+const fn operation_key_str(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    let mut slash = 0;
+    while slash < bytes.len() && bytes[slash] != b'/' { slash += 1; }
+    slash > 0 && slash + 1 < bytes.len()
+}
