@@ -256,6 +256,14 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant CI 38231650549 passed; generation-aware admission context remains |
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation tested locally on impl/m1-pending-graph; live state triggers and full shipping evidence remain |
 | CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
+| AI-CI1 | CI0; parallel with Basic | `flake.nix`, compatible example and Basic plugin builds | Share Cargo compilation across compatible fixtures, package each plugin independently, narrow Nix source sets; preserve isolated ABI, LTO/linker and malicious fixtures | [ ] PLANNED: same-head before/after benchmark; one fixture edit must not rebuild unrelated fixtures |
+| AI-CI2 | AI-CI1 | Phenix AI Rust/Nix test profiles | Provide fast semantic checks and separate optimized shipping proofs without weakening native ABI, negative/security or production closure tests | [ ] PLANNED: compare exact check coverage, artifacts and failure cases for both profiles |
+| FC1 | CI0 | `phenix-flake-ci` opt-in Nix check discovery | Derive exact-head check inventory and plan manifest from `checks.<system>`; new checks cannot be omitted by stale YAML | [ ] DESIGNED in [phenix-flake-ci #17](https://github.com/matthis-k/phenix-flake-ci/pull/17); implementation pending |
+| FC2 | FC1 | `phenix-flake-ci` checked Nix source-impact planner | Extend existing Cargo reverse-dependency rules with provable Nix input impact; unknown or shared changes fall back to full checks | [ ] DESIGNED in #17; implementation pending |
+| FC3 | FC1 | `phenix-flake-ci` check grouping, DAG and evidence gate | Schedule shared Nix outputs, shard without new compiles, account for every check and validate exact-head shipping evidence | [ ] DESIGNED in #17; implementation pending |
+| FC4 | FC1; may parallelize FC2/FC3 | `phenix-flake-ci` trusted cache policy and CI metrics | PRs restore verified Nix outputs read-only; validated trusted runs publish cache; report wall time, build counts and transfer costs | [ ] DESIGNED in #17; implementation pending |
+| AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [ ] PLANNED: existing serial shipping gate remains authoritative until parity |
+| AI-CI4 | AI-CI3, FC2; FC4 for cache rollout | Phenix AI selective PR checks and shared cache | Small edits run only proven affected checks; main/release/manual-full run complete inventory and shipping | [ ] PLANNED: cold/warm timing and unaffected-check evidence required |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
 | B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: Session, EventJournal and SQLite-backed Storage plugins. A two-process test on impl/m1-basic-storage-sqlite checks persisted checkpoints, journal replay, CAS rollback and interrupted-tool reconciliation. CI, observer offset checkpoint storage and crash/fault-injection acceptance remain open |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
@@ -271,6 +279,37 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | I1 | K3 | `phenix-plugin-introspection` | Independent optional typed, discoverable contract projection over authorized kernel query APIs; no direct unrestricted host handles, no dependency on L1 | [ ] NOT STARTED |
 
 G1-G4 refine S4/S5 using one resolver and dispatcher. S6 remains outside the Basic critical path. B1 can proceed after G1, F1 after G3, and P1 requires G4. K1-K3 and L1/I1 are independent operations milestones, not Basic product blockers.
+
+### CI performance and flake-aware planning
+
+CI0 is the measured parallel matrix baseline, not completion of CI optimization.
+At the 12 October exact-head comparison, the matrix took 11m10s versus
+25m18s for the serial job. Later successful matrices took 9m33s to 14m03s.
+The prior old-main selective CI took about 5-6 minutes with different coverage;
+do not use it as a full-suite speedup claim. Logs show repeated independent
+Cargo compilation of shared contract, SDK and macro crates.
+
+[The M1 matrix rollout](m1-ci-matrix.md) records the current benchmark and
+shipping gate. [The proposed generic flake-aware design](https://github.com/matthis-k/phenix-flake-ci/pull/17)
+records FC1-FC4, owned by `phenix-flake-ci`. AI-CI1-AI-CI4 are consumer
+integration milestones in this roadmap. The library schedules declared Nix
+checks and proves selections; Phenix AI owns the derivations, compiler profiles,
+fixture packaging and release semantics. Maintain one Nix check definition.
+
+Prioritize AI-CI1 before adding further matrix shards. First remove redundant
+Cargo builds and broad source invalidations. Next prove fast check profiles,
+then use FC1-FC3 to generate a complete job plan. Keep the original shipping
+job required until the generated aggregate verifies every check and exact-head
+release report. FC2 and FC4 add selective PR execution and shared caches after
+those guarantees hold. Only validated main or trusted revisions may publish
+cache outputs; PRs consume them read-only.
+
+Collect same-commit cold and warm runs, per-crate compilation counts, Nix
+built/substituted derivations, cache bytes, wall time and billed runner-minutes.
+Initial performance targets, not acceptance claims, are 2-4 minutes for a
+small warm plugin PR and 5-8 minutes for warm full validation. A faster run
+must preserve the same semantic, negative, ABI and shipping evidence.
+
 
 G1/G2: [PR #782](https://github.com/matthis-k/phenix-ai/pull/782) owns typed graph declarations, ELF verification and the prepared multi-root DAG. Full exact-head shipping CI 38220130161 passed at `1615ed52`, but definition-only and negative semantic evidence remain before acceptance. [Its contract](m1-graph-declarations.md) owns the gates.
 
