@@ -36,9 +36,8 @@ mod plugin {
     use phenix_basic_contracts::{
         error, BasicError, BasicInput, BasicOutput, CatalogCursor, Context, ErrorCode, Event,
         EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
-        ModelRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope, Session,
-        SessionSnapshot, Skills, ToolCatalog, ToolExecute, ToolInfo, ToolQuery, ToolRequest,
-        Usage,
+        ModelRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope, Session, SessionSnapshot,
+        Skills, ToolCatalog, ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
     };
     use phenix_sdk::{Blob, CallError, CallResult, Host};
     use std::collections::BTreeSet;
@@ -109,7 +108,10 @@ mod plugin {
             }
         }
         let mut names = BTreeSet::new();
-        if tools.iter().any(|tool| tool.id.is_empty() || !names.insert(tool.id.clone())) {
+        if tools
+            .iter()
+            .any(|tool| tool.id.is_empty() || !names.insert(tool.id.clone()))
+        {
             return Err(CallError::Domain(error(
                 ErrorCode::InvalidReply,
                 "invalid or duplicate catalog tool",
@@ -119,16 +121,26 @@ mod plugin {
     }
 
     fn add_usage(total: &mut Usage, extra: &Usage) -> CallResult<(), BasicError> {
-        total.input_tokens = total.input_tokens.checked_add(extra.input_tokens).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::TurnLimit, "input usage overflow"))
-        })?;
-        total.output_tokens = total.output_tokens.checked_add(extra.output_tokens).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::TurnLimit, "output usage overflow"))
-        })?;
+        total.input_tokens = total
+            .input_tokens
+            .checked_add(extra.input_tokens)
+            .ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::TurnLimit, "input usage overflow"))
+            })?;
+        total.output_tokens = total
+            .output_tokens
+            .checked_add(extra.output_tokens)
+            .ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::TurnLimit, "output usage overflow"))
+            })?;
         Ok(())
     }
 
-    fn stopped(host: &Host<'_>, mut state: SessionSnapshot, error: &BasicError) -> CallResult<(), BasicError> {
+    fn stopped(
+        host: &Host<'_>,
+        mut state: SessionSnapshot,
+        error: &BasicError,
+    ) -> CallResult<(), BasicError> {
         state.status = RunStatus::Failed;
         let current = checkpoint(host, state)?;
         event(
@@ -141,10 +153,7 @@ mod plugin {
         )
     }
 
-    fn execute(
-        host: &Host<'_>,
-        input: PromptSubmitted,
-    ) -> CallResult<RunResult, BasicError> {
+    fn execute(host: &Host<'_>, input: PromptSubmitted) -> CallResult<RunResult, BasicError> {
         phenix_basic_contracts::check_session(host, &input.session)?;
         if input.text.is_empty() {
             return Err(CallError::Domain(error(
@@ -153,8 +162,12 @@ mod plugin {
             )));
         }
 
-        let mut session =
-            host.invoke::<Session::open>("Session", &Scope { session: input.session.clone() })?;
+        let mut session = host.invoke::<Session::open>(
+            "Session",
+            &Scope {
+                session: input.session.clone(),
+            },
+        )?;
         if session.status == RunStatus::Indeterminate || !session.pending.is_empty() {
             return Err(CallError::Domain(error(
                 ErrorCode::Indeterminate,
@@ -168,9 +181,10 @@ mod plugin {
             )));
         }
 
-        let next = session.checkpoint.checked_add(1).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::Conflict, "run counter overflow"))
-        })?;
+        let next = session
+            .checkpoint
+            .checked_add(1)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "run counter overflow")))?;
         let run = format!("run-{next}");
         session.run = run.clone();
         session.status = RunStatus::Running;
@@ -183,16 +197,27 @@ mod plugin {
             error: None,
         });
         session = checkpoint(host, session)?;
-        event(host, &input.session, &run, EventKind::PromptAccepted, input.text, "")?;
+        event(
+            host,
+            &input.session,
+            &run,
+            EventKind::PromptAccepted,
+            input.text,
+            "",
+        )?;
 
         let tools = catalog(host, &input.session)?;
         let skills = host.invoke::<Skills::list>(
             "Skills",
-            &Scope { session: input.session.clone() },
+            &Scope {
+                session: input.session.clone(),
+            },
         )?;
         let context = host.invoke::<Context::list>(
             "Context",
-            &Scope { session: input.session.clone() },
+            &Scope {
+                session: input.session.clone(),
+            },
         )?;
 
         let mut turns = 0_u64;
@@ -204,7 +229,14 @@ mod plugin {
                 stopped(host, session, &problem)?;
                 return Err(CallError::Domain(problem));
             }
-            event(host, &input.session, &run, EventKind::ModelStarted, String::new(), "")?;
+            event(
+                host,
+                &input.session,
+                &run,
+                EventKind::ModelStarted,
+                String::new(),
+                "",
+            )?;
             let reply = host.invoke::<Model::complete>(
                 "Model",
                 &ModelRequest {
@@ -251,7 +283,14 @@ mod plugin {
                 });
                 session.status = RunStatus::Completed;
                 session = checkpoint(host, session)?;
-                event(host, &input.session, &run, EventKind::Answer, reply.text.clone(), "")?;
+                event(
+                    host,
+                    &input.session,
+                    &run,
+                    EventKind::Answer,
+                    reply.text.clone(),
+                    "",
+                )?;
                 return Ok(RunResult {
                     session: input.session,
                     run,
