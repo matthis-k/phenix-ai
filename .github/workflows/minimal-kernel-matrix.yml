@@ -71,7 +71,7 @@ jobs:
           - suite: coordination
             checks: "m1-pending m1-pending-product m1-imports m1-generations m1-live-state m1-live-state-product"
           - suite: graph-agent
-            checks: "m1-native-authoring m1-graph basic-contracts b4-scripted a0-agent a0-agent-product m1-value-sdk m1-value-sdk-product"
+            checks: "m1-native-authoring m1-graph basic-contracts b4-scripted b3-tools a0-agent a0-agent-product m1-value-sdk m1-value-sdk-product"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
