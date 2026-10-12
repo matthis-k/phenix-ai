@@ -1,7 +1,8 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest, Submission,
+    BasicError, ClientInput, EventPage, JournalQuery, ObserverCheckpoint, ObserverRequest,
+    RenderRequest, Submission,
 };
 use phenix_contract::{Portable, Value};
 use phenix_kernel::{
@@ -49,6 +50,7 @@ fn render_new(
     frontend: &str,
     session: &str,
     after: &mut u64,
+    mut observer: Option<&mut ObserverCheckpoint>,
     mut sink: impl Write,
 ) -> Result<(), String> {
     loop {
@@ -79,6 +81,18 @@ fn render_new(
         ))?;
         for line in lines {
             writeln!(sink, "{line}").map_err(|e| e.to_string())?;
+        }
+        sink.flush().map_err(|e| e.to_string())?;
+        if let Some(checkpoint) = observer.as_deref_mut() {
+            *checkpoint = completed(invoke(
+                kernel,
+                "phenix.basic.agent",
+                "phenix.basic.output@1/checkpoint_observer",
+                ObserverCheckpoint {
+                    after: page.next,
+                    ..checkpoint.clone()
+                },
+            ))?;
         }
         *after = page.next;
     }
@@ -218,6 +232,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             "phenix.basic.frontend-acp",
                             session,
                             offset,
+                            None,
                             &mut output,
                         )
                         .map_err(|e| (-32000, e))?;
@@ -249,6 +264,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             "phenix.basic.frontend-acp",
                             session,
                             offset,
+                            None,
                             &mut output,
                         )
                         .map_err(|e| (-32000, e))?;
@@ -325,8 +341,25 @@ fn run() -> Result<(), String> {
     // The first product fixture binds one authenticated session. Later
     // frontends will ask the controller to construct a scope per session.
     let session = "s1";
-    let mut after = 0_u64;
+    let mut observer: ObserverCheckpoint = completed(invoke(
+        &kernel,
+        "phenix.basic.agent",
+        "phenix.basic.output@1/observer",
+        ObserverRequest {
+            session: session.into(),
+            observer: args[1].clone(),
+        },
+    ))?;
+    let mut after = observer.after;
     let mut stdout = io::stdout().lock();
+    render_new(
+        &kernel,
+        frontend,
+        session,
+        &mut after,
+        Some(&mut observer),
+        &mut stdout,
+    )?;
     for line in io::stdin().lock().lines() {
         let line = line.map_err(|e| e.to_string())?;
         let decoded = completed(invoke::<Submission>(
@@ -341,7 +374,14 @@ fn run() -> Result<(), String> {
         // A domain failure is returned to the caller rather than forging
         // a successful answer. Persisted failure events can still be replayed.
         let result = submit(&kernel, decoded);
-        render_new(&kernel, frontend, session, &mut after, &mut stdout)?;
+        render_new(
+            &kernel,
+            frontend,
+            session,
+            &mut after,
+            Some(&mut observer),
+            &mut stdout,
+        )?;
         result?;
     }
     kernel.shutdown().map_err(|e| format!("{e:?}"))

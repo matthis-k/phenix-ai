@@ -265,7 +265,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [ ] PLANNED: existing serial shipping gate remains authoritative until parity |
 | AI-CI4 | AI-CI3, FC2; FC4 for cache rollout | Phenix AI selective PR checks and shared cache | Small edits run only proven affected checks; main/release/manual-full run complete inventory and shipping | [ ] PLANNED: cold/warm timing and unaffected-check evidence required |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
-| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: Session, EventJournal and SQLite-backed Storage plugins. A two-process test on impl/m1-basic-storage-sqlite checks persisted checkpoints, journal replay, CAS rollback and interrupted-tool reconciliation. CI, observer offset checkpoint storage and crash/fault-injection acceptance remain open |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: durable sessions, journal, SQLite and observer checkpoints. The observer slice adds five-process acknowledgement crash tests and Terminal/JSONL startup restoration. Exact-head CI, storage migrations and remaining transaction fault cases stay open |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
@@ -382,10 +382,30 @@ reads the journal with two independent cursors and explicitly reconciles both
 call IDs. The conformance and shipping checks include the resulting report.
 The original in-memory fixture remains separate.
 
-This is implementation evidence pending exact-head CI. B2 still needs durable
-per-observer cursor checkpoints, crash injection around commit boundaries,
-migration/versioning checks and replay integration at product startup. Keep
-the stage unchecked until those cases are proven.
+The observer slice below adds per-observer persistence and startup replay.
+B2 remains unchecked until exact-head acceptance, migration/versioning checks
+and the remaining transaction fault cases pass.
+
+### B2 durable observer checkpoint slice
+
+`impl/m1-observer-checkpoints` extends EventJournal and BasicOutput with typed
+observer load and checkpoint operations. The Journal plugin stores one
+revision-checked record per session and observer through its selected Storage
+provider. BasicOutput forwards through the selected Journal import. The
+[observer contract](basic-observer-contract.md) owns record validation, offset
+bounds, CAS conflicts and crash semantics.
+
+Terminal and JSONL restore separate named cursors at startup. The host writes
+and flushes a rendered page before persisting its last sequence. Failure leaves
+the page available for replay. A crash between delivery and commit can repeat
+the page; delivery is at least once. ACP session/load retains its explicit
+history replay and connection-local offsets.
+
+The existing `b2-sqlite` gate now includes a five-process observer fixture with
+independent cursors, abrupt exits before/after acknowledgement, stale revisions,
+backward/future offset rejection, session denial and corrupt-record rejection.
+The product gate includes restart and failed-pipe replay checks. The Nix check
+inventory is unchanged. Canonical exact-head CI remains required.
 
 ### B2 session/checkpoint slice
 

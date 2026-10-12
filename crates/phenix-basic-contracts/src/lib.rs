@@ -226,6 +226,19 @@ pub struct EventPage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ObserverRequest {
+    pub session: String,
+    pub observer: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ObserverCheckpoint {
+    pub session: String,
+    pub observer: String,
+    pub after: u64,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum RunStatus {
     Idle,
     Running,
@@ -325,6 +338,11 @@ pub trait Session {
 pub trait EventJournal {
     fn append(&self, request: JournalAppend) -> Result<u64, BasicError>;
     fn read(&self, request: JournalQuery) -> Result<EventPage, BasicError>;
+    fn observer(&self, request: ObserverRequest) -> Result<ObserverCheckpoint, BasicError>;
+    fn checkpoint_observer(
+        &self,
+        request: ObserverCheckpoint,
+    ) -> Result<ObserverCheckpoint, BasicError>;
 }
 #[contract(id = "phenix.basic.storage@1")]
 pub trait Storage {
@@ -338,6 +356,11 @@ pub trait BasicInput {
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
     fn read(&self, request: JournalQuery) -> Result<EventPage, BasicError>;
+    fn observer(&self, request: ObserverRequest) -> Result<ObserverCheckpoint, BasicError>;
+    fn checkpoint_observer(
+        &self,
+        request: ObserverCheckpoint,
+    ) -> Result<ObserverCheckpoint, BasicError>;
 }
 #[contract(id = "phenix.basic.frontend@1")]
 pub trait Frontend {

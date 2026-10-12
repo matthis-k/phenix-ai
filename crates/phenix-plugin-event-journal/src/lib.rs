@@ -85,12 +85,132 @@ mod plugin {
     use super::{append_checked, page_from, storage_error, JOURNAL_KEY};
     use phenix_basic_contracts::{
         decode, encode, BasicError, ErrorCode, Event, EventJournal, EventPage, JournalAppend,
-        JournalQuery, RecordKey, Storage, StorageEdit, StorageTransaction,
+        JournalQuery, ObserverCheckpoint, ObserverRequest, RecordKey, Storage, StorageEdit,
+        StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
 
     #[derive(Default)]
     pub struct State;
+
+    fn observer_key(observer: &str) -> CallResult<String, BasicError> {
+        if !phenix_sdk::identifier(observer) {
+            return Err(CallError::Domain(phenix_basic_contracts::error(
+                ErrorCode::InvalidInput,
+                "invalid observer identity",
+            )));
+        }
+        Ok(format!("event-observer.v1.{observer}"))
+    }
+
+    fn load_observer(
+        host: &Host<'_>,
+        request: &ObserverRequest,
+    ) -> CallResult<(ObserverCheckpoint, u64), BasicError> {
+        let key = observer_key(&request.observer)?;
+        let (_, events) = load(host, &request.session)?;
+        super::validate(&events, &request.session).map_err(CallError::Domain)?;
+        let tail = events.last().map_or(0, |event| event.sequence);
+        let record = host.invoke::<Storage::read>(
+            "Storage",
+            &RecordKey {
+                session: request.session.clone(),
+                key,
+            },
+        );
+        let checkpoint = match record {
+            Ok(record) => {
+                let saved: ObserverCheckpoint =
+                    decode(&record.data).map_err(|_| CallError::Domain(storage_error()))?;
+                if saved.session != request.session
+                    || saved.observer != request.observer
+                    || saved.revision == 0
+                    || saved.revision != record.revision
+                    || saved.after > tail
+                {
+                    return Err(CallError::Domain(storage_error()));
+                }
+                saved
+            }
+            Err(CallError::Domain(error)) if error.code == ErrorCode::NotFound => {
+                ObserverCheckpoint {
+                    session: request.session.clone(),
+                    observer: request.observer.clone(),
+                    after: 0,
+                    revision: 0,
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        Ok((checkpoint, tail))
+    }
+
+    #[provide(EventJournal::observer)]
+    fn observer(
+        _: &mut State,
+        host: &Host<'_>,
+        request: ObserverRequest,
+    ) -> CallResult<ObserverCheckpoint, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        Ok(load_observer(host, &request)?.0)
+    }
+
+    #[provide(EventJournal::checkpoint_observer)]
+    fn checkpoint_observer(
+        _: &mut State,
+        host: &Host<'_>,
+        request: ObserverCheckpoint,
+    ) -> CallResult<ObserverCheckpoint, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        let (current, tail) = load_observer(
+            host,
+            &ObserverRequest {
+                session: request.session.clone(),
+                observer: request.observer.clone(),
+            },
+        )?;
+        if request.revision != current.revision {
+            return Err(CallError::Domain(phenix_basic_contracts::error(
+                ErrorCode::Conflict,
+                "observer revision changed",
+            )));
+        }
+        if request.after < current.after || request.after > tail {
+            return Err(CallError::Domain(phenix_basic_contracts::error(
+                ErrorCode::InvalidCursor,
+                "observer offset is outside delivered journal bounds",
+            )));
+        }
+        if request.after == current.after {
+            return Ok(current);
+        }
+        let mut saved = request;
+        saved.revision = current.revision.checked_add(1).ok_or_else(|| {
+            CallError::Domain(phenix_basic_contracts::error(
+                ErrorCode::Conflict,
+                "observer revision overflow",
+            ))
+        })?;
+        let data = encode(&saved)?;
+        let records = host.invoke::<Storage::transact>(
+            "Storage",
+            &StorageTransaction {
+                session: saved.session.clone(),
+                edits: vec![StorageEdit {
+                    key: observer_key(&saved.observer)?,
+                    expected: current.revision,
+                    data: data.clone(),
+                }],
+            },
+        )?;
+        if records.len() != 1 || records[0].revision != saved.revision || records[0].data != data {
+            return Err(CallError::Kernel(Failure::new(
+                Code::PluginFailed,
+                "storage returned an invalid observer checkpoint",
+            )));
+        }
+        Ok(saved)
+    }
 
     fn load(host: &Host<'_>, session: &str) -> CallResult<(u64, Vec<Event>), BasicError> {
         let result = host.invoke::<Storage::read>(

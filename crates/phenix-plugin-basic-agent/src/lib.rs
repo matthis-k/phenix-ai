@@ -39,8 +39,9 @@ mod plugin {
     use phenix_basic_contracts::{
         error, BasicError, BasicInput, BasicOutput, CatalogCursor, Context, ErrorCode, Event,
         EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
-        ModelRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope, Session, SessionSnapshot,
-        Skills, ToolCatalog, ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
+        ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
+        RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolExecute, ToolInfo,
+        ToolQuery, ToolRequest, Usage,
     };
     use phenix_sdk::{Blob, CallError, CallResult, Host};
     use std::collections::BTreeSet;
@@ -398,5 +399,25 @@ mod plugin {
     ) -> CallResult<EventPage, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         host.invoke::<EventJournal::read>("Journal", &request)
+    }
+
+    #[provide(BasicOutput::observer)]
+    fn observer(
+        _: &mut State,
+        host: &Host<'_>,
+        request: ObserverRequest,
+    ) -> CallResult<ObserverCheckpoint, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        host.invoke::<EventJournal::observer>("Journal", &request)
+    }
+
+    #[provide(BasicOutput::checkpoint_observer)]
+    fn checkpoint_observer(
+        _: &mut State,
+        host: &Host<'_>,
+        request: ObserverCheckpoint,
+    ) -> CallResult<ObserverCheckpoint, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        host.invoke::<EventJournal::checkpoint_observer>("Journal", &request)
     }
 }

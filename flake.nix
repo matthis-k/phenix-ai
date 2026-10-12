@@ -238,6 +238,24 @@
         ${conformanceBinary}/bin/phenix-b2-sqlite resume ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         test -s "$out/sqlite-restart.json"
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-observers.db"
+        observer_fixture() {
+          ${conformanceBinary}/bin/phenix-b2-observers "$1" ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        }
+        observer_fixture seed
+        set +e
+        observer_fixture crash-before
+        before_status=$?
+        set -e
+        test "$before_status" -eq 71
+        observer_fixture verify-before
+        set +e
+        observer_fixture crash-after
+        after_status=$?
+        set -e
+        test "$after_status" -eq 72
+        observer_fixture resume
+        test -s "$out/observer-restart.json"
       '';
       basicMemory = basicNativePlugin
         "phenix-plugin-basic-memory"
@@ -302,11 +320,15 @@
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
+        { caller = "root"; key = "phenix.basic.output@1/observer"; }
+        { caller = "root"; key = "phenix.basic.output@1/checkpoint_observer"; }
         { caller = "root"; key = "phenix.basic.frontend@1/decode"; }
         { caller = "root"; key = "phenix.basic.frontend@1/render"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.input@1/submit"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/append"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/read"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/observer"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/checkpoint_observer"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.model@1/complete"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.catalog@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.tool@1/execute"; }
@@ -381,6 +403,8 @@
         grep -F 'answer: mock:hello' $out/terminal.txt
         printf '%s\n' '{"type":"prompt","session":"s1","text":"tools:hello","limits":{"model_turns":2,"tool_calls":2}}' | ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} > $out/jsonl.txt
         grep -F 'mock:call-1:HELLO|call-2:5' $out/jsonl.txt
+        python ${./tests/observer-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
+        test -s "$out/observer-product.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
