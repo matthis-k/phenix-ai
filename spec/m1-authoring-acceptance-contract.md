@@ -38,3 +38,10 @@ and CI artifact before accepting S3b. Retain cancellation, lifecycle rollback,
 generation retirement, dependency ordering, attenuation and A0 fixture gates.
 The shared DAG ordering code has distinct lifecycle and future reactive meanings;
 reactive integration remains G1-G4.
+
+## Generated pending slots
+
+Declared slots generate sealed `begin` and `begin_scoped` helpers alongside
+`invoke`. Many slots also generate indexed pending helpers. They use the existing
+Host and PendingImport types. Wrong-contract members fail compilation; missing
+indices reject at the prepared selection before native work starts.
