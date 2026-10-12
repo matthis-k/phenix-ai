@@ -30,6 +30,9 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     require(phenix_basic_contracts::Context, slot = "Context"),
     require(phenix_basic_contracts::Session, slot = "Session"),
     require(phenix_basic_contracts::EventJournal, slot = "Journal"),
+    // Preserve Storage authority for nested Session, Journal and memory calls.
+    // The agent does not select or invoke a Storage provider itself.
+    require(phenix_basic_contracts::Storage, slot = "Storage", optional),
     graph(super::GRAPH)
 )]
 mod plugin {

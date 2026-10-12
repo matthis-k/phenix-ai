@@ -1,8 +1,7 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest,
-    Submission,
+    BasicError, ClientInput, EventPage, JournalQuery, RenderRequest, Submission,
 };
 use phenix_contract::{Portable, Value};
 use phenix_kernel::{
@@ -36,7 +35,7 @@ fn invoke<T: Portable>(
     {
         Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
         Outcome::Domain(value) => Ok(Err(
-            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?,
+            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?
         )),
     }
 }
@@ -118,8 +117,7 @@ fn run() -> Result<(), String> {
     }
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
-    let composition: Composition =
-        serde_json::from_slice(&config).map_err(|e| e.to_string())?;
+    let composition: Composition = serde_json::from_slice(&config).map_err(|e| e.to_string())?;
     let kernel = Prepared::prepare(composition)
         .map_err(|e| format!("{e:?}"))?
         .load()
