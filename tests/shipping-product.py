@@ -3,7 +3,7 @@ import json, re, sys
 from pathlib import Path
 kernel, sdk_check, conformance, closure, examples, output = map(Path, sys.argv[1:])
 output.mkdir(parents=True)
-required = {"contract", "descriptor", "native", "product", "composition", "composition-product", "lifecycle", "lifecycle-product", "pending", "pending-product", "imports", "generations"}
+required = {"contract", "descriptor", "native", "product", "composition", "composition-product", "lifecycle", "lifecycle-product", "pending", "pending-product", "imports", "generations", "wire", "metadata-state", "authoring", "live-state", "live-state-product", "value-sdk", "value-sdk-product", "agent", "agent-product"}
 assert {p.name for p in conformance.iterdir()} == required
 assert (conformance / "contract" / "contract").read_text().strip() == "passed"
 assert (sdk_check / "public-sdk").read_text().strip() == "passed"
@@ -30,7 +30,7 @@ fixture_files = sorted(p for p in examples.rglob("*.rs")
 assert fixture_files
 for path in fixture_files:
     source = path.read_text()
-    assert not re.search(r"phenix_native_v[12]|descriptor_pending\s*\(|descriptor_with_policy\s*\(|link_section\s*=\s*\"\.phenix\"", source), path
+    assert not re.search(r"phenix_native_v[123]|descriptor_pending\s*\(|descriptor_with_policy\s*\(|link_section\s*=\s*\"\.phenix\"", source), path
 result = dict(format="phenix.m1.shipping.v1", gates=sorted(required | {"public-sdk"}), kernel=str(kernel), sdk_check=str(sdk_check), realized_gates={name:str((conformance / name).resolve()) for name in sorted(required)}, production_files=production_files, production_closure=closure_paths, parsed_reports=reports, independently_authored_fixture_files=len(fixture_files))
 (output / "evidence.json").write_text(json.dumps(result, sort_keys=True, indent=2))
 print("M1 integrated shipping conformance passed")

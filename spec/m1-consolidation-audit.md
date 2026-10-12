@@ -90,8 +90,8 @@ S3b pending imports on the compatibility representation would add throwaway work
 | Kernel agent executors | 0 | 0 | 0 |
 | Production crates | 5 | 5 | 5 |
 | Authored State needed for stateless plugin | Yes | No | No |
-| Production-crate Rust source lines | 10,665 | 8,852 | Measured |
-| Kernel Rust source lines | 3,905 | 3,545 | Measured |
+| Production-crate Rust source lines | 10,665 | 8,858 | Measured |
+| Kernel Rust source lines | 3,905 | 3,551 | Measured |
 | Public contract/SDK type declarations | 81 | 64 | Measured |
 
 Source line counts include inline unit tests and exclude conformance and external
@@ -121,6 +121,8 @@ CI alone did not classify it. The contemporary M1 rollback suite now passes in
 debug after restoring per-plugin create/initialize order and reverse cleanup of
 only acquired instances. This does not claim a backport to the historical branch.
 
+The release evidence product now includes all 21 contemporary semantic and
+protocol gates, plus the standalone public SDK and shipping closure.
 Full M1-only acceptance requires exact-head full Nix CI and its evidence product.
 S3b stage acceptance and reactive trigger/readiness integration remain subsequent
 work; this migration does not declare those stages complete.

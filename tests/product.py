@@ -78,7 +78,7 @@ assert replaced["outcome"]["failure"]["context"] == dict(caller="root", provider
                                                          operation="example.consumer@1/run")
 
 def compare_golden(actual, expected):
-    # Additive fields are allowed within v1. Frozen fields must preserve types
+    # Additive fields are allowed within v2. Frozen fields must preserve types
     # and values; incompatible changes require a new inspection format version.
     if isinstance(expected, dict):
         assert isinstance(actual, dict)

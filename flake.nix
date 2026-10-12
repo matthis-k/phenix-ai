@@ -37,6 +37,7 @@
         ./examples
         ./include
         ./tests/abi.c
+        ./tests/m1-architecture.py
         ./tests/generation-identity-v2.json
       ];
       artifactSource = subset [
@@ -286,6 +287,7 @@
         cargoBuildFlags = [ ];
         nativeBuildInputs = old.nativeBuildInputs ++ [
           pkgs.rustfmt
+          pkgs.python3
           pkgs.clippy
         ];
         buildPhase = ''
@@ -297,7 +299,7 @@
           $CC -std=c11 -Iinclude tests/abi.c -o abi-layout
           ./abi-layout
         '';
-        installPhase = "mkdir -p $out; echo passed > $out/contract";
+        installPhase = "mkdir -p $out; echo passed > $out/contract; python tests/m1-architecture.py > $out/architecture.json";
       });
       referenceWireCheck = (build "phenix-contract" publicSource).overrideAttrs (old: {
         cargoBuildFlags = [ "-p" "phenix-contract" "--bin" "phenix-value-probe" ];
@@ -476,6 +478,15 @@
         ln -s ${pendingProduct} $out/pending-product
         ln -s ${importsCheck} $out/imports
         ln -s ${generationsCheck} $out/generations
+        ln -s ${referenceWireCheck} $out/wire
+        ln -s ${metadataStateCheck} $out/metadata-state
+        ln -s ${authoringCheck} $out/authoring
+        ln -s ${stateCheck} $out/live-state
+        ln -s ${stateProduct} $out/live-state-product
+        ln -s ${valueSdkCheck} $out/value-sdk
+        ln -s ${valueSdkProduct} $out/value-sdk-product
+        ln -s ${agentCheck} $out/agent
+        ln -s ${agentProduct} $out/agent-product
       '';
     in
     {
