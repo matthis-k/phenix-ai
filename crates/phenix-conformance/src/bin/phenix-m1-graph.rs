@@ -1,6 +1,6 @@
 //! G2 external artifact gate. All three graph providers are independently built.
 use phenix_contract::{Authority, Code, Value};
-use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection};
+use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const TASK: &str = "example.graph.task@1";
@@ -18,6 +18,26 @@ fn composition(artifacts: Vec<String>) -> Composition {
             resources: BTreeSet::new(),
         });
     }
+    // The graph nodes use the existing state host API. A and B commit their
+    // own properties; C reads those values through selected property imports.
+    let mut operations = BTreeSet::from([KEY.into()]);
+    for (owner, caller, actions) in [
+        ("example.graph-a", "example.graph-a", &["get", "set"][..]),
+        ("example.graph-b", "example.graph-b", &["get", "set"][..]),
+        ("example.graph-a", "example.graph-c", &["get"][..]),
+        ("example.graph-b", "example.graph-c", &["get"][..]),
+    ] {
+        let interface = phenix_contract::property_contract(owner, "result").unwrap();
+        for operation in actions {
+            grants.push(ScopedGrant {
+                caller: caller.into(),
+                interface: interface.clone(),
+                operation: (*operation).into(),
+                resources: BTreeSet::new(),
+            });
+            operations.insert(format!("{interface}/{operation}"));
+        }
+    }
     Composition {
         format: "phenix.composition.v2".into(),
         artifacts,
@@ -27,12 +47,27 @@ fn composition(artifacts: Vec<String>) -> Composition {
             operation: "run".into(),
             provider: ids[0].into(),
         },
-        slots: vec![],
+        slots: vec![
+            SlotBinding {
+                caller: "example.graph-c".into(),
+                slot: "a".into(),
+                index: 0,
+                provider: "example.graph-a".into(),
+                export: "property.result".into(),
+            },
+            SlotBinding {
+                caller: "example.graph-c".into(),
+                slot: "b".into(),
+                index: 0,
+                provider: "example.graph-b".into(),
+                export: "property.result".into(),
+            },
+        ],
         grants,
         excluded: BTreeSet::new(),
         substitutions: vec![],
         authority: Authority {
-            operations: [KEY.into()].into(),
+            operations,
             resources: BTreeSet::new(),
         },
         resource: None,
@@ -214,12 +249,17 @@ fn main() {
     .enumerate()
     {
         assert_eq!(submitted[index].node, *name);
+        let value = if index == 2 { "A:triggered|B:triggered" } else { "triggered" };
         assert_eq!(
             submitted[index].outcome,
-            phenix_kernel::Outcome::Success(Value::String("triggered".into()))
+            phenix_kernel::Outcome::Success(Value::String(value.into()))
         );
     }
-    assert!(successor_witness.exists(), "C must run after both successful roots");
+    assert_eq!(
+        fs::read_to_string(&successor_witness).unwrap(),
+        "A:triggered|B:triggered",
+        "C must read both committed predecessor values"
+    );
     fs::remove_file(&successor_witness).unwrap();
     let domain = kernel
         .submit_action(
@@ -306,6 +346,7 @@ fn main() {
             "three-external-nodes-dispatched",
             "schema-and-action-rejection",
             "successful-fanin-runs-c",
+            "two-committed-property-values-read-by-successor",
             "predecessor-b-domain-prevents-c-effect"
         ]
         }))

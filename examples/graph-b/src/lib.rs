@@ -11,7 +11,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
         after: &[],
         selector: "",
         operation: "example.graph.task@1/run",
-        writes: &[],
+        writes: &["example.graph-b/result"],
         join: JoinPolicy::AllActive,
         failure: FailurePolicy::FailRoot,
     }],
@@ -21,15 +21,30 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     id = "example.graph-b",
     define(Task),
     provide(Task, slot = "task"),
+    profile = "state",
     graph(GRAPH)
 )]
 mod provider {
     use super::*;
+    #[derive(Default)]
+    struct State {
+        #[get(id = "result")]
+        #[set]
+        result: String,
+    }
+
     #[provide(Task::run)]
-    fn run(input: Start) -> Result<String, String> {
+    fn run(state: &mut State, host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
         if input.text == "domain-b" {
-            return Err("domain fixture b".into());
+            return Err(CallError::Domain("domain fixture b".into()));
         }
+        let mut edit = state
+            .result
+            .edit(host)
+            .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+        *edit = format!("B:{}", input.text);
+        edit.commit(host)
+            .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
         Ok(input.text)
     }
 }

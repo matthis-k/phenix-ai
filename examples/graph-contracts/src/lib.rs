@@ -1,4 +1,4 @@
-use phenix_sdk::{action, contract, event, Portable};
+use phenix_sdk::{action, contract, event, property, Portable};
 
 #[event(id = "example.graph.start")]
 #[derive(Debug, Clone, Portable)]
@@ -18,3 +18,9 @@ pub struct Submit;
 pub trait Task {
     fn run(&mut self, input: Start) -> Result<String, String>;
 }
+
+#[property(owner = "example.graph-a", id = "result", get, set)]
+pub type ResultA = String;
+
+#[property(owner = "example.graph-b", id = "result", get, set)]
+pub type ResultB = String;
