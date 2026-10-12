@@ -114,8 +114,14 @@ mod plugin {
         request: Scope,
     ) -> CallResult<Vec<Skill>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        Ok(load::<SkillSet>(host, &request.session, SKILLS_KEY)?
-            .map_or_else(Vec::new, |(_, value)| value.skills))
+        match load::<SkillSet>(host, &request.session, SKILLS_KEY)? {
+            Some((_, value)) if value.session == request.session => Ok(value.skills),
+            Some(_) => Err(CallError::Domain(error(
+                ErrorCode::StorageFailed,
+                "stored skill session mismatch",
+            ))),
+            None => Ok(vec![]),
+        }
     }
 
     #[provide(Skills::set)]
@@ -136,8 +142,14 @@ mod plugin {
         request: Scope,
     ) -> CallResult<Vec<ContextItem>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        Ok(load::<ContextSet>(host, &request.session, CONTEXT_KEY)?
-            .map_or_else(Vec::new, |(_, value)| value.items))
+        match load::<ContextSet>(host, &request.session, CONTEXT_KEY)? {
+            Some((_, value)) if value.session == request.session => Ok(value.items),
+            Some(_) => Err(CallError::Domain(error(
+                ErrorCode::StorageFailed,
+                "stored context session mismatch",
+            ))),
+            None => Ok(vec![]),
+        }
     }
 
     #[provide(Context::set)]
