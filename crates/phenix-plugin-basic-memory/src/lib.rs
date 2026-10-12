@@ -1,6 +1,6 @@
 //! Session-scoped Skills and Context providers over independently selected
 //! Storage. These are declarations, not an implicit filesystem or prompt scan.
-use phenix_basic_contracts::{error, BasicError, ErrorCode, ContextItem, Skill};
+use phenix_basic_contracts::{error, BasicError, ContextItem, ErrorCode, Skill};
 use std::collections::BTreeSet;
 
 const SKILLS_KEY: &str = "basic.skills.v1";
@@ -84,9 +84,9 @@ mod plugin {
             Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => 0,
             Err(err) => return Err(err),
         };
-        let next = revision.checked_add(1).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::Conflict, "revision overflow"))
-        })?;
+        let next = revision
+            .checked_add(1)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "revision overflow")))?;
         let result = host.invoke::<Storage::transact>(
             "Storage",
             &StorageTransaction {
@@ -125,11 +125,7 @@ mod plugin {
     }
 
     #[provide(Skills::set)]
-    fn skills_set(
-        _: &mut State,
-        host: &Host<'_>,
-        request: SkillSet,
-    ) -> CallResult<(), BasicError> {
+    fn skills_set(_: &mut State, host: &Host<'_>, request: SkillSet) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         validate_skills(&request.skills).map_err(CallError::Domain)?;
         save(host, &request.session, SKILLS_KEY, &request)
@@ -169,14 +165,30 @@ mod tests {
     use super::*;
     #[test]
     fn unique_ids_are_required_before_storage_effects() {
-        assert_eq!(validate_skills(&[Skill {
-            id: "".into(),
-            description: "".into(),
-            instructions: "".into(),
-        }]).unwrap_err().code, ErrorCode::InvalidInput);
-        assert_eq!(validate_context(&[
-            ContextItem { id: "dup".into(), text: "a".into() },
-            ContextItem { id: "dup".into(), text: "b".into() },
-        ]).unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            validate_skills(&[Skill {
+                id: "".into(),
+                description: "".into(),
+                instructions: "".into(),
+            }])
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            validate_context(&[
+                ContextItem {
+                    id: "dup".into(),
+                    text: "a".into()
+                },
+                ContextItem {
+                    id: "dup".into(),
+                    text: "b".into()
+                },
+            ])
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
     }
 }
