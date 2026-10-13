@@ -272,7 +272,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Nonblocking ACP progress and cancellation implemented on `impl/m1-p1-live-acp-controller`, with independent HTTP acceptance pending CI; the ACP protocol boundary now handles malformed idle frames and v1 fallback negotiation on `impl/m1-p1-acp-protocol-boundary`, pending CI. Official ACP SDK client check implementing on `impl/m1-p1-acp-sdk-interop`; exact-head verification remains |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` accepted on #815 after exact-head canonical, matrix and DAG checks. ACP SDK client gate is implementing on `impl/m1-p1-acp-sdk-interop`; SSE framing migration to a bounded sans-I/O parser is implementing on `impl/m1-r1-standard-sse-parser`; Cargo.lock is pinned; exact-head conformance, matrix and DAG tests remain. Full ACP SDK-based codec migration remains. |
-| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: Basic agent, live Terminal/JSONL/ACP streams and cancellation, durable sessions and named session selection implemented on #816, #818, #819 and #820. Full shipping CI passed through #819; later exact heads and independent official ACP SDK interop passed once; locked exact-head CI remains under test. Cross-process Session ownership safety is implementing on `impl/m1-p1-session-crossprocess-safety`; owner-fenced crash recovery and remaining R1 review remain open. |
+| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: Basic agent, live Terminal/JSONL/ACP streams and cancellation, durable sessions and named session selection implemented on #816, #818, #819 and #820. Full shipping CI passed through #819; later exact heads and independent official ACP SDK interop passed once; locked exact-head CI remains under test. Cross-process Session ownership safety is implementing on `impl/m1-p1-session-crossprocess-safety`; cooperative per-session locking is implementing on `impl/m1-p1-session-advisory-ownership`; durable owner-fenced crash recovery and remaining R1 review remain open. |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -576,6 +576,23 @@ The unit suite adds bytewise BOM/CRLF fragmentation, invalid UTF-8 across
 chunks, and oversize rejection. The real pending-HTTP Basic and ACP fixtures
 remain part of the shipping gate. The 66-package workspace Cargo.lock now pins the parser and its
 dependencies. Exact-head shipping CI remains pending.
+
+### P1 cooperative local session locking
+
+`impl/m1-p1-session-advisory-ownership` holds a per-session exclusive
+file lock while Terminal, JSONL or ACP drives an admitted graph. The
+runtime derives the lock path from the canonical file-backed SQLite path
+and a hex-encoded session identity. It uses Rust's standard `File::try_lock`
+and retains the descriptor until graph drainage and cancellation
+checkpointing finish. Other cooperating local hosts fail admission before
+issuing a Model or Tool effect. Locks for distinct sessions are independent,
+and the operating system releases a lock when its process exits.
+
+This guards active local execution only. It does not prove that historical
+`Running` records were created by a lock-aware host, so the Session
+plugin still does not automatically recover abandoned runs. A durable
+owner marker and explicit recovery transition remain P1 work. Exact-head
+CI and the two-process pending-HTTP product fixture must pass.
 
 ### P1 cross-process Session ownership safety
 

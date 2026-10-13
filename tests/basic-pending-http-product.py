@@ -201,7 +201,7 @@ try:
         assert concurrent.returncode != 0, (
             concurrent.stdout, concurrent.stderr
         )
-        assert "a run is already active" in concurrent.stderr, concurrent.stderr
+        assert "session already owned by another host" in concurrent.stderr, concurrent.stderr
         assert len(calls) == 3, "concurrent host dispatched a second Model"
         # The next turn is submitted before cancelling the current run.
         # The controller must preserve it across cancellation and draining.
@@ -245,6 +245,7 @@ try:
         "queued_other_session_isolated": True,
         "wrong_session_cancel_ignored": True,
         "second_process_running_session_rejected": True,
+        "session_file_lock_enforced": True,
     }, indent=2, sort_keys=True))
 finally:
     release_cancel_stream.set()

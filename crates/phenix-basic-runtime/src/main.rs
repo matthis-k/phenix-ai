@@ -238,6 +238,60 @@ fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Cooperative, local-process ownership for the duration of one active
+/// graph. The file descriptor is the guard: the operating system releases
+/// its advisory lock if the host process exits unexpectedly.
+///
+/// This is admission protection, not a recovery authorization. A fresh
+/// process must still not rewrite a durable Running snapshot solely because
+/// it acquired a lock; older or noncooperating hosts may lack this protocol.
+fn session_lock(session: &str) -> Result<std::fs::File, String> {
+    let path = env::var("PHENIX_BASIC_SQLITE_PATH")
+        .map_err(|_| "PHENIX_BASIC_SQLITE_PATH is required for session ownership")?;
+    if path.is_empty() || path == ":memory:" || path.starts_with("file:") {
+        return Err("session ownership requires a file-backed SQLite path".into());
+    }
+    lock_session_file(Path::new(&path), session)
+}
+
+fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, String> {
+    phenix_basic_contracts::session_resource(session)
+        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
+    let full = match std::fs::canonicalize(database) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = database
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let name = database.file_name().ok_or("SQLite path has no file name")?;
+            std::fs::canonicalize(parent)
+                .map_err(|e| e.to_string())?
+                .join(name)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut suffix = String::with_capacity(session.len() * 2);
+    for byte in session.bytes() {
+        use std::fmt::Write as _;
+        write!(suffix, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    let mut lock_path = full.into_os_string();
+    lock_path.push(".phenix-session-");
+    lock_path.push(suffix);
+    lock_path.push(".lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(std::path::PathBuf::from(lock_path))
+        .map_err(|e| e.to_string())?;
+    file.try_lock()
+        .map_err(|e| format!("session already owned by another host or lock failed: {e}"))?;
+    Ok(file)
+}
+
 /// A reader owns stdin. Only the controller thread touches Kernel, Root, or
 /// GraphExecution. This keeps root admission and cancellation on one thread.
 fn input_channel() -> Receiver<Result<String, String>> {
@@ -285,6 +339,7 @@ fn run_console(
     let receiver = input_channel();
     let mut queue = VecDeque::<Submission>::new();
     let mut active: Option<GraphExecution<'_>> = None;
+    let mut active_lock: Option<std::fs::File> = None;
     let mut eof = false;
     loop {
         let packet = if eof {
@@ -333,6 +388,7 @@ fn run_console(
 
         if active.is_none() {
             if let Some(next) = queue.pop_front() {
+                active_lock = Some(session_lock(session)?);
                 active = Some(begin_submission(
                     &kernel,
                     next,
@@ -368,6 +424,9 @@ fn run_console(
                         &mut stdout,
                     )?;
                 }
+                // Release only after the graph has drained and any durable
+                // cancellation checkpoint has been written.
+                drop(active_lock.take());
             } else {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -475,6 +534,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             continue;
         }
 
+        let _session_lock = session_lock(&session)?;
         let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
         loop {
             // Leave unprocessed requests in the bounded channel when the
@@ -840,6 +900,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         ));
                         let submission = decoded.map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
+                        let _session_lock = session_lock(session).map_err(|e| (-32000, e))?;
                         let execution =
                             begin_submission(kernel, submission, basic_scope(composition, session))
                                 .map_err(|e| (-32000, e))?;
@@ -933,5 +994,35 @@ fn main() {
     if let Err(err) = run() {
         eprintln!("phenix-basic: {err}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod session_lock_tests {
+    use super::lock_session_file;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn independent_sessions_and_lock_release() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-session-lock-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let database = root.join("basic.db");
+
+        let first = lock_session_file(&database, "s1").unwrap();
+        assert!(lock_session_file(&database, "s1").is_err());
+        let second = lock_session_file(&database, "s2").unwrap();
+
+        drop(first);
+        let resumed = lock_session_file(&database, "s1").unwrap();
+        drop(resumed);
+        drop(second);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
