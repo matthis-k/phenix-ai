@@ -50,8 +50,37 @@ fn completed<T>(result: Result<Result<T, BasicError>, String>) -> Result<T, Stri
     result?.map_err(|e| format!("{:?}: {}", e.code, e.message))
 }
 
+/// Use the pending graph's authenticated root instead of admitting another
+/// root while its tickets are live. The kernel still checks the selected
+/// operation, exact scope and ordinary root grants.
+fn invoke_graph<T: Portable>(
+    execution: &GraphExecution<'_>,
+    provider: &str,
+    operation: &str,
+    request: impl Portable,
+) -> Result<Result<T, BasicError>, String> {
+    let (interface, name) = operation
+        .split_once('/')
+        .ok_or_else(|| format!("invalid operation {operation}"))?;
+    let selected = Selection {
+        interface: interface.into(),
+        operation: name.into(),
+        provider: provider.into(),
+    };
+    match execution
+        .invoke_selected(&selected, &request.to_value())
+        .map_err(|e| format!("{e:?}"))?
+    {
+        Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
+        Outcome::Domain(value) => Ok(Err(
+            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?,
+        )),
+    }
+}
+
 fn render_new(
     kernel: &Kernel,
+    execution: Option<&GraphExecution<'_>>,
     frontend: &str,
     session: &str,
     after: &mut u64,
@@ -59,45 +88,82 @@ fn render_new(
     mut sink: impl Write,
 ) -> Result<(), String> {
     loop {
-        let page: EventPage = completed(invoke(
-            kernel,
-            "phenix.basic.event-journal",
+        let page: EventPage = completed(if let Some(graph) = execution {
+            invoke_graph(
+                graph,
+                "phenix.basic.event-journal",
             "phenix.basic.journal@1/read",
             JournalQuery {
                 session: session.into(),
                 after: *after,
                 limit: 128,
             },
-        ))?;
+            )
+        } else {
+            invoke(
+                kernel,
+                "phenix.basic.event-journal",
+                "phenix.basic.journal@1/read",
+                JournalQuery {
+                    session: session.into(),
+                    after: *after,
+                    limit: 128,
+                },
+            )
+        })?;
         if page.events.is_empty() {
             break;
         }
         if page.next <= *after {
             return Err("journal cursor did not advance".into());
         }
-        let lines: Vec<String> = completed(invoke(
-            kernel,
-            frontend,
+        let lines: Vec<String> = completed(if let Some(graph) = execution {
+            invoke_graph(
+                graph,
+                frontend,
             "phenix.basic.frontend@1/render",
             RenderRequest {
                 session: session.into(),
-                events: page.events,
+                events: page.events.clone(),
             },
-        ))?;
+            )
+        } else {
+            invoke(
+                kernel,
+                frontend,
+                "phenix.basic.frontend@1/render",
+                RenderRequest {
+                    session: session.into(),
+                    events: page.events,
+                },
+            )
+        })?;
         for line in lines {
             writeln!(sink, "{line}").map_err(|e| e.to_string())?;
         }
         sink.flush().map_err(|e| e.to_string())?;
         if let Some(checkpoint) = observer.as_deref_mut() {
-            *checkpoint = completed(invoke(
-                kernel,
-                "phenix.basic.event-journal",
+            *checkpoint = completed(if let Some(graph) = execution {
+                invoke_graph(
+                    graph,
+                    "phenix.basic.event-journal",
                 "phenix.basic.journal@1/checkpoint_observer",
                 ObserverCheckpoint {
                     after: page.next,
                     ..checkpoint.clone()
                 },
-            ))?;
+                )
+            } else {
+                invoke(
+                    kernel,
+                    "phenix.basic.event-journal",
+                    "phenix.basic.journal@1/checkpoint_observer",
+                    ObserverCheckpoint {
+                        after: page.next,
+                        ..checkpoint.clone()
+                    },
+                )
+            })?;
         }
         *after = page.next;
     }
@@ -238,6 +304,7 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
     let mut stdout = io::stdout().lock();
     render_new(
         &kernel,
+        None,
         frontend,
         session,
         &mut after,
@@ -308,6 +375,7 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             render_new(
                 &kernel,
+                Some(execution),
                 frontend,
                 session,
                 &mut after,
@@ -320,9 +388,10 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
                 if outcome? {
                     record_cancelled(&kernel, session)?;
                     render_new(
-                        &kernel,
-                        frontend,
-                        session,
+        &kernel,
+        None,
+        frontend,
+        session,
                         &mut after,
                         Some(&mut observer),
                         &mut stdout,
@@ -441,6 +510,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         *offset = 0;
                         render_new(
                             current,
+                            None,
                             "phenix.basic.frontend-acp",
                             session,
                             offset,
@@ -475,6 +545,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         let offset = offsets.entry(session.to_string()).or_default();
                         render_new(
                             kernel,
+                            None,
                             "phenix.basic.frontend-acp",
                             session,
                             offset,
