@@ -3,6 +3,9 @@
 name: Phenix Nix remote-builder 2/4/8 benchmark
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/m1-remote-builder-benchmark
 
 permissions:
   contents: read
