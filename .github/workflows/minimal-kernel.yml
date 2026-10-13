@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   conformance:
-    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel' || startsWith(github.head_ref, 'impl/m1-') || (github.head_ref == 'ci/m1-flake-generic-checks' || github.head_ref == 'ci/m1-rust-fixture-batch')
+    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel' || startsWith(github.head_ref, 'impl/m1-') || (github.head_ref == 'ci/m1-flake-generic-checks' || startsWith(github.head_ref, 'ci/m1-'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
