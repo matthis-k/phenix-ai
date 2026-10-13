@@ -272,7 +272,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Nonblocking ACP progress and cancellation implemented on `impl/m1-p1-live-acp-controller`, with independent HTTP acceptance pending CI; complete ACP protocol-client conformance remains |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` on `impl/m1-r1-rusqlite-storage`; exact-head checks pending. HTTP SSE and ACP reviews remain open. |
-| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: pending Basic agent and product host implemented. `impl/m1-p1-live-jsonl-controller` adds live Terminal/JSONL journal observation, cancellation and durable restart/resume behavior; exact-head CI pending. ACP live cancel, multi-session Terminal/JSONL, owner-fenced interrupted-run recovery, independent ACP parity and R1 closure remain |
+| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: pending Basic agent and product host implemented. `impl/m1-p1-live-jsonl-controller` adds live Terminal/JSONL journal observation, cancellation and durable restart/resume behavior; exact-head CI pending. ACP live cancel is implemented on #818, and JSONL multi-session support is implementing on `impl/m1-p1-jsonl-multisession`; Terminal multi-session, owner-fenced interrupted-run recovery, independent ACP parity and R1 closure remain. Full exact-head verification is pending |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -584,6 +584,22 @@ additional scheduler and modification of the graph execution ABI. The
 server to test a streamed update, live cancellation and same-session
 continuation. All acceptance remains pending exact-head shipping CI and an
 independent ACP client compatibility check.
+
+### P1 JSONL session selection
+
+`impl/m1-p1-jsonl-multisession` routes each JSONL packet by its declared
+session using the existing ACP `scoped_kernel` composition. Each session
+gets independent resource authority and its own Storage-backed journal
+observer checkpoint. The controller runs one graph at a time and queues
+other sessions' prompts until the current root completes. A cancellation
+packet can affect only its matching active session. Starting JSONL without
+input still replays undelivered events for the default `s1` session.
+
+The `jsonl-multisession-product` check interleaves two sessions, restarts
+the host, checks independent output and journal offsets and verifies that
+an idle cancellation cannot change another session. Concurrent execution
+and multi-session Terminal support remain outside this slice. The check
+has not yet passed canonical CI.
 
 ### F1 terminal and JSONL frontend codecs
 
