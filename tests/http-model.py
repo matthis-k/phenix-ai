@@ -116,14 +116,14 @@ with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     cert, key = root / "cert.pem", root / "key.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+                    "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1",
                     "-keyout", key, "-out", cert], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     https = ThreadingHTTPServer(("127.0.0.1", 0), Server)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     https.socket = context.wrap_socket(https.socket, server_side=True)
     threading.Thread(target=https.serve_forever, daemon=True).start()
-    endpoint = f"https://localhost:{https.server_port}/completions"
+    endpoint = f"https://127.0.0.1:{https.server_port}/completions"
     run("tls-untrusted", endpoint)
     run("tls", endpoint, cert)
     https.shutdown()
