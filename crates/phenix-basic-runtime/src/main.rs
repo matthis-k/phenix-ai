@@ -375,7 +375,6 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
     kernel.shutdown().map_err(|e| format!("{e:?}"))
 }
 
-
 fn jsonl_session(line: &str) -> Result<String, String> {
     let frame: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
     let session = frame
@@ -475,8 +474,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             continue;
         }
 
-        let mut execution =
-            begin_submission(&kernel, input, basic_scope(composition, &session))?;
+        let mut execution = begin_submission(&kernel, input, basic_scope(composition, &session))?;
         loop {
             // Leave unprocessed requests in the bounded channel when the
             // local queue fills. Do not abandon an admitted graph.
