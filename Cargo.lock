@@ -227,6 +227,7 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-contract",
  "phenix-kernel",
+ "phenix-sdk",
  "serde_json",
 ]
 
