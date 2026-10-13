@@ -313,7 +313,7 @@ try:
     # checkpointing the interrupted run. Recovery must resume from this
     # durable phase marker without issuing the original HTTP request again.
     marker.write_text(original_marker.replace(
-        "phenix.basic.owner.v1\\n", "phenix.basic.recovery.v1\\n", 1,
+        "phenix.basic.owner.v1\n", "phenix.basic.recovery.v1\n", 1,
     ))
 
     recovered = subprocess.run(
