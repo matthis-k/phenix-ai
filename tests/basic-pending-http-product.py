@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import queue
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -309,13 +310,38 @@ try:
     assert denied.returncode != 0, (denied.stdout, denied.stderr)
     assert "no matching fenced owner marker" in denied.stderr, denied.stderr
     assert len(calls) == 6, "unverified recovery dispatched a new model"
-    # Simulate another crash after persisting recovery intent but before
-    # checkpointing the interrupted run. Recovery must resume from this
-    # durable phase marker without issuing the original HTTP request again.
-    marker.write_text(original_marker.replace(
-        "phenix.basic.owner.v1\n", "phenix.basic.recovery.v1\n", 1,
-    ))
+    # Force a failure *between* two durable writes. The Session checkpoint
+    # must persist while SQLite rejects only the recovery Failure journal
+    # append. The restart must repair that missing event without Model replay.
+    marker.write_text(original_marker)
+    with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+        db.executescript("""
+            CREATE TRIGGER block_recovery_journal
+            BEFORE UPDATE OF data ON basic_records
+            WHEN NEW.session = 's1' AND NEW.name = 'event-journal.v1'
+            BEGIN
+                SELECT RAISE(ABORT, 'test interrupted journal');
+            END;
+        """)
+    try:
+        incomplete = subprocess.run(
+            [binary, "jsonl", str(composition_file)],
+            input=json.dumps({
+                "type": "prompt", "session": "s1", "text": "after crash"
+            }) + "\n",
+            text=True, capture_output=True, env=env, timeout=20,
+        )
+        assert incomplete.returncode != 0, (incomplete.stdout, incomplete.stderr)
+        assert len(calls) == 6, "failed recovery issued the interrupted Model"
+        assert marker.read_text() == original_marker.replace(
+            "phenix.basic.owner.v1\n", "phenix.basic.recovery.v1\n", 1,
+        ), "recovery phase marker did not survive the failed journal append"
+    finally:
+        with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+            db.execute("DROP TRIGGER block_recovery_journal")
 
+    # The snapshot is already Failed, but its recovery event was not
+    # committed. A new owner must finish that phase once, then admit a turn.
     recovered = subprocess.run(
         [binary, "jsonl", str(composition_file)],
         input=json.dumps({
@@ -351,6 +377,7 @@ try:
         "no_interrupted_model_replay": True,
         "tampered_marker_recovery_rejected": True,
         "recovery_phase_marker_restart_tested": True,
+        "interrupted_recovery_journal_write_repaired": True,
     }, indent=2, sort_keys=True))
 finally:
     release_cancel_stream.set()
