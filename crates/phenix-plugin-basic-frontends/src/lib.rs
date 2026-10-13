@@ -8,8 +8,8 @@
 compile_error!("select exactly one Basic frontend adapter");
 
 use phenix_basic_contracts::{
-    encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits, PromptSubmitted,
-    RenderRequest, Submission,
+    decode, encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits,
+    PromptSubmitted, RenderRequest, Submission, ToolCompletion,
 };
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
@@ -292,12 +292,25 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
                 "kind": "other",
                 "status": "pending"
             })),
-            EventKind::ToolFinished => Some(serde_json::json!({
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": event.call_id,
-                "status": "completed",
-                "content": [{"type": "content", "content": {"type": "text", "text": event.text}}]
-            })),
+            EventKind::ToolFinished => {
+                // Old journal entries had no payload and represented success.
+                // All new entries carry a Portable-encoded ToolCompletion.
+                let failed = if event.data.0.is_empty() {
+                    false
+                } else {
+                    decode::<ToolCompletion>(&event.data)
+                        .map_err(|_| {
+                            error(ErrorCode::InvalidReply, "invalid tool completion metadata")
+                        })?
+                        .failed
+                };
+                Some(serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": event.call_id,
+                    "status": if failed { "failed" } else { "completed" },
+                    "content": [{"type": "content", "content": {"type": "text", "text": event.text}}]
+                }))
+            },
             _ => None,
         };
         if let Some(update) = update {
