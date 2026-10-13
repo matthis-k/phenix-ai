@@ -32,6 +32,9 @@ impl Default for Stream {
 }
 impl Stream {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<String, BasicError> {
+        if bytes.len() > phenix_sdk::MAX_BYTES {
+            return Err(invalid("SSE transport chunk exceeds portable bounds"));
+        }
         // The SSE standard replaces invalid UTF-8. The Model wire contract
         // rejects it instead, including invalid sequences split across chunks.
         let mut candidate = std::mem::take(&mut self.incomplete_utf8);
