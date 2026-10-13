@@ -1,7 +1,10 @@
 //! Independent stable-v1 ACP client used only by the P1 product check.
 //! Phenix's kernel and runtime do not import this SDK.
 use agent_client_protocol::schema::{
-    v1::{ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, SessionNotification, TextContent},
+    v1::{
+        ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
+        SessionNotification, TextContent,
+    },
     ProtocolVersion,
 };
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
@@ -40,10 +43,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             assert_eq!(init.protocol_version, ProtocolVersion::V1);
 
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
             let session = connection
-                .send_request(NewSessionRequest::new(
-                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-                ))
+                .send_request(NewSessionRequest::new(cwd.clone()))
                 .block_task()
                 .await?;
             let answer = connection
@@ -59,21 +61,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // not just agent_message_chunk. The SDK decodes every update.
             let tool_answer = connection
                 .send_request(PromptRequest::new(
-                    session.session_id,
+                    session.session_id.clone(),
                     vec![ContentBlock::Text(TextContent::new("tools:hello"))],
                 ))
                 .block_task()
                 .await?;
             assert_eq!(format!("{:?}", tool_answer.stop_reason), "EndTurn");
+
+            // Loading the persisted session on the same stdio connection
+            // must replay its journal as valid, ordered ACP notifications.
+            // This exercises the host's session/load path through the official
+            // protocol types, not another handwritten JSON fixture.
+            connection
+                .send_request(LoadSessionRequest::new(session.session_id, cwd))
+                .block_task()
+                .await?;
             Ok(())
         })
         .await?;
 
-    // One direct reply and a two-tool turn: at least one text chunk
-    // from each reply, plus two starts and two completion updates.
-    if updates.load(Ordering::Relaxed) < 6 {
-        return Err("official ACP client did not receive all tool lifecycle updates".into());
+    // The original turn and the session/load replay each publish at
+    // least six typed updates: two message chunks, two tool starts and two
+    // tool completions. Missing replay or incompatible wire types fails.
+    if updates.load(Ordering::Relaxed) < 12 {
+        return Err("official ACP client missed tool updates or session/load replay".into());
     }
-    println!("official-acp-sdk-v1: initialized, ran tools, received typed updates");
+    println!("official-acp-sdk-v1: tool updates and loaded-session replay decoded");
     Ok(())
 }
