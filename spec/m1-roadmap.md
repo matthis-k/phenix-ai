@@ -270,7 +270,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted reference and pending HTTP/HTTPS provider with live journal deltas, typed usage, function calls, limits and draining on impl/m1-model-http. Exact-head CI and pending Basic-agent integration remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
-| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Active cancellation, model streaming and full ACP product acceptance remain |
+| F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Nonblocking ACP progress and cancellation implemented on `impl/m1-p1-live-acp-controller`, with independent HTTP acceptance pending CI; complete ACP protocol-client conformance remains |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` on `impl/m1-r1-rusqlite-storage`; exact-head checks pending. HTTP SSE and ACP reviews remain open. |
 | P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: pending Basic agent and product host implemented. `impl/m1-p1-live-jsonl-controller` adds live Terminal/JSONL journal observation, cancellation and durable restart/resume behavior; exact-head CI pending. ACP live cancel, multi-session Terminal/JSONL, owner-fenced interrupted-run recovery, independent ACP parity and R1 closure remain |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
@@ -565,6 +565,25 @@ still requires its own nonblocking protocol controller. Model-only interrupted
 runs also need ownership fencing for safe recovery: a fresh Session instance
 cannot infer that another process's live model request has ended. An automatic
 recovery attempt in closed PR #817 was rejected for this reason.
+
+### P1 live ACP controller
+
+`impl/m1-p1-live-acp-controller` replaces the blocking ACP prompt path
+with a reader thread and one kernel-owning control loop. A pending prompt
+drives the existing `GraphExecution::pump`. Journal reads and Frontend
+rendering reuse `GraphExecution::invoke_selected` while the root is live.
+Cancellation is decoded by the ACP Frontend plugin and cancels the same
+graph root. The host waits for physical draining, persists the cancelled
+Session and emits a journal event before answering the prompt with
+`stopReason: cancelled`. It then admits the next turn on the same session.
+
+The connection retains other ACP requests in a bounded 64-entry FIFO until
+the current prompt completes. This avoids a second kernel thread, an
+additional scheduler and modification of the graph execution ABI. The
+`acp-pending-http-product` fixture uses an independent chunked HTTP
+server to test a streamed update, live cancellation and same-session
+continuation. All acceptance remains pending exact-head shipping CI and an
+independent ACP client compatibility check.
 
 ### F1 terminal and JSONL frontend codecs
 

@@ -159,16 +159,6 @@ fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
     }
 }
 
-fn submit(kernel: &Kernel, input: Submission, scope: ScopedRequest) -> Result<(), String> {
-    let mut execution = begin_submission(kernel, input, scope)?;
-    while let GraphStatus::Pending | GraphStatus::Draining =
-        execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
-    {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    finish_submission(&execution).map(|_| ())
-}
-
 /// Start an admitted graph without blocking the frontend's input controller.
 fn begin_submission<'a>(
     kernel: &'a Kernel,
@@ -251,7 +241,7 @@ fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
 /// A reader owns stdin. Only the controller thread touches Kernel, Root, or
 /// GraphExecution. This keeps root admission and cancellation on one thread.
 fn input_channel() -> Receiver<Result<String, String>> {
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(64);
     std::thread::spawn(move || {
         for line in io::stdin().lock().lines() {
             if sender.send(line.map_err(|e| e.to_string())).is_err() {
@@ -403,6 +393,110 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
         .map_err(|e| format!("{e:?}"))
 }
 
+/// Run one ACP prompt while the reader continues accepting cancellation
+/// notifications. Other requests retain their order and are handled once
+/// this prompt has completed. The kernel stays on this controller thread.
+fn drive_acp_prompt(
+    kernel: &Kernel,
+    session: &str,
+    mut execution: GraphExecution<'_>,
+    receiver: &Receiver<Result<String, String>>,
+    deferred: &mut VecDeque<String>,
+    after: &mut u64,
+    mut output: impl Write,
+) -> Result<serde_json::Value, String> {
+    loop {
+        // Bound this batch so a busy client cannot starve the graph pump.
+        for _ in 0..32 {
+            let line = match receiver.try_recv() {
+                Ok(line) => line?,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            };
+            let frame: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(frame) => frame,
+                Err(_) => {
+                    let reply = serde_json::json!({
+                        "jsonrpc": "2.0", "id": null,
+                        "error": {"code": -32700, "message": "parse error"}
+                    });
+                    writeln!(output, "{reply}").map_err(|e| e.to_string())?;
+                    output.flush().map_err(|e| e.to_string())?;
+                    continue;
+                }
+            };
+            if frame.get("method").and_then(|value| value.as_str()) == Some("session/cancel")
+                && frame.get("id").is_none()
+            {
+                if frame
+                    .pointer("/params/sessionId")
+                    .and_then(|value| value.as_str())
+                    == Some(session)
+                {
+                    let decoded = completed(invoke_graph::<Submission>(
+                        &execution,
+                        "phenix.basic.frontend-acp",
+                        "phenix.basic.frontend@1/decode",
+                        ClientInput {
+                            session: session.into(),
+                            line,
+                        },
+                    ));
+                    match decoded {
+                        Ok(packet) if packet.cancel => {
+                            execution.cancel().map_err(|e| format!("{e:?}"))?;
+                        }
+                        _ => eprintln!("phenix-basic: rejected ACP cancellation packet"),
+                    }
+                } else {
+                    eprintln!("phenix-basic: ACP cancel has no matching active session");
+                }
+            } else if deferred.len() < 64 {
+                deferred.push_back(line);
+            } else {
+                // A full queue may reject a request but must not drop the
+                // admitted root. Notifications have no reply.
+                if let Some(id) = frame.get("id") {
+                    let reply = serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32000, "message": "ACP queue full"}
+                    });
+                    writeln!(output, "{reply}").map_err(|e| e.to_string())?;
+                    output.flush().map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+        render_new(
+            kernel,
+            Some(&execution),
+            "phenix.basic.frontend-acp",
+            session,
+            after,
+            None,
+            &mut output,
+        )?;
+        if status == GraphStatus::Finished {
+            let cancelled = finish_submission(&execution)?;
+            drop(execution);
+            if cancelled {
+                record_cancelled(kernel, session)?;
+                render_new(
+                    kernel,
+                    None,
+                    "phenix.basic.frontend-acp",
+                    session,
+                    after,
+                    None,
+                    &mut output,
+                )?;
+            }
+            let reason = if cancelled { "cancelled" } else { "end_turn" };
+            return Ok(serde_json::json!({"stopReason": reason}));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), String> {
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -411,9 +505,18 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
     let mut sessions: BTreeMap<String, Kernel> = BTreeMap::new();
     let mut offsets: BTreeMap<String, u64> = BTreeMap::new();
     let mut issued = 0_u64;
+    let receiver = input_channel();
+    let mut deferred = VecDeque::<String>::new();
 
-    for line in io::stdin().lock().lines() {
-        let line = line.map_err(|e| e.to_string())?;
+    loop {
+        let line = if let Some(next) = deferred.pop_front() {
+            next
+        } else {
+            match receiver.recv() {
+                Ok(line) => line?,
+                Err(_) => break,
+            }
+        };
         let frame: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
         let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
@@ -517,31 +620,28 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                                 line,
                             },
                         ));
-                        decoded
-                            .and_then(|submission| {
-                                submit(kernel, submission, basic_scope(composition, session))
-                            })
-                            .map_err(|e| (-32000, e))?;
+                        let submission = decoded.map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
-                        render_new(
+                        let execution =
+                            begin_submission(kernel, submission, basic_scope(composition, session))
+                                .map_err(|e| (-32000, e))?;
+                        drive_acp_prompt(
                             kernel,
-                            None,
-                            "phenix.basic.frontend-acp",
                             session,
+                            execution,
+                            &receiver,
+                            &mut deferred,
                             offset,
-                            None,
                             &mut output,
                         )
-                        .map_err(|e| (-32000, e))?;
-                        Ok(serde_json::json!({"stopReason":"end_turn"}))
+                        .map_err(|e| (-32000, e))
                     } else {
                         Err((-32602, "unknown sessionId".into()))
                     }
                 }
                 "session/cancel" if initialized => {
-                    // The synchronous model path cannot consume a cancel notification
-                    // while blocked. The caller has no live pending graph handle.
-                    // Do not claim successful cancellation.
+                    // A cancel with no active graph is an ignored notification.
+                    // The active prompt loop handles cancellation on its own root.
                     if let Some(session) =
                         frame.pointer("/params/sessionId").and_then(|v| v.as_str())
                     {

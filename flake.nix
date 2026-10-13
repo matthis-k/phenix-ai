@@ -569,6 +569,8 @@
         mkdir -p $out
         python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
         test -s "$out/pending-basic-http.json"
+        python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        test -s "$out/acp-pending-http.json"
       '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
