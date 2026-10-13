@@ -374,6 +374,7 @@
         "phenix-plugin-storage-sqlite"
         "phenix_plugin_storage_sqlite"
         ./crates/phenix-plugin-storage-sqlite).overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
         });
       sqliteRestartCheck = pkgs.runCommand "phenix-b2-sqlite" { } ''
