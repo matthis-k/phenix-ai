@@ -470,6 +470,13 @@
         { caller = "root"; key = "phenix.basic.output@1/checkpoint_observer"; }
         { caller = "root"; key = "phenix.basic.frontend@1/decode"; }
         { caller = "root"; key = "phenix.basic.frontend@1/render"; }
+        # Live observation and cancellation are explicit host control operations.
+        { caller = "root"; key = "phenix.basic.journal@1/read"; }
+        { caller = "root"; key = "phenix.basic.journal@1/append"; }
+        { caller = "root"; key = "phenix.basic.journal@1/observer"; }
+        { caller = "root"; key = "phenix.basic.journal@1/checkpoint_observer"; }
+        { caller = "root"; key = "phenix.basic.session@1/open"; }
+        { caller = "root"; key = "phenix.basic.session@1/checkpoint"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.input@1/submit"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/append"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/read"; }
