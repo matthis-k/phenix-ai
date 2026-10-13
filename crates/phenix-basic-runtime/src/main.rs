@@ -73,7 +73,7 @@ fn invoke_graph<T: Portable>(
     {
         Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
         Outcome::Domain(value) => Ok(Err(
-            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?,
+            BasicError::from_value(value).map_err(|e| format!("{e:?}"))?
         )),
     }
 }
