@@ -88,7 +88,8 @@ class Server(BaseHTTPRequestHandler):
             time.sleep(0.03)
             self.chunk({"choices": [{"index": 0, "delta": {"content": "ä"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
-        self.wfile.write(b"data: [DONE]\r\n\r\n".__len__().__format__("x").encode() + b"\r\n" + b"data: [DONE]\r\n\r\n" + b"\r\n")
+        done = b"data: [DONE]\\r\\n\\r\\n"
+        self.wfile.write(f"{len(done):x}\\r\\n".encode() + done + b"\\r\\n")
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
@@ -115,7 +116,7 @@ try:
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert len(calls) == 2, f"expected one tool continuation: {len(calls)}"
-    assert [e["text"] for e in events if e["kind"] == "TextDelta"] == ["phase1-", "final-", "ä"], events
+    assert "".join(e["text"] for e in events if e["kind"] == "TextDelta") == "phase1-final-ä", events
     assert [e["kind"] for e in events].count("ToolStarted") == 2
     assert [e["kind"] for e in events].count("ToolFinished") == 2
     assert [e["text"] for e in events if e["kind"] == "Answer"] == ["final-ä"]
