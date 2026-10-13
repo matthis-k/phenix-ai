@@ -75,7 +75,7 @@ mod plugin {
         kind: EventKind,
         text: String,
         call_id: &str,
-    ) -> CallResult<(), BasicError> {
+    ) -> CallResult<u64, BasicError> {
         host.invoke::<EventJournal::append>(
             "Journal",
             &JournalAppend {
@@ -90,8 +90,7 @@ mod plugin {
                     data: Blob(vec![]),
                 }],
             },
-        )?;
-        Ok(())
+        )
     }
 
     fn checkpoint(
@@ -173,7 +172,7 @@ mod plugin {
             EventKind::Failure,
             error.message.clone(),
             "",
-        )
+        ).map(|_| ())
     }
 
     fn prepare(host: &Host<'_>, input: PromptSubmitted) -> CallResult<Running, BasicError> {
@@ -448,7 +447,7 @@ mod plugin {
                 stopped(host, running.session.clone(), &problem)?;
                 return Err(CallError::Domain(problem));
             }
-            event(
+            running.model_after = event(
                 host,
                 &running.input.session,
                 &running.run,
@@ -456,7 +455,6 @@ mod plugin {
                 String::new(),
                 "",
             )?;
-            running.model_after = journal_tail(host, &running.input.session, 0)?.0;
             let request = ModelRequest {
                 session: running.input.session.clone(),
                 run: running.run.clone(),
