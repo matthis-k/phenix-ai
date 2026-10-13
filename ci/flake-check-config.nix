@@ -25,9 +25,16 @@ ci.mkFlakeCheckConfig {
     ];
     checkHints = {
       "m1-shipping" = { isolate = true; weight = 240; };
-      "b4-http" = { weight = 8; };
-      "basic-pending-http-product" = { weight = 8; };
-      "b5-agent" = { weight = 6; };
+      "b4-http" = { weight = 8; affinity = "model-http"; };
+      "basic-pending-http-product" = { weight = 8; affinity = "model-http"; };
+      "b5-agent" = { weight = 6; affinity = "agent"; };
+      "b3-tools" = { affinity = "agent"; };
+      "basic-host-smoke" = { affinity = "agent"; };
+      "b2-*" = { affinity = "state"; };
+      "b3-memory" = { affinity = "state"; };
+      "f?-*" = { affinity = "frontend"; };
+      "m1-live-state*" = { affinity = "live-state"; };
+      "m1-value-sdk*" = { affinity = "value-sdk"; };
     };
   };
   cache = {
