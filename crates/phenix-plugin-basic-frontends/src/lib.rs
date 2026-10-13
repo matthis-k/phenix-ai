@@ -93,6 +93,7 @@ pub fn terminal_render(request: RenderRequest) -> Result<Vec<String>, BasicError
             EventKind::TextDelta => Some(item.text),
             EventKind::Answer => Some(format!("answer: {}", item.text)),
             EventKind::Failure => Some(format!("error: {}", item.text)),
+            EventKind::Cancelled => Some("cancelled".into()),
             EventKind::ToolStarted => Some(format!("tool: {}", item.text)),
             EventKind::ToolFinished => Some(format!("tool result: {}", item.text)),
             _ => None,
@@ -402,6 +403,24 @@ mod tests {
             .code,
             ErrorCode::Denied
         );
+    }
+
+    #[test]
+    fn terminal_renders_durable_cancellation() {
+        let lines = terminal_render(RenderRequest {
+            session: "s1".into(),
+            events: vec![Event {
+                sequence: 1,
+                session: "s1".into(),
+                run: "r1".into(),
+                kind: EventKind::Cancelled,
+                call_id: String::new(),
+                text: String::new(),
+                data: Blob(vec![]),
+            }],
+        })
+        .unwrap();
+        assert_eq!(lines, vec!["cancelled"]);
     }
 
     #[test]
