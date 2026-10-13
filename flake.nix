@@ -874,6 +874,8 @@
       packages.${system} = {
         default = kernel;
         phenix-kernel = kernel;
+        # Shared Cargo output for Nix CI prebuild; plugins remain independent packages.
+        phenix-core-example-plugins = coreExamplesBuild;
         phenix-describe = describe;
         example-provider = provider;
         example-consumer = consumer;
