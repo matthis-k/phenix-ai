@@ -63,7 +63,7 @@ class Server(BaseHTTPRequestHandler):
         with lock:
             calls.append(request)
             turn = len(calls)
-        assert turn in (1, 2, 3, 4), "unexpected model continuation"
+        assert turn in (1, 2, 3, 4, 5, 6), "unexpected model continuation"
         if turn == 1:
             assert messages[-1] == {"role": "user", "content": "two tools"}
         elif turn == 2:
@@ -73,8 +73,12 @@ class Server(BaseHTTPRequestHandler):
             assert any(x["role"] == "assistant" and len(x.get("tool_calls", [])) == 2 for x in messages)
         elif turn == 3:
             assert messages[-1] == {"role": "user", "content": "cancel during stream"}
-        else:
+        elif turn == 4:
             assert messages[-1] == {"role": "user", "content": "after cancel"}
+        elif turn == 5:
+            assert messages[-1] == {"role": "user", "content": "crash model"}
+        else:
+            assert messages[-1] == {"role": "user", "content": "after crash"}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
@@ -92,16 +96,19 @@ class Server(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"index": 0, "delta": {"content": "final-"}, "finish_reason": None}]})
             time.sleep(0.03)
             self.chunk({"choices": [{"index": 0, "delta": {"content": "ä"}, "finish_reason": "stop"}]})
-        elif turn == 3:
-            self.chunk({"choices": [{"index": 0, "delta": {"content": "cancel-start"}, "finish_reason": None}]})
+        elif turn in (3, 5):
+            text = "cancel-start" if turn == 3 else "crash-start"
+            self.chunk({"choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]})
             time.sleep(3.0)
-            # The client should have cancelled the transport before the next chunk.
+            # Cancellation or a process crash closes this transport early.
             try:
                 self.chunk({"choices": [{"index": 0, "delta": {"content": "too-late"}, "finish_reason": "stop"}]})
             except (BrokenPipeError, ConnectionResetError):
                 return
-        else:
+        elif turn == 4:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "resumed"}, "finish_reason": "stop"}]})
+        else:
+            self.chunk({"choices": [{"index": 0, "delta": {"content": "recovered-from-crash"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
         done = b"data: [DONE]\r\n\r\n"
         self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
@@ -194,6 +201,64 @@ try:
         proc.stderr.close()
         reader.join(timeout=5)
 
+
+    # A new Session provider must not leave a model-only interrupted run
+    # stuck at Running after the process dies. There was no pending tool call,
+    # so reopening may mark this turn Failed without replaying an effect.
+    crashed = subprocess.Popen(
+        [binary, "jsonl", str(composition_file)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, env=env,
+    )
+    observed_crash = queue.Queue()
+
+    def read_crash_events():
+        for item in crashed.stdout:
+            observed_crash.put(json.loads(item))
+        observed_crash.put(None)
+
+    crash_reader = threading.Thread(target=read_crash_events, daemon=True)
+    crash_reader.start()
+    try:
+        crashed.stdin.write(json.dumps({
+            "type": "prompt", "session": "s1", "text": "crash model"
+        }) + "\n")
+        crashed.stdin.flush()
+        started = False
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            # The HTTP test server emits a live chunk before pausing. Use
+            # a reader thread so the fixture has a bounded failure path.
+            event = observed_crash.get(timeout=2)
+            assert event is not None, "crash fixture exited before its delta"
+            if event["kind"] == "TextDelta" and event["text"] == "crash-start":
+                started = True
+                break
+        assert started, "model did not stream before process crash"
+        crashed.kill()
+        crashed.wait(timeout=10)
+    finally:
+        if crashed.poll() is None:
+            crashed.kill()
+            crashed.wait(timeout=10)
+        crashed.stdin.close()
+        crashed.stdout.close()
+        crashed.stderr.close()
+        crash_reader.join(timeout=5)
+
+    recovered = subprocess.run(
+        [binary, "jsonl", str(composition_file)],
+        input=json.dumps({
+            "type": "prompt", "session": "s1", "text": "after crash"
+        }) + "\n",
+        text=True, capture_output=True, env=env, timeout=35,
+    )
+    assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    resumed = [json.loads(line) for line in recovered.stdout.splitlines()]
+    assert any(e["kind"] == "Answer" and e["text"] == "recovered-from-crash"
+               for e in resumed), resumed
+    assert len(calls) == 6, f"unexpected model requests after restart: {len(calls)}"
+
     (output / "pending-basic-http.json").write_text(json.dumps({
         "format": "phenix.basic.pending-http-product.v1",
         "model_requests": len(calls),
@@ -203,6 +268,7 @@ try:
         "active_cancellation_tested": True,
         "durable_resume_after_cancel": True,
         "live_jsonl_delta": True,
+        "orphaned_model_crash_recovered": True,
     }, indent=2, sort_keys=True))
 finally:
     http.shutdown()
