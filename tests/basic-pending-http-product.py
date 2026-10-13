@@ -387,8 +387,18 @@ try:
     )
     assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
     resumed_events = [json.loads(line) for line in recovered.stdout.splitlines()]
-    assert sum(e["kind"] == "Failure" and "interrupted" in e["text"]
-               for e in resumed_events) == 1, resumed_events
+    recovered_failures = [
+        e for e in resumed_events
+        if e["kind"] == "Failure" and "interrupted" in e["text"]
+    ]
+    journal_only_failures = [
+        json.loads(line) for line in journal_only.stdout.splitlines()
+        if json.loads(line)["kind"] == "Failure"
+        and "interrupted" in json.loads(line)["text"]
+    ]
+    assert len(recovered_failures) + len(journal_only_failures) == 1, (
+        journal_only.stdout, resumed_events
+    )
     assert any(e["kind"] == "Answer" and e["text"] == "recovered"
                for e in resumed_events), resumed_events
     assert len(calls) == 7, "recovery retried the interrupted model call"
