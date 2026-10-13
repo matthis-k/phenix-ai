@@ -133,19 +133,18 @@
         '';
       };
       packagedCoreExample = name:
-        pkgs.runCommand "${name}-native-package"
-          {
-            # Record hashes after the second package's standard ELF fixup.
-            # Original native packages also run phenix-describe postFixup.
-            postFixup = ''
-              ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
-              ${pkgs.python3}/bin/python ${recordWriter} "$out"
-            '';
-          }
-          ''
-            mkdir -p "$out/lib"
-            cp ${coreExamplesBuild}/lib/lib${exampleLibraryName name}.so "$out/lib/plugin.so"
-          '';
+        pkgs.runCommand "${name}-native-package" { } ''
+          mkdir -p "$out/lib"
+          # runCommand executes buildCommand, not stdenv's postFixup phase.
+          # The shared Cargo output was already fixed and stripped, so hash
+          # its final copied bytes and produce both metadata files here.
+          cp ${coreExamplesBuild}/lib/lib${exampleLibraryName name}.so "$out/lib/plugin.so"
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+          test -s "$out/lib/plugin.so"
+          test -s "$out/descriptor.bin"
+          test -s "$out/package.json"
+        '';
       individualPlugin =
         name:
         let
