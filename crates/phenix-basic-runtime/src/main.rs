@@ -886,7 +886,11 @@ fn parse_acp_frame(line: &str) -> Result<serde_json::Value, (i32, &'static str)>
     if frame.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
         return Err((-32600, "invalid JSON-RPC request"));
     }
-    if frame.get("method").and_then(|value| value.as_str()).is_none() {
+    if frame
+        .get("method")
+        .and_then(|value| value.as_str())
+        .is_none()
+    {
         return Err((-32600, "missing JSON-RPC method"));
     }
     if frame.get("id").is_some_and(|value| {
