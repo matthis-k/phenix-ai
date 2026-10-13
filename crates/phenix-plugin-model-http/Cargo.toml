@@ -1,0 +1,14 @@
+[package]
+name = "phenix-plugin-model-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+serde_json.workspace = true
+curl = { version = "0.4", default-features = false }

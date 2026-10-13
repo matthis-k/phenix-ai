@@ -265,9 +265,9 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [ ] PLANNED: existing serial shipping gate remains authoritative until parity |
 | AI-CI4 | AI-CI3, FC2; FC4 for cache rollout | Phenix AI selective PR checks and shared cache | Small edits run only proven affected checks; main/release/manual-full run complete inventory and shipping | [ ] PLANNED: cold/warm timing and unaffected-check evidence required |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
-| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] IMPLEMENTING: durable sessions, journal, SQLite and observer checkpoints. The observer slice adds five-process acknowledgement crash tests and Terminal/JSONL startup restoration. Exact-head CI, storage migrations and remaining transaction fault cases stay open |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] PARTIAL: observer checkpoint slice proven at `f235d68f` by full conformance 38321349932 and matrix 38321349890. Storage migrations and remaining transaction fault cases stay open |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
-| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted typed Model provider, native cross-session gate and independent packaging on impl/m1-basic-providers; HTTP and streaming remain |
+| B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted reference and pending HTTP/HTTPS provider with live journal deltas, typed usage, function calls, limits and draining on impl/m1-model-http. Exact-head CI and pending Basic-agent integration remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Active cancellation, model streaming and full ACP product acceptance remain |
@@ -404,8 +404,11 @@ history replay and connection-local offsets.
 The existing `b2-sqlite` gate now includes a five-process observer fixture with
 independent cursors, abrupt exits before/after acknowledgement, stale revisions,
 backward/future offset rejection, session denial and corrupt-record rejection.
-The product gate includes restart and failed-pipe replay checks. The Nix check
-inventory is unchanged. Canonical exact-head CI remains required.
+The product gate includes restart and failed-pipe replay checks. The observer
+slice passed [full conformance](https://github.com/matthis-k/phenix-ai/actions/runs/38321349932)
+and [matrix CI](https://github.com/matthis-k/phenix-ai/actions/runs/38321349890)
+at `f235d68f6b5d236328971b31654e19db69dec1e5`. Full B2 remains open for migrations
+and the remaining transaction fault cases.
 
 ### B2 session/checkpoint slice
 
@@ -581,10 +584,33 @@ implementation using the public Basic types. It validates transcript tool
 call IDs, returns deterministic multiple calls and usage, honors caller
 token limits, and checks the authenticated session resource at the native
 ABI boundary. An independent package and native black-box gate exercise
-these contracts; HTTP transport, streaming and full B4 acceptance are still
-unchecked. B2 durable sessions, B3 tools/skills/context, G4 committed
+these contracts. The HTTP provider below adds a separate pending implementation;
+full B4 acceptance remains unchecked. B2 durable sessions, B3 tools/skills/context, G4 committed
 state-change triggers, B5 graph-composed agent and F1/F2 remain in their
 existing roadmap order. This slice does not add a new kernel mechanism.
+
+### B4 pending HTTP model slice
+
+`impl/m1-model-http` provides the existing Model contract as an independent
+native package. It imports the selected Journal and declares an optional Storage
+ceiling for nested journal writes. A libcurl worker owns HTTP/HTTPS transport,
+certificate verification, complete-history requests and incremental SSE decoding.
+It holds only owned data, a cancellation flag and an existing wake permit.
+Authenticated poll callbacks append text deltas through the Journal import.
+
+The [HTTP model contract](basic-http-model-contract.md) owns request mapping,
+caller limits, reply validation and cancellation. Function arguments use an
+API object envelope that unwraps into the unchanged ToolCall JSON arguments.
+The worker retains its pending native lease until transport ends and it joins.
+Cancelled cleanup discards progress and makes no journal writes.
+
+The independent local HTTP/HTTPS fixture checks live progress before completion,
+split UTF-8/SSE, multiple calls, complete history, skills/context, typed usage,
+errors, truncated/malformed streams, caller limits, session denial, redirects,
+CA trust and cancellation/draining. The new `b4-http` check participates in the
+matrix and shipping evidence. Exact-head Nix CI is still required. The current
+Basic agent remains synchronous; pending import integration and full frontend
+streaming/cancellation remain B5/P1 requirements. Kernel and SDK code are unchanged.
 
 ## 9. Kernel operations and independent plugins
 

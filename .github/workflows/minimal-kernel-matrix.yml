@@ -5,7 +5,7 @@ on:
   push:
     branches: [impl/m1-ci-matrix]
   pull_request:
-    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix, impl/m1-basic-providers, impl/m1-basic-tools, impl/m1-basic-journal, impl/m1-basic-session, impl/m1-basic-storage-sqlite, impl/m1-basic-skills-context, impl/m1-basic-agent, impl/m1-basic-frontends, impl/m1-basic-runtime, impl/m1-basic-acp, roadmap/m1-flake-aware-ci]
+    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix, impl/m1-basic-providers, impl/m1-basic-tools, impl/m1-basic-journal, impl/m1-basic-session, impl/m1-basic-storage-sqlite, impl/m1-basic-skills-context, impl/m1-basic-agent, impl/m1-basic-frontends, impl/m1-basic-runtime, impl/m1-basic-acp, roadmap/m1-flake-aware-ci, impl/m1-observer-checkpoints]
   workflow_dispatch:
 
 permissions:
@@ -71,7 +71,7 @@ jobs:
           - suite: coordination
             checks: "m1-pending m1-pending-product m1-imports m1-generations m1-live-state m1-live-state-product"
           - suite: graph-agent
-            checks: "m1-native-authoring m1-graph basic-contracts b4-scripted b3-tools b2-journal b2-session b2-sqlite b3-memory b5-agent f1-frontends f2-acp basic-host-smoke a0-agent a0-agent-product m1-value-sdk m1-value-sdk-product"
+            checks: "m1-native-authoring m1-graph basic-contracts b4-scripted b4-http b3-tools b2-journal b2-session b2-sqlite b3-memory b5-agent f1-frontends f2-acp basic-host-smoke a0-agent a0-agent-product m1-value-sdk m1-value-sdk-product"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:

@@ -39,6 +39,8 @@ At the original #790 benchmark the candidate had 24 ordinary checks, with
 `m1-shipping` in the serial acceptance job. On the later
 `impl/m1-basic-acp` head, the flake defines 35 checks: all 34 ordinary checks
 are listed in the matrix and `m1-shipping` remains in the serial gate.
+The HTTP model slice adds `b4-http`, bringing its exact-head inventory to 36
+checks: 35 ordinary checks in the matrix plus serial `m1-shipping`.
 The matrix list is still maintained by hand. The generated planner must
 derive check inventory from the exact-head flake and reject omissions.
 The candidate cannot replace the serial gate until `m1-shipping` and the

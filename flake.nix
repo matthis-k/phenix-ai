@@ -209,6 +209,20 @@
         "phenix-plugin-model-scripted"
         "phenix_plugin_model_scripted"
         ./crates/phenix-plugin-model-scripted;
+      httpModel = (basicNativePlugin
+        "phenix-plugin-model-http"
+        "phenix_plugin_model_http"
+        ./crates/phenix-plugin-model-http).overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
+          buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
+        });
+      httpModelCheck = pkgs.runCommand "phenix-b4-http" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.openssl ];
+      } ''
+        mkdir -p $out
+        python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        test -s "$out/http-model.json"
+      '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
         "phenix_plugin_basic_tools"
@@ -575,8 +589,9 @@
           '';
       contractCheck = (build "phenix-contract-check" contractSource).overrideAttrs (old: {
         cargoBuildFlags = [ ];
-        buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
+        buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite pkgs.curl pkgs.zlib ];
         nativeBuildInputs = old.nativeBuildInputs ++ [
+          pkgs.pkg-config
           pkgs.rustfmt
           pkgs.python3
           pkgs.clippy
@@ -775,6 +790,7 @@
         ln -s ${graphCheck} $out/graph
         ln -s ${basicContractsCheck} $out/basic-contracts
         ln -s ${scriptedModelCheck} $out/scripted-model
+        ln -s ${httpModelCheck} $out/http-model
         ln -s ${basicToolsCheck} $out/basic-tools
         ln -s ${eventJournalCheck} $out/event-journal
         ln -s ${basicSessionCheck} $out/basic-session
@@ -805,6 +821,7 @@
         phenix-m1-release = release;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
+        phenix-plugin-model-http = httpModel;
         phenix-plugin-basic-tools = basicTools;
         phenix-plugin-event-journal = eventJournal;
         phenix-plugin-basic-session = basicSession;
@@ -855,6 +872,7 @@
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
         b4-scripted = scriptedModelCheck;
+        b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
         b2-journal = eventJournalCheck;
         b2-session = basicSessionCheck;
