@@ -1,0 +1,18 @@
+# Experimental generated dependency DAG CI. The existing canonical and
+# full-matrix workflows remain intact for same-head evidence comparison.
+name: Phenix generated Nix DAG candidate
+on:
+  push:
+    branches: [ci/m1-dag-staged]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generated:
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@78c40432b82336b8d59cb89be46aa6f5baa71b36
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 78c40432b82336b8d59cb89be46aa6f5baa71b36
