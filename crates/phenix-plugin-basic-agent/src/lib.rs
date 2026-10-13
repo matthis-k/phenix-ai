@@ -172,7 +172,8 @@ mod plugin {
             EventKind::Failure,
             error.message.clone(),
             "",
-        ).map(|_| ())
+        )
+        .map(|_| ())
     }
 
     fn prepare(host: &Host<'_>, input: PromptSubmitted) -> CallResult<Running, BasicError> {
@@ -252,7 +253,11 @@ mod plugin {
 
     // A pending Model may have already committed live deltas. A synchronous
     // Model has not. Account for both without depending on provider identity.
-    fn journal_tail(host: &Host<'_>, session: &str, mut after: u64) -> CallResult<(u64, Vec<Event>), BasicError> {
+    fn journal_tail(
+        host: &Host<'_>,
+        session: &str,
+        mut after: u64,
+    ) -> CallResult<(u64, Vec<Event>), BasicError> {
         let mut collected = Vec::new();
         loop {
             let page = host.invoke::<EventJournal::read>(
