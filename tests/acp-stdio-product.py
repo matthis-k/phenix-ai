@@ -46,6 +46,20 @@ def request(process, number, method, params):
     raise AssertionError("no ACP response after 256 messages")
 
 
+def request_error(process, number, method, params, code):
+    frame = {
+        "jsonrpc": "2.0",
+        "id": number,
+        "method": method,
+        "params": params,
+    }
+    process.stdin.write(json.dumps(frame) + "\n")
+    process.stdin.flush()
+    response = json.loads(process.stdout.readline())
+    assert response["id"] == number, response
+    assert response["error"]["code"] == code, response
+
+
 def initialize(process):
     result = request(
         process, 1, "initialize",
@@ -114,6 +128,16 @@ session = request(first, 2, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
 })["sessionId"]
 assert session
+# An arbitrary well-formed ID is not a persisted session. Reject it
+# without replacing or corrupting the client's existing live session.
+request_error(first, 101, "session/load", {
+    "sessionId": "s_nonexistent", "cwd": "/tmp", "mcpServers": [],
+}, -32602)
+# The ID returned by session/new is still live even before its first
+# durable checkpoint. Reloading it in the same connection remains valid.
+assert request(first, 102, "session/load", {
+    "sessionId": session, "cwd": "/tmp", "mcpServers": [],
+}) == {}
 done = request(first, 3, "session/prompt", {
     "sessionId": session,
     "prompt": [{"type": "text", "text": "first"}],
@@ -237,6 +261,8 @@ exit_cleanly(second)
             "two-tool-acp-lifecycle-ordered",
             "tool-call-identity-preserved",
             "tool-result-and-final-text-streamed",
+            "unknown-durable-session-rejected",
+            "live-uncheckpointed-session-reload-allowed",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
