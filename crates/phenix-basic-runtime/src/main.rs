@@ -12,7 +12,7 @@ use phenix_kernel::{
     Kernel, Outcome,
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     env,
     io::{self, BufRead, Write},
     path::Path,
@@ -396,11 +396,13 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
     let receiver = input_channel();
     let mut queued = VecDeque::<String>::new();
     let mut output = io::stdout().lock();
+    let mut sessions = BTreeMap::<String, Kernel>::new();
+    sessions.insert("s1".into(), scoped_kernel(composition, "s1")?);
 
     // Retain the existing no-input behavior: replay undelivered events from
     // the default session when a JSONL host starts solely as an observer.
     {
-        let kernel = scoped_kernel(composition, "s1")?;
+        let kernel = sessions.get("s1").expect("default session initialized");
         let mut observer: ObserverCheckpoint = completed(invoke(
             &kernel,
             "phenix.basic.event-journal",
@@ -420,7 +422,6 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             Some(&mut observer),
             &mut output,
         )?;
-        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
     }
 
     loop {
@@ -433,7 +434,13 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
         };
         let session = jsonl_session(&line)?;
-        let kernel = scoped_kernel(composition, &session)?;
+        if !sessions.contains_key(&session) {
+            if sessions.len() >= 32 {
+                return Err("too many active JSONL sessions".into());
+            }
+            sessions.insert(session.clone(), scoped_kernel(composition, &session)?);
+        }
+        let kernel = sessions.get(&session).expect("session initialized");
         let mut observer: ObserverCheckpoint = completed(invoke(
             &kernel,
             "phenix.basic.event-journal",
@@ -465,7 +472,6 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         if input.cancel {
             // Cancelling a session without an active run cannot affect another
             // session's graph or mutate its durable checkpoint.
-            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
             continue;
         }
 
@@ -541,6 +547,8 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    for (_, kernel) in sessions {
         kernel.shutdown().map_err(|e| format!("{e:?}"))?;
     }
     Ok(())
