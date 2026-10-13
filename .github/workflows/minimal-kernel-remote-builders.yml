@@ -1,11 +1,8 @@
-# Manual and branch-push benchmark; intentionally does not replace production CI.
+# Explicit manual benchmark; intentionally does not replace production CI.
 # Run 2, then 4, then 8 remote builders to avoid cross-variant contention.
 name: Phenix Nix remote-builder 2/4/8 benchmark
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - ci/m1-remote-builder-benchmark
 
 permissions:
   contents: read
@@ -16,8 +13,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  credential-check:
+    name: Verify Tailscale OIDC setup before allocating builders
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require GitHub repository variables or secrets
+        env:
+          CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+          AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+        run: |
+          if [[ -z "$CLIENT_ID" || -z "$AUDIENCE" ]]; then
+            echo '::error::Missing Tailscale federated identity configuration. See https://github.com/matthis-k/phenix-flake-ci/blob/ci/nix-remote-builders/docs/distributed-nix-builders.md'
+            echo 'Add GitHub Actions repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE (or secrets with those names).'
+            exit 1
+          fi
+
   remote-2:
     name: 2 remote builders
+    needs: credential-check
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@18247489e4bb61e5d88345840c2abca909f23313
     with:
       config: ci/flake-check-config.nix
@@ -25,13 +38,13 @@ jobs:
       worker_count: 2
       slots_per_worker: 2
     secrets:
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
 
   remote-4:
     name: 4 remote builders
     needs: remote-2
-    if: always()
+    if: needs.remote-2.result == 'success'
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@18247489e4bb61e5d88345840c2abca909f23313
     with:
       config: ci/flake-check-config.nix
@@ -39,13 +52,13 @@ jobs:
       worker_count: 4
       slots_per_worker: 2
     secrets:
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
 
   remote-8:
     name: 8 remote builders
     needs: remote-4
-    if: always()
+    if: needs.remote-4.result == 'success'
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@18247489e4bb61e5d88345840c2abca909f23313
     with:
       config: ci/flake-check-config.nix
@@ -53,5 +66,5 @@ jobs:
       worker_count: 8
       slots_per_worker: 2
     secrets:
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
