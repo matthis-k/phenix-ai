@@ -371,12 +371,14 @@ fn recover_owned_run(
     set_owner_marker(owner, None)
 }
 
+// Graph admission does not run the first node. Wait until a pump has
+// committed Running before recording its durable owner.
 fn mark_admitted_run(
     kernel: &Kernel,
     graph: &GraphExecution<'_>,
     session: &str,
     owner: &mut std::fs::File,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let snapshot: SessionSnapshot = completed(invoke_observed(
         kernel,
         Some(graph),
@@ -387,9 +389,10 @@ fn mark_admitted_run(
         },
     ))?;
     if snapshot.status == RunStatus::Running && !snapshot.run.is_empty() {
-        set_owner_marker(owner, Some(&snapshot.run))
+        set_owner_marker(owner, Some(&snapshot.run))?;
+        Ok(true)
     } else {
-        set_owner_marker(owner, None)
+        Ok(false)
     }
 }
 
@@ -441,6 +444,7 @@ fn run_console(
     let mut queue = VecDeque::<Submission>::new();
     let mut active: Option<GraphExecution<'_>> = None;
     let mut active_lock: Option<std::fs::File> = None;
+    let mut active_marked = false;
     let mut eof = false;
     loop {
         let packet = if eof {
@@ -491,12 +495,8 @@ fn run_console(
             if let Some(next) = queue.pop_front() {
                 let mut owner = session_lock(session)?;
                 recover_owned_run(&kernel, session, &mut owner)?;
-                let execution = begin_submission(
-                    &kernel,
-                    next,
-                    basic_scope(composition, session),
-                )?;
-                mark_admitted_run(&kernel, &execution, session, &mut owner)?;
+                let execution = begin_submission(&kernel, next, basic_scope(composition, session))?;
+                active_marked = false;
                 active_lock = Some(owner);
                 active = Some(execution);
             } else if eof {
@@ -505,6 +505,11 @@ fn run_console(
         }
         if let Some(execution) = active.as_mut() {
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            if !active_marked {
+                if let Some(owner) = active_lock.as_mut() {
+                    active_marked = mark_admitted_run(&kernel, execution, session, owner)?;
+                }
+            }
             render_new(
                 &kernel,
                 Some(execution),
@@ -645,7 +650,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         let mut owner = session_lock(&session)?;
         recover_owned_run(kernel, &session, &mut owner)?;
         let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
-        mark_admitted_run(kernel, &execution, &session, &mut owner)?;
+        let mut marked = false;
         loop {
             // Leave unprocessed requests in the bounded channel when the
             // local queue fills. Do not abandon an admitted graph.
@@ -688,6 +693,9 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 }
             }
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            if !marked {
+                marked = mark_admitted_run(kernel, &execution, &session, &mut owner)?;
+            }
             render_new(
                 kernel,
                 Some(&execution),
@@ -749,11 +757,13 @@ fn drive_acp_prompt(
     kernel: &Kernel,
     session: &str,
     mut execution: GraphExecution<'_>,
+    owner: &mut std::fs::File,
     receiver: &Receiver<Result<String, String>>,
     deferred: &mut VecDeque<String>,
     after: &mut u64,
     mut output: impl Write,
 ) -> Result<serde_json::Value, String> {
+    let mut marked = false;
     loop {
         // Bound this batch so a busy client cannot starve the graph pump.
         for _ in 0..32 {
@@ -815,6 +825,9 @@ fn drive_acp_prompt(
             }
         }
         let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+        if !marked {
+            marked = mark_admitted_run(kernel, &execution, session, owner)?;
+        }
         render_new(
             kernel,
             Some(&execution),
@@ -1012,17 +1025,15 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         let submission = decoded.map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
                         let mut owner = session_lock(session).map_err(|e| (-32000, e))?;
-                        recover_owned_run(kernel, session, &mut owner)
-                            .map_err(|e| (-32000, e))?;
+                        recover_owned_run(kernel, session, &mut owner).map_err(|e| (-32000, e))?;
                         let execution =
                             begin_submission(kernel, submission, basic_scope(composition, session))
                                 .map_err(|e| (-32000, e))?;
-                        mark_admitted_run(kernel, &execution, session, &mut owner)
-                            .map_err(|e| (-32000, e))?;
                         let result = drive_acp_prompt(
                             kernel,
                             session,
                             execution,
+                            &mut owner,
                             &receiver,
                             &mut deferred,
                             offset,
@@ -1116,9 +1127,7 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::{
-        lock_session_file, owner_marker, set_owner_marker, verified_owner, OWNER_MARKER,
-    };
+    use super::{lock_session_file, owner_marker, set_owner_marker, verified_owner, OWNER_MARKER};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
