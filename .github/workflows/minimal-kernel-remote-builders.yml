@@ -57,7 +57,7 @@ jobs:
               raise SystemExit("Invalid Tailscale secret: leading/trailing whitespace")
           expected = f"api.tailscale.com/{client}"
           if audience != expected:
-              raise SystemExit("TS_AUDIENCE does not match the generated audience for TS_OAUTH_CLIENT_ID; copy both values from the same Tailscale federated identity.")
+              raise SystemExit("Computed OIDC audience did not match expected client ID format.")
           url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(audience, safe="")
           headers = {"Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"}
           with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as response:
@@ -66,7 +66,7 @@ jobs:
           if len(parts) != 3:
               raise SystemExit("GitHub returned an invalid OIDC identity token")
           claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
-          expected_subject = "repo:matthis-k/phenix-ai:*"
+          expected_subject = "repo:matthis-k@69082876/phenix-ai@1281803146:*"
           print(f"Observed GitHub OIDC subject: {claims.get('sub', '')}")
           checks = {
               "issuer": claims.get("iss") == "https://token.actions.githubusercontent.com",
