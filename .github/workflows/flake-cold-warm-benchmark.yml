@@ -1,0 +1,132 @@
+# Controlled exact-head benchmark. Cold: no Phenix Nix cache restore.
+# Warm: same commit and runner image, restore the cold job's Nix store.
+name: Phenix M1 cold-warm Nix benchmark
+on:
+  push:
+    branches: [ci/m1-cold-warm-benchmark]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m1-cold-warm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold:
+    name: Cold project cache, full shipping
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start with no Phenix cache, save for the warm job
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: phenix-controlled-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          gc-max-store-size-linux: "8G"
+      - name: Measure full cold-project-cache Nix checks
+        env:
+          BENCH_MODE: cold
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark
+          echo "commit=$(git rev-parse HEAD)" | tee benchmark/context.txt
+          nix --version | tee -a benchmark/context.txt
+          start="$SECONDS"
+          set +e
+          /usr/bin/time -v nix flake check -L 2>&1 | tee benchmark/full-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          elapsed="$((SECONDS - start))"
+          printf '%s\n' "$elapsed" > benchmark/elapsed.txt
+          printf '%s\n' "$status" > benchmark/exit.txt
+          python3 .github/scripts/record-nix-benchmark.py \
+            --mode "$BENCH_MODE" --directory benchmark
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: phenix-cold-benchmark
+          path: |
+            benchmark/metrics.json
+            benchmark/context.txt
+          if-no-files-found: error
+
+  warm:
+    name: Warm project cache, full shipping
+    needs: cold
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore the exact-head cold run cache, without saving
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: phenix-controlled-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          save: false
+      - name: Measure same full Nix checks with warm project cache
+        env:
+          BENCH_MODE: warm
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark
+          echo "commit=$(git rev-parse HEAD)" | tee benchmark/context.txt
+          nix --version | tee -a benchmark/context.txt
+          start="$SECONDS"
+          set +e
+          /usr/bin/time -v nix flake check -L 2>&1 | tee benchmark/full-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          elapsed="$((SECONDS - start))"
+          printf '%s\n' "$elapsed" > benchmark/elapsed.txt
+          printf '%s\n' "$status" > benchmark/exit.txt
+          python3 .github/scripts/record-nix-benchmark.py \
+            --mode "$BENCH_MODE" --directory benchmark
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: phenix-warm-benchmark
+          path: |
+            benchmark/metrics.json
+            benchmark/context.txt
+          if-no-files-found: error
+
+  compare:
+    name: Compare cold and warm exact-head runs
+    if: always()
+    needs: [cold, warm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: phenix-cold-benchmark
+          path: comparison/cold
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: phenix-warm-benchmark
+          path: comparison/warm
+      - name: Require matching full check inventory and compare durations
+        run: python3 .github/scripts/compare-nix-benchmarks.py comparison/cold/metrics.json comparison/warm/metrics.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: phenix-cold-warm-comparison
+          path: comparison
+          if-no-files-found: error
