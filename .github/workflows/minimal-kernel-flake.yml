@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@b82adf3c5af5b3c9d66857ad967f9615307c0ab6
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@1283a461f0ada50523ea94617cb9a4e8fc152997
     with:
       config: ci/flake-check-config.nix
-      library_ref: b82adf3c5af5b3c9d66857ad967f9615307c0ab6
+      library_ref: 1283a461f0ada50523ea94617cb9a4e8fc152997
