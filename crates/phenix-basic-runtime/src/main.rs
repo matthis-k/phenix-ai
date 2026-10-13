@@ -1169,7 +1169,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                     if let Some((session, kernel)) = session
                         .and_then(|session| sessions.get(session).map(|kernel| (session, kernel)))
                     {
-                        let decoded = completed(invoke::<Submission>(
+                        let submission = invoke::<Submission>(
                             kernel,
                             "phenix.basic.frontend-acp",
                             "phenix.basic.frontend@1/decode",
@@ -1177,8 +1177,16 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                                 session: session.into(),
                                 line,
                             },
-                        ));
-                        let submission = decoded.map_err(|e| (-32000, e))?;
+                        )
+                        .map_err(|e| (-32000, e))?
+                        .map_err(|cause| {
+                            let code = if cause.code == phenix_basic_contracts::ErrorCode::InvalidInput {
+                                -32602
+                            } else {
+                                -32000
+                            };
+                            (code, format!("{:?}: {}", cause.code, cause.message))
+                        })?;
                         let offset = offsets.entry(session.to_string()).or_default();
                         let mut owner = session_lock(session).map_err(|e| (-32000, e))?;
                         recover_owned_run(kernel, session, &mut owner).map_err(|e| (-32000, e))?;
