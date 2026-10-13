@@ -43,11 +43,30 @@ mod plugin {
         RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolExecute, ToolInfo,
         ToolQuery, ToolRequest, Usage,
     };
-    use phenix_sdk::{Blob, CallError, CallResult, Host};
+    use phenix_sdk::{
+        Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
+        PendingResult,
+    };
     use std::collections::BTreeSet;
 
+    struct Running {
+        input: PromptSubmitted,
+        session: SessionSnapshot,
+        run: String,
+        tools: Vec<ToolInfo>,
+        skills: Vec<phenix_basic_contracts::Skill>,
+        context: Vec<phenix_basic_contracts::ContextItem>,
+        turns: u64,
+        calls: u64,
+        usage: Usage,
+        model_after: u64,
+        child: Option<PendingImport<Model::complete>>,
+    }
+
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        active: Option<Running>,
+    }
 
     fn event(
         host: &Host<'_>,
@@ -157,13 +176,10 @@ mod plugin {
         )
     }
 
-    fn execute(host: &Host<'_>, input: PromptSubmitted) -> CallResult<RunResult, BasicError> {
+    fn prepare(host: &Host<'_>, input: PromptSubmitted) -> CallResult<Running, BasicError> {
         phenix_basic_contracts::check_session(host, &input.session)?;
         if input.text.is_empty() {
-            return Err(CallError::Domain(error(
-                ErrorCode::InvalidInput,
-                "empty prompt",
-            )));
+            return Err(CallError::Domain(error(ErrorCode::InvalidInput, "empty prompt")));
         }
 
         let mut session = host.invoke::<Session::open>(
@@ -184,11 +200,9 @@ mod plugin {
                 "a run is already active",
             )));
         }
-
-        let next = session
-            .checkpoint
-            .checked_add(1)
-            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "run counter overflow")))?;
+        let next = session.checkpoint.checked_add(1).ok_or_else(|| {
+            CallError::Domain(error(ErrorCode::Conflict, "run counter overflow"))
+        })?;
         let run = format!("run-{next}");
         session.run = run.clone();
         session.status = RunStatus::Running;
@@ -206,10 +220,9 @@ mod plugin {
             &input.session,
             &run,
             EventKind::PromptAccepted,
-            input.text,
+            input.text.clone(),
             "",
         )?;
-
         let tools = catalog(host, &input.session)?;
         let skills = host.invoke::<Skills::list>(
             "Skills",
@@ -223,172 +236,329 @@ mod plugin {
                 session: input.session.clone(),
             },
         )?;
+        Ok(Running {
+            input,
+            session,
+            run,
+            tools,
+            skills,
+            context,
+            turns: 0,
+            calls: 0,
+            usage: Usage::default(),
+            model_after: 0,
+            child: None,
+        })
+    }
 
-        let mut turns = 0_u64;
-        let mut calls = 0_u64;
-        let mut usage = Usage::default();
+    // A pending Model may have already committed live deltas. A synchronous
+    // Model has not. Account for both without depending on provider identity.
+    fn journal_tail(host: &Host<'_>, session: &str, mut after: u64) -> CallResult<(u64, Vec<Event>), BasicError> {
+        let mut collected = Vec::new();
         loop {
-            if input.limits.model_turns.is_some_and(|max| turns >= max) {
+            let page = host.invoke::<EventJournal::read>(
+                "Journal",
+                &JournalQuery {
+                    session: session.into(),
+                    after,
+                    limit: 128,
+                },
+            )?;
+            if page.events.is_empty() {
+                return Ok((after, collected));
+            }
+            if page.next <= after {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "journal cursor did not advance",
+                )));
+            }
+            after = page.next;
+            collected.extend(page.events);
+        }
+    }
+
+    fn reconcile_text(
+        host: &Host<'_>,
+        running: &Running,
+        text: &str,
+    ) -> CallResult<(), BasicError> {
+        let (_, events) = journal_tail(host, &running.input.session, running.model_after)?;
+        let streamed: String = events
+            .iter()
+            .filter(|entry| entry.run == running.run && entry.kind == EventKind::TextDelta)
+            .map(|entry| entry.text.as_str())
+            .collect();
+        let Some(remaining) = text.strip_prefix(&streamed) else {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "model progress disagrees with final reply",
+            )));
+        };
+        if !remaining.is_empty() {
+            event(
+                host,
+                &running.input.session,
+                &running.run,
+                EventKind::TextDelta,
+                remaining.into(),
+                "",
+            )?;
+        }
+        Ok(())
+    }
+
+    enum Advance {
+        Pending,
+        Done(RunResult),
+    }
+
+    // Each model reply, immediate or polled, resumes this same continuation.
+    // Tool effects remain synchronous until the separate pending-tools slice.
+    fn advance(
+        host: &Host<'_>,
+        running: &mut Running,
+        mut reply: Option<CallResult<phenix_basic_contracts::ModelReply, BasicError>>,
+    ) -> CallResult<Advance, BasicError> {
+        loop {
+            if let Some(result) = reply.take() {
+                let response = match result {
+                    Ok(response) => response,
+                    Err(CallError::Domain(problem)) => {
+                        stopped(host, running.session.clone(), &problem)?;
+                        return Err(CallError::Domain(problem));
+                    }
+                    Err(other) => return Err(other),
+                };
+                running.turns = running.turns.checked_add(1).ok_or_else(|| {
+                    CallError::Domain(error(ErrorCode::TurnLimit, "model turn overflow"))
+                })?;
+                add_usage(&mut running.usage, &response.usage)?;
+                add_usage(&mut running.session.usage, &response.usage)?;
+                reconcile_text(host, running, &response.text)?;
+
+                if response.calls.is_empty() {
+                    running.session.history.push(Message {
+                        role: Role::Assistant,
+                        text: response.text.clone(),
+                        calls: vec![],
+                        call_id: String::new(),
+                        error: None,
+                    });
+                    running.session.status = RunStatus::Completed;
+                    checkpoint(host, running.session.clone())?;
+                    event(
+                        host,
+                        &running.input.session,
+                        &running.run,
+                        EventKind::Answer,
+                        response.text.clone(),
+                        "",
+                    )?;
+                    return Ok(Advance::Done(RunResult {
+                        session: running.input.session.clone(),
+                        run: running.run.clone(),
+                        answer: response.text,
+                        model_turns: running.turns,
+                        tool_calls: running.calls,
+                        usage: running.usage.clone(),
+                    }));
+                }
+
+                let count = u64::try_from(response.calls.len()).map_err(|_| {
+                    CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls"))
+                })?;
+                let new_total = running.calls.checked_add(count).ok_or_else(|| {
+                    CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
+                })?;
+                if running.input.limits.tool_calls.is_some_and(|max| new_total > max) {
+                    let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
+                    stopped(host, running.session.clone(), &problem)?;
+                    return Err(CallError::Domain(problem));
+                }
+                let mut ids = BTreeSet::new();
+                for call in &response.calls {
+                    if call.id.is_empty() || !ids.insert(call.id.clone()) {
+                        return Err(CallError::Domain(error(
+                            ErrorCode::InvalidReply,
+                            "duplicate or empty tool call ID",
+                        )));
+                    }
+                }
+                running.session.history.push(Message {
+                    role: Role::Assistant,
+                    text: response.text,
+                    calls: response.calls.clone(),
+                    call_id: String::new(),
+                    error: None,
+                });
+                running.session.pending = response.calls.clone();
+                running.session = checkpoint(host, running.session.clone())?;
+
+                for call in response.calls {
+                    event(
+                        host,
+                        &running.input.session,
+                        &running.run,
+                        EventKind::ToolStarted,
+                        call.tool.clone(),
+                        &call.id,
+                    )?;
+                    let outcome = host.invoke::<ToolExecute::execute>(
+                        "Tools",
+                        &ToolRequest {
+                            session: running.input.session.clone(),
+                            run: running.run.clone(),
+                            call: call.clone(),
+                        },
+                    );
+                    let (text, failure) = match outcome {
+                        Ok(result) => (result.text, None),
+                        Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
+                        Err(other) => return Err(other),
+                    };
+                    running.session.history.push(Message {
+                        role: Role::Tool,
+                        text: text.clone(),
+                        calls: vec![],
+                        call_id: call.id.clone(),
+                        error: failure.clone(),
+                    });
+                    running.session.pending.retain(|pending| pending.id != call.id);
+                    running.session = checkpoint(host, running.session.clone())?;
+                    event(
+                        host,
+                        &running.input.session,
+                        &running.run,
+                        EventKind::ToolFinished,
+                        failure.unwrap_or(text),
+                        &call.id,
+                    )?;
+                }
+                running.calls = new_total;
+            }
+
+            if running
+                .input
+                .limits
+                .model_turns
+                .is_some_and(|max| running.turns >= max)
+            {
                 let problem = error(ErrorCode::TurnLimit, "model turn limit reached");
-                stopped(host, session, &problem)?;
+                stopped(host, running.session.clone(), &problem)?;
                 return Err(CallError::Domain(problem));
             }
             event(
                 host,
-                &input.session,
-                &run,
+                &running.input.session,
+                &running.run,
                 EventKind::ModelStarted,
                 String::new(),
                 "",
             )?;
-            let reply = host.invoke::<Model::complete>(
-                "Model",
-                &ModelRequest {
-                    session: input.session.clone(),
-                    run: run.clone(),
-                    history: session.history.clone(),
-                    tools: tools.clone(),
-                    skills: skills.clone(),
-                    context: context.clone(),
-                    limits: input.limits.clone(),
-                },
-            );
-            let reply = match reply {
-                Ok(value) => value,
-                Err(CallError::Domain(problem)) => {
-                    stopped(host, session, &problem)?;
-                    return Err(CallError::Domain(problem));
-                }
-                Err(other) => return Err(other),
+            running.model_after = journal_tail(host, &running.input.session, 0)?.0;
+            let request = ModelRequest {
+                session: running.input.session.clone(),
+                run: running.run.clone(),
+                history: running.session.history.clone(),
+                tools: running.tools.clone(),
+                skills: running.skills.clone(),
+                context: running.context.clone(),
+                limits: running.input.limits.clone(),
             };
-            turns = turns.checked_add(1).ok_or_else(|| {
-                CallError::Domain(error(ErrorCode::TurnLimit, "model turn overflow"))
-            })?;
-            add_usage(&mut usage, &reply.usage)?;
-            add_usage(&mut session.usage, &reply.usage)?;
-            if !reply.text.is_empty() {
-                event(
-                    host,
-                    &input.session,
-                    &run,
-                    EventKind::TextDelta,
-                    reply.text.clone(),
-                    "",
-                )?;
-            }
-
-            if reply.calls.is_empty() {
-                session.history.push(Message {
-                    role: Role::Assistant,
-                    text: reply.text.clone(),
-                    calls: vec![],
-                    call_id: String::new(),
-                    error: None,
-                });
-                session.status = RunStatus::Completed;
-                checkpoint(host, session)?;
-                event(
-                    host,
-                    &input.session,
-                    &run,
-                    EventKind::Answer,
-                    reply.text.clone(),
-                    "",
-                )?;
-                return Ok(RunResult {
-                    session: input.session,
-                    run,
-                    answer: reply.text,
-                    model_turns: turns,
-                    tool_calls: calls,
-                    usage,
-                });
-            }
-
-            let count = u64::try_from(reply.calls.len()).map_err(|_| {
-                CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls"))
-            })?;
-            let new_total = calls.checked_add(count).ok_or_else(|| {
-                CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
-            })?;
-            if input.limits.tool_calls.is_some_and(|max| new_total > max) {
-                let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
-                stopped(host, session, &problem)?;
-                return Err(CallError::Domain(problem));
-            }
-
-            // Checkpoint all pending IDs before the first external tool effect.
-            let mut ids = BTreeSet::new();
-            for call in &reply.calls {
-                if call.id.is_empty() || !ids.insert(call.id.clone()) {
-                    return Err(CallError::Domain(error(
-                        ErrorCode::InvalidReply,
-                        "duplicate or empty tool call ID",
-                    )));
+            match host
+                .begin::<Model::complete>("Model", &request)
+                .map_err(CallError::Kernel)?
+            {
+                ImportCall::Ready(result) => reply = Some(result),
+                ImportCall::Pending(child) => {
+                    running.child = Some(child);
+                    return Ok(Advance::Pending);
                 }
             }
-            session.history.push(Message {
-                role: Role::Assistant,
-                text: reply.text,
-                calls: reply.calls.clone(),
-                call_id: String::new(),
-                error: None,
-            });
-            session.pending = reply.calls.clone();
-            session = checkpoint(host, session)?;
-
-            for call in reply.calls {
-                event(
-                    host,
-                    &input.session,
-                    &run,
-                    EventKind::ToolStarted,
-                    call.tool.clone(),
-                    &call.id,
-                )?;
-                let outcome = host.invoke::<ToolExecute::execute>(
-                    "Tools",
-                    &ToolRequest {
-                        session: input.session.clone(),
-                        run: run.clone(),
-                        call: call.clone(),
-                    },
-                );
-                let (text, failure) = match outcome {
-                    Ok(result) => (result.text, None),
-                    Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
-                    // A kernel failure does not authorize blind retry.
-                    Err(other) => return Err(other),
-                };
-                session.history.push(Message {
-                    role: Role::Tool,
-                    text: text.clone(),
-                    calls: vec![],
-                    call_id: call.id.clone(),
-                    error: failure.clone(),
-                });
-                session.pending.retain(|pending| pending.id != call.id);
-                session = checkpoint(host, session)?;
-                event(
-                    host,
-                    &input.session,
-                    &run,
-                    EventKind::ToolFinished,
-                    failure.unwrap_or(text),
-                    &call.id,
-                )?;
-            }
-            calls = new_total;
         }
     }
 
-    #[provide(BasicInput::submit)]
-    fn submit(
-        _: &mut State,
+    fn finish(
+        state: &mut State,
+        running: Running,
+        value: CallResult<Advance, BasicError>,
+    ) -> PendingResult<RunResult, BasicError> {
+        match value {
+            Ok(Advance::Pending) => {
+                state.active = Some(running);
+                PendingResult::Pending
+            }
+            Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
+            Err(CallError::Domain(error)) => {
+                PendingResult::Ready(Err(CallError::Domain(error)))
+            }
+            Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    #[pending(BasicInput::submit)]
+    fn begin(
+        state: &mut State,
         host: &Host<'_>,
         request: PromptSubmitted,
-    ) -> CallResult<RunResult, BasicError> {
-        execute(host, request)
+    ) -> PendingResult<RunResult, BasicError> {
+        if state.active.is_some() {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "a Basic run is already active",
+            ))));
+        }
+        match prepare(host, request) {
+            Ok(mut running) => {
+                let value = advance(host, &mut running, None);
+                finish(state, running, value)
+            }
+            Err(CallError::Domain(error)) => {
+                PendingResult::Ready(Err(CallError::Domain(error)))
+            }
+            Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    #[poll(BasicInput::submit)]
+    fn poll(state: &mut State, host: &Host<'_>) -> PendingResult<RunResult, BasicError> {
+        let Some(mut running) = state.active.take() else {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "Basic pending run is missing",
+            ));
+        };
+        let Some(mut child) = running.child.take() else {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "Basic pending Model is missing",
+            ));
+        };
+        match child.poll(host) {
+            Ok(ImportPoll::Pending | ImportPoll::Draining) => {
+                running.child = Some(child);
+                state.active = Some(running);
+                PendingResult::Pending
+            }
+            Ok(ImportPoll::Ready(reply)) => {
+                let result = advance(host, &mut running, Some(reply));
+                finish(state, running, result)
+            }
+            Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
+                Code::ScopeRejected,
+                "Basic Model import was cancelled",
+            )),
+            Err(failure) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    #[cancel(BasicInput::submit)]
+    fn cancel(state: &mut State) -> Result<bool, Failure> {
+        // The kernel cancels imported children before this callback and
+        // retains their physical leases. The agent owns no worker thread.
+        state.active = None;
+        Ok(true)
     }
 
     #[provide(BasicOutput::read)]
