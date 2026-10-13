@@ -22,6 +22,15 @@ def frame(delta, finish=None):
 
 
 class Server(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def write_chunk(self, data):
+        self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
+
+    def end_chunks(self):
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
     def log_message(self, *_):
         pass
 
@@ -29,7 +38,7 @@ class Server(BaseHTTPRequestHandler):
         data = f"data: {json.dumps(value, ensure_ascii=False)}\r\n\r\n".encode()
         # Split even multibyte UTF-8 into distinct writes.
         for offset in range(0, len(data), 3):
-            self.wfile.write(data[offset:offset + 3])
+            self.write_chunk(data[offset:offset + 3])
         self.wfile.flush()
 
     def do_POST(self):
@@ -49,17 +58,17 @@ class Server(BaseHTTPRequestHandler):
         assert body["tools"][0]["function"]["parameters"]["properties"]["value"] == {"type": "string"}
         try:
             if mode == "status":
-                self.send_response(429); self.end_headers(); return
+                self.send_response(429); self.send_header("Content-Length", "0"); self.end_headers(); return
             if mode == "redirect":
-                self.send_response(307); self.send_header("Location", "/redirect-target"); self.end_headers(); return
+                self.send_response(307); self.send_header("Location", "/redirect-target"); self.send_header("Content-Length", "0"); self.end_headers(); return
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Connection", "close")
+            self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             if mode == "timeout":
                 time.sleep(0.3); return
             if mode == "malformed":
-                self.wfile.write(b"data: invalid-json\n\n"); self.wfile.flush(); return
+                self.write_chunk(b"data: invalid-json\n\n"); self.end_chunks(); return
             if mode == "multi":
                 self.chunk(frame({"tool_calls": [
                     {"index": 1, "id": "c2", "type": "function", "function": {"name": "length", "arguments": '{"value":'}},
@@ -79,11 +88,12 @@ class Server(BaseHTTPRequestHandler):
                     assert marker.exists(), f"native caller did not observe {mode}"
                 self.chunk(frame({"content": "aß"}, "stop"))
             if mode == "truncated":
+                self.end_chunks()
                 return
             if mode != "no-usage":
                 self.chunk({"choices": [], "usage": {"prompt_tokens": 27, "completion_tokens": 7}})
-            self.wfile.write(b"data: [DONE]\r\n\r\n")
-            self.wfile.flush()
+            self.write_chunk(b"data: [DONE]\r\n\r\n")
+            self.end_chunks()
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
             pass
 
