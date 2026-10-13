@@ -91,7 +91,55 @@
         record = dict(format=profile, artifact="lib/plugin.so", descriptor="descriptor.bin", target="x86_64-unknown-linux-gnu", **json.load(open("digests.json")))
         (out / "package.json").write_text(json.dumps(record, sort_keys=True))
       '';
-      plugin =
+      # Compatible example cdylibs share one Cargo compilation. Each package
+      # below still has its own descriptor and native package metadata. Keep
+      # linker/profile variants on independent Rust derivations.
+      coreExamples = [
+        "example-provider"
+        "example-consumer"
+        "example-alternate"
+        "example-cycle"
+        "example-choice"
+        "example-other"
+        "example-scoped-client"
+        "example-relay"
+        "example-resource-provider"
+        "example-lifecycle-provider"
+        "example-lifecycle-consumer"
+      ];
+      exampleLibraryName =
+        name:
+        let
+          manifest = builtins.fromTOML (
+            builtins.readFile (./examples + "/${pkgs.lib.removePrefix "example-" name}/Cargo.toml")
+          );
+        in
+        manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] name);
+      coreExamplesBuild = rust.buildRustPackage {
+        pname = "phenix-core-example-plugins";
+        version = "0.1.0";
+        src = pluginSource;
+        buildAndTestSubdir = "examples";
+        cargoRoot = "examples";
+        cargoLock.lockFile = ./examples/Cargo.lock;
+        cargoBuildFlags = pkgs.lib.concatMap (name: [ "-p" name ]) coreExamples;
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = false;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          ${pkgs.lib.concatMapStringsSep "\n" (name: ''
+            cp target/*/release/lib${exampleLibraryName name}.so "$out/lib/"
+          '') coreExamples}
+        '';
+      };
+      packagedCoreExample = name:
+        pkgs.runCommand "${name}-native-package" { } ''
+          mkdir -p "$out/lib"
+          cp ${coreExamplesBuild}/lib/lib${exampleLibraryName name}.so "$out/lib/plugin.so"
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      individualPlugin =
         name:
         let
           manifest = builtins.fromTOML (
@@ -121,6 +169,12 @@
             ${pkgs.python3}/bin/python ${recordWriter} $out
           '';
         };
+      plugin =
+        name:
+        if builtins.elem name coreExamples then
+          packagedCoreExample name
+        else
+          individualPlugin name;
       provider = plugin "example-provider";
       consumer = plugin "example-consumer";
       alternate = plugin "example-alternate";
@@ -565,20 +619,20 @@
             ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
             python ${recordWriter} $out
           '';
-      p0Fat = provider.overrideAttrs (_: {
+      p0Fat = (individualPlugin "example-provider").overrideAttrs (_: {
         pname = "example-provider-fat";
         CARGO_PROFILE_RELEASE_LTO = "fat";
       });
-      p0Off = provider.overrideAttrs (_: {
+      p0Off = (individualPlugin "example-provider").overrideAttrs (_: {
         pname = "example-provider-no-lto";
         CARGO_PROFILE_RELEASE_LTO = "off";
       });
-      p0Lld = provider.overrideAttrs (old: {
+      p0Lld = (individualPlugin "example-provider").overrideAttrs (old: {
         pname = "example-provider-lld";
         nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.lld ];
         RUSTFLAGS = "-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--gc-sections";
       });
-      p0Repeat = provider.overrideAttrs (_: {
+      p0Repeat = (individualPlugin "example-provider").overrideAttrs (_: {
         pname = "example-provider-repeat";
       });
       descriptorCheck =
