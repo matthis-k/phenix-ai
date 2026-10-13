@@ -180,9 +180,11 @@ try:
         write_packet("prompt", "cancel during stream")
         until(lambda e: e["kind"] == "TextDelta" and e["text"] == "cancel-start",
               "live streamed text")
+        # The next turn is submitted before cancelling the current run.
+        # The controller must preserve it across cancellation and draining.
+        write_packet("prompt", "after cancel")
         write_packet("cancel")
         until(lambda e: e["kind"] == "Cancelled", "durable cancellation")
-        write_packet("prompt", "after cancel")
         until(lambda e: e["kind"] == "Answer" and e["text"] == "resumed",
               "continuation after cancellation")
         proc.stdin.close()
@@ -206,6 +208,7 @@ try:
         "active_cancellation_tested": True,
         "durable_resume_after_cancel": True,
         "live_jsonl_delta": True,
+        "queued_followup_survives_cancel": True,
     }, indent=2, sort_keys=True))
 finally:
     http.shutdown()
