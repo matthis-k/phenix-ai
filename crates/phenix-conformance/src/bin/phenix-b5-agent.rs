@@ -7,7 +7,7 @@ use phenix_basic_contracts::{
 use phenix_contract::{Authority, Code, Portable, ScopedRequest};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
-    Call, GraphStatus, Outcome, Poll,
+    graph::GraphStatus, Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
