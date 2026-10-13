@@ -27,11 +27,21 @@ cancellation. A client requesting a newer protocol version receives the
 supported version 1 so that the client may negotiate down. Malformed
 JSON-RPC envelopes do not terminate an idle connection.
 
-R1 acceptance must include a real official-SDK ACP client exercising the
-native host over stdio. Before replacing the codec or transport, verify that
-the SDK can deliver notifications while the kernel's root remains pinned to
-the owning thread; do not create a second dispatcher or thread-hop into
-the kernel. This external compatibility gate is still open.
+R1 acceptance includes a real official-SDK ACP client exercising the
+native host over stdio. The isolated `tests/acp-sdk-client` crate pins the
+SDK to 3.3.0 and uses its stable-v1 Client, AcpAgent process transport and
+typed notifications. The separate `P1 official ACP SDK interop` workflow
+launches the exact-head Nix ACP product wrapper, initializes the connection,
+runs a prompt and requires a completed turn with session updates. This
+check is independent of the existing hand-written JSON-RPC fixtures.
+
+The integration fixture does not introduce the SDK into the kernel's Cargo
+workspace. The workflow uploads its generated test-only Cargo.lock as evidence;
+the transitive SDK dependencies still need a committed lockfile before this
+can count as a reproducible shipping gate. Test execution and the future
+codec replacement remain unaccepted until exact-head CI passes. Before
+replacing the codec or transport, verify that the SDK can deliver
+notifications while the kernel's root remains pinned to its owning thread.
 
 ## SQLite migration acceptance
 
