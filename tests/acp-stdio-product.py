@@ -124,6 +124,40 @@ assert any(
     and entry["params"]["update"].get("content", {}).get("text") == "mock:first"
     for entry in updates
 )
+# Tool events must preserve the call identity and order through the
+# EventJournal and the ACP frontend, not merely appear as extra lines.
+start_updates = len(updates)
+tools = request(first, 8, "session/prompt", {
+    "sessionId": session,
+    "prompt": [{"type": "text", "text": "tools:hello"}],
+})
+assert tools["stopReason"] == "end_turn", tools
+tool_updates = [
+    entry["params"]["update"]
+    for entry in updates[start_updates:]
+    if entry["params"]["sessionId"] == session
+]
+started = [
+    (i, update) for i, update in enumerate(tool_updates)
+    if update.get("sessionUpdate") == "tool_call"
+]
+finished = [
+    (i, update) for i, update in enumerate(tool_updates)
+    if update.get("sessionUpdate") == "tool_call_update"
+]
+assert [entry["toolCallId"] for _, entry in started] == ["call-1", "call-2"], started
+assert [entry["toolCallId"] for _, entry in finished] == ["call-1", "call-2"], finished
+for call_id in ("call-1", "call-2"):
+    assert next(i for i, x in started if x["toolCallId"] == call_id) < next(
+        i for i, x in finished if x["toolCallId"] == call_id
+    )
+assert all(entry["status"] == "pending" for _, entry in started)
+assert all(entry["status"] == "completed" for _, entry in finished)
+assert "".join(
+    event.get("content", {}).get("text", "")
+    for event in tool_updates
+    if event.get("sessionUpdate") == "agent_message_chunk"
+) == "mock:call-1:HELLO|call-2:5", tool_updates
 exit_cleanly(first)
 
 # A v1-only agent negotiates down to protocol version 1 when the
@@ -200,6 +234,9 @@ exit_cleanly(second)
             "notifications-do-not-initialize",
             "invalid-request-id-rejected",
             "explicit-null-request-id-replied",
+            "two-tool-acp-lifecycle-ordered",
+            "tool-call-identity-preserved",
+            "tool-result-and-final-text-streamed",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
