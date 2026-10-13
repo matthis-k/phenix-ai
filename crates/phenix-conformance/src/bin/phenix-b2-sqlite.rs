@@ -269,9 +269,26 @@ fn main() {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(restored.revision, 2);
-        assert_eq!(restored.status, RunStatus::Indeterminate);
+        // Opening a snapshot in another process does not prove the first
+        // process exited. Open must not write or infer Indeterminate.
+        assert_eq!(restored.revision, 1);
+        assert_eq!(restored.status, RunStatus::Running);
         assert_eq!(restored.checkpoint, 7);
+        // This fixture runs seed and resume sequentially, so the test driver
+        // knows no owner remains. Explicitly record an interrupted tool turn.
+        let interrupted: SessionSnapshot = call(
+            &kernel,
+            checkpoint,
+            session,
+            SessionSnapshot {
+                status: RunStatus::Indeterminate,
+                ..restored.clone()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(interrupted.revision, 2);
+        assert_eq!(interrupted.status, RunStatus::Indeterminate);
         assert_eq!(restored.history[0].text, "prompt");
         assert_eq!(restored.pending.len(), 2);
         let a: EventPage = call(
@@ -371,7 +388,8 @@ fn main() {
                 "separate_processes": true,
                 "cases": ["session-checkpoint", "CAS-conflict", "atomic-batch-rollback",
                     "cross-session-denial", "ordered-journal-replay",
-                    "independent-observer-offsets", "indeterminate-tool-recovery",
+                    "independent-observer-offsets", "explicit-owner-confirmed-interruption",
+                    "open-does-not-infer-owner-death",
                     "explicit-multiple-call-reconciliation"]
             }))
             .unwrap(),
