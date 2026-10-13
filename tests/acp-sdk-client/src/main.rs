@@ -3,7 +3,7 @@
 use agent_client_protocol::schema::{
     v1::{
         ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
-        SessionNotification, TextContent,
+        SessionId, SessionNotification, TextContent,
     },
     ProtocolVersion,
 };
@@ -19,7 +19,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let binary = std::env::args()
         .nth(1)
         .ok_or("usage: phenix-p1-acp-client-check PHENIX_ACP_EXECUTABLE")?;
-    let agent = AcpAgent::from_args([binary])?;
+    let agent = AcpAgent::from_args([binary.clone()])?;
+    let persisted_session = Arc::new(Mutex::new(None::<SessionId>));
+    let first_session = Arc::clone(&persisted_session);
     let updates = Arc::new(Mutex::new(Vec::<String>::new()));
     let receiver_updates = Arc::clone(&updates);
 
@@ -50,6 +52,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .send_request(NewSessionRequest::new(cwd.clone()))
                 .block_task()
                 .await?;
+            *first_session.lock().expect("session identity poisoned") =
+                Some(session.session_id.clone());
             let answer = connection
                 .send_request(PromptRequest::new(
                     session.session_id.clone(),
@@ -82,17 +86,65 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await?;
 
-    // Two initial turns produce at least six typed updates. Loading the
-    // same durable session must replay the *same ordered notification sequence*.
-    // The SDK decodes both halves independently.
+    // The first host sent two prompts, then loaded the same session.
+    // A second process must see identical persisted journal entries.
+    let original = {
+        let events = updates.lock().expect("ACP event list poisoned");
+        if events.len() < 12 || events.len() % 2 != 0 {
+            return Err("official ACP client missed in-process session/load replay".into());
+        }
+        let (turns, replay) = events.split_at(events.len() / 2);
+        if turns != replay {
+            return Err("in-process session/load replay differs from original updates".into());
+        }
+        turns.to_vec()
+    };
+    let session_id = persisted_session
+        .lock()
+        .expect("session identity poisoned")
+        .clone()
+        .ok_or("ACP host did not return a session ID")?;
+    let restart_events = Arc::clone(&updates);
+    let restarted_agent = AcpAgent::from_args([binary])?;
+    Client
+        .builder()
+        .name("phenix-p1-official-sdk-restart")
+        .on_receive_notification(
+            async move |notification: SessionNotification, _connection| {
+                restart_events
+                    .lock()
+                    .expect("ACP restart event list poisoned")
+                    .push(format!("{notification:?}"));
+                Ok(())
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .connect_with(
+            restarted_agent,
+            |connection: ConnectionTo<Agent>| async move {
+                let init = connection
+                    .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                assert_eq!(init.protocol_version, ProtocolVersion::V1);
+                connection
+                    .send_request(LoadSessionRequest::new(
+                        session_id,
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+                    ))
+                    .block_task()
+                    .await?;
+                Ok(())
+            },
+        )
+        .await?;
+
     let events = updates.lock().expect("ACP event list poisoned");
-    if events.len() < 12 || events.len() % 2 != 0 {
-        return Err("official ACP client missed session/load replay updates".into());
+    if events.len() != original.len() * 3
+        || events[original.len() * 2..] != original
+    {
+        return Err("separate ACP process failed to replay the exact durable journal".into());
     }
-    let (original, replay) = events.split_at(events.len() / 2);
-    if original != replay {
-        return Err("session/load replay differs from the ordered original updates".into());
-    }
-    println!("official-acp-sdk-v1: exact typed tool and session/load replay");
+    println!("official-acp-sdk-v1: exact replay after load and process restart");
     Ok(())
 }
