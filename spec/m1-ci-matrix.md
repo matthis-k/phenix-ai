@@ -46,6 +46,28 @@ derive check inventory from the exact-head flake and reject omissions.
 The candidate cannot replace the serial gate until `m1-shipping` and the
 exact-head release evidence are verified in the generated workflow.
 
+## Flake-aware candidate in #806
+
+The new `.github/workflows/minimal-kernel-flake.yml` calls the pinned,
+reusable workflow from `phenix-flake-ci` #17. This is separate from the older
+hardcoded matrix and the canonical serial shipping gate.
+
+- `ci/flake-check-config.nix` injects the Rust strategy into generic Nix
+  planning. It names reusable package outputs, shard weights, the shipping
+  isolation hint and lockfiles for cache identity.
+- The planner evaluates `checks.x86_64-linux` on the checked-out commit.
+  Every discovered check, including `m1-shipping`, enters exactly one shard.
+- One prebuild writer populates the Nix store cache. Parallel shards restore
+  it read-only and upload commit-bound check results and store paths.
+- The aggregate verifies the manifest hash, complete shard inventory,
+  reported check derivations and matching prebuild artifacts. Skipped or
+  canceled shards do not count as passing checks.
+
+The existing `minimal-kernel.yml` also runs for #806, so both workflows can
+be compared at the same head. The old manual matrix remains a benchmark.
+Exact-head success, optimized shipping report parity, cold/warm timing, and
+fixture-source consolidation are still open. No selective PR skipping is active.
+
 ## Acceptance criteria
 
 1. Compare the matrix's check names with the evaluated Nix check attribute
@@ -105,7 +127,7 @@ platform-specific outputs isolated.
 cross-repository FC1 to FC4.
 [The generic CI-library design](https://github.com/matthis-k/phenix-flake-ci/pull/17)
 is owned by `phenix-flake-ci`; this file retains the measured matrix baseline
-and consumer acceptance rules. These stages remain planned.
+and consumer acceptance rules. The generic planner and consumer integration are implemented as candidates; parity and cutover remain planned.
 
 ### Consumer and library boundaries
 
