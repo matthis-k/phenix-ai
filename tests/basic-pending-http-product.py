@@ -309,7 +309,12 @@ try:
     assert denied.returncode != 0, (denied.stdout, denied.stderr)
     assert "no matching fenced owner marker" in denied.stderr, denied.stderr
     assert len(calls) == 6, "unverified recovery dispatched a new model"
-    marker.write_text(original_marker)
+    # Simulate another crash after persisting recovery intent but before
+    # checkpointing the interrupted run. Recovery must resume from this
+    # durable phase marker without issuing the original HTTP request again.
+    marker.write_text(original_marker.replace(
+        "phenix.basic.owner.v1\\n", "phenix.basic.recovery.v1\\n", 1,
+    ))
 
     recovered = subprocess.run(
         [binary, "jsonl", str(composition_file)],
@@ -320,8 +325,8 @@ try:
     )
     assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
     resumed_events = [json.loads(line) for line in recovered.stdout.splitlines()]
-    assert any(e["kind"] == "Failure" and "interrupted" in e["text"]
-               for e in resumed_events), resumed_events
+    assert sum(e["kind"] == "Failure" and "interrupted" in e["text"]
+               for e in resumed_events) == 1, resumed_events
     assert any(e["kind"] == "Answer" and e["text"] == "recovered"
                for e in resumed_events), resumed_events
     assert len(calls) == 7, "recovery retried the interrupted model call"
@@ -345,6 +350,7 @@ try:
         "durable_owner_marker_matched": True,
         "no_interrupted_model_replay": True,
         "tampered_marker_recovery_rejected": True,
+        "recovery_phase_marker_restart_tested": True,
     }, indent=2, sort_keys=True))
 finally:
     release_cancel_stream.set()
