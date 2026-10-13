@@ -11,10 +11,7 @@ use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use std::{
     error::Error,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
 };
 
 #[tokio::main]
@@ -23,15 +20,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .ok_or("usage: phenix-p1-acp-client-check PHENIX_ACP_EXECUTABLE")?;
     let agent = AcpAgent::from_args([binary])?;
-    let updates = Arc::new(AtomicUsize::new(0));
+    let updates = Arc::new(Mutex::new(Vec::<String>::new()));
     let receiver_updates = Arc::clone(&updates);
 
     Client
         .builder()
         .name("phenix-p1-official-sdk-check")
         .on_receive_notification(
-            async move |_notification: SessionNotification, _connection| {
-                receiver_updates.fetch_add(1, Ordering::Relaxed);
+            async move |notification: SessionNotification, _connection| {
+                // Typed decoding has already succeeded at this point. Keep
+                // exact notification content and arrival order for replay.
+                receiver_updates
+                    .lock()
+                    .expect("ACP event list poisoned")
+                    .push(format!("{notification:?}"));
                 Ok(())
             },
             agent_client_protocol::on_receive_notification!(),
@@ -80,12 +82,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await?;
 
-    // The original turn and the session/load replay each publish at
-    // least six typed updates: two message chunks, two tool starts and two
-    // tool completions. Missing replay or incompatible wire types fails.
-    if updates.load(Ordering::Relaxed) < 12 {
-        return Err("official ACP client missed tool updates or session/load replay".into());
+    // Two initial turns produce at least six typed updates. Loading the
+    // same durable session must replay the *same ordered notification sequence*.
+    // The SDK decodes both halves independently.
+    let events = updates.lock().expect("ACP event list poisoned");
+    if events.len() < 12 || events.len() % 2 != 0 {
+        return Err("official ACP client missed session/load replay updates".into());
     }
-    println!("official-acp-sdk-v1: tool updates and loaded-session replay decoded");
+    let (original, replay) = events.split_at(events.len() / 2);
+    if original != replay {
+        return Err("session/load replay differs from the ordered original updates".into());
+    }
+    println!("official-acp-sdk-v1: exact typed tool and session/load replay");
     Ok(())
 }
