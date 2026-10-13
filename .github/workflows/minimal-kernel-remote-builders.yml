@@ -21,10 +21,16 @@ jobs:
         env:
           CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
           AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+          AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
-          if [[ -z "$CLIENT_ID" || -z "$AUDIENCE" ]]; then
-            echo '::error::Missing Tailscale federated identity configuration. See https://github.com/matthis-k/phenix-flake-ci/blob/ci/nix-remote-builders/docs/distributed-nix-builders.md'
-            echo 'Add GitHub Actions repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE (or secrets with those names).'
+          if [[ -n "$AUTHKEY" ]]; then
+            if [[ -n "$CLIENT_ID" || -n "$AUDIENCE" ]]; then
+              echo "::error::Use either TS_AUTHKEY or the complete OIDC pair, not both."
+              exit 1
+            fi
+          elif [[ -z "$CLIENT_ID" || -z "$AUDIENCE" ]]; then
+            echo '::error::Missing Tailscale identity: add TS_AUTHKEY secret, or TS_OAUTH_CLIENT_ID and TS_AUDIENCE variables/secrets.'
+            echo 'See https://github.com/matthis-k/phenix-flake-ci/blob/ci/nix-remote-builders/docs/distributed-nix-builders.md'
             exit 1
           fi
 
@@ -40,6 +46,7 @@ jobs:
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
       TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
 
   remote-4:
     name: 4 remote builders
@@ -54,6 +61,7 @@ jobs:
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
       TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
 
   remote-8:
     name: 8 remote builders
@@ -68,3 +76,4 @@ jobs:
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
       TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
