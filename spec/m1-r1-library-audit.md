@@ -28,9 +28,11 @@ which is stricter than the SSE standard's replacement-character behavior.
 No async executor or extra I/O stack is introduced.
 
 The existing Model plugin unit tests and independent pending HTTP product
-fixtures provide the acceptance gate. The new parser dependency needs a
-locked Cargo resolution and exact-head Nix shipping proof before R1 SSE
-framing is accepted.
+fixtures provide the acceptance gate. A temporary lock-resolution workflow
+produced `sse-parse` 0.1.0, `futures-core` 0.3.34 and
+`pin-project-lite` 0.2.17 plus the feature-corrected lock entries. The
+exact 66-package lock resolution is now committed. Canonical conformance,
+matrix and generated DAG checks remain required on the latest head.
 
 ## ACP v1 library decision
 
