@@ -67,6 +67,7 @@ jobs:
               raise SystemExit("GitHub returned an invalid OIDC identity token")
           claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
           expected_subject = "repo:matthis-k/phenix-ai:*"
+          print(f"Observed GitHub OIDC subject: {claims.get('sub', '')}")
           checks = {
               "issuer": claims.get("iss") == "https://token.actions.githubusercontent.com",
               "subject": fnmatch.fnmatchcase(claims.get("sub", ""), expected_subject),
