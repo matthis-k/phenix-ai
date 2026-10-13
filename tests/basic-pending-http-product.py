@@ -37,6 +37,7 @@ composition_file.write_text(json.dumps(composition, indent=2))
 calls = []
 lock = threading.Lock()
 release_cancel_stream = threading.Event()
+release_crash_stream = threading.Event()
 
 
 class Server(BaseHTTPRequestHandler):
@@ -64,7 +65,7 @@ class Server(BaseHTTPRequestHandler):
         with lock:
             calls.append(request)
             turn = len(calls)
-        assert turn in (1, 2, 3, 4, 5), "unexpected model continuation"
+        assert turn in (1, 2, 3, 4, 5, 6, 7), "unexpected model continuation"
         if turn == 1:
             assert messages[-1] == {"role": "user", "content": "two tools"}
         elif turn == 2:
@@ -76,8 +77,12 @@ class Server(BaseHTTPRequestHandler):
             assert messages[-1] == {"role": "user", "content": "cancel during stream"}
         elif turn == 4:
             assert messages[-1] == {"role": "user", "content": "after cancel"}
-        else:
+        elif turn == 5:
             assert messages[-1] == {"role": "user", "content": "second-session"}
+        elif turn == 6:
+            assert messages[-1] == {"role": "user", "content": "crash model"}
+        else:
+            assert messages[-1] == {"role": "user", "content": "after crash"}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
@@ -108,8 +113,17 @@ class Server(BaseHTTPRequestHandler):
                 return
         elif turn == 4:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "resumed"}, "finish_reason": "stop"}]})
-        else:
+        elif turn == 5:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "other-session"}, "finish_reason": "stop"}]})
+        elif turn == 6:
+            self.chunk({"choices": [{"index": 0, "delta": {"content": "crash-start"}, "finish_reason": None}]})
+            release_crash_stream.wait(timeout=20.0)
+            try:
+                self.chunk({"choices": [{"index": 0, "delta": {"content": "too-late"}, "finish_reason": "stop"}]})
+            except (BrokenPipeError, ConnectionResetError):
+                return
+        else:
+            self.chunk({"choices": [{"index": 0, "delta": {"content": "recovered"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
         done = b"data: [DONE]\r\n\r\n"
         self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
@@ -232,6 +246,87 @@ try:
         proc.stderr.close()
         reader.join(timeout=5)
 
+    # Simulate a process crash after a real HTTP Model delta. The file
+    # lock must be released by the OS, while its run marker remains durable.
+    # A new host with the same database may then fail the interrupted
+    # Model-only turn and complete the subsequent prompt without replay.
+    crashed = subprocess.Popen(
+        [binary, "jsonl", str(composition_file)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, env=env,
+    )
+    crash_events = queue.Queue()
+
+    def read_crashed():
+        for item in crashed.stdout:
+            crash_events.put(json.loads(item))
+        crash_events.put(None)
+
+    crashed_reader = threading.Thread(target=read_crashed, daemon=True)
+    crashed_reader.start()
+    try:
+        crashed.stdin.write(json.dumps({
+            "type": "prompt", "session": "s1", "text": "crash model"
+        }) + "\n")
+        crashed.stdin.flush()
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            event = crash_events.get(timeout=3)
+            assert event is not None, "model host exited before crash-start"
+            if event["kind"] == "TextDelta" and event["text"] == "crash-start":
+                break
+        else:
+            raise AssertionError("missing live delta before process crash")
+
+        marker = output / ("basic-http.db.phenix-session-" + "s1".encode().hex() + ".lock")
+        assert marker.read_text().startswith("phenix.basic.owner.v1\nrun-"), (
+            "live model has no durable owner marker"
+        )
+        crashed.kill()
+        assert crashed.wait(timeout=10) != 0
+        release_crash_stream.set()
+    finally:
+        if crashed.poll() is None:
+            crashed.kill()
+            crashed.wait(timeout=10)
+        release_crash_stream.set()
+        crashed.stdin.close()
+        crashed.stdout.close()
+        crashed.stderr.close()
+        crashed_reader.join(timeout=5)
+
+    # The lock alone is not proof. A tampered run marker must leave the
+    # durable Running snapshot unchanged and dispatch no Model request.
+    original_marker = marker.read_text()
+    marker.write_text("phenix.basic.owner.v1\nwrong-run")
+    denied = subprocess.run(
+        [binary, "jsonl", str(composition_file)],
+        input=json.dumps({
+            "type": "prompt", "session": "s1", "text": "unmarked must reject"
+        }) + "\n",
+        text=True, capture_output=True, env=env, timeout=15,
+    )
+    assert denied.returncode != 0, (denied.stdout, denied.stderr)
+    assert "no matching fenced owner marker" in denied.stderr, denied.stderr
+    assert len(calls) == 6, "unverified recovery dispatched a new model"
+    marker.write_text(original_marker)
+
+    recovered = subprocess.run(
+        [binary, "jsonl", str(composition_file)],
+        input=json.dumps({
+            "type": "prompt", "session": "s1", "text": "after crash"
+        }) + "\n",
+        text=True, capture_output=True, env=env, timeout=35,
+    )
+    assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    resumed_events = [json.loads(line) for line in recovered.stdout.splitlines()]
+    assert any(e["kind"] == "Failure" and "interrupted" in e["text"]
+               for e in resumed_events), resumed_events
+    assert any(e["kind"] == "Answer" and e["text"] == "recovered"
+               for e in resumed_events), resumed_events
+    assert len(calls) == 7, "recovery retried the interrupted model call"
+    assert marker.read_text() == "", "completed run left stale ownership"
+
     (output / "pending-basic-http.json").write_text(json.dumps({
         "format": "phenix.basic.pending-http-product.v1",
         "model_requests": len(calls),
@@ -246,8 +341,13 @@ try:
         "wrong_session_cancel_ignored": True,
         "second_process_running_session_rejected": True,
         "session_file_lock_enforced": True,
+        "crashed_model_run_recovered": True,
+        "durable_owner_marker_matched": True,
+        "no_interrupted_model_replay": True,
+        "tampered_marker_recovery_rejected": True,
     }, indent=2, sort_keys=True))
 finally:
     release_cancel_stream.set()
+    release_crash_stream.set()
     http.shutdown()
     http.server_close()

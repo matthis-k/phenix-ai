@@ -14,7 +14,7 @@ use phenix_kernel::{
 use std::{
     collections::{BTreeMap, VecDeque},
     env,
-    io::{self, BufRead, Write},
+    io::{self, BufRead, Read, Seek, SeekFrom, Write},
     path::Path,
     sync::mpsc::{self, Receiver, TryRecvError},
     time::Duration,
@@ -292,6 +292,107 @@ fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, St
     Ok(file)
 }
 
+// A durable marker attests that a lock-aware host checkpointed this exact
+// run. A fresh holder may recover only after it owns the matching OS lock.
+// No marker, invalid marker or mismatched run leaves Running untouched.
+const OWNER_MARKER: &str = "phenix.basic.owner.v1\n";
+
+fn owner_marker(file: &mut std::fs::File) -> Result<String, String> {
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let mut value = String::new();
+    file.take(256)
+        .read_to_string(&mut value)
+        .map_err(|e| e.to_string())?;
+    Ok(value)
+}
+
+fn set_owner_marker(file: &mut std::fs::File, run: Option<&str>) -> Result<(), String> {
+    file.set_len(0).map_err(|e| e.to_string())?;
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    if let Some(run) = run {
+        file.write_all(OWNER_MARKER.as_bytes())
+            .map_err(|e| e.to_string())?;
+        file.write_all(run.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    file.sync_all().map_err(|e| e.to_string())
+}
+
+fn verified_owner(marker: &str, run: &str) -> bool {
+    !run.is_empty() && marker == format!("{OWNER_MARKER}{run}")
+}
+
+fn recover_owned_run(
+    kernel: &Kernel,
+    session: &str,
+    owner: &mut std::fs::File,
+) -> Result<(), String> {
+    let marker = owner_marker(owner)?;
+    let mut snapshot: SessionSnapshot = completed(invoke(
+        kernel,
+        "phenix.basic.session",
+        "phenix.basic.session@1/open",
+        Scope {
+            session: session.into(),
+        },
+    ))?;
+    if snapshot.status == RunStatus::Running {
+        if !verified_owner(&marker, &snapshot.run) {
+            return Err("running session has no matching fenced owner marker".into());
+        }
+        snapshot.status = if snapshot.pending.is_empty() {
+            RunStatus::Failed
+        } else {
+            RunStatus::Indeterminate
+        };
+        let recovered: SessionSnapshot = completed(invoke(
+            kernel,
+            "phenix.basic.session",
+            "phenix.basic.session@1/checkpoint",
+            snapshot,
+        ))?;
+        completed(invoke::<u64>(
+            kernel,
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/append",
+            JournalAppend {
+                session: session.into(),
+                events: vec![Event {
+                    sequence: 0,
+                    session: session.into(),
+                    run: recovered.run,
+                    kind: EventKind::Failure,
+                    call_id: String::new(),
+                    text: "run interrupted after owner process exited".into(),
+                    data: phenix_sdk::Blob(vec![]),
+                }],
+            },
+        ))?;
+    }
+    set_owner_marker(owner, None)
+}
+
+fn mark_admitted_run(
+    kernel: &Kernel,
+    graph: &GraphExecution<'_>,
+    session: &str,
+    owner: &mut std::fs::File,
+) -> Result<(), String> {
+    let snapshot: SessionSnapshot = completed(invoke_observed(
+        kernel,
+        Some(graph),
+        "phenix.basic.session",
+        "phenix.basic.session@1/open",
+        Scope {
+            session: session.into(),
+        },
+    ))?;
+    if snapshot.status == RunStatus::Running && !snapshot.run.is_empty() {
+        set_owner_marker(owner, Some(&snapshot.run))
+    } else {
+        set_owner_marker(owner, None)
+    }
+}
+
 /// A reader owns stdin. Only the controller thread touches Kernel, Root, or
 /// GraphExecution. This keeps root admission and cancellation on one thread.
 fn input_channel() -> Receiver<Result<String, String>> {
@@ -388,12 +489,16 @@ fn run_console(
 
         if active.is_none() {
             if let Some(next) = queue.pop_front() {
-                active_lock = Some(session_lock(session)?);
-                active = Some(begin_submission(
+                let mut owner = session_lock(session)?;
+                recover_owned_run(&kernel, session, &mut owner)?;
+                let execution = begin_submission(
                     &kernel,
                     next,
                     basic_scope(composition, session),
-                )?);
+                )?;
+                mark_admitted_run(&kernel, &execution, session, &mut owner)?;
+                active_lock = Some(owner);
+                active = Some(execution);
             } else if eof {
                 break;
             }
@@ -424,8 +529,11 @@ fn run_console(
                         &mut stdout,
                     )?;
                 }
-                // Release only after the graph has drained and any durable
-                // cancellation checkpoint has been written.
+                // Clear the durable marker before releasing the OS lock.
+                // A crashed process instead leaves the marker for recovery.
+                if let Some(ref mut owner) = active_lock {
+                    set_owner_marker(owner, None)?;
+                }
                 drop(active_lock.take());
             } else {
                 std::thread::sleep(Duration::from_millis(5));
@@ -534,8 +642,10 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             continue;
         }
 
-        let _session_lock = session_lock(&session)?;
+        let mut owner = session_lock(&session)?;
+        recover_owned_run(kernel, &session, &mut owner)?;
         let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
+        mark_admitted_run(kernel, &execution, &session, &mut owner)?;
         loop {
             // Leave unprocessed requests in the bounded channel when the
             // local queue fills. Do not abandon an admitted graph.
@@ -602,6 +712,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                         &mut output,
                     )?;
                 }
+                set_owner_marker(&mut owner, None)?;
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -900,11 +1011,15 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         ));
                         let submission = decoded.map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
-                        let _session_lock = session_lock(session).map_err(|e| (-32000, e))?;
+                        let mut owner = session_lock(session).map_err(|e| (-32000, e))?;
+                        recover_owned_run(kernel, session, &mut owner)
+                            .map_err(|e| (-32000, e))?;
                         let execution =
                             begin_submission(kernel, submission, basic_scope(composition, session))
                                 .map_err(|e| (-32000, e))?;
-                        drive_acp_prompt(
+                        mark_admitted_run(kernel, &execution, session, &mut owner)
+                            .map_err(|e| (-32000, e))?;
+                        let result = drive_acp_prompt(
                             kernel,
                             session,
                             execution,
@@ -913,7 +1028,9 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             offset,
                             &mut output,
                         )
-                        .map_err(|e| (-32000, e))
+                        .map_err(|e| (-32000, e))?;
+                        set_owner_marker(&mut owner, None).map_err(|e| (-32000, e))?;
+                        Ok(result)
                     } else {
                         Err((-32602, "unknown sessionId".into()))
                     }
@@ -999,8 +1116,20 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::lock_session_file;
+    use super::{
+        lock_session_file, owner_marker, set_owner_marker, verified_owner, OWNER_MARKER,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn recovery_requires_matching_versioned_run_marker() {
+        assert!(verified_owner(&format!("{OWNER_MARKER}run-4"), "run-4"));
+        assert!(!verified_owner("", "run-4"));
+        assert!(!verified_owner("run-4", "run-4"));
+        assert!(!verified_owner(&format!("{OWNER_MARKER}run-3"), "run-4"));
+        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4"), ""));
+        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4\\n"), "run-4"));
+    }
 
     #[test]
     fn independent_sessions_and_lock_release() {
@@ -1015,12 +1144,25 @@ mod session_lock_tests {
         std::fs::create_dir(&root).unwrap();
         let database = root.join("basic.db");
 
-        let first = lock_session_file(&database, "s1").unwrap();
+        let mut first = lock_session_file(&database, "s1").unwrap();
         assert!(lock_session_file(&database, "s1").is_err());
         let second = lock_session_file(&database, "s2").unwrap();
 
+        assert_eq!(owner_marker(&mut first).unwrap(), "");
+        set_owner_marker(&mut first, Some("run-3")).unwrap();
+        assert_eq!(
+            owner_marker(&mut first).unwrap(),
+            format!("{OWNER_MARKER}run-3"),
+        );
+
         drop(first);
-        let resumed = lock_session_file(&database, "s1").unwrap();
+        let mut resumed = lock_session_file(&database, "s1").unwrap();
+        assert_eq!(
+            owner_marker(&mut resumed).unwrap(),
+            format!("{OWNER_MARKER}run-3"),
+        );
+        set_owner_marker(&mut resumed, None).unwrap();
+        assert_eq!(owner_marker(&mut resumed).unwrap(), "");
         drop(resumed);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
