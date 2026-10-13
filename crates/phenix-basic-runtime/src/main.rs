@@ -1051,28 +1051,48 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                     {
                         Err((-32602, "invalid ACP session load configuration".into()))
                     } else if let Some(session) = session {
-                        if let Some(previous) = sessions.remove(session) {
-                            previous
-                                .shutdown()
-                                .map_err(|e| (-32000, format!("{e:?}")))?;
-                        }
+                        // Validate the candidate before replacing a live
+                        // session. Session::open returns a revision-zero Idle
+                        // snapshot for unknown Storage keys, which is not
+                        // proof that session/load has anything to restore.
                         let instance =
                             scoped_kernel(composition, session).map_err(|e| (-32000, e))?;
-                        sessions.insert(session.to_string(), instance);
-                        let current = sessions.get(session).expect("session admitted");
-                        let offset = offsets.entry(session.to_string()).or_default();
-                        *offset = 0;
-                        render_new(
-                            current,
-                            None,
-                            "phenix.basic.frontend-acp",
-                            session,
-                            offset,
-                            None,
-                            &mut output,
-                        )
+                        let snapshot: SessionSnapshot = completed(invoke(
+                            &instance,
+                            "phenix.basic.session",
+                            "phenix.basic.session@1/open",
+                            Scope {
+                                session: session.into(),
+                            },
+                        ))
                         .map_err(|e| (-32000, e))?;
-                        Ok(serde_json::json!({}))
+                        if snapshot.revision == 0 && !sessions.contains_key(session) {
+                            instance
+                                .shutdown()
+                                .map_err(|e| (-32000, format!("{e:?}")))?;
+                            Err((-32602, "unknown persisted ACP session".into()))
+                        } else {
+                            if let Some(previous) = sessions.remove(session) {
+                                previous
+                                    .shutdown()
+                                    .map_err(|e| (-32000, format!("{e:?}")))?;
+                            }
+                            sessions.insert(session.to_string(), instance);
+                            let current = sessions.get(session).expect("session admitted");
+                            let offset = offsets.entry(session.to_string()).or_default();
+                            *offset = 0;
+                            render_new(
+                                current,
+                                None,
+                                "phenix.basic.frontend-acp",
+                                session,
+                                offset,
+                                None,
+                                &mut output,
+                            )
+                            .map_err(|e| (-32000, e))?;
+                            Ok(serde_json::json!({}))
+                        }
                     } else {
                         Err((-32602, "sessionId required".into()))
                     }
