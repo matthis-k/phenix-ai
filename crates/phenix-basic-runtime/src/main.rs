@@ -410,7 +410,10 @@ fn recover_owned_run(
         return set_owner_marker(owner, None);
     }
 
-    if !matches!(snapshot.status, RunStatus::Failed | RunStatus::Indeterminate) {
+    if !matches!(
+        snapshot.status,
+        RunStatus::Failed | RunStatus::Indeterminate
+    ) {
         return Err("recovery marker has an unexpected session status".into());
     }
 
