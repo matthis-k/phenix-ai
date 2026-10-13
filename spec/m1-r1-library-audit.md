@@ -36,12 +36,13 @@ runs a prompt and requires a completed turn with session updates. This
 check is independent of the existing hand-written JSON-RPC fixtures.
 
 The integration fixture does not introduce the SDK into the kernel's Cargo
-workspace. The workflow uploads its generated test-only Cargo.lock as evidence;
-the transitive SDK dependencies still need a committed lockfile before this
-can count as a reproducible shipping gate. Test execution and the future
-codec replacement remain unaccepted until exact-head CI passes. Before
-replacing the codec or transport, verify that the SDK can deliver
-notifications while the kernel's root remains pinned to its owning thread.
+workspace. The first official-SDK integration run passed on commit
+`9534a35d` and produced a 144-package test dependency resolution. That
+`Cargo.lock` is now committed under `tests/acp-sdk-client`; the workflow
+uses `cargo run --locked`. The fully locked test and canonical Nix shipping
+checks must pass on the updated exact head before acceptance. SDK-backed
+replacement of the handwritten ACP codec remains separate work. The
+protocol driver must keep the kernel's active root on its owning thread.
 
 ## SQLite migration acceptance
 
