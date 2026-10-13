@@ -1205,7 +1205,8 @@ mod session_lock_tests {
         assert!(!verified_owner("run-4", "run-4"));
         assert!(!verified_owner(&format!("{OWNER_MARKER}run-3"), "run-4"));
         assert!(!verified_owner(&format!("{OWNER_MARKER}run-4"), ""));
-        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4\\n"), "run-4"));        assert!(verified_recovery(
+        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4\\n"), "run-4"));
+        assert!(verified_recovery(
             &format!("{RECOVERY_MARKER}run-4"),
             "run-4"
         ));
