@@ -177,12 +177,29 @@ fn main() {
     .unwrap()
     .unwrap();
     assert_eq!(seeded.len(), 1);
-    let interrupted: SessionSnapshot = invoke(
+    // Loading a second provider instance does not prove the old process
+    // exited. Opening its stored Running checkpoint is read-only.
+    let restored: SessionSnapshot = invoke(
         &kernel,
         open,
         "phenix.basic.session",
         Scope {
             session: session.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(restored.status, RunStatus::Running);
+    assert_eq!(restored.revision, 1);
+    // This test controls the fixture's process lifetime and explicitly
+    // records an interrupted tool call before reconciliation.
+    let interrupted: SessionSnapshot = invoke(
+        &kernel,
+        checkpoint,
+        "phenix.basic.session",
+        SessionSnapshot {
+            status: RunStatus::Indeterminate,
+            ..restored
         },
     )
     .unwrap()
@@ -214,8 +231,8 @@ fn main() {
             "format": "phenix.b2.session.v1",
             "cases": [
                 "new-session", "checkpoint-CAS", "stale-revision",
-                "session-scoped-open", "interrupted-tool-indeterminate",
-                "explicit-reconciliation", "persisted-history"
+                "session-scoped-open", "open-preserves-running",
+                "explicit-interruption-checkpoint", "explicit-reconciliation", "persisted-history"
             ],
             "storage_backend": "volatile-native-fixture-with-seeded-checkpoint",
             "real_restart_or_sqlite_verified": false
