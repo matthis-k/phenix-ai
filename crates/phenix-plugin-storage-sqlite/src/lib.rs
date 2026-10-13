@@ -105,10 +105,9 @@ fn transact(request: StorageTransaction) -> Result<Vec<StoredRecord>, BasicError
     }
 
     let mut db = Db::open()?;
-    let tx = db
-        .0
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| failed())?;
+    let tx =
+        db.0.transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| failed())?;
     let result = (|| {
         let mut records = Vec::with_capacity(request.edits.len());
         for StorageEdit {
