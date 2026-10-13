@@ -71,16 +71,11 @@ fn submit(
             scope.clone(),
         )
         .expect("graph admission must have no kernel failures");
-    loop {
-        match execution
-            .pump(|_| {})
-            .expect("graph execution must have no kernel failures")
-        {
-            GraphStatus::Pending | GraphStatus::Draining => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            GraphStatus::Finished => break,
-        }
+    while let GraphStatus::Pending | GraphStatus::Draining = execution
+        .pump(|_| {})
+        .expect("graph execution must have no kernel failures")
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let steps = execution.steps();
     assert_eq!(steps.len(), 1);
@@ -260,13 +255,8 @@ fn main() {
             },
         )
         .unwrap();
-    loop {
-        match denied_run.pump(|_| {}).unwrap() {
-            GraphStatus::Pending | GraphStatus::Draining => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            GraphStatus::Finished => break,
-        }
+    while let GraphStatus::Pending | GraphStatus::Draining = denied_run.pump(|_| {}).unwrap() {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let denied = match denied_run.completion().unwrap() {
         GraphCompletion::Failure(failure) => failure.code.clone(),
