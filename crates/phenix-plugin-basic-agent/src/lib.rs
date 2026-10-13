@@ -343,7 +343,14 @@ mod plugin {
                 })?;
                 add_usage(&mut running.usage, &response.usage)?;
                 add_usage(&mut running.session.usage, &response.usage)?;
-                reconcile_text(host, running, &response.text)?;
+                match reconcile_text(host, running, &response.text) {
+                    Ok(()) => {}
+                    Err(CallError::Domain(problem)) => {
+                        stopped(host, running.session.clone(), &problem)?;
+                        return Err(CallError::Domain(problem));
+                    }
+                    Err(other) => return Err(other),
+                }
 
                 if response.calls.is_empty() {
                     running.session.history.push(Message {
@@ -392,10 +399,9 @@ mod plugin {
                 let mut ids = BTreeSet::new();
                 for call in &response.calls {
                     if call.id.is_empty() || !ids.insert(call.id.clone()) {
-                        return Err(CallError::Domain(error(
-                            ErrorCode::InvalidReply,
-                            "duplicate or empty tool call ID",
-                        )));
+                        let problem = error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
+                        stopped(host, running.session.clone(), &problem)?;
+                        return Err(CallError::Domain(problem));
                     }
                 }
                 running.session.history.push(Message {
