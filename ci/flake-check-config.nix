@@ -13,6 +13,7 @@ ci.mkFlakeCheckConfig {
       ".#phenix-kernel"
       ".#phenix-describe"
       ".#phenix-m1-conformance-runner"
+      ".#phenix-core-example-plugins"
     ];
     checkHints = {
       "m1-shipping" = { isolate = true; weight = 240; };
