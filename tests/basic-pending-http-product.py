@@ -88,8 +88,8 @@ class Server(BaseHTTPRequestHandler):
             time.sleep(0.03)
             self.chunk({"choices": [{"index": 0, "delta": {"content": "ä"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
-        done = b"data: [DONE]\\r\\n\\r\\n"
-        self.wfile.write(f"{len(done):x}\\r\\n".encode() + done + b"\\r\\n")
+        done = b"data: [DONE]\r\n\r\n"
+        self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
