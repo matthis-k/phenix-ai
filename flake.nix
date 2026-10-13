@@ -424,6 +424,13 @@
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
       '';
+      basicPendingHttpProductCheck = pkgs.runCommand "phenix-basic-pending-http-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p $out
+        python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        test -s "$out/pending-basic-http.json"
+      '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b4-scripted ${scriptedModel} ${basicDefinitions} $out
@@ -800,6 +807,7 @@
         ln -s ${frontendCheck} $out/frontends
         ln -s ${acpCheck} $out/acp-codec
         ln -s ${basicProductCheck} $out/basic-host-smoke
+        ln -s ${basicPendingHttpProductCheck} $out/basic-pending-http-product
         ln -s ${stateCheck} $out/live-state
         ln -s ${stateProduct} $out/live-state-product
         ln -s ${valueSdkCheck} $out/value-sdk
@@ -882,6 +890,7 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        basic-pending-http-product = basicPendingHttpProductCheck;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
