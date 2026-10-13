@@ -186,6 +186,12 @@ try:
     invalid_id = frames.get(timeout=5)
     assert invalid_id is not None and invalid_id.get("id") is None, invalid_id
     assert invalid_id.get("error", {}).get("code") == -32600, invalid_id
+    # A flood of unsupported notifications must not occupy the deferred
+    # request queue. Queue a real request during the live Model run to prove
+    # the queue still has capacity and handles it after cancellation.
+    for _ in range(80):
+        send("session/new", {"cwd": "/tmp", "mcpServers": []})
+    send("unavailable/method", {}, 73)
     # A notification for another session cannot cancel this prompt.
     send("session/cancel", {"sessionId": "unrelated-session"})
     try:
@@ -196,6 +202,9 @@ try:
     send("session/cancel", {"sessionId": session})
     cancelled = until(lambda x: x.get("id") == 3, "cancelled prompt response")
     assert cancelled["result"]["stopReason"] == "cancelled", cancelled
+    deferred_reply = frames.get(timeout=5)
+    assert deferred_reply is not None and deferred_reply.get("id") == 73, deferred_reply
+    assert deferred_reply.get("error", {}).get("code") == -32601, deferred_reply
 
     send("session/prompt", {
         "sessionId": session, "prompt": [{"type": "text", "text": "after cancel"}],
@@ -215,6 +224,7 @@ try:
         "malformed_frame_isolated": True,
         "invalid_active_request_rejected": True,
         "wrong_session_cancel_ignored": True,
+        "unsupported_notifications_do_not_fill_queue": True,
         "model_requests": len(requests),
     }, indent=2, sort_keys=True))
 finally:
