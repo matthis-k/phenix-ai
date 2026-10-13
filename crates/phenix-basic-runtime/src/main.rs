@@ -403,7 +403,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
     {
         let kernel = sessions.get("s1").expect("default session initialized");
         let mut observer: ObserverCheckpoint = completed(invoke(
-            &kernel,
+            kernel,
             "phenix.basic.event-journal",
             "phenix.basic.journal@1/observer",
             ObserverRequest {
@@ -413,7 +413,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         ))?;
         let mut after = observer.after;
         render_new(
-            &kernel,
+            kernel,
             None,
             FRONTEND,
             "s1",
@@ -441,7 +441,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         }
         let kernel = sessions.get(&session).expect("session initialized");
         let mut observer: ObserverCheckpoint = completed(invoke(
-            &kernel,
+            kernel,
             "phenix.basic.event-journal",
             "phenix.basic.journal@1/observer",
             ObserverRequest {
@@ -451,7 +451,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         ))?;
         let mut after = observer.after;
         render_new(
-            &kernel,
+            kernel,
             None,
             FRONTEND,
             &session,
@@ -460,7 +460,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             &mut output,
         )?;
         let input: Submission = completed(invoke(
-            &kernel,
+            kernel,
             FRONTEND,
             "phenix.basic.frontend@1/decode",
             ClientInput {
@@ -474,7 +474,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             continue;
         }
 
-        let mut execution = begin_submission(&kernel, input, basic_scope(composition, &session))?;
+        let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
         loop {
             // Leave unprocessed requests in the bounded channel when the
             // local queue fills. Do not abandon an admitted graph.
@@ -518,7 +518,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             render_new(
-                &kernel,
+                kernel,
                 Some(&execution),
                 FRONTEND,
                 &session,
@@ -530,9 +530,9 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 let cancelled = finish_submission(&execution)?;
                 drop(execution);
                 if cancelled {
-                    record_cancelled(&kernel, &session)?;
+                    record_cancelled(kernel, &session)?;
                     render_new(
-                        &kernel,
+                        kernel,
                         None,
                         FRONTEND,
                         &session,
