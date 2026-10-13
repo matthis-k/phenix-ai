@@ -877,6 +877,26 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
         .map_err(|e| format!("{e:?}"))
 }
 
+/// One JSON-RPC envelope check for idle requests and active prompt traffic.
+/// Invalid input is rejected before a notification can reach the decoder or
+/// a request can enter the deferred queue.
+fn parse_acp_frame(line: &str) -> Result<serde_json::Value, (i32, &'static str)> {
+    let frame: serde_json::Value =
+        serde_json::from_str(line).map_err(|_| (-32700, "parse error"))?;
+    if frame.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
+        return Err((-32600, "invalid JSON-RPC request"));
+    }
+    if frame.get("method").and_then(|value| value.as_str()).is_none() {
+        return Err((-32600, "missing JSON-RPC method"));
+    }
+    if frame.get("id").is_some_and(|value| {
+        !value.is_null() && !value.is_string() && !value.is_i64() && !value.is_u64()
+    }) {
+        return Err((-32600, "invalid JSON-RPC request id"));
+    }
+    Ok(frame)
+}
+
 /// Run one ACP prompt while the reader continues accepting cancellation
 /// notifications. Other requests retain their order and are handled once
 /// this prompt has completed. The kernel stays on this controller thread.
@@ -897,15 +917,10 @@ fn drive_acp_prompt(
                 Ok(line) => line?,
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             };
-            let frame: serde_json::Value = match serde_json::from_str(&line) {
+            let frame = match parse_acp_frame(&line) {
                 Ok(frame) => frame,
-                Err(_) => {
-                    let reply = serde_json::json!({
-                        "jsonrpc": "2.0", "id": null,
-                        "error": {"code": -32700, "message": "parse error"}
-                    });
-                    writeln!(output, "{reply}").map_err(|e| e.to_string())?;
-                    output.flush().map_err(|e| e.to_string())?;
+                Err((code, message)) => {
+                    acp_protocol_error(&mut output, code, message)?;
                     continue;
                 }
             };
@@ -1014,29 +1029,16 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 Err(_) => break,
             }
         };
-        let frame: serde_json::Value = match serde_json::from_str::<serde_json::Value>(&line) {
-            Ok(frame) if frame.get("jsonrpc").and_then(|v| v.as_str()) == Some("2.0") => frame,
-            Ok(_) => {
-                acp_protocol_error(&mut output, -32600, "invalid JSON-RPC request")?;
-                continue;
-            }
-            Err(_) => {
-                acp_protocol_error(&mut output, -32700, "parse error")?;
+        let frame = match parse_acp_frame(&line) {
+            Ok(frame) => frame,
+            Err((code, message)) => {
+                acp_protocol_error(&mut output, code, message)?;
                 continue;
             }
         };
         let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let is_notification = frame.get("id").is_none();
-        let Some(method) = frame.get("method").and_then(|v| v.as_str()) else {
-            acp_protocol_error(&mut output, -32600, "missing JSON-RPC method")?;
-            continue;
-        };
-        if frame.get("id").is_some_and(|value| {
-            !value.is_null() && !value.is_string() && !value.is_i64() && !value.is_u64()
-        }) {
-            acp_protocol_error(&mut output, -32600, "invalid JSON-RPC request id")?;
-            continue;
-        }
+        let method = frame["method"].as_str().expect("validated ACP method");
         if is_notification && method != "session/cancel" {
             // Only cancellation has side effects without a response ID.
             // Other notifications cannot create sessions or initialize ACP.
@@ -1394,5 +1396,27 @@ mod bounded_stdio_tests {
             bounded_input_line(&mut input).unwrap_err().kind(),
             ErrorKind::InvalidData,
         );
+    }
+}
+
+#[cfg(test)]
+mod acp_frame_tests {
+    use super::parse_acp_frame;
+
+    #[test]
+    fn one_envelope_policy_for_idle_and_pending_acp() {
+        assert!(parse_acp_frame(r#"{"jsonrpc":"2.0","method":"session/cancel"}"#).is_ok());
+        assert!(parse_acp_frame(r#"{"jsonrpc":"2.0","id":null,"method":"initialize"}"#).is_ok());
+        assert!(parse_acp_frame(r#"{"jsonrpc":"2.0","id":7,"method":"initialize"}"#).is_ok());
+        assert_eq!(parse_acp_frame("{broken").unwrap_err().0, -32700);
+        for frame in [
+            r#"{"jsonrpc":"1.0","id":7,"method":"session/cancel"}"#,
+            r#"{"jsonrpc":"2.0","id":[],"method":"session/cancel"}"#,
+            r#"{"jsonrpc":"2.0","id":true,"method":"initialize"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":null}"#,
+            r#"["session/cancel"]"#,
+        ] {
+            assert_eq!(parse_acp_frame(frame).unwrap_err().0, -32600, "{frame}");
+        }
     }
 }
