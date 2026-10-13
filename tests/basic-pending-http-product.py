@@ -63,7 +63,7 @@ class Server(BaseHTTPRequestHandler):
         with lock:
             calls.append(request)
             turn = len(calls)
-        assert turn in (1, 2, 3, 4), "unexpected model continuation"
+        assert turn in (1, 2, 3, 4, 5), "unexpected model continuation"
         if turn == 1:
             assert messages[-1] == {"role": "user", "content": "two tools"}
         elif turn == 2:
@@ -73,8 +73,10 @@ class Server(BaseHTTPRequestHandler):
             assert any(x["role"] == "assistant" and len(x.get("tool_calls", [])) == 2 for x in messages)
         elif turn == 3:
             assert messages[-1] == {"role": "user", "content": "cancel during stream"}
-        else:
+        elif turn == 4:
             assert messages[-1] == {"role": "user", "content": "after cancel"}
+        else:
+            assert messages[-1] == {"role": "user", "content": "second-session"}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
@@ -100,8 +102,10 @@ class Server(BaseHTTPRequestHandler):
                 self.chunk({"choices": [{"index": 0, "delta": {"content": "too-late"}, "finish_reason": "stop"}]})
             except (BrokenPipeError, ConnectionResetError):
                 return
-        else:
+        elif turn == 4:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "resumed"}, "finish_reason": "stop"}]})
+        else:
+            self.chunk({"choices": [{"index": 0, "delta": {"content": "other-session"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
         done = b"data: [DONE]\r\n\r\n"
         self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
@@ -154,8 +158,8 @@ try:
     reader = threading.Thread(target=read_events, daemon=True)
     reader.start()
 
-    def write_packet(kind, text=None):
-        packet = {"type": kind, "session": "s1"}
+    def write_packet(kind, text=None, session="s1"):
+        packet = {"type": kind, "session": session}
         if text is not None:
             packet["text"] = text
         proc.stdin.write(json.dumps(packet) + "\n")
@@ -183,13 +187,18 @@ try:
         # The next turn is submitted before cancelling the current run.
         # The controller must preserve it across cancellation and draining.
         write_packet("prompt", "after cancel")
+        write_packet("prompt", "second-session", session="s2")
+        write_packet("cancel", session="s2")
         write_packet("cancel")
-        until(lambda e: e["kind"] == "Cancelled", "durable cancellation")
-        until(lambda e: e["kind"] == "Answer" and e["text"] == "resumed",
-              "continuation after cancellation")
+        until(lambda e: e["kind"] == "Cancelled" and e["session"] == "s1",
+              "durable cancellation")
+        until(lambda e: e["kind"] == "Answer" and e["text"] == "resumed"
+              and e["session"] == "s1", "continuation after cancellation")
+        until(lambda e: e["kind"] == "Answer" and e["text"] == "other-session"
+              and e["session"] == "s2", "isolated second-session answer")
         proc.stdin.close()
         assert proc.wait(timeout=25) == 0, proc.stderr.read()
-        assert len(calls) == 4, f"unexpected model calls after cancellation: {len(calls)}"
+        assert len(calls) == 5, f"unexpected model calls after cancellation: {len(calls)}"
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -209,6 +218,8 @@ try:
         "durable_resume_after_cancel": True,
         "live_jsonl_delta": True,
         "queued_followup_survives_cancel": True,
+        "queued_other_session_isolated": True,
+        "wrong_session_cancel_ignored": True,
     }, indent=2, sort_keys=True))
 finally:
     http.shutdown()
