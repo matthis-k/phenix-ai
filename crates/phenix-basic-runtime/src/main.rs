@@ -123,13 +123,10 @@ fn submit(kernel: &Kernel, input: Submission, scope: ScopedRequest) -> Result<()
     let mut execution = kernel
         .begin_action_scoped(&input.action, &value, scope)
         .map_err(|e| format!("{e:?}"))?;
-    loop {
-        match execution.pump(|_| {}).map_err(|e| format!("{e:?}"))? {
-            GraphStatus::Pending | GraphStatus::Draining => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            GraphStatus::Finished => break,
-        }
+    while let GraphStatus::Pending | GraphStatus::Draining =
+        execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let steps = execution.steps();
     if steps.is_empty() {
