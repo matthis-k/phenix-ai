@@ -36,6 +36,7 @@ composition_file.write_text(json.dumps(composition, indent=2))
 
 calls = []
 lock = threading.Lock()
+release_cancel_stream = threading.Event()
 
 
 class Server(BaseHTTPRequestHandler):
@@ -96,7 +97,10 @@ class Server(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"index": 0, "delta": {"content": "ä"}, "finish_reason": "stop"}]})
         elif turn == 3:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "cancel-start"}, "finish_reason": None}]})
-            time.sleep(3.0)
+            # Keep the first model stream pending while the second process
+            # attempts to enter the same durable session. The main test
+            # releases the HTTP handler once cancellation has drained.
+            release_cancel_stream.wait(timeout=20.0)
             # The client should have cancelled the transport before the next chunk.
             try:
                 self.chunk({"choices": [{"index": 0, "delta": {"content": "too-late"}, "finish_reason": "stop"}]})
@@ -191,7 +195,7 @@ try:
             [binary, "jsonl", str(composition_file)],
             input=json.dumps({
                 "type": "prompt", "session": "s1", "text": "must reject"
-            }) + "\\n",
+            }) + "\n",
             text=True, capture_output=True, env=env, timeout=12,
         )
         assert concurrent.returncode != 0, (
@@ -207,6 +211,7 @@ try:
         write_packet("cancel")
         until(lambda e: e["kind"] == "Cancelled" and e["session"] == "s1",
               "durable cancellation")
+        release_cancel_stream.set()
         until(lambda e: e["kind"] == "Answer" and e["text"] == "resumed"
               and e["session"] == "s1", "continuation after cancellation")
         until(lambda e: e["kind"] == "Answer" and e["text"] == "other-session"
@@ -238,5 +243,6 @@ try:
         "second_process_running_session_rejected": True,
     }, indent=2, sort_keys=True))
 finally:
+    release_cancel_stream.set()
     http.shutdown()
     http.server_close()
