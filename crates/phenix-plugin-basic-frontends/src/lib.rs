@@ -437,6 +437,49 @@ mod tests {
     }
 
     #[test]
+    fn acp_reports_typed_tool_outcomes_and_rejects_corrupt_metadata() {
+        let render = |data: Blob| {
+            acp_render(RenderRequest {
+                session: "s1".into(),
+                events: vec![Event {
+                    sequence: 1,
+                    session: "s1".into(),
+                    run: "r1".into(),
+                    kind: EventKind::ToolFinished,
+                    call_id: "call-1".into(),
+                    text: "tool output".into(),
+                    data,
+                }],
+            })
+        };
+        for (failed, expected) in [(false, "completed"), (true, "failed")] {
+            let data = encode(&ToolCompletion { failed }).unwrap();
+            let frames = render(data).unwrap();
+            assert_eq!(frames.len(), 1);
+            let frame: serde_json::Value = serde_json::from_str(&frames[0]).unwrap();
+            assert_eq!(
+                frame.pointer("/params/update/status").and_then(|status| status.as_str()),
+                Some(expected),
+            );
+            assert_eq!(
+                frame.pointer("/params/update/toolCallId").and_then(|id| id.as_str()),
+                Some("call-1"),
+            );
+        }
+        // Preserve old durable journals with payload-free ToolFinished entries.
+        let legacy = render(Blob(vec![])).unwrap();
+        let legacy: serde_json::Value = serde_json::from_str(&legacy[0]).unwrap();
+        assert_eq!(
+            legacy.pointer("/params/update/status").and_then(|status| status.as_str()),
+            Some("completed"),
+        );
+        assert_eq!(
+            render(Blob(vec![0xff])).unwrap_err().code,
+            ErrorCode::InvalidReply,
+        );
+    }
+
+    #[test]
     fn both_adapters_reject_cross_session_output() {
         let request = RenderRequest {
             session: "s1".into(),
