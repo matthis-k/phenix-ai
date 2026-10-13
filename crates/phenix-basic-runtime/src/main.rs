@@ -317,8 +317,9 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
             }
         };
         if let Some(line) = packet {
-            let submission = completed(invoke::<Submission>(
+            let submission = completed(invoke_observed::<Submission>(
                 &kernel,
+                active.as_ref(),
                 frontend,
                 "phenix.basic.frontend@1/decode",
                 ClientInput {
