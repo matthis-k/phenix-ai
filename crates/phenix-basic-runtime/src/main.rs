@@ -254,12 +254,13 @@ fn input_channel() -> Receiver<Result<String, String>> {
 
 /// Terminal and JSONL share one controller. Follow-up prompts are queued and
 /// cancel packets target only the currently active root.
-fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> Result<(), String> {
-    let kernel = Prepared::prepare(composition.clone())
-        .map_err(|e| format!("{e:?}"))?
-        .load()
-        .map_err(|e| format!("{e:?}"))?;
-    let session = "s1";
+fn run_console(
+    composition: &Composition,
+    frontend: &str,
+    observer_id: &str,
+    session: &str,
+) -> Result<(), String> {
+    let kernel = scoped_kernel(composition, session)?;
     let mut observer: ObserverCheckpoint = completed(invoke(
         &kernel,
         "phenix.basic.event-journal",
@@ -861,16 +862,28 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json".into());
+    if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION for terminal]".into());
     }
+    let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
+        args[4].as_str()
+    } else if args.len() == 3 {
+        "s1"
+    } else {
+        return Err("session selection requires terminal COMPOSITION.json --session SESSION".into());
+    };
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
     let composition: Composition = serde_json::from_slice(&config).map_err(|e| e.to_string())?;
     match args[1].as_str() {
         "acp" => run_acp(&composition, io::stdout().lock()),
         "jsonl" => run_jsonl(&composition),
-        "terminal" => run_console(&composition, "phenix.basic.frontend-terminal", "terminal"),
+        "terminal" => run_console(
+            &composition,
+            "phenix.basic.frontend-terminal",
+            "terminal",
+            terminal_session,
+        ),
         _ => unreachable!(),
     }
 }

@@ -560,6 +560,8 @@
         test -s "$out/observer-product.json"
         python ${./tests/jsonl-multisession-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/jsonl-multisession.json"
+        python ${./tests/terminal-sessions-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
+        test -s "$out/terminal-sessions.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
