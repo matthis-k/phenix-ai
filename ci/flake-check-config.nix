@@ -14,6 +14,12 @@ ci.mkFlakeCheckConfig {
       ".#phenix-describe"
       ".#phenix-m1-conformance-runner"
       ".#phenix-core-example-plugins"
+      # These exact store derivations appeared in multiple independent shards.
+      # Share only the observed hotset, not every check dependency: broad
+      # prebuilding would serialize the critical path and bloat the cache.
+      ".#phenix-basic-contracts"
+      ".#phenix-plugin-event-journal"
+      ".#phenix-plugin-storage-sqlite"
     ];
     checkHints = {
       "m1-shipping" = { isolate = true; weight = 240; };
