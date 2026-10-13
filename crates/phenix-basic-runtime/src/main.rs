@@ -1353,22 +1353,38 @@ mod bounded_stdio_tests {
     #[test]
     fn preserves_newlines_utf8_crlf_and_final_partial_line() {
         let mut input = Cursor::new("first\r\n☃\nlast".as_bytes());
-        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("first"));
-        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("☃"));
-        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("last"));
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap().as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap().as_deref(),
+            Some("☃")
+        );
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap().as_deref(),
+            Some("last")
+        );
         assert_eq!(bounded_input_line(&mut input).unwrap(), None);
     }
 
     #[test]
     fn drains_oversized_frame_without_buffering_it() {
         let mut input = Cursor::new(
-            [vec![b'x'; super::MAX_STDIN_LINE_BYTES + 7], b"\nnext\n".to_vec()].concat(),
+            [
+                vec![b'x'; super::MAX_STDIN_LINE_BYTES + 7],
+                b"\nnext\n".to_vec(),
+            ]
+            .concat(),
         );
         assert_eq!(
             bounded_input_line(&mut input).unwrap_err().kind(),
             ErrorKind::InvalidData,
         );
-        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("next"));
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap().as_deref(),
+            Some("next")
+        );
     }
 
     #[test]
