@@ -271,7 +271,8 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Active cancellation, model streaming and full ACP product acceptance remain |
-| P1 | B5, F1, F2 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: native terminal/JSONL product host and SQLite-backed graph smoke on impl/m1-basic-runtime. Full streaming, host-controlled cancellation, ACP parity, multi-session and exact-head CI still open |
+| R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] PLANNED: see library and protocol reuse policy below |
+| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: native terminal/JSONL product host and SQLite-backed graph smoke on impl/m1-basic-runtime. Full streaming, host-controlled cancellation, ACP parity, multi-session and exact-head CI still open |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -279,6 +280,54 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | I1 | K3 | `phenix-plugin-introspection` | Independent optional typed, discoverable contract projection over authorized kernel query APIs; no direct unrestricted host handles, no dependency on L1 | [ ] NOT STARTED |
 
 G1-G4 refine S4/S5 using one resolver and dispatcher. S6 remains outside the Basic critical path. B1 can proceed after G1, F1 after G3, and P1 requires G4. K1-K3 and L1/I1 are independent operations milestones, not Basic product blockers.
+
+### Library and protocol reuse policy (R1)
+
+This rule applies across Phenix, including future plugins and frontends. Prefer a
+well-maintained, widely used Rust library for standard protocols, database
+drivers, transports, serialization, async I/O and common utilities. Optimize
+for less maintained code and fewer custom failure modes, not the fewest crates.
+Use `std` where it already solves the problem cleanly.
+
+A PR that adds custom code for a standard mechanism must first compare
+established libraries. Record a short exception when none fits, covering the
+missing capability, safety and maintenance costs, and compatibility evidence.
+Keep domain-specific contracts, resource checks, journal ordering, graph
+semantics, and the frozen Phenix value/ABI encoding in Phenix. Existing custom
+ABI code still requires independent conformance tests. A standard library does
+not replace Phenix's security checks.
+
+| Area | Default choice to evaluate | Phenix ownership |
+| --- | --- | --- |
+| HTTP model transport, TLS and connection pooling | Established clients such as `curl` or `reqwest`; an async runtime such as `tokio` only when needed | Model request/response mapping, limits, authorization, cancellation and usage |
+| Streaming HTTP/SSE | A maintained event-stream parser integrated with the HTTP client | Typed model progress, ticket lifecycle and journal events |
+| SQLite bindings and transactions | `rusqlite` instead of hand-written `sqlite3_*` FFI | Storage keys, revision-checked CAS and session isolation |
+| ACP and JSON-RPC transport | Official `agent-client-protocol` Rust SDK if compatible with the required ACP version | ACP-to-typed-event mapping, session grants and cancellation admission |
+| JSON and shared encoding utilities | Existing `serde` / `serde_json`; `std` for ordinary conversions | Canonical Phenix wire bytes and declared contract schemas |
+| IDs, time, URI handling, retries and other common functions | Established, scoped crates where they remove meaningful code and edge cases | Domain policy and explicit caller-selected behavior |
+
+R1 work, before P1 acceptance:
+
+1. Inventory hand-written generic mechanisms in the current kernel, SDK,
+   plugins and frontend host. Record the chosen dependency or justified
+   exception for each relevant P1 implementation; audit new features during PR
+   review so the list does not grow stale.
+2. Replace the SQLite plugin's manual C binding layer with a maintained wrapper,
+   unless a measured, documented constraint rules it out. Preserve the current
+   inter-process CAS, rollback, restart, denial and corruption tests.
+3. Review the HTTP Model provider in #803, which already uses the `curl` crate
+   for HTTP/TLS. Evaluate its custom SSE framing against maintained parsers;
+   retain custom code only with a documented compatibility reason. Verify
+   fragmented streams, malformed replies, cancellation, timeouts and errors.
+4. Evaluate the official ACP Rust SDK for the frontend and host. Use it for
+   supported protocol framing, types and transport. Document any compatibility
+   exception, then test against an independent ACP client.
+5. Keep external I/O and protocol dependencies in the owning plugins or hosts,
+   not in the generic kernel. Check lockfile, license, security, Nix build and
+   independent ABI/security tests before closing R1.
+
+R1 is a P1 acceptance dependency and a review rule for later work. It is not
+a new runtime layer or a reason to replace proven custom Phenix semantics.
 
 ### CI performance and flake-aware planning
 
