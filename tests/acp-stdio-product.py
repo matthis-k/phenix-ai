@@ -128,6 +128,17 @@ session = request(first, 2, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
 })["sessionId"]
 assert session
+# Invalid prompt content is a client parameter error. These cases must
+# leave the session idle, with no output or Model admission.
+for number, params in enumerate([
+    {"sessionId": session},
+    {"sessionId": session, "prompt": []},
+    {"sessionId": session, "prompt": [{"type": "image", "data": "unsupported"}]},
+    {"sessionId": session, "prompt": [{"type": "text", "text": 42}]},
+], start=110):
+    previous_updates = list(updates)
+    request_error(first, number, "session/prompt", params, -32602)
+    assert updates == previous_updates, "invalid prompt caused session updates"
 # An arbitrary well-formed ID is not a persisted session. Reject it
 # without replacing or corrupting the client's existing live session.
 request_error(first, 101, "session/load", {
@@ -291,6 +302,7 @@ assert "stdin frame exceeds 1 MiB" in stderr, stderr
             "invalid-session-identity-rejected",
             "failed-load-preserves-durable-live-journal",
             "oversized-stdio-frame-rejected",
+            "invalid-prompt-params-rejected-before-admission",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
