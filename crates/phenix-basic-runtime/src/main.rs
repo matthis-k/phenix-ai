@@ -275,7 +275,9 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             },
                         ));
                         decoded
-                            .and_then(|submission| submit(kernel, submission, basic_scope(composition, session)))
+                            .and_then(|submission| {
+                                submit(kernel, submission, basic_scope(composition, session))
+                            })
                             .map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
                         render_new(
