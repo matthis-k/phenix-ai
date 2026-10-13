@@ -262,6 +262,14 @@ assert any(
 )
 exit_cleanly(second)
 
+# One input frame without a newline can otherwise grow beyond the bounded
+# reader channel's 64 messages. The host rejects it before JSON decoding,
+# with a bounded allocation and no active graph or Model dispatch.
+oversized = start()
+stdout, stderr = oversized.communicate("x" * (1024 * 1024 + 8) + "\n", timeout=30)
+assert oversized.returncode != 0, stdout
+assert "stdin frame exceeds 1 MiB" in stderr, stderr
+
 (output / "acp-product.json").write_text(
     json.dumps({
         "format": "phenix.acp.host.v1",
@@ -282,6 +290,7 @@ exit_cleanly(second)
             "live-uncheckpointed-session-reload-allowed",
             "invalid-session-identity-rejected",
             "failed-load-preserves-durable-live-journal",
+            "oversized-stdio-frame-rejected",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
