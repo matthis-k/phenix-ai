@@ -124,7 +124,6 @@ fn submit(kernel: &Kernel, input: Submission, scope: ScopedRequest) -> Result<()
     finish_submission(&execution).map(|_| ())
 }
 
-
 /// Start an admitted graph without blocking the frontend's input controller.
 fn begin_submission<'a>(
     kernel: &'a Kernel,
@@ -282,9 +281,7 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
                 },
             ))?;
             if submission.cancel {
-                let current = active
-                    .as_mut()
-                    .ok_or("no active graph execution to cancel")?;
+                let current = active.as_mut().ok_or("no active graph execution to cancel")?;
                 current.cancel().map_err(|e| format!("{e:?}"))?;
             } else {
                 if queue.len() >= 32 {
