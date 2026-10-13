@@ -11,11 +11,20 @@ output = Path(output)
 output.mkdir(parents=True, exist_ok=True)
 witness = output / "constructor-witness"
 environment = dict(os.environ, PHENIX_CONSTRUCTOR_WITNESS=str(witness))
-offline = json.loads(subprocess.check_output([kernel, "inspect", deployment], env=environment, text=True))
+def checked_json(*args):
+    result = subprocess.run(args, env=environment, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"CLI command {args[1]} failed (exit={result.returncode})\\n"
+            f"stdout: {result.stdout}\\nstderr: {result.stderr}"
+        )
+    return json.loads(result.stdout)
+
+offline = checked_json(kernel, "inspect", deployment)
 assert offline["format"] == "phenix.inspect.v2"
 assert not witness.exists()
 assert all(p["offline_verified"] and not p["abi_negotiated"] for p in offline["plugins"])
-loaded = json.loads(subprocess.check_output([kernel, "invoke", deployment, request], env=environment, text=True))
+loaded = checked_json(kernel, "invoke", deployment, request)
 assert witness.exists()
 assert loaded["outcome"] == dict(kind="success", value=dict(text="PHENIX"))
 assert loaded["calls"] == 2
