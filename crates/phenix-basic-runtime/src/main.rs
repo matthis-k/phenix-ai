@@ -1,7 +1,7 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
+    BasicError, ClientInput, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery,
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
     Submission,
 };
@@ -1180,7 +1180,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         )
                         .map_err(|e| (-32000, e))?
                         .map_err(|cause| {
-                            let code = if cause.code == phenix_basic_contracts::ErrorCode::InvalidInput {
+                            let code = if cause.code == ErrorCode::InvalidInput {
                                 -32602
                             } else {
                                 -32000
