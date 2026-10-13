@@ -23,6 +23,6 @@ ci.mkFlakeCheckConfig {
   };
   cache = {
     keyPrefix = "phenix-m1";
-    saveOnDefaultBranch = true;
+    keyFiles = [ "flake.lock" "Cargo.lock" "examples/Cargo.lock" ];
   };
 }
