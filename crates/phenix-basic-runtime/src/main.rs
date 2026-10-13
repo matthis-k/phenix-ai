@@ -78,6 +78,19 @@ fn invoke_graph<T: Portable>(
     }
 }
 
+fn invoke_observed<T: Portable>(
+    kernel: &Kernel,
+    execution: Option<&GraphExecution<'_>>,
+    provider: &str,
+    operation: &str,
+    request: impl Portable,
+) -> Result<Result<T, BasicError>, String> {
+    match execution {
+        Some(graph) => invoke_graph(graph, provider, operation, request),
+        None => invoke(kernel, provider, operation, request),
+    }
+}
+
 fn render_new(
     kernel: &Kernel,
     execution: Option<&GraphExecution<'_>>,
@@ -88,82 +101,48 @@ fn render_new(
     mut sink: impl Write,
 ) -> Result<(), String> {
     loop {
-        let page: EventPage = completed(if let Some(graph) = execution {
-            invoke_graph(
-                graph,
-                "phenix.basic.event-journal",
+        let page: EventPage = completed(invoke_observed(
+            kernel,
+            execution,
+            "phenix.basic.event-journal",
             "phenix.basic.journal@1/read",
             JournalQuery {
                 session: session.into(),
                 after: *after,
                 limit: 128,
             },
-            )
-        } else {
-            invoke(
-                kernel,
-                "phenix.basic.event-journal",
-                "phenix.basic.journal@1/read",
-                JournalQuery {
-                    session: session.into(),
-                    after: *after,
-                    limit: 128,
-                },
-            )
-        })?;
+        ))?;
         if page.events.is_empty() {
             break;
         }
         if page.next <= *after {
             return Err("journal cursor did not advance".into());
         }
-        let lines: Vec<String> = completed(if let Some(graph) = execution {
-            invoke_graph(
-                graph,
-                frontend,
+        let lines: Vec<String> = completed(invoke_observed(
+            kernel,
+            execution,
+            frontend,
             "phenix.basic.frontend@1/render",
             RenderRequest {
                 session: session.into(),
-                events: page.events.clone(),
+                events: page.events,
             },
-            )
-        } else {
-            invoke(
-                kernel,
-                frontend,
-                "phenix.basic.frontend@1/render",
-                RenderRequest {
-                    session: session.into(),
-                    events: page.events,
-                },
-            )
-        })?;
+        ))?;
         for line in lines {
             writeln!(sink, "{line}").map_err(|e| e.to_string())?;
         }
         sink.flush().map_err(|e| e.to_string())?;
         if let Some(checkpoint) = observer.as_deref_mut() {
-            *checkpoint = completed(if let Some(graph) = execution {
-                invoke_graph(
-                    graph,
-                    "phenix.basic.event-journal",
+            *checkpoint = completed(invoke_observed(
+                kernel,
+                execution,
+                "phenix.basic.event-journal",
                 "phenix.basic.journal@1/checkpoint_observer",
                 ObserverCheckpoint {
                     after: page.next,
                     ..checkpoint.clone()
                 },
-                )
-            } else {
-                invoke(
-                    kernel,
-                    "phenix.basic.event-journal",
-                    "phenix.basic.journal@1/checkpoint_observer",
-                    ObserverCheckpoint {
-                        after: page.next,
-                        ..checkpoint.clone()
-                    },
-                )
-            })?;
+            ))?;
         }
         *after = page.next;
     }
@@ -388,10 +367,10 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
                 if outcome? {
                     record_cancelled(&kernel, session)?;
                     render_new(
-        &kernel,
-        None,
-        frontend,
-        session,
+                        &kernel,
+                        None,
+                        frontend,
+                        session,
                         &mut after,
                         Some(&mut observer),
                         &mut stdout,
