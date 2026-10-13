@@ -6,7 +6,7 @@ use phenix_basic_contracts::{
 };
 use phenix_contract::{Authority, Code, Portable, ScopedRequest};
 use phenix_kernel::{
-    graph::GraphStatus,
+    graph::{GraphCompletion, GraphStatus},
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Call, Outcome, Poll,
 };
@@ -243,8 +243,10 @@ fn main() {
         resource: resource.clone(),
     };
     let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
-    let denied = kernel
-        .submit_action_scoped(
+    // This node may now yield while awaiting a Model import. Exercise the
+    // pending-capable graph path before asserting authority denial.
+    let mut denied_run = kernel
+        .begin_action_scoped(
             "phenix.basic.submit",
             &PromptSubmitted {
                 session: "s1".into(),
@@ -257,8 +259,21 @@ fn main() {
                 resource,
             },
         )
-        .unwrap_err();
-    assert_eq!(denied.code, Code::Denied);
+        .unwrap();
+    loop {
+        match denied_run.pump(|_| {}).unwrap() {
+            GraphStatus::Pending | GraphStatus::Draining => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            GraphStatus::Finished => break,
+        }
+    }
+    let denied = match denied_run.completion().unwrap() {
+        GraphCompletion::Failure(failure) => failure.code.clone(),
+        other => panic!("restricted storage unexpectedly completed: {other:?}"),
+    };
+    assert_eq!(denied, Code::Denied);
+    drop(denied_run);
     let untouched = invoke::<phenix_basic_contracts::SessionSnapshot>(
         &kernel,
         "phenix.basic.session@1/open",
