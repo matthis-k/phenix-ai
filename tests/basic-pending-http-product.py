@@ -184,6 +184,21 @@ try:
         write_packet("prompt", "cancel during stream")
         until(lambda e: e["kind"] == "TextDelta" and e["text"] == "cancel-start",
               "live streamed text")
+        # A separate host has no authority to infer that the original
+        # process died. It must refuse a conflicting session prompt without
+        # changing the active run or issuing another Model request.
+        concurrent = subprocess.run(
+            [binary, "jsonl", str(composition_file)],
+            input=json.dumps({
+                "type": "prompt", "session": "s1", "text": "must reject"
+            }) + "\\n",
+            text=True, capture_output=True, env=env, timeout=12,
+        )
+        assert concurrent.returncode != 0, (
+            concurrent.stdout, concurrent.stderr
+        )
+        assert "a run is already active" in concurrent.stderr, concurrent.stderr
+        assert len(calls) == 3, "concurrent host dispatched a second Model"
         # The next turn is submitted before cancelling the current run.
         # The controller must preserve it across cancellation and draining.
         write_packet("prompt", "after cancel")
@@ -220,6 +235,7 @@ try:
         "queued_followup_survives_cancel": True,
         "queued_other_session_isolated": True,
         "wrong_session_cancel_ignored": True,
+        "second_process_running_session_rejected": True,
     }, indent=2, sort_keys=True))
 finally:
     http.shutdown()
