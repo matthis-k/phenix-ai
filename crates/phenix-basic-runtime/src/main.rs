@@ -755,9 +755,8 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
 /// this prompt has completed. The kernel stays on this controller thread.
 fn drive_acp_prompt(
     kernel: &Kernel,
-    session: &str,
+    (session, owner): (&str, &mut std::fs::File),
     mut execution: GraphExecution<'_>,
-    owner: &mut std::fs::File,
     receiver: &Receiver<Result<String, String>>,
     deferred: &mut VecDeque<String>,
     after: &mut u64,
@@ -1031,9 +1030,8 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                                 .map_err(|e| (-32000, e))?;
                         let result = drive_acp_prompt(
                             kernel,
-                            session,
+                            (session, &mut owner),
                             execution,
-                            &mut owner,
                             &receiver,
                             &mut deferred,
                             offset,
