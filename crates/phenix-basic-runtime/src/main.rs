@@ -4,10 +4,10 @@ use phenix_basic_contracts::{
     BasicError, ClientInput, EventPage, JournalQuery, ObserverCheckpoint, ObserverRequest,
     RenderRequest, Submission,
 };
-use phenix_contract::{Portable, Value};
+use phenix_contract::{Portable, ScopedRequest, Value};
 use phenix_kernel::{
     resolve::{Composition, Prepared, Selection},
-    Kernel, Outcome,
+    GraphStatus, Kernel, Outcome,
 };
 use std::{
     env,
@@ -99,25 +99,44 @@ fn render_new(
     sink.flush().map_err(|e| e.to_string())
 }
 
-fn submit(kernel: &Kernel, input: Submission) -> Result<(), String> {
+fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
+    let resource = format!("phenix.session.{session}");
+    let mut authority = composition.authority.clone();
+    authority.resources = [resource.clone()].into();
+    ScopedRequest {
+        authority,
+        resource: Some(resource),
+    }
+}
+
+fn submit(kernel: &Kernel, input: Submission, scope: ScopedRequest) -> Result<(), String> {
     if input.cancel {
-        // The synchronous B5 slice has no pending root to cancel. F1 only
-        // produces the typed packet; G4's host pump owns active cancellation.
+        // The controller must retain an active GraphExecution for cancellation.
+        // This synchronous input loop cannot admit a second control packet yet.
         return Err("no active pending graph execution to cancel".into());
     }
     if input.action != "phenix.basic.submit" {
         return Err("frontend selected an unknown Basic action".into());
     }
     let value = Value::decode(&input.payload.0).map_err(|e| format!("{e:?}"))?;
-    let steps = kernel
-        .submit_action(&input.action, &value)
+    let mut execution = kernel
+        .begin_action_scoped(&input.action, &value, scope)
         .map_err(|e| format!("{e:?}"))?;
+    loop {
+        match execution.pump(|_| {}).map_err(|e| format!("{e:?}"))? {
+            GraphStatus::Pending | GraphStatus::Draining => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            GraphStatus::Finished => break,
+        }
+    }
+    let steps = execution.steps();
     if steps.is_empty() {
         return Err("prompt action did not activate a graph node".into());
     }
     for step in steps {
-        if let Outcome::Domain(value) = step.outcome {
-            let cause = BasicError::from_value(value).map_err(|e| format!("{e:?}"))?;
+        if let Outcome::Domain(value) = &step.outcome {
+            let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
             return Err(format!("{:?}: {}", cause.code, cause.message));
         }
     }
@@ -256,7 +275,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             },
                         ));
                         decoded
-                            .and_then(|submission| submit(kernel, submission))
+                            .and_then(|submission| submit(kernel, submission, basic_scope(composition, session)))
                             .map_err(|e| (-32000, e))?;
                         let offset = offsets.entry(session.to_string()).or_default();
                         render_new(
@@ -328,7 +347,7 @@ fn run() -> Result<(), String> {
     if args[1] == "acp" {
         return run_acp(&composition, io::stdout().lock());
     }
-    let kernel = Prepared::prepare(composition)
+    let kernel = Prepared::prepare(composition.clone())
         .map_err(|e| format!("{e:?}"))?
         .load()
         .map_err(|e| format!("{e:?}"))?;
@@ -373,7 +392,7 @@ fn run() -> Result<(), String> {
         ))?;
         // A domain failure is returned to the caller rather than forging
         // a successful answer. Persisted failure events can still be replayed.
-        let result = submit(&kernel, decoded);
+        let result = submit(&kernel, decoded, basic_scope(&composition, session));
         render_new(
             &kernel,
             frontend,
