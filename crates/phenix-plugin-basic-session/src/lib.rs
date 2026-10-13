@@ -19,6 +19,21 @@ pub fn empty(session: &str) -> SessionSnapshot {
     }
 }
 
+/// A new Session provider instance has no in-memory ownership of a
+/// previously Running run. An interrupted Model-only turn can fail safely;
+/// unresolved tool effects must retain their call IDs for reconciliation.
+pub fn recover_interrupted(snapshot: &mut SessionSnapshot, live: bool) -> bool {
+    if live || snapshot.status != RunStatus::Running {
+        return false;
+    }
+    snapshot.status = if snapshot.pending.is_empty() {
+        RunStatus::Failed
+    } else {
+        RunStatus::Indeterminate
+    };
+    true
+}
+
 /// No speculative retry of a non-idempotent tool call. Its recorded call ID
 /// must be explicitly reconciled before the session can resume.
 pub fn reconcile_snapshot(
@@ -60,7 +75,7 @@ pub fn reconcile_snapshot(
     require(phenix_basic_contracts::Storage, slot = "Storage")
 )]
 mod plugin {
-    use super::{empty, reconcile_snapshot, RECORD};
+    use super::{empty, reconcile_snapshot, recover_interrupted, RECORD};
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, ErrorCode, ReconcileTool, RecordKey, RunStatus, Scope,
         Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
@@ -139,11 +154,7 @@ mod plugin {
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         let mut current = load(host, &request.session)?;
-        if current.status == RunStatus::Running
-            && !current.pending.is_empty()
-            && !state.live.contains(&request.session)
-        {
-            current.status = RunStatus::Indeterminate;
+        if recover_interrupted(&mut current, state.live.contains(&request.session)) {
             current = commit(host, current)?;
         }
         Ok(current)
@@ -207,6 +218,32 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_basic_contracts::ToolCall;
+
+
+    #[test]
+    fn orphaned_model_run_fails_but_pending_tool_calls_need_reconciliation() {
+        let mut model = empty("s1");
+        model.status = RunStatus::Running;
+        model.run = "r1".into();
+        assert!(!recover_interrupted(&mut model, true));
+        assert_eq!(model.status, RunStatus::Running);
+        assert!(recover_interrupted(&mut model, false));
+        assert_eq!(model.status, RunStatus::Failed);
+        assert!(!recover_interrupted(&mut model, false));
+
+        let mut tool = empty("s2");
+        tool.status = RunStatus::Running;
+        tool.run = "r2".into();
+        tool.pending.push(ToolCall {
+            id: "external-call".into(),
+            tool: "shell".into(),
+            arguments: String::new(),
+        });
+        assert!(recover_interrupted(&mut tool, false));
+        assert_eq!(tool.status, RunStatus::Indeterminate);
+        assert_eq!(tool.pending[0].id, "external-call");
+        assert!(!recover_interrupted(&mut tool, false));
+    }
 
     #[test]
     fn interrupted_tool_recovery_requires_explicit_call_id() {
