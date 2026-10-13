@@ -209,9 +209,13 @@ try:
         write_packet("prompt", "second-session", session="s2")
         write_packet("cancel", session="s2")
         write_packet("cancel")
+        # Give the live graph time to observe the cancellation before
+        # releasing HTTP input. This also prevents a stalled curl request
+        # from waiting indefinitely for another transport chunk.
+        time.sleep(1.0)
+        release_cancel_stream.set()
         until(lambda e: e["kind"] == "Cancelled" and e["session"] == "s1",
               "durable cancellation")
-        release_cancel_stream.set()
         until(lambda e: e["kind"] == "Answer" and e["text"] == "resumed"
               and e["session"] == "s1", "continuation after cancellation")
         until(lambda e: e["kind"] == "Answer" and e["text"] == "other-session"
