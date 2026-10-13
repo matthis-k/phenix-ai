@@ -48,19 +48,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             let answer = connection
                 .send_request(PromptRequest::new(
-                    session.session_id,
+                    session.session_id.clone(),
                     vec![ContentBlock::Text(TextContent::new("sdk-interop"))],
                 ))
                 .block_task()
                 .await?;
             assert_eq!(format!("{:?}", answer.stop_reason), "EndTurn");
+
+            // Exercise typed tool-call and tool-call-update notifications,
+            // not just agent_message_chunk. The SDK decodes every update.
+            let tool_answer = connection
+                .send_request(PromptRequest::new(
+                    session.session_id,
+                    vec![ContentBlock::Text(TextContent::new("tools:hello"))],
+                ))
+                .block_task()
+                .await?;
+            assert_eq!(format!("{:?}", tool_answer.stop_reason), "EndTurn");
             Ok(())
         })
         .await?;
 
-    if updates.load(Ordering::Relaxed) == 0 {
-        return Err("official ACP client received no typed session updates".into());
+    // One direct reply and a two-tool turn: at least one text chunk
+    // from each reply, plus two starts and two completion updates.
+    if updates.load(Ordering::Relaxed) < 6 {
+        return Err("official ACP client did not receive all tool lifecycle updates".into());
     }
-    println!("official-acp-sdk-v1: initialized, prompted, received updates");
+    println!("official-acp-sdk-v1: initialized, ran tools, received typed updates");
     Ok(())
 }
