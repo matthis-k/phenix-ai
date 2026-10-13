@@ -1,5 +1,6 @@
 # Explicit manual benchmark; intentionally does not replace production CI.
 # Run 2, then 4, then 8 remote builders to avoid cross-variant contention.
+# Retry after declaring tag:phenix-ci and enabling tailnet self-SSH grants.
 name: Phenix Nix remote-builder 2/4/8 benchmark
 on:
   workflow_dispatch:
