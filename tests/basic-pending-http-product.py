@@ -341,7 +341,43 @@ try:
             db.execute("DROP TRIGGER block_recovery_journal")
 
     # The snapshot is already Failed, but its recovery event was not
-    # committed. A new owner must finish that phase once, then admit a turn.
+    # committed. Block the *next* session checkpoint so that recovery can
+    # append the missing Failure event without dispatching another Model.
+    with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+        db.executescript("""
+            CREATE TRIGGER block_followup_checkpoint
+            BEFORE UPDATE OF data ON basic_records
+            WHEN NEW.session = 's1' AND NEW.name = 'session.snapshot.v1'
+            BEGIN
+                SELECT RAISE(ABORT, 'test followup checkpoint failure');
+            END;
+        """)
+    try:
+        journal_only = subprocess.run(
+            [binary, "jsonl", str(composition_file)],
+            input=json.dumps({
+                "type": "prompt", "session": "s1", "text": "after crash"
+            }) + "\n",
+            text=True, capture_output=True, env=env, timeout=20,
+        )
+        assert journal_only.returncode != 0, (
+            journal_only.stdout, journal_only.stderr
+        )
+        assert len(calls) == 6, "failed followup dispatched a Model"
+        assert marker.read_text() == "", (
+            "recovery did not clear the marker after committing Failure"
+        )
+    finally:
+        with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+            db.execute("DROP TRIGGER block_followup_checkpoint")
+
+    # Replay the persisted recovery marker as if the owner exited after the
+    # journal append and before clearing its marker. The next owner must
+    # find the event and avoid writing a duplicate.
+    marker.write_text(original_marker.replace(
+        "phenix.basic.owner.v1\n", "phenix.basic.recovery.v1\n", 1,
+    ))
+
     recovered = subprocess.run(
         [binary, "jsonl", str(composition_file)],
         input=json.dumps({
@@ -378,6 +414,7 @@ try:
         "tampered_marker_recovery_rejected": True,
         "recovery_phase_marker_restart_tested": True,
         "interrupted_recovery_journal_write_repaired": True,
+        "post_journal_marker_replay_deduplicated": True,
     }, indent=2, sort_keys=True))
 finally:
     release_cancel_stream.set()
