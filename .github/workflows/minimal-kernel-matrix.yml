@@ -5,7 +5,7 @@ on:
   push:
     branches: [impl/m1-ci-matrix]
   pull_request:
-    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix, impl/m1-basic-providers, impl/m1-basic-tools, impl/m1-basic-journal, impl/m1-basic-session, impl/m1-basic-storage-sqlite, impl/m1-basic-skills-context, impl/m1-basic-agent, impl/m1-basic-frontends, impl/m1-basic-runtime, impl/m1-basic-acp, roadmap/m1-flake-aware-ci, impl/m1-observer-checkpoints]
+    branches: [impl/m1-basic-contracts, impl/m1-ci-matrix, impl/m1-basic-providers, impl/m1-basic-tools, impl/m1-basic-journal, impl/m1-basic-session, impl/m1-basic-storage-sqlite, impl/m1-basic-skills-context, impl/m1-basic-agent, impl/m1-basic-frontends, impl/m1-basic-runtime, impl/m1-basic-acp, roadmap/m1-flake-aware-ci, impl/m1-observer-checkpoints, impl/m1-model-http]
   workflow_dispatch:
 
 permissions:
