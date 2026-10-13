@@ -12,9 +12,7 @@ permissions:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@45d36b321636ed9691d830e836112ed4d22337c8
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@b82adf3c5af5b3c9d66857ad967f9615307c0ab6
     with:
       config: ci/flake-check-config.nix
-      library_ref: 45d36b321636ed9691d830e836112ed4d22337c8
-      cache_prefix: phenix-m1
-      cache_inputs: "**/Cargo.lock"
+      library_ref: b82adf3c5af5b3c9d66857ad967f9615307c0ab6
