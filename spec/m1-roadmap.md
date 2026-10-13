@@ -272,7 +272,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Active cancellation, model streaming and full ACP product acceptance remain |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` on `impl/m1-r1-rusqlite-storage`; exact-head checks pending. HTTP SSE and ACP reviews remain open. |
-| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: native terminal/JSONL product host and SQLite-backed graph smoke on impl/m1-basic-runtime. Full streaming, host-controlled cancellation, ACP parity, multi-session and exact-head CI still open |
+| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: pending Basic agent and product host implemented. `impl/m1-p1-live-jsonl-controller` adds live Terminal/JSONL journal observation, cancellation and durable restart/resume behavior; exact-head CI pending. ACP live cancel, multi-session Terminal/JSONL, independent ACP parity and R1 closure remain |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -543,6 +543,25 @@ It grants Storage operations only to the owning Session, Journal and memory
 providers. The runtime passes Rust formatting. Local native Terminal and JSONL
 smoke tests pass in separate processes against one SQLite database. These
 checks cover the synchronous slice; canonical Nix CI is still required.
+
+### P1 live terminal and JSONL controller
+
+`impl/m1-p1-live-jsonl-controller` gives the host a dedicated stdin reader
+while the controller thread owns the kernel and pending graph. It continues
+calling `GraphExecution::pump` while handling follow-up and cancellation
+packets. The host reads journal deltas through explicit, session-scoped grants
+on the independently selected EventJournal provider; rendering and observer
+checkpoints use the same existing Frontend and Storage-backed Journal plugins.
+Cancellation waits for graph ticket draining, then checkpoints a cancelled
+Session and appends a typed `Cancelled` journal event. The next prompt is
+allowed to continue in that session. Prompts queue with a 32-entry limit.
+
+The `basic-pending-http-product` fixture extends its real fragmented HTTP
+test with live text, cancellation and same-session continuation. No new kernel
+dispatcher, agent entry point or scheduler is introduced. These changes remain
+unaccepted until the exact-head Nix shipping gate passes. The terminal and
+JSONL launcher still uses a single selected session, and ACP cancellation
+still requires its own nonblocking protocol controller.
 
 ### F1 terminal and JSONL frontend codecs
 
