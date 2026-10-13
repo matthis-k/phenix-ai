@@ -6,8 +6,9 @@ use phenix_basic_contracts::{
 };
 use phenix_contract::{Authority, Code, Portable, ScopedRequest};
 use phenix_kernel::{
+    graph::GraphStatus,
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
-    graph::GraphStatus, Call, Outcome, Poll,
+    Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -71,7 +72,10 @@ fn submit(
         )
         .expect("graph admission must have no kernel failures");
     loop {
-        match execution.pump(|_| {}).expect("graph execution must have no kernel failures") {
+        match execution
+            .pump(|_| {})
+            .expect("graph execution must have no kernel failures")
+        {
             GraphStatus::Pending | GraphStatus::Draining => {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }

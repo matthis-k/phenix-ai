@@ -179,7 +179,10 @@ mod plugin {
     fn prepare(host: &Host<'_>, input: PromptSubmitted) -> CallResult<Running, BasicError> {
         phenix_basic_contracts::check_session(host, &input.session)?;
         if input.text.is_empty() {
-            return Err(CallError::Domain(error(ErrorCode::InvalidInput, "empty prompt")));
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "empty prompt",
+            )));
         }
 
         let mut session = host.invoke::<Session::open>(
@@ -200,9 +203,10 @@ mod plugin {
                 "a run is already active",
             )));
         }
-        let next = session.checkpoint.checked_add(1).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::Conflict, "run counter overflow"))
-        })?;
+        let next = session
+            .checkpoint
+            .checked_add(1)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "run counter overflow")))?;
         let run = format!("run-{next}");
         session.run = run.clone();
         session.status = RunStatus::Running;
@@ -375,7 +379,12 @@ mod plugin {
                 let new_total = running.calls.checked_add(count).ok_or_else(|| {
                     CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
                 })?;
-                if running.input.limits.tool_calls.is_some_and(|max| new_total > max) {
+                if running
+                    .input
+                    .limits
+                    .tool_calls
+                    .is_some_and(|max| new_total > max)
+                {
                     let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
                     stopped(host, running.session.clone(), &problem)?;
                     return Err(CallError::Domain(problem));
@@ -428,7 +437,10 @@ mod plugin {
                         call_id: call.id.clone(),
                         error: failure.clone(),
                     });
-                    running.session.pending.retain(|pending| pending.id != call.id);
+                    running
+                        .session
+                        .pending
+                        .retain(|pending| pending.id != call.id);
                     running.session = checkpoint(host, running.session.clone())?;
                     event(
                         host,
@@ -493,9 +505,7 @@ mod plugin {
                 PendingResult::Pending
             }
             Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
-            Err(CallError::Domain(error)) => {
-                PendingResult::Ready(Err(CallError::Domain(error)))
-            }
+            Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
         }
     }
@@ -517,9 +527,7 @@ mod plugin {
                 let value = advance(host, &mut running, None);
                 finish(state, running, value)
             }
-            Err(CallError::Domain(error)) => {
-                PendingResult::Ready(Err(CallError::Domain(error)))
-            }
+            Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
         }
     }

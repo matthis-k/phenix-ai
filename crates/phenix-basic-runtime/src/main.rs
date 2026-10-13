@@ -6,8 +6,9 @@ use phenix_basic_contracts::{
 };
 use phenix_contract::{Portable, ScopedRequest, Value};
 use phenix_kernel::{
+    graph::GraphStatus,
     resolve::{Composition, Prepared, Selection},
-    graph::GraphStatus, Kernel, Outcome,
+    Kernel, Outcome,
 };
 use std::{
     env,
