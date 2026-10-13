@@ -37,6 +37,48 @@ jobs:
             exit 1
           fi
 
+      - name: Validate federated audience and GitHub token claims
+        env:
+          CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+          AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import fnmatch
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          client = os.environ["CLIENT_ID"]
+          audience = os.environ["AUDIENCE"]
+          if client != client.strip() or audience != audience.strip():
+              raise SystemExit("Invalid Tailscale secret: leading/trailing whitespace")
+          expected = f"api.tailscale.com/{client}"
+          if audience != expected:
+              raise SystemExit("TS_AUDIENCE does not match the generated audience for TS_OAUTH_CLIENT_ID; copy both values from the same Tailscale federated identity.")
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(audience, safe="")
+          headers = {"Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"}
+          with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as response:
+              token = json.load(response)["value"]
+          parts = token.split(".")
+          if len(parts) != 3:
+              raise SystemExit("GitHub returned an invalid OIDC identity token")
+          claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+          expected_subject = "repo:matthis-k/phenix-ai:*"
+          checks = {
+              "issuer": claims.get("iss") == "https://token.actions.githubusercontent.com",
+              "subject": fnmatch.fnmatchcase(claims.get("sub", ""), expected_subject),
+              "audience": claims.get("aud") == audience,
+              "repository": claims.get("repository") == "matthis-k/phenix-ai",
+          }
+          for name, ok in checks.items():
+              print(f"OIDC {name} matches configured trust: {ok}")
+          if not all(checks.values()):
+              raise SystemExit("GitHub OIDC claims do not match expected Tailscale trust configuration")
+          PY
+
   remote-2:
     name: 2 remote builders
     needs: credential-check
