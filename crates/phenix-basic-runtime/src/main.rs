@@ -482,7 +482,15 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                     Ok(line) => line?,
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 };
-                let target = jsonl_session(&pending_line)?;
+                let target = match jsonl_session(&pending_line) {
+                    Ok(target) => target,
+                    Err(_) => {
+                        // Report malformed input only after the active root
+                        // finishes; it must not abandon pending physical work.
+                        queued.push_back(pending_line);
+                        continue;
+                    }
+                };
                 let packet: serde_json::Value =
                     serde_json::from_str(&pending_line).map_err(|e| e.to_string())?;
                 if packet.get("type").and_then(|value| value.as_str()) == Some("cancel") {
