@@ -66,15 +66,8 @@ mod plugin {
         Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
-    use std::collections::BTreeSet;
-
     #[derive(Default)]
-    pub struct State {
-        // Only sessions actively checkpointed by this particular instance are
-        // known-live. Reopening Running+pending after reload marks the tool
-        // result indeterminate rather than invoking it a second time.
-        live: BTreeSet<String>,
-    }
+    pub struct State;
 
     fn load(host: &Host<'_>, session: &str) -> CallResult<SessionSnapshot, BasicError> {
         let result = host.invoke::<Storage::read>(
@@ -133,25 +126,20 @@ mod plugin {
 
     #[provide(Session::open)]
     fn open(
-        state: &mut State,
+        _: &mut State,
         host: &Host<'_>,
         request: Scope,
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        let mut current = load(host, &request.session)?;
-        if current.status == RunStatus::Running
-            && !current.pending.is_empty()
-            && !state.live.contains(&request.session)
-        {
-            current.status = RunStatus::Indeterminate;
-            current = commit(host, current)?;
-        }
-        Ok(current)
+        // A new plugin instance cannot prove that the owning process died.
+        // Report the durable state unchanged. In particular, do not turn a
+        // still-live run with pending tools into Indeterminate.
+        load(host, &request.session)
     }
 
     #[provide(Session::checkpoint)]
     fn checkpoint(
-        state: &mut State,
+        _: &mut State,
         host: &Host<'_>,
         request: SessionSnapshot,
     ) -> CallResult<SessionSnapshot, BasicError> {
@@ -175,31 +163,19 @@ mod plugin {
                 "running session has no run id",
             )));
         }
-        let session = request.session.clone();
-        let is_live = request.status == RunStatus::Running;
-        let result = commit(host, request)?;
-        if is_live {
-            state.live.insert(session);
-        } else {
-            state.live.remove(&session);
-        }
-        Ok(result)
+        commit(host, request)
     }
 
     #[provide(Session::reconcile)]
     fn reconcile(
-        state: &mut State,
+        _: &mut State,
         host: &Host<'_>,
         request: ReconcileTool,
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         let mut current = load(host, &request.session)?;
         reconcile_snapshot(&mut current, &request).map_err(CallError::Domain)?;
-        let result = commit(host, current)?;
-        if result.status == RunStatus::Running {
-            state.live.insert(result.session.clone());
-        }
-        Ok(result)
+        commit(host, current)
     }
 }
 
