@@ -1,0 +1,46 @@
+# Keep the checked-in workflow identical to the pure-Nix rendering.
+name: Verify generated flake CI caller
+on:
+  push:
+    branches:
+      - ci/m1-generated-backend-consumer
+  pull_request:
+    paths:
+      - ci/flake-backend.nix
+      - ci/render-flake-workflow.nix
+      - .github/workflows/phenix-flake-ci-generated.yml
+      - .github/workflows/verify-generated-flake-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generated-caller:
+    name: Verify pinned workflow generation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: matthis-k/phenix-flake-ci
+          ref: 25da62028d5d72d2e5ae3aca9d1571c425eb0d09
+          path: .ci-tools/flake-ci
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate the workflow from Nix policy and compare byte for byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix eval --raw --file ci/render-flake-workflow.nix > "$RUNNER_TEMP/phenix-flake-ci-generated.yml"
+          diff -u .github/workflows/phenix-flake-ci-generated.yml "$RUNNER_TEMP/phenix-flake-ci-generated.yml"
+          test "$(grep -c 'worker_count: 4' "$RUNNER_TEMP/phenix-flake-ci-generated.yml")" -eq 1
+      - name: Require the consumer check configuration to evaluate
+        run: |
+          set -euo pipefail
+          nix eval --json --file ci/flake-check-config.nix > "$RUNNER_TEMP/flake-check-config.json"
+          jq -e '.schemaVersion == 1 and .system == "x86_64-linux"' "$RUNNER_TEMP/flake-check-config.json"
