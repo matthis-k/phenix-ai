@@ -296,6 +296,8 @@ fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, St
 // run. A fresh holder may recover only after it owns the matching OS lock.
 // No marker, invalid marker or mismatched run leaves Running untouched.
 const OWNER_MARKER: &str = "phenix.basic.owner.v1\n";
+const RECOVERY_MARKER: &str = "phenix.basic.recovery.v1\n";
+const INTERRUPTED_MESSAGE: &str = "run interrupted after owner process exited";
 
 fn owner_marker(file: &mut std::fs::File) -> Result<String, String> {
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
@@ -306,19 +308,64 @@ fn owner_marker(file: &mut std::fs::File) -> Result<String, String> {
     Ok(value)
 }
 
-fn set_owner_marker(file: &mut std::fs::File, run: Option<&str>) -> Result<(), String> {
+fn set_marker(file: &mut std::fs::File, prefix: &str, run: Option<&str>) -> Result<(), String> {
     file.set_len(0).map_err(|e| e.to_string())?;
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     if let Some(run) = run {
-        file.write_all(OWNER_MARKER.as_bytes())
+        file.write_all(prefix.as_bytes())
             .map_err(|e| e.to_string())?;
         file.write_all(run.as_bytes()).map_err(|e| e.to_string())?;
     }
     file.sync_all().map_err(|e| e.to_string())
 }
 
+fn set_owner_marker(file: &mut std::fs::File, run: Option<&str>) -> Result<(), String> {
+    set_marker(file, OWNER_MARKER, run)
+}
+
+fn verified_marker(marker: &str, prefix: &str, run: &str) -> bool {
+    !run.is_empty() && marker == format!("{prefix}{run}")
+}
+
 fn verified_owner(marker: &str, run: &str) -> bool {
-    !run.is_empty() && marker == format!("{OWNER_MARKER}{run}")
+    verified_marker(marker, OWNER_MARKER, run)
+}
+
+fn verified_recovery(marker: &str, run: &str) -> bool {
+    verified_marker(marker, RECOVERY_MARKER, run)
+}
+
+// A recovery checkpoint and journal append are separate transactions.
+// Scan the durable journal to make recovery retries idempotent under the
+// exclusive local session lock.
+fn recovery_event_exists(kernel: &Kernel, session: &str, run: &str) -> Result<bool, String> {
+    let mut after = 0;
+    loop {
+        let page: EventPage = completed(invoke(
+            kernel,
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/read",
+            JournalQuery {
+                session: session.into(),
+                after,
+                limit: 128,
+            },
+        ))?;
+        if page.events.iter().any(|event| {
+            event.run == run
+                && event.kind == EventKind::Failure
+                && event.text == INTERRUPTED_MESSAGE
+        }) {
+            return Ok(true);
+        }
+        if page.events.is_empty() {
+            return Ok(false);
+        }
+        if page.next <= after {
+            return Err("recovery journal cursor did not advance".into());
+        }
+        after = page.next;
+    }
 }
 
 fn recover_owned_run(
@@ -335,21 +382,39 @@ fn recover_owned_run(
             session: session.into(),
         },
     ))?;
+    let recovering = verified_recovery(&marker, &snapshot.run);
     if snapshot.status == RunStatus::Running {
-        if !verified_owner(&marker, &snapshot.run) {
+        if !verified_owner(&marker, &snapshot.run) && !recovering {
             return Err("running session has no matching fenced owner marker".into());
+        }
+        // Record recovery intent before the terminal checkpoint. A crash
+        // after that checkpoint resumes the missing journal append.
+        if !recovering {
+            set_marker(owner, RECOVERY_MARKER, Some(&snapshot.run))?;
         }
         snapshot.status = if snapshot.pending.is_empty() {
             RunStatus::Failed
         } else {
             RunStatus::Indeterminate
         };
-        let recovered: SessionSnapshot = completed(invoke(
+        snapshot = completed(invoke(
             kernel,
             "phenix.basic.session",
             "phenix.basic.session@1/checkpoint",
             snapshot,
         ))?;
+    } else if !recovering {
+        if marker.starts_with(RECOVERY_MARKER) {
+            return Err("recovery marker does not match durable session run".into());
+        }
+        return set_owner_marker(owner, None);
+    }
+
+    if !matches!(snapshot.status, RunStatus::Failed | RunStatus::Indeterminate) {
+        return Err("recovery marker has an unexpected session status".into());
+    }
+
+    if !recovery_event_exists(kernel, session, &snapshot.run)? {
         completed(invoke::<u64>(
             kernel,
             "phenix.basic.event-journal",
@@ -359,15 +424,17 @@ fn recover_owned_run(
                 events: vec![Event {
                     sequence: 0,
                     session: session.into(),
-                    run: recovered.run,
+                    run: snapshot.run,
                     kind: EventKind::Failure,
                     call_id: String::new(),
-                    text: "run interrupted after owner process exited".into(),
+                    text: INTERRUPTED_MESSAGE.into(),
                     data: phenix_sdk::Blob(vec![]),
                 }],
             },
         ))?;
     }
+    // A second crash is safe: the recovery marker survives until both
+    // durable writes complete and the next holder checks the journal.
     set_owner_marker(owner, None)
 }
 
@@ -1125,7 +1192,10 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::{lock_session_file, owner_marker, set_owner_marker, verified_owner, OWNER_MARKER};
+    use super::{
+        lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
+        verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1135,7 +1205,15 @@ mod session_lock_tests {
         assert!(!verified_owner("run-4", "run-4"));
         assert!(!verified_owner(&format!("{OWNER_MARKER}run-3"), "run-4"));
         assert!(!verified_owner(&format!("{OWNER_MARKER}run-4"), ""));
-        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4\\n"), "run-4"));
+        assert!(!verified_owner(&format!("{OWNER_MARKER}run-4\\n"), "run-4"));        assert!(verified_recovery(
+            &format!("{RECOVERY_MARKER}run-4"),
+            "run-4"
+        ));
+        assert!(!verified_recovery(
+            &format!("{RECOVERY_MARKER}run-3"),
+            "run-4"
+        ));
+        assert!(!verified_owner(&format!("{RECOVERY_MARKER}run-4"), "run-4"));
     }
 
     #[test]
@@ -1168,6 +1246,12 @@ mod session_lock_tests {
             owner_marker(&mut resumed).unwrap(),
             format!("{OWNER_MARKER}run-3"),
         );
+        set_marker(&mut resumed, RECOVERY_MARKER, Some("run-3")).unwrap();
+        assert_eq!(
+            owner_marker(&mut resumed).unwrap(),
+            format!("{RECOVERY_MARKER}run-3"),
+        );
+
         set_owner_marker(&mut resumed, None).unwrap();
         assert_eq!(owner_marker(&mut resumed).unwrap(), "");
         drop(resumed);
