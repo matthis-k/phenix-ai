@@ -84,10 +84,10 @@ jobs:
   remote-2:
     name: 2 remote builders
     needs: credential-check
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@2e46c50744e5745ccbbcaee46d43eb9fbe464239
     with:
       config: ci/flake-check-config.nix
-      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
+      library_ref: 2e46c50744e5745ccbbcaee46d43eb9fbe464239
       worker_count: 2
       slots_per_worker: 2
     secrets:
@@ -99,10 +99,10 @@ jobs:
     name: 4 remote builders
     needs: remote-2
     if: needs.remote-2.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@2e46c50744e5745ccbbcaee46d43eb9fbe464239
     with:
       config: ci/flake-check-config.nix
-      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
+      library_ref: 2e46c50744e5745ccbbcaee46d43eb9fbe464239
       worker_count: 4
       slots_per_worker: 2
     secrets:
@@ -114,10 +114,10 @@ jobs:
     name: 8 remote builders
     needs: remote-4
     if: needs.remote-4.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@2e46c50744e5745ccbbcaee46d43eb9fbe464239
     with:
       config: ci/flake-check-config.nix
-      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
+      library_ref: 2e46c50744e5745ccbbcaee46d43eb9fbe464239
       worker_count: 8
       slots_per_worker: 2
     secrets:
@@ -130,6 +130,9 @@ jobs:
     needs: [remote-2, remote-4, remote-8]
     if: always()
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Require every benchmark pool to pass
         env:
@@ -144,7 +147,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: matthis-k/phenix-flake-ci
-          ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
+          ref: 2e46c50744e5745ccbbcaee46d43eb9fbe464239
           path: .ci-tools/flake-ci
           persist-credentials: false
 
@@ -163,13 +166,20 @@ jobs:
           name: remote-nix-evidence-8
           path: ci-results/8
 
+      - name: Read completed GitHub job timestamps and runner usage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ci-results
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > ci-results/jobs.json
+
       - name: Compare complete check evidence before comparing Nix build timings
         run: |
           set -euo pipefail
           python3 .ci-tools/flake-ci/lib/compare-remote-benchmarks.py \
             --variant 2:ci-results/2 \
             --variant 4:ci-results/4 \
-            --variant 8:ci-results/8 | tee ci-results/comparison.md
+            --variant 8:ci-results/8 --jobs-json ci-results/jobs.json | tee ci-results/comparison.md
           cat ci-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
