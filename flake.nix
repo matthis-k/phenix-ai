@@ -133,12 +133,19 @@
         '';
       };
       packagedCoreExample = name:
-        pkgs.runCommand "${name}-native-package" { } ''
-          mkdir -p "$out/lib"
-          cp ${coreExamplesBuild}/lib/lib${exampleLibraryName name}.so "$out/lib/plugin.so"
-          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
-          ${pkgs.python3}/bin/python ${recordWriter} "$out"
-        '';
+        pkgs.runCommand "${name}-native-package"
+          {
+            # Record hashes after the second package's standard ELF fixup.
+            # Original native packages also run phenix-describe postFixup.
+            postFixup = ''
+              ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+              ${pkgs.python3}/bin/python ${recordWriter} "$out"
+            '';
+          }
+          ''
+            mkdir -p "$out/lib"
+            cp ${coreExamplesBuild}/lib/lib${exampleLibraryName name}.so "$out/lib/plugin.so"
+          '';
       individualPlugin =
         name:
         let
