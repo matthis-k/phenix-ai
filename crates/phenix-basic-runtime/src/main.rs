@@ -375,6 +375,169 @@ fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> 
     kernel.shutdown().map_err(|e| format!("{e:?}"))
 }
 
+
+fn jsonl_session(line: &str) -> Result<String, String> {
+    let frame: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    let session = frame
+        .get("session")
+        .and_then(|value| value.as_str())
+        .ok_or("JSONL session is required")?;
+    phenix_basic_contracts::session_resource(session)
+        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
+    Ok(session.into())
+}
+
+/// Reuse the ACP session-scoped composition for JSONL. A single controller
+/// executes each turn to completion; other sessions' prompts remain queued.
+/// Each session has its own journal and observer checkpoint in Storage.
+fn run_jsonl(composition: &Composition) -> Result<(), String> {
+    const FRONTEND: &str = "phenix.basic.frontend-jsonl";
+    const OBSERVER: &str = "jsonl";
+    let receiver = input_channel();
+    let mut queued = VecDeque::<String>::new();
+    let mut output = io::stdout().lock();
+
+    // Retain the existing no-input behavior: replay undelivered events from
+    // the default session when a JSONL host starts solely as an observer.
+    {
+        let kernel = scoped_kernel(composition, "s1")?;
+        let mut observer: ObserverCheckpoint = completed(invoke(
+            &kernel,
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/observer",
+            ObserverRequest {
+                session: "s1".into(),
+                observer: OBSERVER.into(),
+            },
+        ))?;
+        let mut after = observer.after;
+        render_new(
+            &kernel,
+            None,
+            FRONTEND,
+            "s1",
+            &mut after,
+            Some(&mut observer),
+            &mut output,
+        )?;
+        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+    }
+
+    loop {
+        let line = if let Some(line) = queued.pop_front() {
+            line
+        } else {
+            match receiver.recv() {
+                Ok(line) => line?,
+                Err(_) => break,
+            }
+        };
+        let session = jsonl_session(&line)?;
+        let kernel = scoped_kernel(composition, &session)?;
+        let mut observer: ObserverCheckpoint = completed(invoke(
+            &kernel,
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/observer",
+            ObserverRequest {
+                session: session.clone(),
+                observer: OBSERVER.into(),
+            },
+        ))?;
+        let mut after = observer.after;
+        render_new(
+            &kernel,
+            None,
+            FRONTEND,
+            &session,
+            &mut after,
+            Some(&mut observer),
+            &mut output,
+        )?;
+        let input: Submission = completed(invoke(
+            &kernel,
+            FRONTEND,
+            "phenix.basic.frontend@1/decode",
+            ClientInput {
+                session: session.clone(),
+                line,
+            },
+        ))?;
+        if input.cancel {
+            // Cancelling a session without an active run cannot affect another
+            // session's graph or mutate its durable checkpoint.
+            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+            continue;
+        }
+
+        let mut execution =
+            begin_submission(&kernel, input, basic_scope(composition, &session))?;
+        loop {
+            // Leave unprocessed requests in the bounded channel when the
+            // local queue fills. Do not abandon an admitted graph.
+            for _ in 0..32 {
+                if queued.len() >= 32 {
+                    break;
+                }
+                let pending_line = match receiver.try_recv() {
+                    Ok(line) => line?,
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                };
+                let target = jsonl_session(&pending_line)?;
+                let packet: serde_json::Value =
+                    serde_json::from_str(&pending_line).map_err(|e| e.to_string())?;
+                if packet.get("type").and_then(|value| value.as_str()) == Some("cancel") {
+                    if target == session {
+                        let cancellation: Submission = completed(invoke_graph(
+                            &execution,
+                            FRONTEND,
+                            "phenix.basic.frontend@1/decode",
+                            ClientInput {
+                                session: session.clone(),
+                                line: pending_line,
+                            },
+                        ))?;
+                        if cancellation.cancel {
+                            execution.cancel().map_err(|e| format!("{e:?}"))?;
+                        }
+                    }
+                } else {
+                    queued.push_back(pending_line);
+                }
+            }
+            let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            render_new(
+                &kernel,
+                Some(&execution),
+                FRONTEND,
+                &session,
+                &mut after,
+                Some(&mut observer),
+                &mut output,
+            )?;
+            if status == GraphStatus::Finished {
+                let cancelled = finish_submission(&execution)?;
+                drop(execution);
+                if cancelled {
+                    record_cancelled(&kernel, &session)?;
+                    render_new(
+                        &kernel,
+                        None,
+                        FRONTEND,
+                        &session,
+                        &mut after,
+                        Some(&mut observer),
+                        &mut output,
+                    )?;
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+    }
+    Ok(())
+}
+
 /// ACP connection controller. Each session owns a fresh M1 kernel admission
 /// with the requested resource scope. Artifacts and resolver stay unchanged.
 fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
@@ -690,15 +853,12 @@ fn run() -> Result<(), String> {
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
     let composition: Composition = serde_json::from_slice(&config).map_err(|e| e.to_string())?;
-    if args[1] == "acp" {
-        return run_acp(&composition, io::stdout().lock());
-    }
-    let frontend = match args[1].as_str() {
-        "terminal" => "phenix.basic.frontend-terminal",
-        "jsonl" => "phenix.basic.frontend-jsonl",
+    match args[1].as_str() {
+        "acp" => run_acp(&composition, io::stdout().lock()),
+        "jsonl" => run_jsonl(&composition),
+        "terminal" => run_console(&composition, "phenix.basic.frontend-terminal", "terminal"),
         _ => unreachable!(),
-    };
-    run_console(&composition, frontend, &args[1])
+    }
 }
 fn main() {
     if let Err(err) = run() {
