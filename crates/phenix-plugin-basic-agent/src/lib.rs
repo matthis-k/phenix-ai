@@ -41,7 +41,7 @@ mod plugin {
         EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
         ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
         RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolExecute, ToolInfo,
-        ToolQuery, ToolRequest, ToolCompletion, Usage,
+        ToolCompletion, ToolQuery, ToolRequest, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -76,15 +76,7 @@ mod plugin {
         text: String,
         call_id: &str,
     ) -> CallResult<u64, BasicError> {
-        event_with_data(
-            host,
-            session,
-            run,
-            kind,
-            text,
-            call_id,
-            Blob(vec![]),
-        )
+        event_with_data(host, session, run, kind, text, call_id, Blob(vec![]))
     }
 
     fn event_with_data(
