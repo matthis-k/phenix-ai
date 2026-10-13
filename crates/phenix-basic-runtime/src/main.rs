@@ -197,8 +197,7 @@ fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
                 kind: EventKind::Cancelled,
                 call_id: String::new(),
                 text: String::new(),
-                data: phenix_basic_contracts::encode(&())
-                    .unwrap_or_default(),
+                data: phenix_basic_contracts::Blob(vec![]),
             }],
         },
     ))?;
