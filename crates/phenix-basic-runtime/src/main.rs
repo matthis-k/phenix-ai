@@ -716,7 +716,22 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
             }
         };
         let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
-        let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let is_notification = frame.get("id").is_none();
+        let Some(method) = frame.get("method").and_then(|v| v.as_str()) else {
+            acp_protocol_error(&mut output, -32600, "missing JSON-RPC method")?;
+            continue;
+        };
+        if frame.get("id").is_some_and(|value| {
+            !value.is_null() && !value.is_string() && !value.is_i64() && !value.is_u64()
+        }) {
+            acp_protocol_error(&mut output, -32600, "invalid JSON-RPC request id")?;
+            continue;
+        }
+        if is_notification && method != "session/cancel" {
+            // Only cancellation has side effects without a response ID.
+            // Other notifications cannot create sessions or initialize ACP.
+            continue;
+        }
         let result: Result<serde_json::Value, (i32, String)> = (|| {
             match method {
                 "initialize" => {
@@ -852,7 +867,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                             eprintln!("phenix-basic: unknown ACP cancellation session");
                         }
                     }
-                    if id.is_null() {
+                    if is_notification {
                         Ok(serde_json::json!({}))
                     } else {
                         Err((-32600, "cancel must be a notification".into()))
@@ -861,7 +876,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 _ => Err((-32601, "method unavailable in this Basic host".into())),
             }
         })();
-        if id.is_null() {
+        if is_notification {
             continue;
         }
         let reply = match result {
