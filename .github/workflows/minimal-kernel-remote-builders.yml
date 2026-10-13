@@ -84,10 +84,10 @@ jobs:
   remote-2:
     name: 2 remote builders
     needs: credential-check
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
     with:
       config: ci/flake-check-config.nix
-      library_ref: c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
       worker_count: 2
       slots_per_worker: 2
     secrets:
@@ -99,10 +99,10 @@ jobs:
     name: 4 remote builders
     needs: remote-2
     if: needs.remote-2.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
     with:
       config: ci/flake-check-config.nix
-      library_ref: c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
       worker_count: 4
       slots_per_worker: 2
     secrets:
@@ -114,13 +114,67 @@ jobs:
     name: 8 remote builders
     needs: remote-4
     if: needs.remote-4.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@76470d8f0b5ade4ce441c23565ff406b868b5312
     with:
       config: ci/flake-check-config.nix
-      library_ref: c0d0d2b8d945ded3ce0c0d534c00a84844cbe895
+      library_ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
       worker_count: 8
       slots_per_worker: 2
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
       TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
       TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+
+  compare:
+    name: Compare exact-head remote builder evidence and timing
+    needs: [remote-2, remote-4, remote-8]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every benchmark pool to pass
+        env:
+          TWO: ${{ needs.remote-2.result }}
+          FOUR: ${{ needs.remote-4.result }}
+          EIGHT: ${{ needs.remote-8.result }}
+        run: |
+          test "$TWO" = success
+          test "$FOUR" = success
+          test "$EIGHT" = success
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: matthis-k/phenix-flake-ci
+          ref: 76470d8f0b5ade4ce441c23565ff406b868b5312
+          path: .ci-tools/flake-ci
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: remote-nix-evidence-2
+          path: ci-results/2
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: remote-nix-evidence-4
+          path: ci-results/4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: remote-nix-evidence-8
+          path: ci-results/8
+
+      - name: Compare complete check evidence before comparing Nix build timings
+        run: |
+          set -euo pipefail
+          python3 .ci-tools/flake-ci/lib/compare-remote-benchmarks.py \
+            --variant 2:ci-results/2 \
+            --variant 4:ci-results/4 \
+            --variant 8:ci-results/8 | tee ci-results/comparison.md
+          cat ci-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: remote-nix-comparison
+          path: ci-results/comparison.md
+          if-no-files-found: warn
