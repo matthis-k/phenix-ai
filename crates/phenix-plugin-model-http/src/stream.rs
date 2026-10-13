@@ -6,10 +6,9 @@ use phenix_sdk::Portable;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Default)]
 pub(crate) struct Stream {
-    buffer: Vec<u8>,
-    data: String,
+    parser: sse_parse::SseParser,
+    incomplete_utf8: Vec<u8>,
     text: String,
     calls: BTreeMap<u64, ToolCall>,
     usage: Option<Usage>,
@@ -17,31 +16,40 @@ pub(crate) struct Stream {
     done: bool,
     reply_bytes: usize,
 }
+impl Default for Stream {
+    fn default() -> Self {
+        Self {
+            parser: sse_parse::SseParser::new().max_buffer(phenix_sdk::MAX_BYTES),
+            incomplete_utf8: Vec::new(),
+            text: String::new(),
+            calls: BTreeMap::new(),
+            usage: None,
+            finish: None,
+            done: false,
+            reply_bytes: 0,
+        }
+    }
+}
 impl Stream {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<String, BasicError> {
-        if self.buffer.len().saturating_add(bytes.len()) > phenix_sdk::MAX_BYTES {
+        // The SSE standard replaces invalid UTF-8. The Model wire contract
+        // rejects it instead, including invalid sequences split across chunks.
+        let mut candidate = std::mem::take(&mut self.incomplete_utf8);
+        candidate.extend_from_slice(bytes);
+        if let Err(problem) = std::str::from_utf8(&candidate) {
+            if problem.error_len().is_some() {
+                return Err(invalid("invalid SSE UTF-8"));
+            }
+            self.incomplete_utf8
+                .extend_from_slice(&candidate[problem.valid_up_to()..]);
+        }
+        self.parser.feed(bytes);
+        if self.parser.overflows() != 0 {
             return Err(invalid("SSE frame exceeds portable bounds"));
         }
-        self.buffer.extend_from_slice(bytes);
         let mut progress = String::new();
-        while let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
-            let line: Vec<_> = self.buffer.drain(..=end).collect();
-            let line = std::str::from_utf8(&line)
-                .map_err(|_| invalid("invalid SSE UTF-8"))?
-                .trim_end_matches(['\r', '\n']);
-            if line.is_empty() {
-                if !self.data.is_empty() {
-                    let frame = std::mem::take(&mut self.data);
-                    progress.push_str(&self.frame(frame.trim_end_matches('\n'))?);
-                }
-            } else if let Some(data) = line.strip_prefix("data:") {
-                let data = data.strip_prefix(' ').unwrap_or(data);
-                if self.data.len().saturating_add(data.len() + 1) > phenix_sdk::MAX_BYTES {
-                    return Err(invalid("SSE data exceeds portable bounds"));
-                }
-                self.data.push_str(data);
-                self.data.push('\n');
-            }
+        while let Some(event) = self.parser.next_event() {
+            progress.push_str(&self.frame(&event.data)?);
         }
         Ok(progress)
     }
@@ -173,7 +181,11 @@ impl Stream {
         Ok(text)
     }
     pub fn finish(mut self, request: &ModelRequest) -> Result<ModelReply, BasicError> {
-        if !self.done || self.finish.is_none() || !self.buffer.is_empty() || !self.data.is_empty() {
+        if !self.incomplete_utf8.is_empty() {
+            return Err(invalid("invalid SSE UTF-8"));
+        }
+        self.parser.finish();
+        if !self.done || self.finish.is_none() || self.parser.next_event().is_some() {
             return Err(invalid("incomplete model stream"));
         }
         let usage = self
