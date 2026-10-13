@@ -870,7 +870,9 @@ fn run() -> Result<(), String> {
     } else if args.len() == 3 {
         "s1"
     } else {
-        return Err("session selection requires terminal COMPOSITION.json --session SESSION".into());
+        return Err(
+            "session selection requires terminal COMPOSITION.json --session SESSION".into(),
+        );
     };
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
