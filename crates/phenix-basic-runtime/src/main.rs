@@ -928,9 +928,12 @@ fn drive_acp_prompt(
                     continue;
                 }
             };
-            if frame.get("method").and_then(|value| value.as_str()) == Some("session/cancel")
-                && frame.get("id").is_none()
-            {
+            if frame.get("id").is_none() {
+                // Match the idle controller: unrelated notifications do not
+                // consume the deferred request queue while a graph is live.
+                if frame["method"].as_str() != Some("session/cancel") {
+                    continue;
+                }
                 if frame
                     .pointer("/params/sessionId")
                     .and_then(|value| value.as_str())
