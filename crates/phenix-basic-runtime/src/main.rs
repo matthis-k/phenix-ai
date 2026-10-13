@@ -1050,6 +1050,10 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         || servers.is_none_or(|servers| !servers.is_empty())
                     {
                         Err((-32602, "invalid ACP session load configuration".into()))
+                    } else if session
+                        .is_some_and(|id| phenix_basic_contracts::session_resource(id).is_err())
+                    {
+                        Err((-32602, "invalid ACP sessionId".into()))
                     } else if let Some(session) = session {
                         // Validate the candidate before replacing a live
                         // session. Session::open returns a revision-zero Idle
