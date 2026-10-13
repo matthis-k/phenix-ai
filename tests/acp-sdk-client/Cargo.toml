@@ -1,0 +1,12 @@
+[package]
+name = "phenix-p1-acp-client-check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# This independent client is not a kernel dependency or workspace member.
+[workspace]
+
+[dependencies]
+agent-client-protocol = { version = "=3.3.0", features = ["process"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
