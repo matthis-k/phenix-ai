@@ -704,7 +704,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 Err(_) => break,
             }
         };
-        let frame: serde_json::Value = match serde_json::from_str(&line) {
+        let frame: serde_json::Value = match serde_json::from_str::<serde_json::Value>(&line) {
             Ok(frame) if frame.get("jsonrpc").and_then(|v| v.as_str()) == Some("2.0") => frame,
             Ok(_) => {
                 acp_protocol_error(&mut output, -32600, "invalid JSON-RPC request")?;
