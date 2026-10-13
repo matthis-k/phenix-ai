@@ -577,6 +577,21 @@ chunks, and oversize rejection. The real pending-HTTP Basic and ACP fixtures
 remain part of the shipping gate. The 66-package workspace Cargo.lock now pins the parser and its
 dependencies. Exact-head shipping CI remains pending.
 
+### P1 typed tool completion status
+
+`impl/m1-p1-typed-tool-outcome` adds a Portable `ToolCompletion { failed }`
+payload to the existing `ToolFinished` journal event. The Basic agent
+encodes the outcome once after the tool result has been checkpointed;
+the ACP Frontend adapter decodes it and selects `completed` or `failed`
+for `tool_call_update`. Payload-free historical events retain their old
+successful interpretation, while malformed typed payloads are rejected
+instead of misreported. The frontend unit gate checks success, failure,
+legacy empty payloads, corrupt data and call-ID preservation.
+
+This is a semantic-event plugin change, not a new kernel event type or
+ACP-specific graph scheduler. Full shipping conformance and official SDK
+interop must pass before acceptance.
+
 ### P1 ACP tool event delivery
 
 `impl/m1-p1-acp-tool-events` extends the real ACP stdio product fixture
