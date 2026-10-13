@@ -271,7 +271,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 Frontend codec and multi-session stdio host on impl/m1-basic-acp; initialize/new/prompt/update smoke is defined. Nonblocking ACP progress and cancellation implemented on `impl/m1-p1-live-acp-controller`, with independent HTTP acceptance pending CI; the ACP protocol boundary now handles malformed idle frames and v1 fallback negotiation on `impl/m1-p1-acp-protocol-boundary`, pending CI. Official ACP SDK client check implementing on `impl/m1-p1-acp-sdk-interop`; exact-head verification remains |
-| R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` accepted on #815 after exact-head canonical, matrix and DAG checks. ACP SDK client gate is implementing on `impl/m1-p1-acp-sdk-interop`; HTTP SSE parser and full ACP migration reviews remain. |
+| R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in plugins and hosts; select maintained Rust libraries or document narrow exceptions | Use established protocol, transport and database libraries; remove avoidable hand-written SQLite bindings and ACP protocol code; keep Phenix-specific semantics and ABI guarantees | [ ] IMPLEMENTING: SQLite Storage migration to `rusqlite` accepted on #815 after exact-head canonical, matrix and DAG checks. ACP SDK client gate is implementing on `impl/m1-p1-acp-sdk-interop`; SSE framing migration to a bounded sans-I/O parser is implementing on `impl/m1-r1-standard-sse-parser`; locked dependency and exact-head CI remain. Full ACP SDK-based codec migration remains. |
 | P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: Basic agent, live Terminal/JSONL/ACP streams and cancellation, durable sessions and named session selection implemented on #816, #818, #819 and #820. Full shipping CI passed through #819; later exact heads and independent official ACP SDK interop passed once; locked exact-head CI remains under test. Fenced crash recovery and remaining R1 review remain open. |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
@@ -565,6 +565,17 @@ still requires its own nonblocking protocol controller. Model-only interrupted
 runs also need ownership fencing for safe recovery: a fresh Session instance
 cannot infer that another process's live model request has ended. An automatic
 recovery attempt in closed PR #817 was rejected for this reason.
+
+### R1 standard SSE framing
+
+`impl/m1-r1-standard-sse-parser` replaces custom line/data accumulation
+in the pending HTTP Model plugin with `sse-parse` 0.1.0. Existing `curl`
+callbacks and the typed Model delta/usage decoder remain. The parser enforces
+the canonical portable size bound; malformed UTF-8 remains a Model error.
+The unit suite adds bytewise BOM/CRLF fragmentation, invalid UTF-8 across
+chunks, and oversize rejection. The real pending-HTTP Basic and ACP fixtures
+remain part of the shipping gate. Package resolution and exact-head CI are
+pending.
 
 ### P1 independent ACP SDK integration
 
