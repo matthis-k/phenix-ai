@@ -1,19 +1,23 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
 use phenix_basic_contracts::{
-    BasicError, ClientInput, EventPage, JournalQuery, ObserverCheckpoint, ObserverRequest,
-    RenderRequest, Submission,
+    BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
+    ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
+    Submission,
 };
 use phenix_contract::{Portable, ScopedRequest, Value};
 use phenix_kernel::{
-    graph::GraphStatus,
+    graph::{GraphCompletion, GraphExecution, GraphStatus},
     resolve::{Composition, Prepared, Selection},
     Kernel, Outcome,
 };
 use std::{
+    collections::VecDeque,
     env,
     io::{self, BufRead, Write},
     path::Path,
+    sync::mpsc::{self, Receiver, TryRecvError},
+    time::Duration,
 };
 
 fn invoke<T: Portable>(
@@ -57,8 +61,8 @@ fn render_new(
     loop {
         let page: EventPage = completed(invoke(
             kernel,
-            "phenix.basic.agent",
-            "phenix.basic.output@1/read",
+            "phenix.basic.event-journal",
+            "phenix.basic.journal@1/read",
             JournalQuery {
                 session: session.into(),
                 after: *after,
@@ -87,8 +91,8 @@ fn render_new(
         if let Some(checkpoint) = observer.as_deref_mut() {
             *checkpoint = completed(invoke(
                 kernel,
-                "phenix.basic.agent",
-                "phenix.basic.output@1/checkpoint_observer",
+                "phenix.basic.event-journal",
+                "phenix.basic.journal@1/checkpoint_observer",
                 ObserverCheckpoint {
                     after: page.next,
                     ..checkpoint.clone()
@@ -111,34 +115,227 @@ fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
 }
 
 fn submit(kernel: &Kernel, input: Submission, scope: ScopedRequest) -> Result<(), String> {
+    let mut execution = begin_submission(kernel, input, scope)?;
+    while let GraphStatus::Pending | GraphStatus::Draining =
+        execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    finish_submission(&execution).map(|_| ())
+}
+
+
+/// Start an admitted graph without blocking the frontend's input controller.
+fn begin_submission<'a>(
+    kernel: &'a Kernel,
+    input: Submission,
+    scope: ScopedRequest,
+) -> Result<GraphExecution<'a>, String> {
     if input.cancel {
-        // The controller must retain an active GraphExecution for cancellation.
-        // This synchronous input loop cannot admit a second control packet yet.
-        return Err("no active pending graph execution to cancel".into());
+        return Err("no active graph execution to cancel".into());
     }
     if input.action != "phenix.basic.submit" {
         return Err("frontend selected an unknown Basic action".into());
     }
     let value = Value::decode(&input.payload.0).map_err(|e| format!("{e:?}"))?;
-    let mut execution = kernel
+    kernel
         .begin_action_scoped(&input.action, &value, scope)
-        .map_err(|e| format!("{e:?}"))?;
-    while let GraphStatus::Pending | GraphStatus::Draining =
-        execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
-    {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let steps = execution.steps();
-    if steps.is_empty() {
+        .map_err(|e| format!("{e:?}"))
+}
+
+fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
+    let cancelled = match execution.completion() {
+        Some(GraphCompletion::Success | GraphCompletion::Domain) => false,
+        Some(GraphCompletion::Cancelled) => true,
+        Some(GraphCompletion::Failure(failure)) => return Err(format!("{failure:?}")),
+        None => return Err("graph is not finished".into()),
+    };
+    if execution.steps().is_empty() && !cancelled {
         return Err("prompt action did not activate a graph node".into());
     }
-    for step in steps {
+    for step in execution.steps() {
         if let Outcome::Domain(value) = &step.outcome {
             let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
             return Err(format!("{:?}: {}", cause.code, cause.message));
         }
     }
+    Ok(cancelled)
+}
+
+/// The kernel's cancel callback has no Storage authority. Once its tickets
+/// physically drain, the host records the explicit user cancellation through
+/// the separately authorized Session and Journal providers.
+fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
+    let mut snapshot: SessionSnapshot = completed(invoke(
+        kernel,
+        "phenix.basic.session",
+        "phenix.basic.session@1/open",
+        Scope {
+            session: session.into(),
+        },
+    ))?;
+    if snapshot.status != RunStatus::Running || !snapshot.pending.is_empty() {
+        return Err("cancelled run has unresolved session work".into());
+    }
+    snapshot.status = RunStatus::Cancelled;
+    let snapshot: SessionSnapshot = completed(invoke(
+        kernel,
+        "phenix.basic.session",
+        "phenix.basic.session@1/checkpoint",
+        snapshot,
+    ))?;
+    completed(invoke::<u64>(
+        kernel,
+        "phenix.basic.event-journal",
+        "phenix.basic.journal@1/append",
+        JournalAppend {
+            session: session.into(),
+            events: vec![Event {
+                sequence: 0,
+                session: session.into(),
+                run: snapshot.run,
+                kind: EventKind::Cancelled,
+                call_id: String::new(),
+                text: String::new(),
+                data: phenix_basic_contracts::encode(&())
+                    .unwrap_or_default(),
+            }],
+        },
+    ))?;
     Ok(())
+}
+
+/// A reader owns stdin. Only the controller thread touches Kernel, Root, or
+/// GraphExecution. This keeps root admission and cancellation on one thread.
+fn input_channel() -> Receiver<Result<String, String>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            if sender.send(line.map_err(|e| e.to_string())).is_err() {
+                break;
+            }
+        }
+    });
+    receiver
+}
+
+/// Terminal and JSONL share one controller. Follow-up prompts are queued and
+/// cancel packets target only the currently active root.
+fn run_console(composition: &Composition, frontend: &str, observer_id: &str) -> Result<(), String> {
+    let kernel = Prepared::prepare(composition.clone())
+        .map_err(|e| format!("{e:?}"))?
+        .load()
+        .map_err(|e| format!("{e:?}"))?;
+    let session = "s1";
+    let mut observer: ObserverCheckpoint = completed(invoke(
+        &kernel,
+        "phenix.basic.event-journal",
+        "phenix.basic.journal@1/observer",
+        ObserverRequest {
+            session: session.into(),
+            observer: observer_id.into(),
+        },
+    ))?;
+    let mut after = observer.after;
+    let mut stdout = io::stdout().lock();
+    render_new(
+        &kernel,
+        frontend,
+        session,
+        &mut after,
+        Some(&mut observer),
+        &mut stdout,
+    )?;
+
+    let receiver = input_channel();
+    let mut queue = VecDeque::<Submission>::new();
+    let mut active: Option<GraphExecution<'_>> = None;
+    let mut eof = false;
+    loop {
+        let packet = if eof {
+            None
+        } else if active.is_some() || !queue.is_empty() {
+            match receiver.try_recv() {
+                Ok(value) => Some(value),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    eof = true;
+                    None
+                }
+            }
+        } else {
+            match receiver.recv() {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    eof = true;
+                    None
+                }
+            }
+        };
+        if let Some(line) = packet {
+            let submission = completed(invoke::<Submission>(
+                &kernel,
+                frontend,
+                "phenix.basic.frontend@1/decode",
+                ClientInput {
+                    session: session.into(),
+                    line: line?,
+                },
+            ))?;
+            if submission.cancel {
+                let current = active
+                    .as_mut()
+                    .ok_or("no active graph execution to cancel")?;
+                current.cancel().map_err(|e| format!("{e:?}"))?;
+            } else {
+                if queue.len() >= 32 {
+                    return Err("too many queued Basic prompts".into());
+                }
+                queue.push_back(submission);
+            }
+        }
+
+        if active.is_none() {
+            if let Some(next) = queue.pop_front() {
+                active = Some(begin_submission(
+                    &kernel,
+                    next,
+                    basic_scope(composition, session),
+                )?);
+            } else if eof {
+                break;
+            }
+        }
+        if let Some(execution) = active.as_mut() {
+            let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            render_new(
+                &kernel,
+                frontend,
+                session,
+                &mut after,
+                Some(&mut observer),
+                &mut stdout,
+            )?;
+            if status == GraphStatus::Finished {
+                let outcome = finish_submission(execution);
+                active = None;
+                if outcome? {
+                    record_cancelled(&kernel, session)?;
+                    render_new(
+                        &kernel,
+                        frontend,
+                        session,
+                        &mut after,
+                        Some(&mut observer),
+                        &mut stdout,
+                    )?;
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+    kernel.shutdown().map_err(|e| format!("{e:?}"))
 }
 
 /// ACP connection controller. Each session owns a fresh M1 kernel admission
@@ -347,63 +544,12 @@ fn run() -> Result<(), String> {
     if args[1] == "acp" {
         return run_acp(&composition, io::stdout().lock());
     }
-    let kernel = Prepared::prepare(composition.clone())
-        .map_err(|e| format!("{e:?}"))?
-        .load()
-        .map_err(|e| format!("{e:?}"))?;
     let frontend = match args[1].as_str() {
         "terminal" => "phenix.basic.frontend-terminal",
         "jsonl" => "phenix.basic.frontend-jsonl",
-        "acp" => "phenix.basic.frontend-acp",
         _ => unreachable!(),
     };
-    // The first product fixture binds one authenticated session. Later
-    // frontends will ask the controller to construct a scope per session.
-    let session = "s1";
-    let mut observer: ObserverCheckpoint = completed(invoke(
-        &kernel,
-        "phenix.basic.agent",
-        "phenix.basic.output@1/observer",
-        ObserverRequest {
-            session: session.into(),
-            observer: args[1].clone(),
-        },
-    ))?;
-    let mut after = observer.after;
-    let mut stdout = io::stdout().lock();
-    render_new(
-        &kernel,
-        frontend,
-        session,
-        &mut after,
-        Some(&mut observer),
-        &mut stdout,
-    )?;
-    for line in io::stdin().lock().lines() {
-        let line = line.map_err(|e| e.to_string())?;
-        let decoded = completed(invoke::<Submission>(
-            &kernel,
-            frontend,
-            "phenix.basic.frontend@1/decode",
-            ClientInput {
-                session: session.into(),
-                line,
-            },
-        ))?;
-        // A domain failure is returned to the caller rather than forging
-        // a successful answer. Persisted failure events can still be replayed.
-        let result = submit(&kernel, decoded, basic_scope(&composition, session));
-        render_new(
-            &kernel,
-            frontend,
-            session,
-            &mut after,
-            Some(&mut observer),
-            &mut stdout,
-        )?;
-        result?;
-    }
-    kernel.shutdown().map_err(|e| format!("{e:?}"))
+    run_console(&composition, frontend, &args[1])
 }
 fn main() {
     if let Err(err) = run() {
