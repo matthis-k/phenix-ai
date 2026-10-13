@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   generated:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@411207ab1f12abfdad112ad13ff99d76c29fd68f
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@f3995e28abc16e548fc6fd455030dfc26f6144bb
     with:
       config: ci/flake-check-config.nix
-      library_ref: 411207ab1f12abfdad112ad13ff99d76c29fd68f
+      library_ref: f3995e28abc16e548fc6fd455030dfc26f6144bb
