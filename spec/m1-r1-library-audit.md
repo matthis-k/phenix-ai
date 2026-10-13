@@ -7,10 +7,30 @@ Scope: the active M1 rewrite. [The roadmap](m1-roadmap.md) owns milestone status
 | Code | Standard mechanism | Choice | Required Phenix behavior |
 | --- | --- | --- | --- |
 | `crates/phenix-plugin-storage-sqlite/src/lib.rs` | SQLite connection, statement binding, rows and transaction lifecycle | Use `rusqlite` 0.37 with the system SQLite library. Remove manual `sqlite3_*` declarations and unsafe pointer handling. | Missing or disallowed database paths fail closed. Keep 5-second busy timeout, FULL synchronous mode, immediate write transactions, atomic multi-key CAS, revision overflow refusal and session checks. |
-| `crates/phenix-plugin-model-http/` | HTTP, TLS and request transport | Keep the maintained `curl` crate. Review the custom SSE parser in `src/stream.rs` against established event-stream parsers. | Provider-selected limits, typed progress, fragmented event handling, redirect refusal, TLS trust, errors and physical cancellation draining. |
+| `crates/phenix-plugin-model-http/` | HTTP, TLS and SSE framing | Keep `curl` for blocking HTTP and use `sse-parse` 0.1.0 for incremental WHATWG SSE framing without an async runtime. | Bounded frames, strict Model UTF-8 and typed JSON/usage, fragmented input, redirect refusal, TLS trust and physically drained cancellation. |
 | `crates/phenix-basic-runtime/src/main.rs` and `crates/phenix-plugin-basic-frontends/src/lib.rs` | ACP and JSON-RPC framing | Evaluate the official ACP Rust SDK before expanding the custom message handling. Replace protocol code where the SDK fits the pinned ACP version. | Authenticated session selection, checked action admission, progress and cancellation mapping. Test through an independent ACP client. |
 | `crates/phenix-plugin-basic-frontends/src/lib.rs` | JSONL serialization | Keep `serde_json`; do not add another parser. | Validate typed input, selected session and denied cross-session output. |
 | Kernel, SDK and Basic contracts | Phenix wire identity, authority, graph admission and leases | Keep the canonical Phenix implementation. Generic libraries cannot define these semantics. | Independent wire, ABI, graph, denial and generation conformance. |
+
+## SSE parser decision
+
+`impl/m1-r1-standard-sse-parser` replaces the hand-written SSE line and
+data-field accumulation with `sse-parse` 0.1.0. Its sans-I/O
+`SseParser::feed` and `next_event` APIs fit the current synchronous
+`curl::easy` callbacks. The bounded parser enforces the portable size
+cap and reports dropped oversized frames as failures. It handles CR/LF,
+CRLF, comments, BOMs, multi-line data and byte fragmentation.
+
+The Model plugin still validates its JSON deltas, cumulative token usage,
+tool call envelopes, finish reasons and `[DONE]` marker. A short
+incremental UTF-8 check preserves the existing fail-closed Model contract,
+which is stricter than the SSE standard's replacement-character behavior.
+No async executor or extra I/O stack is introduced.
+
+The existing Model plugin unit tests and independent pending HTTP product
+fixtures provide the acceptance gate. The new parser dependency needs a
+locked Cargo resolution and exact-head Nix shipping proof before R1 SSE
+framing is accepted.
 
 ## ACP v1 library decision
 
