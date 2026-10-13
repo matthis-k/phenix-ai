@@ -84,10 +84,10 @@ jobs:
   remote-2:
     name: 2 remote builders
     needs: credential-check
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25995cf581520ba8927dccc8d7202171a0600fa7
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
     with:
       config: ci/flake-check-config.nix
-      library_ref: 25995cf581520ba8927dccc8d7202171a0600fa7
+      library_ref: f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
       worker_count: 2
       slots_per_worker: 2
     secrets:
@@ -99,10 +99,10 @@ jobs:
     name: 4 remote builders
     needs: remote-2
     if: needs.remote-2.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25995cf581520ba8927dccc8d7202171a0600fa7
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
     with:
       config: ci/flake-check-config.nix
-      library_ref: 25995cf581520ba8927dccc8d7202171a0600fa7
+      library_ref: f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
       worker_count: 4
       slots_per_worker: 2
     secrets:
@@ -114,10 +114,10 @@ jobs:
     name: 8 remote builders
     needs: remote-4
     if: needs.remote-4.result == 'success'
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25995cf581520ba8927dccc8d7202171a0600fa7
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
     with:
       config: ci/flake-check-config.nix
-      library_ref: 25995cf581520ba8927dccc8d7202171a0600fa7
+      library_ref: f47edcf5ef94c8caddadf1e096a5b9d0bfb2ad75
       worker_count: 8
       slots_per_worker: 2
     secrets:
