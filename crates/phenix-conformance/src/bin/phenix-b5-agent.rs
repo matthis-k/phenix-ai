@@ -7,7 +7,7 @@ use phenix_basic_contracts::{
 use phenix_contract::{Authority, Code, Portable, ScopedRequest};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
-    Outcome,
+    Call, GraphStatus, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -26,18 +26,40 @@ fn invoke<T: Portable>(
     input: impl Portable,
 ) -> Result<Result<T, BasicError>, phenix_contract::Failure> {
     let root = kernel.admit_root(selection(key, provider))?;
-    match root.invoke(&input.to_value())? {
+    let outcome = match root.begin(&input.to_value())? {
+        Call::Ready(outcome) => outcome,
+        Call::Pending(ticket) => loop {
+            match root.poll(&ticket)? {
+                Poll::Pending | Poll::Draining | Poll::Cancelled { quiescent: false } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Poll::Ready(result) => {
+                    root.release(&ticket)?;
+                    break result?;
+                }
+                Poll::Cancelled { quiescent: true } => {
+                    root.release(&ticket)?;
+                    return Err(phenix_contract::Failure::new(
+                        Code::ScopeRejected,
+                        "unexpected test cancellation",
+                    ));
+                }
+            }
+        },
+    };
+    match outcome {
         Outcome::Success(value) => Ok(Ok(T::from_value(value)?)),
         Outcome::Domain(value) => Ok(Err(BasicError::from_value(value)?)),
     }
 }
 fn submit(
     kernel: &phenix_kernel::Kernel,
+    scope: &ScopedRequest,
     prompt: &str,
     limits: Limits,
 ) -> Result<RunResult, BasicError> {
-    let steps = kernel
-        .submit_action(
+    let mut execution = kernel
+        .begin_action_scoped(
             "phenix.basic.submit",
             &PromptSubmitted {
                 session: "s1".into(),
@@ -45,8 +67,18 @@ fn submit(
                 limits,
             }
             .to_value(),
+            scope.clone(),
         )
-        .expect("graph execution must have no kernel failures");
+        .expect("graph admission must have no kernel failures");
+    loop {
+        match execution.pump(|_| {}).expect("graph execution must have no kernel failures") {
+            GraphStatus::Pending | GraphStatus::Draining => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            GraphStatus::Finished => break,
+        }
+    }
+    let steps = execution.steps();
     assert_eq!(steps.len(), 1);
     assert_eq!(steps[0].node, "phenix.basic.agent/submit");
     match &steps[0].outcome {
@@ -202,6 +234,10 @@ fn main() {
     let mut restricted = composition.authority.clone();
     restricted.operations.remove("phenix.basic.storage@1/read");
     let resource = composition.resource.clone();
+    let submit_scope = ScopedRequest {
+        authority: composition.authority.clone(),
+        resource: resource.clone(),
+    };
     let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
     let denied = kernel
         .submit_action_scoped(
@@ -264,6 +300,7 @@ fn main() {
 
     let direct = submit(
         &kernel,
+        &submit_scope,
         "hello",
         Limits {
             model_turns: Some(2),
@@ -276,6 +313,7 @@ fn main() {
     assert_eq!(direct.model_turns, 1);
     let tools = submit(
         &kernel,
+        &submit_scope,
         "tools:hello",
         Limits {
             model_turns: Some(2),
@@ -322,10 +360,11 @@ fn main() {
     .unwrap();
     assert_eq!(denied.unwrap_err().code, ErrorCode::Denied);
 
-    let failed = submit(&kernel, "model-error", Limits::default()).unwrap_err();
+    let failed = submit(&kernel, &submit_scope, "model-error", Limits::default()).unwrap_err();
     assert_eq!(failed.code, ErrorCode::ModelFailed);
     let failed_turn = submit(
         &kernel,
+        &submit_scope,
         "tools:limit",
         Limits {
             model_turns: Some(1),
