@@ -1,0 +1,22 @@
+name: "Phenix generated Nix CI (4 remote builders)"
+on:
+  push:
+    branches:
+      - "ci/m1-generated-backend-consumer"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  flake-checks:
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25da62028d5d72d2e5ae3aca9d1571c425eb0d09
+    with:
+      config: "ci/flake-check-config.nix"
+      library_ref: "25da62028d5d72d2e5ae3aca9d1571c425eb0d09"
+      worker_count: 4
+      slots_per_worker: 2
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
