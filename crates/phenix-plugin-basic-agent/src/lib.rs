@@ -41,7 +41,7 @@ mod plugin {
         EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
         ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
         RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolExecute, ToolInfo,
-        ToolQuery, ToolRequest, Usage,
+        ToolQuery, ToolRequest, ToolCompletion, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -76,6 +76,26 @@ mod plugin {
         text: String,
         call_id: &str,
     ) -> CallResult<u64, BasicError> {
+        event_with_data(
+            host,
+            session,
+            run,
+            kind,
+            text,
+            call_id,
+            Blob(vec![]),
+        )
+    }
+
+    fn event_with_data(
+        host: &Host<'_>,
+        session: &str,
+        run: &str,
+        kind: EventKind,
+        text: String,
+        call_id: &str,
+        data: Blob,
+    ) -> CallResult<u64, BasicError> {
         host.invoke::<EventJournal::append>(
             "Journal",
             &JournalAppend {
@@ -87,7 +107,7 @@ mod plugin {
                     kind,
                     call_id: call_id.into(),
                     text,
-                    data: Blob(vec![]),
+                    data,
                 }],
             },
         )
@@ -449,13 +469,18 @@ mod plugin {
                         .pending
                         .retain(|pending| pending.id != call.id);
                     running.session = checkpoint(host, running.session.clone())?;
-                    event(
+                    let data = phenix_basic_contracts::encode(&ToolCompletion {
+                        failed: failure.is_some(),
+                    })
+                    .map_err(CallError::Kernel)?;
+                    event_with_data(
                         host,
                         &running.input.session,
                         &running.run,
                         EventKind::ToolFinished,
                         failure.unwrap_or(text),
                         &call.id,
+                        data,
                     )?;
                 }
                 running.calls = new_total;
