@@ -675,6 +675,15 @@ fn drive_acp_prompt(
     }
 }
 
+fn acp_protocol_error(mut output: impl Write, code: i32, message: &str) -> Result<(), String> {
+    let reply = serde_json::json!({
+        "jsonrpc": "2.0", "id": null,
+        "error": {"code": code, "message": message}
+    });
+    writeln!(output, "{reply}").map_err(|e| e.to_string())?;
+    output.flush().map_err(|e| e.to_string())
+}
+
 fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), String> {
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -695,7 +704,17 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 Err(_) => break,
             }
         };
-        let frame: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        let frame: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(frame) if frame.get("jsonrpc").and_then(|v| v.as_str()) == Some("2.0") => frame,
+            Ok(_) => {
+                acp_protocol_error(&mut output, -32600, "invalid JSON-RPC request")?;
+                continue;
+            }
+            Err(_) => {
+                acp_protocol_error(&mut output, -32700, "parse error")?;
+                continue;
+            }
+        };
         let id = frame.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let result: Result<serde_json::Value, (i32, String)> = (|| {
@@ -703,6 +722,12 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 "initialize" => {
                     if initialized {
                         Err((-32600, "connection already initialized".into()))
+                    } else if frame
+                        .pointer("/params/protocolVersion")
+                        .and_then(|v| v.as_u64())
+                        .is_none_or(|version| version == 0)
+                    {
+                        Err((-32602, "positive ACP protocol version required".into()))
                     } else {
                         initialized = true;
                         Ok(serde_json::json!({

@@ -12,6 +12,27 @@ Scope: the active M1 rewrite. [The roadmap](m1-roadmap.md) owns milestone status
 | `crates/phenix-plugin-basic-frontends/src/lib.rs` | JSONL serialization | Keep `serde_json`; do not add another parser. | Validate typed input, selected session and denied cross-session output. |
 | Kernel, SDK and Basic contracts | Phenix wire identity, authority, graph admission and leases | Keep the canonical Phenix implementation. Generic libraries cannot define these semantics. | Independent wire, ABI, graph, denial and generation conformance. |
 
+## ACP v1 library decision
+
+The official [ACP Rust SDK](https://github.com/agentclientprotocol/rust-sdk)
+publishes `agent-client-protocol` 3.3.0 with a stable v1 client and agent API.
+Its `agent-client-protocol-schema` companion supplies the protocol data model.
+Use the maintained SDK instead of extending Phenix's handwritten JSON-RPC
+router for additional protocol features. Keep kernel graph admission, resource
+authority and the one-thread execution requirement owned by Phenix.
+
+The current lightweight ACP host remains a P1 test implementation. It
+handles stable-v1 initialization, session entry, journal progress and prompt
+cancellation. A client requesting a newer protocol version receives the
+supported version 1 so that the client may negotiate down. Malformed
+JSON-RPC envelopes do not terminate an idle connection.
+
+R1 acceptance must include a real official-SDK ACP client exercising the
+native host over stdio. Before replacing the codec or transport, verify that
+the SDK can deliver notifications while the kernel's root remains pinned to
+the owning thread; do not create a second dispatcher or thread-hop into
+the kernel. This external compatibility gate is still open.
+
 ## SQLite migration acceptance
 
 The Storage plugin now uses `rusqlite::Connection`, bound parameters and `TransactionBehavior::Immediate`. The `BEGIN IMMEDIATE` CAS boundary remains at the same point. A failed edit returns a domain error and rolls back the entire transaction. The plugin remains a separately packaged native provider; the kernel and public Basic contract do not change.

@@ -65,6 +65,33 @@ def exit_cleanly(process):
 
 
 first = start()
+
+# A malformed idle frame must get a JSON-RPC error, not terminate ACP.
+first.stdin.write("{bad-json\n")
+first.stdin.flush()
+parse_error = json.loads(first.stdout.readline())
+assert parse_error["error"]["code"] == -32700, parse_error
+assert parse_error["id"] is None
+
+# Invalid JSON-RPC framing and missing/zero protocol version cannot
+# permanently consume the initialize slot.
+first.stdin.write(json.dumps({
+    "jsonrpc": "1.0", "id": 91, "method": "initialize",
+    "params": {"protocolVersion": 1, "clientCapabilities": {}},
+}) + "\n")
+first.stdin.flush()
+invalid_request = json.loads(first.stdout.readline())
+assert invalid_request["error"]["code"] == -32600, invalid_request
+
+first.stdin.write(json.dumps({
+    "jsonrpc": "2.0", "id": 92, "method": "initialize",
+    "params": {"protocolVersion": 0, "clientCapabilities": {}},
+}) + "\n")
+first.stdin.flush()
+invalid_version = json.loads(first.stdout.readline())
+assert invalid_version["id"] == 92, invalid_version
+assert invalid_version["error"]["code"] == -32602, invalid_version
+
 initialize(first)
 session = request(first, 2, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
@@ -81,6 +108,19 @@ assert any(
     for entry in updates
 )
 exit_cleanly(first)
+
+# A v1-only agent negotiates down to protocol version 1 when the
+# client advertises a newer version. The client may continue at v1.
+version_probe = start()
+downgraded = request(version_probe, 90, "initialize", {
+    "protocolVersion": 2,
+    "clientCapabilities": {},
+})
+assert downgraded["protocolVersion"] == 1, downgraded
+assert request(version_probe, 91, "session/new", {
+    "cwd": "/tmp", "mcpServers": [],
+})["sessionId"]
+exit_cleanly(version_probe)
 
 # A new provider process reopens the same SQLite file through Storage.
 second = start()
@@ -124,6 +164,9 @@ exit_cleanly(second)
             "initialize", "session-new", "prompt", "stream-notifications",
             "process-restart-load", "session-continuation",
             "two-session-isolation",
+            "malformed-frame-recovers", "invalid-jsonrpc-rejected",
+            "invalid-protocol-version-rejected",
+            "newer-client-negotiates-down-to-v1",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
