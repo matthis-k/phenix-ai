@@ -8,8 +8,8 @@
 compile_error!("select exactly one Basic frontend adapter");
 
 use phenix_basic_contracts::{
-    decode, encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits,
-    PromptSubmitted, RenderRequest, Submission, ToolCompletion,
+    decode, encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits, PromptSubmitted,
+    RenderRequest, Submission, ToolCompletion,
 };
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
@@ -310,7 +310,7 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
                     "status": if failed { "failed" } else { "completed" },
                     "content": [{"type": "content", "content": {"type": "text", "text": event.text}}]
                 }))
-            },
+            }
             _ => None,
         };
         if let Some(update) = update {
@@ -458,11 +458,15 @@ mod tests {
             assert_eq!(frames.len(), 1);
             let frame: serde_json::Value = serde_json::from_str(&frames[0]).unwrap();
             assert_eq!(
-                frame.pointer("/params/update/status").and_then(|status| status.as_str()),
+                frame
+                    .pointer("/params/update/status")
+                    .and_then(|status| status.as_str()),
                 Some(expected),
             );
             assert_eq!(
-                frame.pointer("/params/update/toolCallId").and_then(|id| id.as_str()),
+                frame
+                    .pointer("/params/update/toolCallId")
+                    .and_then(|id| id.as_str()),
                 Some("call-1"),
             );
         }
@@ -470,7 +474,9 @@ mod tests {
         let legacy = render(Blob(vec![])).unwrap();
         let legacy: serde_json::Value = serde_json::from_str(&legacy[0]).unwrap();
         assert_eq!(
-            legacy.pointer("/params/update/status").and_then(|status| status.as_str()),
+            legacy
+                .pointer("/params/update/status")
+                .and_then(|status| status.as_str()),
             Some("completed"),
         );
         assert_eq!(
