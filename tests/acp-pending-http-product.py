@@ -77,8 +77,10 @@ class ModelServer(BaseHTTPRequestHandler):
                 return
         else:
             self.send_event("acp-resumed", finished=True)
+        usage = b'data: {"choices":[],"usage":{"prompt_tokens":15,"completion_tokens":3}}\r\n\r\n'
         final = b"data: [DONE]\r\n\r\n"
         try:
+            self.wfile.write(f"{len(usage):x}\r\n".encode() + usage + b"\r\n")
             self.wfile.write(f"{len(final):x}\r\n".encode() + final + b"\r\n")
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
