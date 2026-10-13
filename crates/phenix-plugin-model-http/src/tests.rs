@@ -117,6 +117,52 @@ fn fragmented_utf8_sse_and_tool_arguments_decode_to_the_same_typed_reply() {
         (27, 7)
     );
 }
+
+#[test]
+fn standard_sse_line_endings_metadata_and_bom_preserve_model_reply() {
+    let mut stream = Stream::default();
+    let data = format!(
+        "\u{feff}: keepalive\r\nevent: message\r\nid: message-1\r\ndata: {}\r\n\r\n{}data: [DONE]\r\n\r\n",
+        json!({"choices":[{"index":0,"delta":{"content":"aß"},"finish_reason":"stop"}]}),
+        frame(usage()),
+    );
+    let mut streamed = String::new();
+    for part in data.as_bytes().chunks(1) {
+        streamed.push_str(&stream.feed(part).unwrap());
+    }
+    let reply = stream.finish(&request()).unwrap();
+    assert_eq!(streamed, "aß");
+    assert_eq!(reply.text, streamed);
+    assert_eq!(reply.usage.input_tokens, 27);
+}
+
+#[test]
+fn invalid_utf8_even_when_fragmented_is_not_silently_replaced() {
+    let mut stream = Stream::default();
+    stream.feed(b"data: \\xc3").unwrap();
+    assert_eq!(
+        stream.feed(b"(").unwrap_err().code,
+        ErrorCode::InvalidReply,
+    );
+
+    let mut stream = Stream::default();
+    stream.feed(b"data: \\xe2").unwrap();
+    assert_eq!(
+        stream.finish(&request()).unwrap_err().code,
+        ErrorCode::InvalidReply,
+    );
+}
+
+#[test]
+fn standard_sse_parser_respects_portable_frame_bounds() {
+    let mut stream = Stream::default();
+    let oversized = vec![b'x'; phenix_sdk::MAX_BYTES + 1];
+    assert_eq!(
+        stream.feed(&oversized).unwrap_err().code,
+        ErrorCode::InvalidReply,
+    );
+}
+
 #[test]
 fn incomplete_and_malformed_streams_cannot_be_successful_replies() {
     let mut stream = Stream::default();
