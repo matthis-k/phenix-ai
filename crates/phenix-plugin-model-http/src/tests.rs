@@ -139,14 +139,14 @@ fn standard_sse_line_endings_metadata_and_bom_preserve_model_reply() {
 #[test]
 fn invalid_utf8_even_when_fragmented_is_not_silently_replaced() {
     let mut stream = Stream::default();
-    stream.feed(b"data: \\xc3").unwrap();
+    stream.feed(b"data: \xc3").unwrap();
     assert_eq!(
         stream.feed(b"(").unwrap_err().code,
         ErrorCode::InvalidReply,
     );
 
     let mut stream = Stream::default();
-    stream.feed(b"data: \\xe2").unwrap();
+    stream.feed(b"data: \xe2").unwrap();
     assert_eq!(
         stream.finish(&request()).unwrap_err().code,
         ErrorCode::InvalidReply,
