@@ -182,6 +182,23 @@ assert "".join(
     for event in tool_updates
     if event.get("sessionUpdate") == "agent_message_chunk"
 ) == "mock:call-1:HELLO|call-2:5", tool_updates
+# An invalid session identity is a client parameter error, not a host
+# failure. Reject a forged well-formed ID after durable work without
+# replacing the current kernel, losing its journal or admitting a new run.
+original_updates = list(updates)
+request_error(first, 103, "session/load", {
+    "sessionId": "../../escape", "cwd": "/tmp", "mcpServers": [],
+}, -32602)
+request_error(first, 104, "session/load", {
+    "sessionId": "s_nonexistent", "cwd": "/tmp", "mcpServers": [],
+}, -32602)
+assert updates == original_updates, "invalid session loads emitted output"
+assert request(first, 105, "session/load", {
+    "sessionId": session, "cwd": "/tmp", "mcpServers": [],
+}) == {}
+assert updates[len(original_updates):] == original_updates, (
+    "live session journal did not survive refused load"
+)
 exit_cleanly(first)
 
 # A v1-only agent negotiates down to protocol version 1 when the
@@ -263,6 +280,8 @@ exit_cleanly(second)
             "tool-result-and-final-text-streamed",
             "unknown-durable-session-rejected",
             "live-uncheckpointed-session-reload-allowed",
+            "invalid-session-identity-rejected",
+            "failed-load-preserves-durable-live-journal",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
