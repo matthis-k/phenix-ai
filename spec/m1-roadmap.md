@@ -577,6 +577,21 @@ chunks, and oversize rejection. The real pending-HTTP Basic and ACP fixtures
 remain part of the shipping gate. The 66-package workspace Cargo.lock now pins the parser and its
 dependencies. Exact-head shipping CI remains pending.
 
+### P1 ACP tool event delivery
+
+`impl/m1-p1-acp-tool-events` extends the real ACP stdio product fixture
+with an entire scripted two-tool turn. It checks typed `ToolStarted` and
+`ToolFinished` journal events become `tool_call` and
+`tool_call_update` notifications with the same IDs, ordered starts before
+completions and an exact final text chunk. The independent official ACP SDK
+client now executes that tool turn and requires at least six successfully
+decoded typed notifications across its initial prompt and tool continuation.
+
+These tests exercise the existing `Frontend::render` contract and the
+shared host journal-to-stdout path. No kernel event subscriptions, duplicated
+ACP scheduler or plugin ABI changes are introduced. Acceptance requires the
+exact-head canonical matrix and official SDK compatibility workflow.
+
 ### P1 independent ACP SDK integration
 
 `impl/m1-p1-acp-sdk-interop` adds a separate official Rust ACP SDK 3.3.0
