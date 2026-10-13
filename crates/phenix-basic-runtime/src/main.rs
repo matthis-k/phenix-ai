@@ -466,14 +466,71 @@ fn mark_admitted_run(
     }
 }
 
+// This limit applies before JSON, ACP or Terminal parsing. A bounded
+// channel alone cannot prevent BufRead::lines from allocating an unbounded
+// buffer for an input that never contains a newline.
+const MAX_STDIN_LINE_BYTES: usize = 1024 * 1024;
+
+fn bounded_input_line(reader: &mut impl BufRead) -> io::Result<Option<String>> {
+    let mut line = Vec::new();
+    let mut too_long = false;
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            if line.is_empty() && !too_long {
+                return Ok(None);
+            }
+            break;
+        }
+        let newline = buffer.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(buffer.len(), |position| position + 1);
+        if !too_long {
+            if line.len().saturating_add(consumed) > MAX_STDIN_LINE_BYTES {
+                too_long = true;
+            } else {
+                line.extend_from_slice(&buffer[..consumed]);
+            }
+        }
+        reader.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if too_long {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Basic stdin frame exceeds 1 MiB",
+        ));
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+    }
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
 /// A reader owns stdin. Only the controller thread touches Kernel, Root, or
 /// GraphExecution. This keeps root admission and cancellation on one thread.
 fn input_channel() -> Receiver<Result<String, String>> {
     let (sender, receiver) = mpsc::sync_channel(64);
     std::thread::spawn(move || {
-        for line in io::stdin().lock().lines() {
-            if sender.send(line.map_err(|e| e.to_string())).is_err() {
-                break;
+        let mut input = io::stdin().lock();
+        loop {
+            match bounded_input_line(&mut input) {
+                Ok(Some(line)) => {
+                    if sender.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = sender.send(Err(error.to_string()));
+                    break;
+                }
             }
         }
     });
@@ -1285,5 +1342,41 @@ mod session_lock_tests {
         drop(resumed);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod bounded_stdio_tests {
+    use super::bounded_input_line;
+    use std::io::{Cursor, ErrorKind};
+
+    #[test]
+    fn preserves_newlines_utf8_crlf_and_final_partial_line() {
+        let mut input = Cursor::new("first\r\n☃\nlast".as_bytes());
+        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("first"));
+        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("☃"));
+        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("last"));
+        assert_eq!(bounded_input_line(&mut input).unwrap(), None);
+    }
+
+    #[test]
+    fn drains_oversized_frame_without_buffering_it() {
+        let mut input = Cursor::new(
+            [vec![b'x'; super::MAX_STDIN_LINE_BYTES + 7], b"\nnext\n".to_vec()].concat(),
+        );
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap_err().kind(),
+            ErrorKind::InvalidData,
+        );
+        assert_eq!(bounded_input_line(&mut input).unwrap().as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_without_lossy_replacement() {
+        let mut input = Cursor::new([0xff, b'\n']);
+        assert_eq!(
+            bounded_input_line(&mut input).unwrap_err().kind(),
+            ErrorKind::InvalidData,
+        );
     }
 }
