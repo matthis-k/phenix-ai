@@ -34,7 +34,6 @@ jobs:
         run: |
           set -euo pipefail
           export PHENIX_BASIC_SQLITE_PATH="$RUNNER_TEMP/phenix-p1-official-acp.db"
-          cargo generate-lockfile --manifest-path tests/acp-sdk-client/Cargo.toml
           cargo run --locked --manifest-path tests/acp-sdk-client/Cargo.toml --release -- \
             "$PWD/result-acp/bin/phenix-basic-acp"
       - name: Record SDK dependency resolution
