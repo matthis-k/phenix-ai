@@ -1,0 +1,51 @@
+# Manual and branch-push benchmark; intentionally does not replace production CI.
+# Run 2, then 4, then 8 remote builders to avoid cross-variant contention.
+name: Phenix Nix remote-builder 2/4/8 benchmark
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/m1-remote-builder-benchmark
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: remote-builders-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  remote-2:
+    name: 2 remote builders
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@9aa998eac986fe4216d0851516ddef1a199f20e1
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 9aa998eac986fe4216d0851516ddef1a199f20e1
+      worker_count: 2
+      slots_per_worker: 2
+    secrets: inherit
+
+  remote-4:
+    name: 4 remote builders
+    needs: remote-2
+    if: always()
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@9aa998eac986fe4216d0851516ddef1a199f20e1
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 9aa998eac986fe4216d0851516ddef1a199f20e1
+      worker_count: 4
+      slots_per_worker: 2
+    secrets: inherit
+
+  remote-8:
+    name: 8 remote builders
+    needs: remote-4
+    if: always()
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@9aa998eac986fe4216d0851516ddef1a199f20e1
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 9aa998eac986fe4216d0851516ddef1a199f20e1
+      worker_count: 8
+      slots_per_worker: 2
+    secrets: inherit
