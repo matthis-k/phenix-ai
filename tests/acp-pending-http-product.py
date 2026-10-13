@@ -166,6 +166,26 @@ try:
     proc.stdin.flush()
     invalid = frames.get(timeout=5)
     assert invalid is not None and invalid.get("error", {}).get("code") == -32700, invalid
+    # The same JSON-RPC envelope validation must run during an active
+    # prompt. An invalid cancellation is rejected immediately, rather
+    # than being deferred until the model finishes or reaching the graph.
+    proc.stdin.write(json.dumps({
+        "jsonrpc": "1.0", "id": 73, "method": "session/cancel",
+        "params": {"sessionId": session},
+    }) + "\n")
+    proc.stdin.flush()
+    invalid_envelope = frames.get(timeout=5)
+    assert invalid_envelope is not None, "missing pending-frame rejection"
+    assert invalid_envelope.get("id") is None, invalid_envelope
+    assert invalid_envelope.get("error", {}).get("code") == -32600, invalid_envelope
+    proc.stdin.write(json.dumps({
+        "jsonrpc": "2.0", "id": [], "method": "session/cancel",
+        "params": {"sessionId": session},
+    }) + "\n")
+    proc.stdin.flush()
+    invalid_id = frames.get(timeout=5)
+    assert invalid_id is not None and invalid_id.get("id") is None, invalid_id
+    assert invalid_id.get("error", {}).get("code") == -32600, invalid_id
     # A notification for another session cannot cancel this prompt.
     send("session/cancel", {"sessionId": "unrelated-session"})
     try:
@@ -193,6 +213,7 @@ try:
         "active_cancellation": True,
         "same_session_continuation": True,
         "malformed_frame_isolated": True,
+        "invalid_active_request_rejected": True,
         "wrong_session_cancel_ignored": True,
         "model_requests": len(requests),
     }, indent=2, sort_keys=True))
