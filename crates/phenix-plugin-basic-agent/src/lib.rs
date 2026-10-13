@@ -399,7 +399,10 @@ mod plugin {
                 let mut ids = BTreeSet::new();
                 for call in &response.calls {
                     if call.id.is_empty() || !ids.insert(call.id.clone()) {
-                        let problem = error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
+                        let problem = error(
+                            ErrorCode::InvalidReply,
+                            "duplicate or empty tool call ID",
+                        );
                         stopped(host, running.session.clone(), &problem)?;
                         return Err(CallError::Domain(problem));
                     }
