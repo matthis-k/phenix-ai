@@ -168,7 +168,10 @@ try:
                 event = observed.get(timeout=min(2, max(0.01, deadline - time.monotonic())))
             except queue.Empty:
                 continue
-            assert event is not None, f"JSONL host exited before {label}: {proc.poll()}"
+            assert event is not None, (
+                f"JSONL host exited before {label}: {proc.poll()}; "
+                f"stderr: {proc.stderr.read()}"
+            )
             if predicate(event):
                 return event
         raise AssertionError(f"timed out waiting for {label}")
