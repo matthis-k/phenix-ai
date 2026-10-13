@@ -92,6 +92,23 @@ invalid_version = json.loads(first.stdout.readline())
 assert invalid_version["id"] == 92, invalid_version
 assert invalid_version["error"]["code"] == -32602, invalid_version
 
+# A notification cannot initialize the connection or admit a new session.
+first.stdin.write(json.dumps({
+    "jsonrpc": "2.0", "method": "initialize",
+    "params": {"protocolVersion": 1, "clientCapabilities": {}},
+}) + "\n")
+first.stdin.flush()
+
+# A Boolean request ID is neither a string nor a JSON-RPC numeric ID.
+first.stdin.write(json.dumps({
+    "jsonrpc": "2.0", "id": True, "method": "initialize",
+    "params": {"protocolVersion": 1, "clientCapabilities": {}},
+}) + "\n")
+first.stdin.flush()
+bad_id = json.loads(first.stdout.readline())
+assert bad_id["error"]["code"] == -32600, bad_id
+assert bad_id["id"] is None, bad_id
+
 initialize(first)
 session = request(first, 2, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
@@ -121,6 +138,19 @@ assert request(version_probe, 91, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
 })["sessionId"]
 exit_cleanly(version_probe)
+
+# An explicit null ID is a request, not a notification. Preserve the
+# supplied ID in its reply without suppressing protocol initialization.
+null_id_probe = start()
+null_id_probe.stdin.write(json.dumps({
+    "jsonrpc": "2.0", "id": None, "method": "initialize",
+    "params": {"protocolVersion": 1, "clientCapabilities": {}},
+}) + "\n")
+null_id_probe.stdin.flush()
+null_id_reply = json.loads(null_id_probe.stdout.readline())
+assert null_id_reply["id"] is None, null_id_reply
+assert null_id_reply["result"]["protocolVersion"] == 1, null_id_reply
+exit_cleanly(null_id_probe)
 
 # A new provider process reopens the same SQLite file through Storage.
 second = start()
@@ -167,6 +197,9 @@ exit_cleanly(second)
             "malformed-frame-recovers", "invalid-jsonrpc-rejected",
             "invalid-protocol-version-rejected",
             "newer-client-negotiates-down-to-v1",
+            "notifications-do-not-initialize",
+            "invalid-request-id-rejected",
+            "explicit-null-request-id-replied",
         ],
         "active_cancellation_verified": False,
     }, indent=2, sort_keys=True)
