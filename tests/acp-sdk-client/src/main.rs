@@ -7,6 +7,7 @@ use agent_client_protocol::schema::{
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use std::{
     error::Error,
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -37,14 +38,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .send_request(InitializeRequest::new(ProtocolVersion::V1))
                 .block_task()
                 .await?;
-            if init.protocol_version != ProtocolVersion::V1 {
-                return Err(agent_client_protocol::Error::invalid_params(
-                    "agent did not negotiate stable ACP v1",
-                ));
-            }
+            assert_eq!(init.protocol_version, ProtocolVersion::V1);
 
             let session = connection
-                .send_request(NewSessionRequest::new(std::env::current_dir()?))
+                .send_request(NewSessionRequest::new(
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+                ))
                 .block_task()
                 .await?;
             let answer = connection
@@ -54,11 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 ))
                 .block_task()
                 .await?;
-            if format!("{:?}", answer.stop_reason) != "EndTurn" {
-                return Err(agent_client_protocol::Error::invalid_params(
-                    "Basic agent did not complete the ACP prompt",
-                ));
-            }
+            assert_eq!(format!("{:?}", answer.stop_reason), "EndTurn");
             Ok(())
         })
         .await?;
