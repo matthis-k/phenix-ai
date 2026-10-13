@@ -17,13 +17,13 @@ concurrency:
 
 jobs:
   credential-check:
-    name: Verify Tailscale OIDC setup before allocating builders
+    name: Verify Tailscale OIDC setup and derived audience
     runs-on: ubuntu-24.04
     steps:
-      - name: Require GitHub repository variables or secrets
+      - name: Require federated Client ID or auth key
         env:
           CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
-          AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+          AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
           AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           if [[ -n "$AUTHKEY" ]]; then
@@ -40,7 +40,7 @@ jobs:
       - name: Validate federated audience and GitHub token claims
         env:
           CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
-          AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+          AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -90,7 +90,7 @@ jobs:
       slots_per_worker: 2
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
       TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
 
   remote-4:
@@ -105,7 +105,7 @@ jobs:
       slots_per_worker: 2
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
       TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
 
   remote-8:
@@ -120,5 +120,5 @@ jobs:
       slots_per_worker: 2
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE || vars.TS_AUDIENCE }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
       TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
