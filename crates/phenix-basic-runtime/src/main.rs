@@ -206,8 +206,7 @@ fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, Stri
     if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
         for step in execution.steps() {
             if let Outcome::Domain(value) = &step.outcome {
-                let cause = BasicError::from_value(value.clone())
-                    .map_err(|e| format!("{e:?}"))?;
+                let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
                 if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed {
                     return Ok(false);
                 }
