@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   conformance:
-    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel' || startsWith(github.head_ref, 'impl/m1-') || startsWith(github.head_ref, 'test/m1-') || (github.head_ref == 'ci/m1-flake-generic-checks' || startsWith(github.head_ref, 'ci/m1-'))
+    if: github.event_name != 'pull_request' || github.head_ref == 'rewrite/minimal-kernel' || startsWith(github.head_ref, 'impl/m1-') || startsWith(github.head_ref, 'test/m1-') || startsWith(github.head_ref, 'fix/m1-') || startsWith(github.head_ref, 'release/p1-') || (github.head_ref == 'ci/m1-flake-generic-checks' || startsWith(github.head_ref, 'ci/m1-'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +52,7 @@ jobs:
         run: |
           nix build .#phenix-m1-conformance --out-link result-conformance
           mkdir ci-evidence
-          if [[ "${{ github.head_ref }}" == impl/m1-* || "${{ github.head_ref }}" == test/m1-* ]]; then
+          if [[ "${{ github.head_ref }}" == impl/m1-* || "${{ github.head_ref }}" == test/m1-* || "${{ github.head_ref }}" == fix/m1-* || "${{ github.head_ref }}" == release/p1-* ]]; then
             nix build .#checks.x86_64-linux.m1-reference-wire --out-link result-m1-wire
             nix build .#checks.x86_64-linux.m1-metadata-state --out-link result-m1-state
             cp -RL result-m1-state ci-evidence/m1-metadata-state
