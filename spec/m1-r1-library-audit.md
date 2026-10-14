@@ -125,6 +125,39 @@ adapter replaces that code and all current malformed-frame, cancellation,
 streaming, restart, tool-event and EOF fixtures pass without a parallel
 handwritten implementation.
 
+### Official ACP v1 schema migration
+
+The first implementation slice on `impl/m1-r1-acp-schema-frontend`
+feature-gates `agent-client-protocol-schema` 1.11.0 to the native ACP
+Frontend plugin. `acp_decode` now deserializes the SDK's stable-v1
+`PromptRequest`, `CancelNotification` and `ContentBlock` payloads
+instead of selecting `params.sessionId` and `params.prompt` by hand.
+It still checks the selected Phenix session and limits content to what
+Basic accepts. Host JSON-RPC framing and output remain legacy code until
+the SDK-backed connection migration.
+
+The resolved lockfile grows from 93 to 169 packages: this is a real
+dependency cost of the official schema, including its `serde_with` and
+related packages. The temporary GitHub Actions resolver was removed.
+All ACP native checks, Rustfmt, ABI, streaming and independent SDK
+fixtures must pass before accepting the typed-input slice.
+
+The next slice must use the official SDK's stable-v1 `Agent.builder()`
+handlers, `Stdio` transport and typed notifications. SDK dispatch
+must not own Phenix's GraphExecution: a bounded typed command/event
+channel hands protocol requests to the existing single-thread kernel
+controller. Responses and journal progress return to the SDK writer.
+A cancellation notification targets the scoped graph root; a client
+disconnect must trigger cancellation and durable cleanup. The SDK
+is responsible for JSON-RPC syntax, request IDs and wire serialization.
+
+**Removal gate:** delete the old production `parse_acp_frame` and
+manual `session/update` encoding after the typed host passes the
+independent official SDK client and negative HTTP/stdio fixtures.
+Client-side interoperability alone is insufficient. The new host
+must also define how ACP's baseline `ResourceLink` prompt content
+is handled, rather than silently claiming complete ACP compliance.
+
 ### R1 migration order
 
 1. **ACP codec and transport.** Replace the handwritten host and frontend JSON-RPC implementation with the official `agent-client-protocol` stable-v1 API. The independent SDK client already passes against the custom host. Compare both implementations on invalid envelopes, sessions, live progress, tool events, FIFO requests, EOF, cancellation and crash recovery before deleting the old path.
