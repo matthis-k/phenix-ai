@@ -377,8 +377,8 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
 #[cfg(feature = "acp_v2")]
 pub fn acp_render_v2(request: RenderRequest) -> Result<Vec<String>, BasicError> {
     use agent_client_protocol_schema::v2::{
-        ContentChunk, MessageId, SessionId, SessionUpdate, ToolCall, ToolCallStatus,
-        ToolCallUpdate, UpdateSessionNotification,
+        ContentChunk, MessageId, SessionId, SessionUpdate, ToolCallStatus, ToolCallUpdate,
+        UpdateSessionNotification,
     };
 
     let mut output = Vec::new();
@@ -391,8 +391,10 @@ pub fn acp_render_v2(request: RenderRequest) -> Result<Vec<String>, BasicError> 
                 event.text.into(),
                 MessageId::new(event.run),
             ))),
-            EventKind::ToolStarted => Some(SessionUpdate::ToolCall(
-                ToolCall::new(event.call_id, event.text).status(ToolCallStatus::Pending),
+            EventKind::ToolStarted => Some(SessionUpdate::ToolCallUpdate(
+                ToolCallUpdate::new(event.call_id)
+                    .title(event.text)
+                    .status(ToolCallStatus::Pending),
             )),
             EventKind::ToolFinished => {
                 let status = if acp_tool_failed(&event.data)? {
@@ -586,7 +588,7 @@ mod tests {
             })
             .collect();
         assert_eq!(values[0]["update"]["sessionUpdate"], "agent_message_chunk");
-        assert_eq!(values[1]["update"]["sessionUpdate"], "tool_call");
+        assert_eq!(values[1]["update"]["sessionUpdate"], "tool_call_update");
         assert_eq!(values[2]["update"]["sessionUpdate"], "tool_call_update");
         assert_eq!(values[2]["update"]["status"], "failed");
 
