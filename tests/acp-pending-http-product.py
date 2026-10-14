@@ -58,19 +58,21 @@ class ModelServer(BaseHTTPRequestHandler):
         with mutex:
             requests.append(request)
             ordinal = len(requests)
-        assert ordinal in (1, 2), ordinal
+        assert ordinal in (1, 2, 3), ordinal
         messages = request["messages"]
         assert messages[-1]["role"] == "user"
-        assert messages[-1]["content"] == (
-            "cancel me" if ordinal == 1 else "after cancel"
-        )
+        assert messages[-1]["content"] == {
+            1: "cancel me", 2: "after cancel", 3: "client eof"
+        }[ordinal]
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
-        if ordinal == 1:
-            self.send_event("acp-live")
-            time.sleep(3.0)
+        if ordinal in (1, 3):
+            self.send_event("acp-live" if ordinal == 1 else "acp-eof")
+            # Give the host time to cancel the active graph while the
+            # independent HTTP server deliberately withholds completion.
+            time.sleep(3.0 if ordinal == 1 else 8.0)
             try:
                 self.send_event("unwanted", finished=True)
             except (BrokenPipeError, ConnectionResetError):
@@ -230,6 +232,34 @@ try:
     proc.stdin.close()
     assert proc.wait(timeout=20) == 0, proc.stderr.read()
     assert len(requests) == 2, len(requests)
+    # Closing ACP stdin while a request is still live must cancel the
+    # graph and release the owner marker, not wait for the HTTP reply.
+    proc.stdout.close()
+    proc.stderr.close()
+    reader.join(timeout=5)
+    proc = subprocess.Popen(
+        [binary, "acp", str(configuration)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, text=True, bufsize=1,
+    )
+    frames = queue.Queue()
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    send("initialize", {"protocolVersion": 1, "clientCapabilities": {}}, 51)
+    until(lambda x: x.get("id") == 51, "EOF probe initialize")
+    send("session/new", {"cwd": "/tmp", "mcpServers": []}, 52)
+    eof_session = until(lambda x: x.get("id") == 52, "EOF probe session")["result"]["sessionId"]
+    send("session/prompt", {
+        "sessionId": eof_session,
+        "prompt": [{"type": "text", "text": "client eof"}],
+    }, 53)
+    until(lambda x: delta(x, "acp-eof", eof_session), "EOF probe live model delta")
+    proc.stdin.close()
+    # The server withholds completion for eight seconds. Five seconds is
+    # enough for normal root cancellation and kernel shutdown, but not
+    # for a disconnected host that incorrectly waits for that completion.
+    assert proc.wait(timeout=5) == 0, proc.stderr.read()
+    assert len(requests) == 3, len(requests)
     assert (output / "acp-pending.db").exists()
     (output / "acp-pending-http.json").write_text(json.dumps({
         "format": "phenix.acp.pending-http-product.v1",
@@ -241,6 +271,7 @@ try:
         "wrong_session_cancel_ignored": True,
         "unsupported_notifications_do_not_fill_queue": True,
         "active_cancel_requests_rejected_immediately": True,
+        "client_eof_cancels_active_graph": True,
         "model_requests": len(requests),
     }, indent=2, sort_keys=True))
 finally:
