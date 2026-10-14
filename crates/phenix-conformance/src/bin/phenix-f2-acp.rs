@@ -83,25 +83,42 @@ fn main() {
         "decode",
         ClientInput {
             session: "s1".into(),
-            line: r#"{"cancel":{"sessionId":"s1"}}"#
-                .into(),
+            line: r#"{"cancel":{"sessionId":"s1"}}"#.into(),
         },
     )
     .unwrap()
     .unwrap();
     assert!(cancel.cancel);
-    assert_eq!(call::<Submission>(
-        &kernel, "decode", ClientInput {
-            session: "s1".into(),
-            line: r#"{"prompt":{"sessionId":"s2","prompt":[{"type":"text","text":"forged"}]}}"#.into(),
-        },
-    ).unwrap().unwrap_err().code, ErrorCode::Denied);
-    assert_eq!(call::<Submission>(
-        &kernel, "decode", ClientInput {
-            session: "s1".into(),
-            line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"image","data":"abc"}]}}"#.into(),
-        },
-    ).unwrap().unwrap_err().code, ErrorCode::InvalidInput);
+    assert_eq!(
+        call::<Submission>(
+            &kernel,
+            "decode",
+            ClientInput {
+                session: "s1".into(),
+                line: r#"{"prompt":{"sessionId":"s2","prompt":[{"type":"text","text":"forged"}]}}"#
+                    .into(),
+            },
+        )
+        .unwrap()
+        .unwrap_err()
+        .code,
+        ErrorCode::Denied
+    );
+    assert_eq!(
+        call::<Submission>(
+            &kernel,
+            "decode",
+            ClientInput {
+                session: "s1".into(),
+                line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"image","data":"abc"}]}}"#
+                    .into(),
+            },
+        )
+        .unwrap()
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
     let output: Vec<String> = call(
         &kernel,
         "render",
@@ -130,10 +147,7 @@ fn main() {
         notification["update"]["sessionUpdate"],
         "agent_message_chunk"
     );
-    assert_eq!(
-        notification["update"]["content"]["text"],
-        "mock:hello"
-    );
+    assert_eq!(notification["update"]["content"]["text"], "mock:hello");
     assert_eq!(
         call::<()>(
             &kernel,
