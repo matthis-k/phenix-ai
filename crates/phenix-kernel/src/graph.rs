@@ -538,6 +538,19 @@ impl GraphExecution<'_> {
     ) -> Result<Outcome, Failure> {
         self.root.invoke_selected(selection, request)
     }
+    /// Read the latest watchable properties committed after a graph epoch.
+    /// Changes coalesce by property. A caller can advance its epoch cursor
+    /// only after processing the returned set. Hook admission follows in G4.
+    pub fn committed_changes_since(&self, after: u64) -> (u64, Vec<String>) {
+        let (epoch, changed) = self
+            .root
+            .kernel
+            .cells
+            .borrow()
+            .watched_changes_since(phenix_contract::Epoch(after));
+        (epoch.0, changed)
+    }
+
     pub fn steps(&self) -> &[GraphStep] {
         &self.completed
     }
