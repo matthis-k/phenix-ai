@@ -23,9 +23,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
+type PendingPrompts = Mutex<VecDeque<(String, Arc<AtomicBool>)>>;
 
 enum Command {
-    Initialize(InitializeRequest, Reply<InitializeResponse>),
+    Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
     Load(LoadSessionRequest, Reply<LoadSessionResponse>, Peer),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
@@ -59,7 +60,7 @@ fn submit(sender: &SyncSender<Command>, cmd: Command) -> acp::Result<()> {
 /// A cancellation targets the earliest admitted prompt for the session, even
 /// before the controller starts its root. Unrelated sessions are unaffected.
 fn signal_cancel(
-    pending: &Mutex<VecDeque<(String, Arc<AtomicBool>)>>,
+    pending: &PendingPrompts,
     session: &str,
 ) -> acp::Result<()> {
     let queued = pending.lock().map_err(internal)?;
@@ -109,7 +110,7 @@ fn send_updates(
 /// Bounded physical stdio adapter built from the SDK's Lines transport.
 /// The Phenix reader enforces only byte, UTF-8 and FIFO limits; the official
 /// SDK owns every ACP/JSON-RPC envelope and protocol operation.
-fn bounded_transport() -> impl acp::ConnectTo<Agent> {
+fn bounded_transport(rejected: Arc<AtomicBool>) -> impl acp::ConnectTo<Agent> {
     let (mut incoming_sender, incoming_receiver) =
         futures::channel::mpsc::channel::<std::io::Result<String>>(64);
     std::thread::spawn(move || {
@@ -123,6 +124,7 @@ fn bounded_transport() -> impl acp::ConnectTo<Agent> {
                 }
                 Ok(None) => break,
                 Err(error) => {
+                    rejected.store(true, Ordering::Release);
                     let _ = futures::executor::block_on(incoming_sender.send(Err(error)));
                     break;
                 }
@@ -148,14 +150,14 @@ struct Controller {
     offsets: BTreeMap<String, u64>,
     initialized: bool,
     issued: u64,
-    queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>>,
+    queued: Arc<PendingPrompts>,
     closed: Arc<AtomicBool>,
 }
 
 impl Controller {
     fn start(
         composition: Composition,
-        queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>>,
+        queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -314,7 +316,7 @@ impl Controller {
             begin_submission(kernel, submission, basic_scope(&self.composition, &session))
                 .map_err(internal)?;
         let offset = self.offsets.entry(session.clone()).or_default();
-        let result = Self::drive(
+        Self::drive(
             kernel,
             execution,
             &session,
@@ -323,8 +325,7 @@ impl Controller {
             peer,
             cancelled,
             &self.closed,
-        );
-        result
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -394,7 +395,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
     // the race between queued requests and the first graph pump.
-    let queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>> =
+    let queued: Arc<PendingPrompts> =
         Arc::new(Mutex::new(VecDeque::new()));
     let controller = Controller::start(
         composition.clone(),
@@ -417,7 +418,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .name("phenix-basic")
         .on_receive_request(
             async move |request: InitializeRequest, reply, _peer| {
-                submit(&initialize, Command::Initialize(request, reply))
+                submit(&initialize, Command::Initialize(Box::new(request), reply))
             },
             acp::on_receive_request!(),
         )
@@ -471,9 +472,18 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
             let _ = on_close.try_send(Command::Closed);
             Ok(())
         });
+    let rejected = Arc::new(AtomicBool::new(false));
+    let transport_rejected = Arc::clone(&rejected);
+    let transport_closed = Arc::clone(&closed);
     let wire = std::thread::spawn(move || {
-        futures::executor::block_on(connection.connect_to(bounded_transport()))
-            .map_err(|e| format!("{e:?}"))
+        let result = futures::executor::block_on(
+            connection.connect_to(bounded_transport(transport_rejected)),
+        )
+        .map_err(|e| format!("{e:?}"));
+        // A transport error does not always invoke the SDK's on_close hook.
+        // Wake the single-thread kernel controller on EOF or a bad frame.
+        transport_closed.store(true, Ordering::Release);
+        result
     });
     let controller_result = controller.serve(receiver);
     closed.store(true, Ordering::Release);
@@ -482,7 +492,11 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .join()
         .map_err(|_| "ACP transport panicked".to_string())?;
     controller_result?;
-    transport_result
+    transport_result?;
+    if rejected.load(Ordering::Acquire) {
+        return Err("ACP stdio frame rejected".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
