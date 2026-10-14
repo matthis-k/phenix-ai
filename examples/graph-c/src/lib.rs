@@ -35,12 +35,22 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             failure: FailurePolicy::FailRoot,
         },
         StaticGraphNode {
+            id: "receipt",
+            triggers: &["state:example.graph-c/receipt"],
+            after: &["example.graph-c/watch"],
+            selector: "",
+            operation: "example.graph.changed@1/run",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
             id: "watch",
             triggers: &["state:example.graph-a/signal"],
             after: &[],
             selector: "",
             operation: "example.graph.changed@1/run",
-            writes: &[],
+            writes: &["example.graph-c/receipt"],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::FailRoot,
         },
@@ -60,6 +70,15 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
 )]
 mod provider {
     use super::*;
+
+    #[derive(Default)]
+    struct State {
+        #[get]
+        #[set]
+        #[watch]
+        receipt: String,
+    }
+
     #[provide(Task::run)]
     fn run(host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
         example_graph_contracts::check_resource(host, &input)?;
@@ -79,14 +98,32 @@ mod provider {
     }
 
     #[provide(StateHook::run)]
-    fn on_change(host: &live::Host<'_>, change: ChangeNotice) -> CallResult<String, String> {
+    fn on_change(
+        state: &mut State,
+        host: &live::Host<'_>,
+        change: ChangeNotice,
+    ) -> CallResult<String, String> {
         assert!(change.epoch > 0);
-        assert_eq!(change.properties, ["example.graph-a/signal"]);
-        // The same admitted scope remains available during hook dispatch.
         let _ = host.resource()?;
         let result = format!("{}:{}", change.epoch, change.properties.join(","));
-        if let Some(path) = std::env::var_os("PHENIX_GRAPH_HOOK_WITNESS") {
-            std::fs::write(path, result.as_bytes()).expect("graph state-hook witness");
+        if change.properties == ["example.graph-a/signal"] {
+            // Committing this watched field starts a second reactive epoch.
+            let mut receipt = state
+                .receipt
+                .edit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+            *receipt = result.clone();
+            receipt
+                .commit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+            if let Some(path) = std::env::var_os("PHENIX_GRAPH_HOOK_WITNESS") {
+                std::fs::write(path, result.as_bytes()).expect("graph state-hook witness");
+            }
+        } else {
+            assert_eq!(change.properties, ["example.graph-c/receipt"]);
+            if let Some(path) = std::env::var_os("PHENIX_GRAPH_RECEIPT_WITNESS") {
+                std::fs::write(path, result.as_bytes()).expect("graph receipt-hook witness");
+            }
         }
         Ok(result)
     }

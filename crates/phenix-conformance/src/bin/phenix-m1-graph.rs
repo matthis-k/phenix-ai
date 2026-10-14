@@ -21,6 +21,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
         .collect();
     let signal = phenix_contract::property_contract("example.graph-a", "signal").unwrap();
     resources.insert(signal.trim_end_matches("@1").to_owned());
+    let receipt = phenix_contract::property_contract("example.graph-c", "receipt").unwrap();
+    resources.insert(receipt.trim_end_matches("@1").to_owned());
     let mut grants = Vec::new();
     for caller in ["root", ids[0], ids[1], ids[2]] {
         grants.push(ScopedGrant {
@@ -81,6 +83,15 @@ fn composition(artifacts: Vec<String>) -> Composition {
         });
         operations.insert(format!("{signal}/{operation}"));
     }
+    for operation in ["get", "set", "watch"] {
+        grants.push(ScopedGrant {
+            caller: "example.graph-c".into(),
+            interface: receipt.clone(),
+            operation: operation.into(),
+            resources: resources.clone(),
+        });
+        operations.insert(format!("{receipt}/{operation}"));
+    }
     Composition {
         format: "phenix.composition.v2".into(),
         artifacts,
@@ -135,6 +146,8 @@ fn main() {
     std::env::set_var("PHENIX_GRAPH_C_WITNESS", &successor_witness);
     let hook_witness = output.join("graph-c-state-hook");
     std::env::set_var("PHENIX_GRAPH_HOOK_WITNESS", &hook_witness);
+    let receipt_witness = output.join("graph-c-receipt-hook");
+    std::env::set_var("PHENIX_GRAPH_RECEIPT_WITNESS", &receipt_witness);
     let packages = args[1..4].to_vec();
     for (index, package) in packages.iter().enumerate() {
         let loaded =
@@ -149,7 +162,7 @@ fn main() {
             if index == 1 {
                 1
             } else if index == 2 {
-                3
+                4
             } else {
                 2
             }
@@ -164,7 +177,7 @@ fn main() {
         "offline resolution ran native constructor"
     );
     let graph = prepared.compiled_graph().expect("verified graph");
-    assert_eq!(graph.nodes.len(), 6);
+    assert_eq!(graph.nodes.len(), 7);
     assert_eq!(
         graph.events[EVENT].payload,
         phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
@@ -180,7 +193,8 @@ fn main() {
             "example.graph-b/b",
             "example.graph-c/c",
             "example.graph-c/d",
-            "example.graph-c/watch"
+            "example.graph-c/watch",
+            "example.graph-c/receipt"
         ]
     );
     assert_eq!(graph.predecessors["example.graph-c/c"].len(), 3);
@@ -822,6 +836,7 @@ fn main() {
         );
     }
     assert!(!hook_witness.exists());
+    assert!(!receipt_witness.exists());
     let mut hook_root = None;
     let mut hook_terminal = 0;
     let changed = kernel
@@ -841,13 +856,19 @@ fn main() {
         hook_terminal, 1,
         "reactive waves emitted multiple terminal events"
     );
-    assert_eq!(changed.len(), 5);
+    assert_eq!(changed.len(), 6);
     assert_eq!(changed[4].node, "example.graph-c/watch");
+    assert_eq!(changed[5].node, "example.graph-c/receipt");
     let hook_text = fs::read_to_string(&hook_witness).unwrap();
     let (hook_epoch, hook_property) = hook_text.split_once(':').unwrap();
     assert!(hook_epoch.parse::<u64>().unwrap() > 0);
     assert_eq!(hook_property, "example.graph-a/signal");
+    let receipt_text = fs::read_to_string(&receipt_witness).unwrap();
+    let (receipt_epoch, receipt_property) = receipt_text.split_once(':').unwrap();
+    assert!(receipt_epoch.parse::<u64>().unwrap() > hook_epoch.parse::<u64>().unwrap());
+    assert_eq!(receipt_property, "example.graph-c/receipt");
     fs::remove_file(&hook_witness).unwrap();
+    fs::remove_file(&receipt_witness).unwrap();
 
     // A selected watch permission is necessary even for an offline hook.
     let mut denied_watch = policy.clone();
@@ -936,6 +957,8 @@ fn main() {
             "pending-a-independent-b-and-delayed-c",
             "native-state-hook-same-root-after-commit",
             "native-state-hook-one-terminal-event",
+            "native-state-hook-committed-second-epoch",
+            "native-state-hook-nonrecursive-receipt",
             "native-state-hook-grant-denied-before-load",
             "native-state-hook-receives-only-matching-property",
             "watched-b-commit-projected-before-pending-a-settles",
