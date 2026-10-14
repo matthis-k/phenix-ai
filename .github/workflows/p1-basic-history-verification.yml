@@ -39,6 +39,7 @@ jobs:
               "tool-call-and-result-history",
               "tool-history-after-restart",
               "terminal-reuses-jsonl-session",
+              "independent-observer-delivery",
               "direct-text-and-unicode",
               "interleaved-text-replies",
               "latest-fact-wins",
