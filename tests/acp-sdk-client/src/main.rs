@@ -78,6 +78,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             assert_eq!(format!("{:?}", tool_answer.stop_reason), "EndTurn");
 
+            // A failed tool call must yield an ACP Failed update. The Basic
+            // agent must continue through its second tool and model turn.
+            eprintln!("SDK interop: failing tool prompt");
+            let failed_tool_answer = connection
+                .send_request(PromptRequest::new(
+                    session.session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new("tools-fail:hello"))],
+                ))
+                .block_task()
+                .await?;
+            assert_eq!(format!("{:?}", failed_tool_answer.stop_reason), "EndTurn");
+
             // ACP v1 requires resource links. The frontend must preserve the
             // name and URI in the Basic prompt, without opening the resource.
             eprintln!("SDK interop: resource link prompt");
@@ -126,6 +138,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 && event.contains("Resource link: notes (file:///tmp/phenix-acp-sdk-unreadable.md)")
         }) {
             return Err("official ACP SDK lost the required v1 resource-link content".into());
+        }
+        // Both prompts issue two tools. Their terminal states are three
+        // successes and one failure; the failed tool is not a failed run.
+        let started = turns
+            .iter()
+            .filter(|event| event.contains("ToolCall("))
+            .count();
+        let completed = turns
+            .iter()
+            .filter(|event| {
+                event.contains("ToolCallUpdate(") && event.contains("Completed")
+            })
+            .count();
+        let failed = turns
+            .iter()
+            .filter(|event| {
+                event.contains("ToolCallUpdate(") && event.contains("Failed")
+            })
+            .count();
+        if (started, completed, failed) != (4, 3, 1) {
+            return Err("ACP SDK lost successful or failed tool status updates".into());
+        }
+        if !turns.iter().any(|event| {
+            event.contains("mock:call-1:error:scripted failure|call-2:5")
+        }) {
+            return Err("Basic agent failed to recover after a tool error".into());
         }
         turns.to_vec()
     };
