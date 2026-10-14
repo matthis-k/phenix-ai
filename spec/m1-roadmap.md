@@ -381,9 +381,12 @@ GraphExecution on its controller thread and durable event journal semantics.
   host as a production fallback. Keep only Phenix policy and backpressure.
   The `impl/m1-r1-acp-single-sdk-host` slice deletes `run_acp`,
   `drive_acp_prompt`, `parse_acp_frame`, their custom error/reply code and
-  old envelope tests. The Frontend notification envelope still causes a
-  serialization round-trip in the SDK host. Remove it through a typed
-  contract before accepting R1-ACP3. R1-ACP4 parity tests are still required.
+  old envelope tests. The same slice now removes the Frontend's outgoing JSON-RPC envelope
+  and incoming JSON-RPC parser. Only official SDK `PromptRequest`,
+  `CancelNotification`, and `SessionNotification` payloads cross the
+  native Frontend ABI. The host delegates prompt-to-Submission mapping
+  to that plugin; the SDK alone owns wire framing. Exact-head native
+  and negative-product CI remain required for R1-ACP3/4 acceptance.
 - [ ] **R1-ACP4: prove parity and release.** Run independent official SDK
   stable-v1 client tests, two-process `session/load` replay, ordered tool
   updates, malformed envelopes, unsupported/invalid payloads, bounded input,
