@@ -381,6 +381,13 @@
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-sessions.db"
         ${conformanceBinary}/bin/phenix-b2-sqlite seed ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        # Inject a real SQLite statement error on the second update in a
+        # two-record CAS transaction; verify the first update also rolls back.
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH" \
+          "CREATE TRIGGER reject_second_edit BEFORE UPDATE ON basic_records WHEN NEW.name = 'atomic-b' BEGIN SELECT RAISE(ABORT, 'injected SQLite write failure'); END;"
+        ${conformanceBinary}/bin/phenix-b2-sqlite faults ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        test -s "$out/sqlite-faults.json"
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH" "DROP TRIGGER reject_second_edit;"
         ${conformanceBinary}/bin/phenix-b2-sqlite resume ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         test -s "$out/sqlite-restart.json"
