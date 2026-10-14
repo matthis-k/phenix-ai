@@ -9,7 +9,6 @@ for name, frame in [
     ("invalid-utf8", b"\xff\n"),
 ]:
     environment = os.environ.copy()
-    environment["PHENIX_BASIC_USE_ACP_SDK"] = "1"
     proc = subprocess.Popen(
         [binary],
         stdin=subprocess.PIPE,
