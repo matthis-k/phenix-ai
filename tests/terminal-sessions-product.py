@@ -43,6 +43,30 @@ invalid = subprocess.run(
 )
 assert invalid.returncode != 0
 assert not any(token in invalid.stdout for token in ("answer:", "mock:"))
+# The same failing-tool Model fixture used by the independent ACP SDK
+# must continue through a successful tool and a final answer in Terminal.
+tool_reply = terminal("s2", "tools-fail:hello\n")
+assert "answer: mock:call-1:error:scripted failure|call-2:5" in tool_reply
+assert terminal("s2") == "", "Terminal replayed an acknowledged failed-tool turn"
+
+# Terminal exits on a Model domain error. Restarting the same session must
+# permit a fresh prompt without re-executing its previous effects.
+model_failure = subprocess.run(
+    [binary, "terminal", composition, "--session", "s2"],
+    input="model-error\n", text=True, capture_output=True,
+    env=env, timeout=45,
+)
+assert model_failure.returncode != 0, (
+    model_failure.stdout, model_failure.stderr
+)
+resumed = terminal("s2", "terminal-after-model-error\n")
+assert "answer: mock:terminal-after-model-error" in resumed
+assert terminal("s2") == "", "Terminal repeated acknowledged recovery output"
+assert "answer: mock:terminal-isolated" in terminal(
+    "s1", "terminal-isolated\n"
+)
+assert terminal("s1") == ""
+
 assert (output / "terminal-sessions.db").is_file()
 
 (output / "terminal-sessions.json").write_text(json.dumps({
@@ -52,6 +76,6 @@ assert (output / "terminal-sessions.db").is_file()
         "explicit-session-selection",
         "independent-session-restart",
         "observer-cursor-isolation",
-        "invalid-session-identity-refused",
+        "invalid-session-identity-refused",\n        "failed-tool-model-continuation",\n        "model-failure-process-restart",
     ],
 }, indent=2, sort_keys=True))
