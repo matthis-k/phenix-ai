@@ -254,7 +254,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G1 | S3b | Contract descriptors, macros, SDK trigger contexts, narrow graph inspection API | Offline typed event/trigger declarations and discoverable action IDs, schemas, descriptions and required authority; duplicate IDs, invalid schemas and undeclared handlers reject | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
 | G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant CI 38231650549 passed; generation-aware admission context remains |
-| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation implemented. `impl/m1-g4-committed-epoch-projection` adds a read-only, coalesced watched-property projection from committed cell epochs through the current GraphExecution. Pending: compile property-trigger declarations, admit affected nodes in the same graph, prove join/cancel behavior and full shipping acceptance. |
+| G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Slow pending model emits progress; cancel event stops its child before tool effects; retained physical leases drain safely; committed value changes use the same DAG | [ ] PARTIAL: same-root pending graph coordination and cancellation implemented. `impl/m1-g4-committed-epoch-projection` adds a read-only, coalesced watched-property projection from committed cell epochs through the current GraphExecution. G4b on `impl/m1-g4-state-trigger-preparation` adds static `state:owner/property` triggers, validates selected watch properties and grants, and computes active projections through the existing DAG algorithm. Actual same-root hook admission, cancellation tests and exact-head shipping are still pending. |
 | CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
 | AI-CI1 | CI0; parallel with Basic | `flake.nix`, compatible example and Basic plugin builds | Share Cargo compilation across compatible fixtures, package each plugin independently, narrow Nix source sets; preserve isolated ABI, LTO/linker and malicious fixtures | [ ] PLANNED: same-head before/after benchmark; one fixture edit must not rebuild unrelated fixtures |
 | AI-CI2 | AI-CI1 | Phenix AI Rust/Nix test profiles | Provide fast semantic checks and separate optimized shipping proofs without weakening native ABI, negative/security or production closure tests | [ ] PLANNED: compare exact check coverage, artifacts and failure cases for both profiles |
@@ -482,6 +482,24 @@ resource denial preserves cell epochs and revisions. The SDK-only native gate
 checks four nodes from three independently built plugins. Local workspace tests,
 Clippy and native execution pass with Rust 1.96. Full exact-head shipping CI 38228548634 passed at `672b7f09`. G3 serial semantics are proven; full stage acceptance awaits the G1/G2
 definition-only follow-up; streaming, cancellation and state triggers remain G4.
+
+### G4b state-trigger preparation
+
+State change hooks use the canonical graph declaration's existing `triggers`
+field with a `state:<plugin>/<property>` identity. The compiler resolves each
+property against prepared package metadata, requires `watch = true`, and
+verifies the node owner's existing `property.<name>@1/watch` grant. Hook
+operations accept `{ epoch: U64, property: String }`. They read values
+through their selected typed property import, so no untyped cell contents or
+implicit capability are passed in the trigger.
+
+`CompiledGraph::state_change_activation_order` uses the same DAG projection
+as regular action events. It activates only declared watchers. `after` still
+orders active predecessors without triggering dormant ones. This phase
+prepares and validates hooks but does not call them. G4c must admit these
+nodes with the existing root, handle multiple committed epochs, and prove
+cancellation and physical lease draining. Do not mark G4 or P1 accepted on
+the compiler tests alone.
 
 ### G4 committed-epoch projection
 
