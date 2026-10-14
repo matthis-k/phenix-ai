@@ -26,7 +26,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
     resources.insert(pending_signal.trim_end_matches("@1").to_owned());
     let receipt = phenix_contract::property_contract("example.graph-c", "receipt").unwrap();
     resources.insert(receipt.trim_end_matches("@1").to_owned());
-    let cancel_probe = phenix_contract::property_contract("example.graph-c", "cancel_probe").unwrap();
+    let cancel_probe =
+        phenix_contract::property_contract("example.graph-c", "cancel_probe").unwrap();
     resources.insert(cancel_probe.trim_end_matches("@1").to_owned());
     let mut grants = Vec::new();
     for caller in ["root", ids[0], ids[1], ids[2]] {
