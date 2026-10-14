@@ -18,13 +18,17 @@ fn fact(message: &str) -> Option<(&str, &str)> {
 }
 
 fn previous_fact<'a>(history: &'a [Message], key: &str) -> Option<(usize, &'a str)> {
-    history.iter().enumerate().rev().find_map(|(index, message)| {
-        if message.role != Role::User {
-            return None;
-        }
-        let (found, value) = fact(&message.text)?;
-        (found == key).then_some((index, value))
-    })
+    history
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, message)| {
+            if message.role != Role::User {
+                return None;
+            }
+            let (found, value) = fact(&message.text)?;
+            (found == key).then_some((index, value))
+        })
 }
 
 /// A tool result must be linked to the assistant's recorded call ID.
@@ -48,7 +52,9 @@ fn linked_tool_result(history: &[Message]) -> Option<&str> {
 fn tool_continuation(history: &[Message], start: usize) -> Result<String, BasicError> {
     let tail = &history[start + 1..];
     if tail.len() != 2 {
-        return Err(invalid("expected one assistant tool call and one tool result"));
+        return Err(invalid(
+            "expected one assistant tool call and one tool result",
+        ));
     }
     let assistant = &tail[0];
     let result = &tail[1];
@@ -90,7 +96,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         }
         (tool_continuation(&request.history, start)?, vec![])
     } else if start + 1 != request.history.len() {
-        return Err(invalid("unexpected transcript tail"))
+        return Err(invalid("unexpected transcript tail"));
     } else if let Some((key, value)) = fact(&prompt.text) {
         (format!("stored:{key}={value}"), vec![])
     } else if let Some(key) = prompt.text.strip_prefix("recall:") {
@@ -98,14 +104,19 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             return Err(error(ErrorCode::InvalidInput, "empty recall key"));
         }
         let previous = previous_fact(&request.history[..start], key);
-        (match previous {
-            Some((_, value)) => format!("recalled:{key}={value}"),
-            None => format!("absent:{key}"),
-        }, vec![])
+        (
+            match previous {
+                Some((_, value)) => format!("recalled:{key}={value}"),
+                None => format!("absent:{key}"),
+            },
+            vec![],
+        )
     } else if let Some(key) = prompt.text.strip_prefix("verify-assistant:") {
         let (index, value) = previous_fact(&request.history[..start], key)
             .ok_or_else(|| invalid("prior user fact missing"))?;
-        let response = request.history.get(index + 1)
+        let response = request
+            .history
+            .get(index + 1)
             .ok_or_else(|| invalid("prior assistant answer missing"))?;
         if response.role != Role::Assistant
             || response.text != format!("stored:{key}={value}")
@@ -132,12 +143,18 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             .ok_or_else(|| invalid("prior tool result missing"))?;
         (format!("tool-recalled:{text}"), vec![])
     } else {
-        return Err(error(ErrorCode::InvalidInput, "unknown history verification command"));
+        return Err(error(
+            ErrorCode::InvalidInput,
+            "unknown history verification command",
+        ));
     };
 
-    let input_size: usize = request.history.iter().map(|message| message.text.len()).sum();
-    let output_size = text.len()
-        + calls.iter().map(|call| call.arguments.len()).sum::<usize>();
+    let input_size: usize = request
+        .history
+        .iter()
+        .map(|message| message.text.len())
+        .sum();
+    let output_size = text.len() + calls.iter().map(|call| call.arguments.len()).sum::<usize>();
     let usage = Usage {
         input_tokens: u64::try_from(input_size / 4 + 1).unwrap_or(u64::MAX),
         output_tokens: u64::try_from(output_size / 4 + 1).unwrap_or(u64::MAX),
@@ -147,7 +164,10 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         .model_tokens
         .is_some_and(|limit| usage.output_tokens > limit)
     {
-        return Err(error(ErrorCode::TurnLimit, "verification model token limit"));
+        return Err(error(
+            ErrorCode::TurnLimit,
+            "verification model token limit",
+        ));
     }
     Ok(ModelReply { text, calls, usage })
 }
@@ -214,18 +234,29 @@ mod tests {
         assert_eq!(first, "stored:color=violet");
         history.push(message(Role::Assistant, &first));
         history.push(message(Role::User, "recall:color"));
-        assert_eq!(complete(&request(history.clone())).unwrap().text, "recalled:color=violet");
+        assert_eq!(
+            complete(&request(history.clone())).unwrap().text,
+            "recalled:color=violet"
+        );
         history.pop();
         history.push(message(Role::User, "verify-assistant:color"));
-        assert_eq!(complete(&request(history.clone())).unwrap().text, "verified:color=violet");
+        assert_eq!(
+            complete(&request(history.clone())).unwrap().text,
+            "verified:color=violet"
+        );
         history[1].text = "different".into();
-        assert_eq!(complete(&request(history)).unwrap_err().code, ErrorCode::InvalidReply);
+        assert_eq!(
+            complete(&request(history)).unwrap_err().code,
+            ErrorCode::InvalidReply
+        );
     }
 
     #[test]
     fn cannot_recall_from_a_new_session_or_latest_message_alone() {
         assert_eq!(
-            complete(&request(vec![message(Role::User, "recall:color")])).unwrap().text,
+            complete(&request(vec![message(Role::User, "recall:color")]))
+                .unwrap()
+                .text,
             "absent:color"
         );
         let mut absent = request(vec![message(Role::User, "verify-assistant:color")]);
@@ -239,15 +270,27 @@ mod tests {
         let mut history = vec![message(Role::User, "tools:hello")];
         let calls = complete(&request(history.clone())).unwrap().calls;
         assert_eq!(calls.len(), 1);
-        history.push(Message { calls, ..message(Role::Assistant, "") });
+        history.push(Message {
+            calls,
+            ..message(Role::Assistant, "")
+        });
         let mut result = message(Role::Tool, "HELLO");
         result.call_id = "history-tool-1".into();
         history.push(result);
-        assert_eq!(complete(&request(history.clone())).unwrap().text, "tool-result:HELLO");
+        assert_eq!(
+            complete(&request(history.clone())).unwrap().text,
+            "tool-result:HELLO"
+        );
         history.push(message(Role::Assistant, "tool-result:HELLO"));
         history.push(message(Role::User, "recall-tool"));
-        assert_eq!(complete(&request(history.clone())).unwrap().text, "tool-recalled:HELLO");
+        assert_eq!(
+            complete(&request(history.clone())).unwrap().text,
+            "tool-recalled:HELLO"
+        );
         history[2].call_id = "wrong".into();
-        assert_eq!(complete(&request(history)).unwrap_err().code, ErrorCode::InvalidReply);
+        assert_eq!(
+            complete(&request(history)).unwrap_err().code,
+            ErrorCode::InvalidReply
+        );
     }
 }
