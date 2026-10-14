@@ -918,6 +918,9 @@ fn drive_acp_prompt(
     loop {
         // Bound this batch so a busy client cannot starve the graph pump.
         for _ in 0..32 {
+            if input_closed {
+                break;
+            }
             let line = match receiver.try_recv() {
                 Ok(line) => line?,
                 Err(TryRecvError::Empty) => break,
