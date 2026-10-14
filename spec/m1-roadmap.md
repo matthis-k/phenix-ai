@@ -483,6 +483,21 @@ checks four nodes from three independently built plugins. Local workspace tests,
 Clippy and native execution pass with Rust 1.96. Full exact-head shipping CI 38228548634 passed at `672b7f09`. G3 serial semantics are proven; full stage acceptance awaits the G1/G2
 definition-only follow-up; streaming, cancellation and state triggers remain G4.
 
+### G4d bounded synchronous reactive execution
+
+The synchronous `submit_action` helper has no caller cancellation point while
+a hook repeatedly writes its own trigger. Limit this helper to 1,024 pump
+turns. Exceeding that bound cancels the existing root and returns a typed
+`InfrastructureFailure`. The asynchronous `begin_action_scoped` and
+`pump` path remains host-driven and cancellable without this bound. This
+is a turn limit, not a timer or a second scheduling mechanism.
+
+The native graph fixture includes an opt-in self-triggering receipt hook. It
+requires the bounded failure, zero remaining physical leases, and successful
+admission of a new root afterward. Exact-head CI must pass before accepting
+this test. This does not replace G4 pending-hook cancellation and draining
+evidence.
+
 ### G4c same-root hook execution
 
 `GraphExecution` captures the live-state epoch at action admission. When

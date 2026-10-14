@@ -870,6 +870,28 @@ fn main() {
     fs::remove_file(&hook_witness).unwrap();
     fs::remove_file(&receipt_witness).unwrap();
 
+    // The synchronous helper cannot be cancelled from another thread. An
+    // intentionally self-triggering hook must fail with a bounded typed error,
+    // release the original root, and leave later action admission possible.
+    std::env::set_var("PHENIX_GRAPH_SELF_TRIGGER", "1");
+    let cycle = kernel
+        .submit_action(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("g4-cycle".into()))]),
+        )
+        .unwrap_err();
+    assert_eq!(cycle.code, Code::InfrastructureFailure);
+    assert!(cycle.message.contains("reactive wave limit"));
+    std::env::remove_var("PHENIX_GRAPH_SELF_TRIGGER");
+    assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+    let recovered = kernel
+        .submit_action(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("g4-recovered".into()))]),
+        )
+        .unwrap();
+    assert_eq!(recovered.len(), 4);
+
     // A selected watch permission is necessary even for an offline hook.
     let mut denied_watch = policy.clone();
     denied_watch.grants.retain(|grant| {
@@ -959,6 +981,8 @@ fn main() {
             "native-state-hook-one-terminal-event",
             "native-state-hook-committed-second-epoch",
             "native-state-hook-nonrecursive-receipt",
+            "native-state-hook-bounded-sync-self-cycle",
+            "native-state-hook-recovers-fresh-root-after-cycle",
             "native-state-hook-grant-denied-before-load",
             "native-state-hook-receives-only-matching-property",
             "watched-b-commit-projected-before-pending-a-settles",

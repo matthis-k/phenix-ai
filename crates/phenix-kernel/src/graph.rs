@@ -434,6 +434,10 @@ pub enum GraphCompletion<'a> {
     Failure(&'a Failure),
 }
 
+/// Synchronous compatibility calls have no external cancellation opportunity.
+/// Explicit callers can use begin_action_scoped/pump for longer workflows.
+const MAX_SYNC_GRAPH_PUMPS: usize = 1_024;
+
 impl Kernel {
     /// Trusted control-plane action admission. Frontends submit the discovered
     /// action rather than invoking a graph handler directly. Synchronous nodes
@@ -474,9 +478,23 @@ impl Kernel {
         mut observe: impl FnMut(&GraphUpdate<'_>),
     ) -> Result<Vec<GraphStep>, Failure> {
         let mut execution = self.begin_action_inner(action_id, payload, scope, false)?;
-        // A synchronous action can commit state that admits reactive hooks.
-        // Drive every ready wave under its original root before returning.
-        while execution.pump(&mut observe)? != GraphStatus::Finished {}
+        // Unlike the host-driven pump, this synchronous entrypoint cannot
+        // accept cancellation while a hook keeps committing its own trigger.
+        // Bound consecutive pump turns rather than introducing a timeout.
+        let mut finished = false;
+        for _ in 0..MAX_SYNC_GRAPH_PUMPS {
+            if execution.pump(&mut observe)? == GraphStatus::Finished {
+                finished = true;
+                break;
+            }
+        }
+        if !finished {
+            execution.cancel()?;
+            return Err(Failure::new(
+                Code::InfrastructureFailure,
+                "synchronous graph exceeded reactive wave limit; use the host-driven pump",
+            ));
+        }
         if let Some(failure) = execution.failure.take() {
             return Err(failure);
         }

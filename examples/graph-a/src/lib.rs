@@ -69,7 +69,7 @@ mod provider {
         *edit = format!("A:{}", input.text);
         edit.commit(host)
             .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
-        if input.text == "g4-hook" {
+        if input.text == "g4-hook" || input.text == "g4-cycle" {
             let mut signal = state
                 .signal
                 .edit(host)

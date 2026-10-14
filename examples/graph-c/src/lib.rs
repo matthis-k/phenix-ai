@@ -121,6 +121,18 @@ mod provider {
             }
         } else {
             assert_eq!(change.properties, ["example.graph-c/receipt"]);
+            if std::env::var_os("PHENIX_GRAPH_SELF_TRIGGER").is_some() {
+                // A deliberately nonterminating state hook must not trap the
+                // synchronous host entrypoint. Each edit opens a new epoch.
+                let mut receipt = state
+                    .receipt
+                    .edit(host)
+                    .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+                *receipt = result.clone();
+                receipt
+                    .commit(host)
+                    .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+            }
             if let Some(path) = std::env::var_os("PHENIX_GRAPH_RECEIPT_WITNESS") {
                 std::fs::write(path, result.as_bytes()).expect("graph receipt-hook witness");
             }
