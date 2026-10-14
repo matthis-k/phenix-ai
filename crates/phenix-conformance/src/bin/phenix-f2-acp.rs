@@ -78,6 +78,22 @@ fn main() {
     let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
     assert_eq!(prompt.text, "hello");
     assert_eq!(prompt.session, "s1");
+    let resource: Submission = call(
+        &kernel,
+        "decode",
+        ClientInput {
+            session: "s1".into(),
+            line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"resource_link","name":"notes","uri":"file:///tmp/notes.md"}]}}"#.into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let resource_prompt: PromptSubmitted =
+        phenix_basic_contracts::decode(&resource.payload).unwrap();
+    assert_eq!(
+        resource_prompt.text,
+        "Resource link: notes (file:///tmp/notes.md)"
+    );
     let cancel: Submission = call(
         &kernel,
         "decode",
@@ -168,7 +184,7 @@ fn main() {
         output_dir.join("acp-codec.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "format": "phenix.f2.acp-codec.v1",
-            "cases": ["acp-v1-text-prompt", "cancel-notification",
+            "cases": ["acp-v1-text-prompt", "acp-v1-resource-link", "cancel-notification",
                 "session-scope-denial", "unsupported-content-rejection",
                 "session-update-notification", "cancel-no-fake-success"],
             "connection_lifecycle_or_streaming_verified": false
