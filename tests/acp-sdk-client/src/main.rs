@@ -3,7 +3,7 @@
 use agent_client_protocol::schema::{
     v1::{
         ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
-        SessionId, SessionNotification, TextContent,
+        ResourceLink, SessionId, SessionNotification, TextContent,
     },
     ProtocolVersion,
 };
@@ -78,6 +78,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             assert_eq!(format!("{:?}", tool_answer.stop_reason), "EndTurn");
 
+            // ACP v1 requires resource links. The frontend must preserve the
+            // name and URI in the Basic prompt, without opening the resource.
+            eprintln!("SDK interop: resource link prompt");
+            let resource_answer = connection
+                .send_request(PromptRequest::new(
+                    session.session_id.clone(),
+                    vec![
+                        ContentBlock::Text(TextContent::new("reference")),
+                        ContentBlock::ResourceLink(ResourceLink::new(
+                            "notes",
+                            "file:///tmp/phenix-acp-sdk-unreadable.md",
+                        )),
+                    ],
+                ))
+                .block_task()
+                .await?;
+            assert_eq!(format!("{:?}", resource_answer.stop_reason), "EndTurn");
+
             eprintln!("SDK interop: replay same process");
             // Loading the persisted session on the same stdio connection
             // must replay its journal as valid, ordered ACP notifications.
@@ -102,6 +120,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let (turns, replay) = events.split_at(events.len() / 2);
         if turns != replay {
             return Err("in-process session/load replay differs from original updates".into());
+        }
+        if !turns.iter().any(|event| {
+            event.contains("mock:reference")
+                && event.contains("Resource link: notes (file:///tmp/phenix-acp-sdk-unreadable.md)")
+        }) {
+            return Err("official ACP SDK lost the required v1 resource-link content".into());
         }
         turns.to_vec()
     };
