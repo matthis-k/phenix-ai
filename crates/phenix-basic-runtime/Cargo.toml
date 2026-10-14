@@ -12,3 +12,4 @@ phenix-sdk = { path = "../phenix-sdk" }
 serde_json.workspace = true
 agent-client-protocol = { version = "=3.3.0", features = ["stdio", "unstable_protocol_v2"] }
 futures = { version = "0.3", features = ["executor"] }
+blocking = "1"
