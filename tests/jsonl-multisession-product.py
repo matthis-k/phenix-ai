@@ -96,7 +96,9 @@ assert (output / "jsonl-multisession.db").is_file()
         "scoped-output-isolation",
         "independent-observer-checkpoints",
         "process-restart-continuation",
-        "idle-cancel-isolation",\n        "failed-tool-model-continuation",\n        "model-failure-process-restart",
+        "idle-cancel-isolation",
+        "failed-tool-model-continuation",
+        "model-failure-process-restart",
     ],
     "accepted": True,
 }, indent=2, sort_keys=True))
