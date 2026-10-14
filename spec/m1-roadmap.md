@@ -491,6 +491,10 @@ canonical cell snapshots, not a second event queue. Multiple writes to one
 property between calls coalesce to one identity. Failed commits add no change.
 Unwatched fields are excluded. The trusted `GraphExecution` exposes this
 projection without changing the native ABI or introducing a second root.
+The existing `phenix-m1-graph` fixture now marks graph A and B results
+watchable and checks two real native commits across a pending node. Its
+`graph.json` report records the observed before/after epoch cases. The
+exact-head native shipping gate must pass before accepting this slice.
 
 This slice does not schedule hooks. Remaining G4 work must bind each property
 trigger to a statically verified graph event, use the same admitted root and
