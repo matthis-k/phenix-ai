@@ -108,6 +108,10 @@ assert answers(jsonl(prompt("s1", "recall-tool"))) == [
 terminal = run("terminal", "recall:color\n", "s1")
 assert "answer: recalled:color=violet" in terminal, terminal
 assert run("terminal", "", "s1") == "", "terminal replayed acknowledged output"
+# JSONL has an independent observer cursor; it must deliver the Terminal turn
+# once rather than silently skip it or replay it again.
+assert answers(jsonl()) == [("s1", "recalled:color=violet")]
+assert jsonl() == [], "JSONL replayed the other frontend's acknowledged event"
 
 # Direct text, non-ASCII input, multiple turns, updated facts and missing
 # facts must have fixed responses and not leak between sessions.
@@ -211,6 +215,7 @@ assert Path(environment["PHENIX_BASIC_SQLITE_PATH"]).is_file()
         "tool-call-and-result-history",
         "tool-history-after-restart",
         "terminal-reuses-jsonl-session",
+        "independent-observer-delivery",
         "direct-text-and-unicode",
         "interleaved-text-replies",
         "latest-fact-wins",
