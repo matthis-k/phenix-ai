@@ -368,16 +368,20 @@ GraphExecution on its controller thread and durable event journal semantics.
   enqueue typed v1 requests on a bounded queue and receive typed responses
   from exactly one Phenix controller. Cancellation/EOF signals reach the live
   graph root without moving Kernel or GraphExecution into protocol tasks.
-  Implementation branch `impl/m1-r1-acp-sdk-host-v1` creates an opt-in
-  SDK-backed host (`PHENIX_BASIC_USE_ACP_SDK=1`) and exercises it via the
-  independent official client, pending exact-head CI. The old host remains
-  the default strictly during comparison; it MUST be removed before R1-ACP3
-  acceptance. Keep session/resource grants, durable owner markers and
+  #842 establishes the official SDK-backed host, with an independent
+  SDK v1 client pass on its exact head. Follow-up
+  `impl/m1-r1-acp-sdk-cutover` selects that SDK for every ACP startup
+  and deletes the old handwritten `run_acp` / `parse_acp_frame`
+  router. This cutover is **implemented, not accepted**: native ACP
+  negative-product fixtures and exact-head CI still need to pass. Keep session/resource grants, durable owner markers and
   journal offsets Phenix-owned. The SDK lockfile now resolves 200 packages, and SDK `Lines` is fed by the pre-existing bounded stdin reader with a 64-entry backpressured frame channel. Prove the physical frame limit and queue/EOF behavior before switching the default.
-- [ ] **R1-ACP3: delete old ACP protocol code.** Remove
-  `parse_acp_frame`, custom JSON-RPC reply/error framing and the remaining
-  notification envelope encoding after the SDK-backed host consumes the
-  typed frontend updates. The ACP frontend maps typed journal events to
+- [ ] **R1-ACP3: delete old ACP protocol code.** On
+  `impl/m1-r1-acp-sdk-cutover`, the legacy host's `parse_acp_frame`,
+  `drive_acp_prompt`, `run_acp`, JSON-RPC reply/error framing and
+  host-specific parser tests are deleted. Complete the remaining
+  frontend `session/update` envelope removal and confirm all CI/negative
+  fixtures before marking this accepted. The SDK transport must consume
+  typed frontend updates, not another handwritten envelope. The ACP frontend maps typed journal events to
   SDK v1 updates in R1-ACP1; the host must send them through the SDK transport
   instead of writing JSON-RPC lines itself. Replace, never retain, the old
   host as a production fallback. Keep only Phenix policy and backpressure.
