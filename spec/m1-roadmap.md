@@ -489,7 +489,7 @@ State change hooks use the canonical graph declaration's existing `triggers`
 field with a `state:<plugin>/<property>` identity. The compiler resolves each
 property against prepared package metadata, requires `watch = true`, and
 verifies the node owner's existing `property.<name>@1/watch` grant. Hook
-operations accept `{ epoch: U64, property: String }`. They read values
+operations accept `{ epoch: U64, properties: List<String> }`. They read values
 through their selected typed property import, so no untyped cell contents or
 implicit capability are passed in the trigger.
 
