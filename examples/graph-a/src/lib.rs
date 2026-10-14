@@ -44,6 +44,7 @@ mod provider {
     struct State {
         #[get(id = "result")]
         #[set]
+        #[watch]
         result: String,
         input: Option<Start>,
         polls: u64,
