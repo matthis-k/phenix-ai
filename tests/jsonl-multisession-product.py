@@ -68,24 +68,30 @@ assert answers(tool_recovery) == [
 ], answers(tool_recovery)
 assert run([]) == [], "tool-recovery journal was delivered twice"
 
-# A Model domain failure terminates the host's current prompt. Re-admit
-# the same persisted session in a fresh process; it must not be locked or
-# mistaken for an incomplete tool effect.
-failed = subprocess.run(
-    [binary, "jsonl", composition],
-    input=json.dumps(prompt("s2", "model-error")) + "\n",
-    text=True, capture_output=True, env=env, timeout=45,
-)
-assert failed.returncode != 0, (failed.stdout, failed.stderr)
-resumed = run([
-    prompt("s2", "jsonl-after-model-error"),
+# A Model domain error ends one graph, not the JSONL connection. The
+# controller must deliver the durable Failure event, clear its owner marker,
+# and service queued prompts in both the same and another session.
+recovered_live = run([
+    prompt("s2", "model-error"),
     prompt("s1", "jsonl-other-session"),
+    prompt("s2", "jsonl-after-model-error"),
 ])
-assert answers(resumed) == [
-    ("s2", "mock:jsonl-after-model-error"),
+failure_events = [
+    event for event in recovered_live
+    if event["kind"] == "Failure" and event["session"] == "s2"
+]
+assert len(failure_events) == 1, recovered_live
+assert failure_events[0]["text"] == "scripted model failure", failure_events
+assert answers(recovered_live) == [
     ("s1", "mock:jsonl-other-session"),
-], answers(resumed)
-assert run([]) == [], "model-failure recovery replayed acknowledged JSONL events"
+    ("s2", "mock:jsonl-after-model-error"),
+], answers(recovered_live)
+assert run([]) == [], "failed JSONL turn was replayed after acknowledgement"
+restarted = run([prompt("s2", "jsonl-after-process-restart")])
+assert answers(restarted) == [
+    ("s2", "mock:jsonl-after-process-restart"),
+], answers(restarted)
+assert run([]) == [], "restart repeated a previously acknowledged JSONL event"
 
 assert (output / "jsonl-multisession.db").is_file()
 
@@ -99,6 +105,7 @@ assert (output / "jsonl-multisession.db").is_file()
         "idle-cancel-isolation",
         "failed-tool-model-continuation",
         "model-failure-process-restart",
+        "same-process-model-failure-continuation",
     ],
     "accepted": True,
 }, indent=2, sort_keys=True))
