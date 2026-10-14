@@ -157,12 +157,16 @@ pub fn state_change_property(trigger: &str) -> Option<&str> {
         .filter(|key| valid_node_key(key))
 }
 
-/// The hook receives the committed epoch and property identity, then reads
-/// any required values through its already authorized property imports.
+/// The hook receives the committed epoch and its matching property IDs.
+/// Multiple triggers on one node still invoke that node once per epoch.
+/// Values are read through selected, authorized property imports.
 pub fn state_change_schema() -> ValueSchema {
     ValueSchema::Struct(std::collections::BTreeMap::from([
         ("epoch".into(), ValueSchema::U64),
-        ("property".into(), ValueSchema::String),
+        (
+            "properties".into(),
+            ValueSchema::List(Box::new(ValueSchema::String)),
+        ),
     ]))
 }
 
@@ -519,7 +523,10 @@ mod tests {
             state_change_schema(),
             ValueSchema::Struct(std::collections::BTreeMap::from([
                 ("epoch".into(), ValueSchema::U64),
-                ("property".into(), ValueSchema::String),
+                (
+                    "properties".into(),
+                    ValueSchema::List(Box::new(ValueSchema::String)),
+                ),
             ]))
         );
     }
