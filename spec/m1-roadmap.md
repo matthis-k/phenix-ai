@@ -271,7 +271,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 multi-session stdio host, live HTTP progress/cancellation and durable replay are implemented. The independent official SDK client covers prompt/tool turns and two-process `session/load` (#831). #832 through #836 passed canonical conformance, flake matrix, generated DAG and official ACP SDK checks on their exact heads. These slices cover load validation, bounded stdin, JSON-RPC envelopes, invalid prompt parameters and pending-queue isolation. Active `session/cancel` requests are rejected without deferral on `impl/m1-p1-acp-cancel-request-admission`, pending exact-head checks. Active ACP stdin-disconnect cancellation is implementing on `impl/m1-p1-acp-eof-cancellation`; the real HTTP fixture checks prompt cancellation before the upstream model responds, pending exact-head acceptance. R1's full SDK-backed ACP host and codec migration remains. |
-| R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in each plugin and host; select maintained Rust libraries or document narrow exceptions | Thin provider adapters over established protocol, transport, parser, storage and process crates; keep Phenix-specific contracts, graph admission, authority, session and replay rules | [ ] IMPLEMENTING: `rusqlite` SQLite Storage passed #815 exact-head CI; `sse-parse` SSE framing passed #823 exact-head CI. The full plugin-by-plugin crate ownership audit and review gate are tracked in [m1-r1-library-audit.md](m1-r1-library-audit.md), updated on `docs/m1-r1-plugin-crate-ownership`. Remaining migrations are the official ACP SDK stable-v1 host/codec and URL parsing in the HTTP Model. `impl/m1-r1-url-endpoint-parser` introduces pinned `url` 2.5.8 and its generated Cargo.lock, adds strict endpoint parsing tests, and removes handwritten authority extraction. This increases the workspace dependency closure by 27 packages; CI and the cost review are pending. The SDK ACP host/codec replacement is still required before P1 acceptance. |
+| R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in each plugin and host; select maintained Rust libraries or document narrow exceptions | Thin provider adapters over established protocol, transport, parser, storage and process crates; keep Phenix-specific contracts, graph admission, authority, session and replay rules | [ ] IMPLEMENTING: `rusqlite` SQLite Storage passed #815 exact-head CI; `sse-parse` SSE framing passed #823 exact-head CI. The full plugin-by-plugin crate ownership audit and review gate are tracked in [m1-r1-library-audit.md](m1-r1-library-audit.md), updated on `docs/m1-r1-plugin-crate-ownership`. Remaining migrations are the official ACP SDK stable-v1 host/codec and URL parsing in the HTTP Model. `impl/m1-r1-url-endpoint-parser` introduces pinned `url` 2.5.8 and its generated Cargo.lock, adds strict endpoint parsing tests, and removes handwritten authority extraction. This increases the workspace dependency closure by 27 packages; CI and the cost review are pending. ACP migration now has explicit R1-ACP1..R1-ACP4 gates below. R1-ACP1 (typed official schema decode in the ACP Frontend) is implementing on `impl/m1-r1-acp-schema-frontend`, pending exact-head checks. The workspace Cargo.lock grows from 93 to 169 packages with schema 1.11.0; only the ACP feature builds this crate. R1-ACP2 SDK-backed host, R1-ACP3 legacy removal, and R1-ACP4 independent interoperability/negative acceptance are not yet complete. None may be waived by client-side SDK tests. |
 | P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] PARTIAL: Basic agent, live Terminal/JSONL/ACP streams and cancellation, durable sessions and named session selection implemented on #816, #818, #819 and #820. Full shipping CI passed through #819; later exact heads and independent official ACP SDK interop passed once; locked exact-head CI remains under test. Cross-process Session ownership safety is implementing on `impl/m1-p1-session-crossprocess-safety`; cooperative per-session locking is implementing on `impl/m1-p1-session-advisory-ownership`; fenced owner-marked recovery passed canonical, matrix, generated DAG and official ACP SDK checks at #829 head `8c8be98c`; crash-safe two-phase recovery/journal completion is implementing on `impl/m1-p1-recovery-journal-idempotence`; bounded 1 MiB stdio frame admission is implementing on `impl/m1-p1-bounded-stdio-frames` with Rust unit and ACP subprocess negatives; integrated P1 acceptance and remaining R1 ACP codec review stay open. |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
@@ -343,6 +343,52 @@ R1 work, before P1 acceptance:
 
 R1 is a P1 acceptance dependency and a review rule for later work. It is not
 a new runtime layer or a reason to replace proven custom Phenix semantics.
+
+#### R1-ACP: replace the Basic host's custom ACP protocol stack
+
+One production ACP codec/transport is the target, not two implementations
+with matching test results. The official Rust `agent-client-protocol` 3.3.0
+and `agent-client-protocol-schema` 1.11.0 stable-v1 APIs are the selected crates.
+Phenix retains session/resource authorization, per-session ownership,
+GraphExecution on its controller thread and durable event journal semantics.
+
+- [ ] **R1-ACP1: typed frontend protocol payloads.** Replace manual extraction
+  of `session/prompt` and `session/cancel` fields with official v1
+  `PromptRequest`, `ContentBlock` and `CancelNotification`. Keep the ACP
+  dependency feature-gated in the ACP frontend artifact. Preserve domain
+  denials, text joining and unsupported-content refusal. Branch
+  `impl/m1-r1-acp-schema-frontend`; exact-head Cargo, Nix, and ABI checks
+  pending. This is not itself a new host transport.
+- [ ] **R1-ACP2: SDK-backed host on one graph owner.** Replace
+  `run_acp`'s handwritten JSON-RPC reader/router/writer with the SDK's
+  `Agent.builder()` handlers and `Stdio` transport. SDK protocol handlers
+  enqueue typed requests/notifications and receive typed responses on a
+  bounded FIFO. The Phenix controller alone owns scoped Kernel instances,
+  journal offsets, OS session locks, GraphExecution, cancellation and
+  error-domain mapping. Do not await graph work inside an SDK dispatch
+  callback or introduce a second graph controller.
+- [ ] **R1-ACP3: delete old ACP protocol code.** Remove
+  `parse_acp_frame`, custom JSON-RPC reply/error framing and custom
+  `session/update` message encoding after the SDK-backed host and typed
+  frontend output work. Replace, never retain, the old host as a production
+  compatibility fallback. Keep only policy/contract mapping and bounded
+  backpressure in Phenix.
+- [ ] **R1-ACP4: prove parity and release.** Run independent official SDK
+  stable-v1 client tests, two-process `session/load` replay, ordered tool
+  updates, malformed envelopes, unsupported/invalid payloads, bounded input,
+  queue saturation, notification flood, active cancellation, request-id
+  rejection, disconnected client, session denial and crash recovery against
+  the **new SDK host**, not just the legacy host. Resolve supported
+  `ResourceLink` content-block behavior explicitly. Pass canonical
+  conformance, Nix flake matrix, generated DAG and negative ABI/security
+  checks on the exact final head. Then mark R1 and integrated P1 accepted.
+
+The schema module itself adds substantial dependencies: at the current
+implementation lock it expands the Cargo workspace from 93 to 169 packages,
+while the feature-gated dependency compiles only for the ACP adapter. Review
+feature flags and cache cost after R1-ACP2; do not create a second JSON-RPC
+transport to save compile time.
+
 
 ### CI performance and flake-aware planning
 
