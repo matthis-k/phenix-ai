@@ -3,7 +3,7 @@
 name: Minimal kernel flake-aware matrix candidate
 on:
   push:
-    branches: [ci/m1-flake-generic-checks]
+    branches: [main, ci/m1-flake-generic-checks]
   pull_request:
   workflow_dispatch:
 
