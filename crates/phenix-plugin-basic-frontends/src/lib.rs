@@ -211,6 +211,7 @@ mod jsonl {
 
 /// ACP v1 prompt and cancel frames. Initialize and session creation belong
 /// to the connection host; this provider only decodes authorized turn input.
+#[cfg(feature = "acp")]
 pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
     use agent_client_protocol_schema::v1::{CancelNotification, ContentBlock, PromptRequest};
 
