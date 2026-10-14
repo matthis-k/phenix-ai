@@ -1,0 +1,26 @@
+name: Temporary ACP typed boundary compile
+on:
+  push:
+    branches: [impl/m1-r1-acp-single-sdk-host]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Rustfmt and compile typed ACP adapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          for file in crates/phenix-plugin-basic-frontends/src/lib.rs crates/phenix-basic-runtime/src/acp_sdk.rs crates/phenix-basic-runtime/src/main.rs crates/phenix-conformance/src/bin/phenix-f2-acp.rs; do
+            echo "PHENIX_FILE_BEGIN:$file"
+            base64 -w0 "$file" | fold -w 200 | sed 's/^/PHENIX_FILE_LINE:/'
+            echo "PHENIX_FILE_END:$file"
+          done
+          cargo check --locked -p phenix-basic-runtime
+          cargo test --locked -p phenix-plugin-basic-frontends --no-default-features --features acp
