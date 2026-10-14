@@ -83,7 +83,8 @@ fn main() {
         "decode",
         ClientInput {
             session: "s1".into(),
-            line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"resource_link","name":"notes","uri":"file:///tmp/notes.md"}]}}"#.into(),
+            line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"resource_link","name":"notes","uri":"file:///tmp/notes.md"}]}}"#
+                .into(),
         },
     )
     .unwrap()
