@@ -300,8 +300,9 @@ impl crate::resolve::Prepared {
                 &self.operations[&(node.provider.clone(), node.definition.operation.clone())];
             for trigger in &node.definition.triggers {
                 if let Some(property_key) = state_change_property(trigger) {
-                    let (owner, property) =
-                        property_key.split_once('/').expect("validated property trigger");
+                    let (owner, property) = property_key
+                        .split_once('/')
+                        .expect("validated property trigger");
                     let field = self
                         .packages
                         .get(owner)
@@ -1030,11 +1031,9 @@ mod tests {
                 .unwrap(),
             ["alpha/a", "beta/b", "gamma/c"]
         );
-        assert!(
-            graph
-                .state_change_activation_order(&BTreeSet::from(["missing/api/id".into()]))
-                .is_err()
-        );
+        assert!(graph
+            .state_change_activation_order(&BTreeSet::from(["missing/api/id".into()]))
+            .is_err());
         assert!(graph
             .state_change_activation_order(&BTreeSet::from(["skills.api/absent".into()]))
             .unwrap()
