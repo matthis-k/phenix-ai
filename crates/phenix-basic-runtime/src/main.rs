@@ -1000,29 +1000,33 @@ fn drive_acp_prompt(
         if !marked {
             marked = mark_admitted_run(kernel, &execution, session, owner)?;
         }
-        render_new(
-            kernel,
-            Some(&execution),
-            "phenix.basic.frontend-acp",
-            session,
-            after,
-            None,
-            &mut output,
-        )?;
+        if !input_closed {
+            render_new(
+                kernel,
+                Some(&execution),
+                "phenix.basic.frontend-acp",
+                session,
+                after,
+                None,
+                &mut output,
+            )?;
+        }
         if status == GraphStatus::Finished {
             let cancelled = finish_submission(&execution)?;
             drop(execution);
             if cancelled {
                 record_cancelled(kernel, session)?;
-                render_new(
-                    kernel,
-                    None,
-                    "phenix.basic.frontend-acp",
-                    session,
-                    after,
-                    None,
-                    &mut output,
-                )?;
+                if !input_closed {
+                    render_new(
+                        kernel,
+                        None,
+                        "phenix.basic.frontend-acp",
+                        session,
+                        after,
+                        None,
+                        &mut output,
+                    )?;
+                }
             }
             let reason = if cancelled { "cancelled" } else { "end_turn" };
             return Ok((serde_json::json!({"stopReason": reason}), input_closed));
