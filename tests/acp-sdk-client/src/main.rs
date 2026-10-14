@@ -175,8 +175,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if events.len() != original.len() * 3 || events[original.len() * 2..] != original {
         return Err("separate ACP process failed to replay the exact durable journal".into());
     }
-    // A third independent SDK connection verifies that two live ACP
-    // sessions do not share journal events or replay cursors.
+    // A third SDK connection must explicitly load a persisted session
+    // before it may submit new work against that session identity.
+    let disconnected_session = persisted_session
+        .lock()
+        .expect("session identity poisoned")
+        .clone()
+        .ok_or("missing previously persisted ACP session")?;
+    // Two live sessions must also keep independent journal replay cursors.
+
     eprintln!("SDK interop: two isolated sessions");
     let isolated_agent = AcpAgent::from_args([binary])?;
     let isolated_updates = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
@@ -219,6 +226,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 assert_ne!(alpha.session_id, beta.session_id);
                 *saved_ids.lock().expect("isolated ACP IDs poisoned") =
                     Some((alpha.session_id.clone(), beta.session_id.clone()));
+
+                // Even a valid persisted identity must not be admitted on
+                // a new connection before an explicit session/load.
+                let unowned = connection
+                    .send_request(PromptRequest::new(
+                        disconnected_session,
+                        vec![ContentBlock::Text(TextContent::new("must-be-denied"))],
+                    ))
+                    .block_task()
+                    .await;
+                assert!(unowned.is_err(), "unloaded ACP session accepted a prompt");
 
                 for (session, prompt) in [
                     (alpha.session_id.clone(), "sdk-isolated-alpha"),
