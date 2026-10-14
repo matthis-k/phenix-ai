@@ -1,5 +1,5 @@
-# Independent protocol compatibility test. The SDK belongs only to this
-# test crate; it must not become a dependency of the Phenix kernel or host.
+# Independent protocol compatibility test; SDK host and independent SDK client
+# share a protocol library but no Phenix graph or transport implementation.
 name: P1 official ACP SDK interop
 on:
   pull_request:
@@ -33,7 +33,6 @@ jobs:
         timeout-minutes: 3
         env:
           RUST_BACKTRACE: "1"
-          PHENIX_BASIC_USE_ACP_SDK: "1"
         run: |
           set -euo pipefail
           export PHENIX_BASIC_SQLITE_PATH="$RUNNER_TEMP/phenix-p1-official-acp.db"
