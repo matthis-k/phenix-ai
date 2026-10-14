@@ -445,6 +445,17 @@ The prior old-main selective CI took about 5-6 minutes with different coverage;
 do not use it as a full-suite speedup claim. Logs show repeated independent
 Cargo compilation of shared contract, SDK and macro crates.
 
+CI0.1: PR #863 replaces the overlapping PR #845 with GitHub Actions
+concurrency keyed by workflow and PR number. Canonical conformance, flake
+matrix, generated DAG and official ACP SDK interoperability each keep their
+own exact-head run. Only a newer commit to the same PR cancels its previous
+runs; push and manual dispatch runs use independent run IDs. The change does
+not remove Nix checks, weaken product acceptance, or alter cache trust.
+Acceptance requires observed cancellation of superseded PR runs, isolation
+between different PRs, preserved manual runs and full checks on the final
+head. Treat these as CI orchestration tests, not evidence that G4 or P1 is
+accepted.
+
 [The M1 matrix rollout](m1-ci-matrix.md) records the current benchmark and
 shipping gate. [The proposed generic flake-aware design](https://github.com/matthis-k/phenix-flake-ci/pull/17)
 records FC1-FC4, owned by `phenix-flake-ci`. AI-CI1-AI-CI4 are consumer
