@@ -98,13 +98,17 @@ credential-free backend without reducing coverage.
 | Gate | Status |
 | --- | --- |
 | P1 integrated on main, preserved oldmain | ACCEPTED |
-| Safe staged remote workflow policy | Implementing / CI gate pending |
-| Exact-head 4-worker Nix inventory and shipping | Pending remote run |
-| Same-head parity and adverse-evidence negatives | Pending |
-| Cold/warm cache and runtime comparison | Pending |
-| Trusted-only remote credentials and cache policy | Pending final audit |
-| Authority switch and duplicate-workflow retirement | Not started |
+| Safe staged remote workflow policy | PASS: #877 RED, #878 policy and exact-pin checks GREEN on `a8a23ffd`; verify the cache revision via #880/#881 |
+| Exact-head 4-worker Nix inventory and shipping | PASS: [run 38565268482](https://github.com/matthis-k/phenix-ai/actions/runs/38565268482), all four builders and independent final acceptance |
+| Same-head parity and adverse-evidence negatives | PASS for remote exact-head shipping and preexisting adversarial tests; full old/new output digest comparison pending |
+| Cold/warm cache and runtime comparison | PARTIAL: [run 38567971821](https://github.com/matthis-k/phenix-ai/actions/runs/38567971821) missed cache and saved a 3,667,233,232-byte store; [warm-restore trial 38589886013](https://github.com/matthis-k/phenix-ai/actions/runs/38589886013) queued; strict same-head comparison pending |
+| Trusted-only remote credentials and cache policy | PARTIAL: remote caller excludes PR and main; coordinator is sole cache writer; review restore-prefix isolation and OIDC claim restrictions before promotion |
+| Authority switch and duplicate-workflow retirement | BLOCKED until controlled same-head cache, parity, trust and required-check review |
 | First authoritative CI on new main | Not started |
+
+The two benchmark runs [38567944923](https://github.com/matthis-k/phenix-ai/actions/runs/38567944923) and [38567971821](https://github.com/matthis-k/phenix-ai/actions/runs/38567971821) started 13 seconds apart on different SHAs, so neither is a warm comparison. The second run confirmed a cache miss and subsequent save. The next trial may prove cross-head prefix restoration, but does not establish a strict cold-versus-warm same-head result. See `spec/evidence/m1-p1-ci-cache-trial.md` on the benchmark branch.
+
+Tests-first verifier parity: [#880](https://github.com/matthis-k/phenix-ai/pull/880) produced the expected RED at [run 38589461343](https://github.com/matthis-k/phenix-ai/actions/runs/38589461343). Its child [#881](https://github.com/matthis-k/phenix-ai/pull/881) has a passing exact-head generated-workflow verifier at [run 38589595582](https://github.com/matthis-k/phenix-ai/actions/runs/38589595582). Full CI remains necessary before integration.
 
 Update this ledger with real workflow run links and actual metrics. Do not
 mark the cutover accepted based on a passing generator-only test.
