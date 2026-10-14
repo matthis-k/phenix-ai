@@ -42,6 +42,19 @@ jobs:
         timeout-minutes: 2
         run: |
           python tests/acp-sdk-frame-bounds.py "$PWD/result-acp/bin/phenix-basic-acp"
+      - name: Build opt-in SDK v1/v2 router with the existing composition
+        timeout-minutes: 10
+        run: |
+          nix build .#phenix-basic-composition --out-link result-composition
+          cargo build --locked -p phenix-basic-runtime --features acp_v2_preview
+      - name: Verify gated v1/v2 negotiation with independent official SDK clients
+        timeout-minutes: 4
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          cargo run --locked --manifest-path tests/acp-sdk-client/Cargo.toml --release \
+            --bin v2-init-preview -- \
+            "$PWD/target/debug/phenix-basic-runtime" acp "$PWD/result-composition"
       - name: Record SDK dependency resolution
         if: always()
         uses: actions/upload-artifact@v4
