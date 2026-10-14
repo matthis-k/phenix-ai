@@ -188,12 +188,13 @@ try:
     invalid_id = frames.get(timeout=5)
     assert invalid_id is not None and invalid_id.get("id") is None, invalid_id
     assert invalid_id.get("error", {}).get("code") == -32600, invalid_id
-    # An ACP cancel with a request ID must be refused immediately, with
-    # the ID preserved. It must not cancel the graph or take a queue slot.
+    # A cancel sent as a request has no request handler in the official ACP
+    # SDK. Its JSON-RPC method-not-found reply must preserve the ID, arrive
+    # immediately, and leave the active graph untouched.
     send("session/cancel", {"sessionId": session}, 74)
     bad_cancel = frames.get(timeout=2)
     assert bad_cancel is not None and bad_cancel.get("id") == 74, bad_cancel
-    assert bad_cancel.get("error", {}).get("code") == -32600, bad_cancel
+    assert bad_cancel.get("error", {}).get("code") == -32601, bad_cancel
     proc.stdin.write(json.dumps({
         "jsonrpc": "2.0", "id": None, "method": "session/cancel",
         "params": {"sessionId": session},
@@ -202,7 +203,7 @@ try:
     null_cancel = frames.get(timeout=2)
     assert null_cancel is not None and "id" in null_cancel, null_cancel
     assert null_cancel["id"] is None, null_cancel
-    assert null_cancel.get("error", {}).get("code") == -32600, null_cancel
+    assert null_cancel.get("error", {}).get("code") == -32601, null_cancel
     # A flood of unsupported notifications must not occupy the deferred
     # request queue. Queue a real request during the live Model run to prove
     # the queue still has capacity and handles it after cancellation.
@@ -271,6 +272,7 @@ try:
         "wrong_session_cancel_ignored": True,
         "unsupported_notifications_do_not_fill_queue": True,
         "active_cancel_requests_rejected_immediately": True,
+        "cancel_as_request_uses_official_sdk_method_not_found": True,
         "client_eof_cancels_active_graph": True,
         "model_requests": len(requests),
     }, indent=2, sort_keys=True))
