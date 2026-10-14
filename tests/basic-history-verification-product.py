@@ -109,6 +109,93 @@ terminal = run("terminal", "recall:color\n", "s1")
 assert "answer: recalled:color=violet" in terminal, terminal
 assert run("terminal", "", "s1") == "", "terminal replayed acknowledged output"
 
+# Direct text, non-ASCII input, multiple turns, updated facts and missing
+# facts must have fixed responses and not leak between sessions.
+direct = answers(jsonl(
+    prompt("s1", "echo:Grüße"),
+    prompt("s2", "echo:independent"),
+    prompt("s1", "remember:color=indigo"),
+    prompt("s1", "recall:color"),
+    prompt("s2", "recall:unknown"),
+))
+assert direct == [
+    ("s1", "echo:Grüße"),
+    ("s2", "echo:independent"),
+    ("s1", "stored:color=indigo"),
+    ("s1", "recalled:color=indigo"),
+    ("s2", "absent:unknown"),
+], direct
+
+# A tool may fail as a domain result without killing the Basic turn. The
+# second tool must execute, and the model must see both results in order.
+failed_tools = jsonl(prompt("s2", "tools-fail:hello"))
+assert answers(failed_tools) == [
+    ("s2", "tools-recovered:scripted failure|5")
+], failed_tools
+assert [event["kind"] for event in failed_tools if event["kind"] in (
+    "ToolStarted", "ToolFinished"
+)] == ["ToolStarted", "ToolStarted", "ToolFinished", "ToolFinished"], failed_tools
+assert answers(jsonl(prompt("s2", "recall:color"))) == [
+    ("s2", "recalled:color=amber")
+], "a failed tool corrupted the prior session transcript"
+
+
+def failures(events):
+    return [(event["session"], event["text"]) for event in events
+            if event["kind"] == "Failure"]
+
+
+# Failures are scoped to the submitting run. In the same stdin connection,
+# subsequent requests must continue and must produce exactly one answer.
+recover = jsonl(
+    prompt("s1", "model-error"),
+    prompt("s2", "echo:other-session-survived"),
+    prompt("s1", "echo:same-session-recovered"),
+)
+assert failures(recover) == [
+    ("s1", "verification model failure"),
+], recover
+assert answers(recover) == [
+    ("s2", "echo:other-session-survived"),
+    ("s1", "echo:same-session-recovered"),
+], recover
+
+# Each user limit is exercised against the actual Basic graph, not against a
+# direct call to the test model. No denied tool call may execute.
+token_cap = prompt("s1", "echo:limited")
+token_cap["limits"] = {"model_tokens": 0}
+tool_cap = prompt("s1", "tools-fail:hello")
+tool_cap["limits"] = {"tool_calls": 1}
+turn_cap = prompt("s1", "tools:hello")
+turn_cap["limits"] = {"model_turns": 1, "tool_calls": 1}
+limited = jsonl(
+    token_cap,
+    tool_cap,
+    turn_cap,
+    prompt("s1", "echo:after-limits"),
+)
+assert failures(limited) == [
+    ("s1", "verification model token limit"),
+    ("s1", "tool call limit reached"),
+    ("s1", "model turn limit reached"),
+], limited
+assert answers(limited) == [("s1", "echo:after-limits")], limited
+assert len([event for event in limited if event["kind"] == "ToolStarted"]) == 1, limited
+assert len([event for event in limited if event["kind"] == "ToolFinished"]) == 1, limited
+
+# An idle cancellation must not poison a session or duplicate journal output.
+assert jsonl({"type": "cancel", "session": "s1"}) == []
+assert answers(jsonl(prompt("s1", "recall:color"))) == [
+    ("s1", "recalled:color=indigo")
+]
+assert jsonl() == [], "acknowledged JSONL output replayed on process restart"
+invalid = subprocess.run(
+    [binary, "terminal", "--session", "../escape"],
+    input="", text=True, capture_output=True, env=environment, timeout=20,
+)
+assert invalid.returncode != 0, invalid
+assert "answer:" not in invalid.stdout, invalid.stdout
+
 # The original Basic configuration must remain usable on its own. In
 # particular, the verification executable must not replace the default model.
 assert Path(environment["PHENIX_BASIC_SQLITE_PATH"]).is_file()
@@ -125,6 +212,20 @@ assert Path(environment["PHENIX_BASIC_SQLITE_PATH"]).is_file()
         "tool-call-and-result-history",
         "tool-history-after-restart",
         "terminal-reuses-jsonl-session",
+        "direct-text-and-unicode",
+        "interleaved-text-replies",
+        "latest-fact-wins",
+        "missing-fact-is-absent",
+        "two-tools-one-domain-failure",
+        "model-failure-recovery",
+        "per-session-model-error-isolation",
+        "model-token-limit",
+        "tool-call-limit-denies-all",
+        "model-turn-limit-after-tool",
+        "failure-does-not-poison-followup",
+        "idle-cancellation",
+        "observer-checkpoint-no-replay",
+        "invalid-session-resource-refused",
     ],
     "accepted": True,
 }, sort_keys=True, indent=2))
