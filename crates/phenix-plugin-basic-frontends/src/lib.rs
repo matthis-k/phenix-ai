@@ -307,6 +307,19 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
     }
 }
 
+/// The journal stores typed tool completion metadata. Both ACP versions use
+/// the same result, including legacy payload-free successful tool events.
+#[cfg(feature = "acp")]
+fn acp_tool_failed(data: &Blob) -> Result<bool, BasicError> {
+    if data.0.is_empty() {
+        Ok(false)
+    } else {
+        decode::<ToolCompletion>(data)
+            .map(|result| result.failed)
+            .map_err(|_| error(ErrorCode::InvalidReply, "invalid tool completion metadata"))
+    }
+}
+
 /// Serialize only typed ACP v1 SessionNotification payloads across the native
 /// Frontend ABI. The official SDK owns JSON-RPC method/envelope framing.
 #[cfg(feature = "acp")]
@@ -330,16 +343,7 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
                 ToolCall::new(event.call_id, event.text).status(ToolCallStatus::Pending),
             )),
             EventKind::ToolFinished => {
-                // Durable pre-payload entries represented successful work.
-                let failed = if event.data.0.is_empty() {
-                    false
-                } else {
-                    decode::<ToolCompletion>(&event.data)
-                        .map_err(|_| {
-                            error(ErrorCode::InvalidReply, "invalid tool completion metadata")
-                        })?
-                        .failed
-                };
+                let failed = acp_tool_failed(&event.data)?;
                 let status = if failed {
                     ToolCallStatus::Failed
                 } else {
@@ -360,6 +364,54 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
             output.push(
                 serde_json::to_string(&notification)
                     .map_err(|_| error(ErrorCode::InvalidReply, "invalid ACP update payload"))?,
+            );
+        }
+    }
+    Ok(output)
+}
+
+/// Draft-v2 journal projection using the official schema. The v2 host sends
+/// these typed notifications through the SDK, never as handmade JSON-RPC.
+/// Session running/idle transitions belong to the v2 graph controller.
+/// This helper is feature-gated until the v2 native provider is wired.
+#[cfg(feature = "acp_v2")]
+pub fn acp_render_v2(request: RenderRequest) -> Result<Vec<String>, BasicError> {
+    use agent_client_protocol_schema::v2::{
+        ContentChunk, MessageId, SessionId, SessionUpdate, ToolCall, ToolCallStatus,
+        ToolCallUpdate, UpdateSessionNotification,
+    };
+
+    let mut output = Vec::new();
+    for event in request.events {
+        if event.session != request.session {
+            return Err(error(ErrorCode::Denied, "cross-session ACP output"));
+        }
+        let update = match event.kind {
+            EventKind::TextDelta => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                event.text.into(),
+                MessageId::new(event.run),
+            ))),
+            EventKind::ToolStarted => Some(SessionUpdate::ToolCall(
+                ToolCall::new(event.call_id, event.text).status(ToolCallStatus::Pending),
+            )),
+            EventKind::ToolFinished => {
+                let status = if acp_tool_failed(&event.data)? {
+                    ToolCallStatus::Failed
+                } else {
+                    ToolCallStatus::Completed
+                };
+                Some(SessionUpdate::ToolCallUpdate(
+                    ToolCallUpdate::new(event.call_id).status(status),
+                ))
+            }
+            _ => None,
+        };
+        if let Some(update) = update {
+            let notification =
+                UpdateSessionNotification::new(SessionId::new(request.session.clone()), update);
+            output.push(
+                serde_json::to_string(&notification)
+                    .map_err(|_| error(ErrorCode::InvalidReply, "invalid ACP v2 update payload"))?,
             );
         }
     }
@@ -491,6 +543,75 @@ mod tests {
         ] {
             assert_eq!(decode(packet).unwrap_err().code, ErrorCode::InvalidInput);
         }
+    }
+
+    #[cfg(feature = "acp_v2")]
+    #[test]
+    fn draft_v2_renders_typed_journal_updates_without_wire_envelopes() {
+        use agent_client_protocol_schema::v2::UpdateSessionNotification;
+
+        let event = |kind: EventKind, data: Blob, call_id: &str, text: &str| Event {
+            sequence: 1,
+            session: "s1".into(),
+            run: "r1".into(),
+            kind,
+            call_id: call_id.into(),
+            text: text.into(),
+            data,
+        };
+        let request = RenderRequest {
+            session: "s1".into(),
+            events: vec![
+                event(EventKind::TextDelta, Blob(vec![]), "", "part"),
+                event(EventKind::ToolStarted, Blob(vec![]), "call-1", "read"),
+                event(
+                    EventKind::ToolFinished,
+                    encode(&ToolCompletion { failed: true }).unwrap(),
+                    "call-1",
+                    "failed",
+                ),
+            ],
+        };
+        let updates = acp_render_v2(request).unwrap();
+        assert_eq!(updates.len(), 3);
+        let values: Vec<serde_json::Value> = updates
+            .iter()
+            .map(|line| {
+                let notification: UpdateSessionNotification =
+                    serde_json::from_str(line).unwrap();
+                assert_eq!(notification.session_id.to_string(), "s1");
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                assert!(value.get("jsonrpc").is_none());
+                assert!(value.get("method").is_none());
+                value
+            })
+            .collect();
+        assert_eq!(values[0]["update"]["sessionUpdate"], "agent_message_chunk");
+        assert_eq!(values[1]["update"]["sessionUpdate"], "tool_call");
+        assert_eq!(values[2]["update"]["sessionUpdate"], "tool_call_update");
+        assert_eq!(values[2]["update"]["status"], "failed");
+
+        let cross_session = RenderRequest {
+            session: "s1".into(),
+            events: vec![event(EventKind::TextDelta, Blob(vec![]), "", "forged")],
+        };
+        let mut denied = cross_session;
+        denied.events[0].session = "s2".into();
+        assert_eq!(acp_render_v2(denied).unwrap_err().code, ErrorCode::Denied);
+        assert_eq!(
+            acp_render_v2(RenderRequest {
+                session: "s1".into(),
+                events: vec![event(
+                    EventKind::ToolFinished,
+                    Blob(vec![0xff]),
+                    "call-2",
+                    "corrupt",
+                )],
+            })
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidReply,
+        );
     }
 
     #[cfg(feature = "acp_v2")]
