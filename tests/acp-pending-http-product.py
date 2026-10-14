@@ -204,12 +204,13 @@ try:
     assert null_cancel is not None and "id" in null_cancel, null_cancel
     assert null_cancel["id"] is None, null_cancel
     assert null_cancel.get("error", {}).get("code") == -32601, null_cancel
-    # A flood of unsupported notifications must not occupy the deferred
-    # request queue. Queue a real request during the live Model run to prove
-    # the queue still has capacity and handles it after cancellation.
+    # Unsupported notifications must not occupy the controller request queue.
+    # Queue a valid session/new while the Model graph is running: the SDK
+    # rejects unknown *methods* immediately, so those cannot test deferred
+    # controller admission or the bounded FIFO.
     for _ in range(80):
         send("session/new", {"cwd": "/tmp", "mcpServers": []})
-    send("unavailable/method", {}, 73)
+    send("session/new", {"cwd": "/tmp", "mcpServers": []}, 73)
     # A notification for another session cannot cancel this prompt.
     send("session/cancel", {"sessionId": "unrelated-session"})
     try:
@@ -220,9 +221,8 @@ try:
     send("session/cancel", {"sessionId": session})
     cancelled = until(lambda x: x.get("id") == 3, "cancelled prompt response")
     assert cancelled["result"]["stopReason"] == "cancelled", cancelled
-    deferred_reply = frames.get(timeout=5)
-    assert deferred_reply is not None and deferred_reply.get("id") == 73, deferred_reply
-    assert deferred_reply.get("error", {}).get("code") == -32601, deferred_reply
+    deferred_reply = until(lambda x: x.get("id") == 73, "deferred session/new")
+    assert isinstance(deferred_reply.get("result", {}).get("sessionId"), str), deferred_reply
 
     send("session/prompt", {
         "sessionId": session, "prompt": [{"type": "text", "text": "after cancel"}],
