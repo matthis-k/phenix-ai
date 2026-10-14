@@ -147,22 +147,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .count();
         let completed = turns
             .iter()
-            .filter(|event| {
-                event.contains("ToolCallUpdate(") && event.contains("Completed")
-            })
+            .filter(|event| event.contains("ToolCallUpdate(") && event.contains("Completed"))
             .count();
         let failed = turns
             .iter()
-            .filter(|event| {
-                event.contains("ToolCallUpdate(") && event.contains("Failed")
-            })
+            .filter(|event| event.contains("ToolCallUpdate(") && event.contains("Failed"))
             .count();
         if (started, completed, failed) != (4, 3, 1) {
             return Err("ACP SDK lost successful or failed tool status updates".into());
         }
-        if !turns.iter().any(|event| {
-            event.contains("mock:call-1:error:scripted failure|call-2:5")
-        }) {
+        if !turns
+            .iter()
+            .any(|event| event.contains("mock:call-1:error:scripted failure|call-2:5"))
+        {
             return Err("Basic agent failed to recover after a tool error".into());
         }
         turns.to_vec()
