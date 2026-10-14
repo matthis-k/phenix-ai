@@ -224,6 +224,12 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         request::endpoint_url("https://example.org/@scope?mention=@alice").unwrap(),
         "https://example.org/@scope?mention=@alice"
     );
+    // The standard parser strips empty userinfo. Libcurl receives only the
+    // normalized, credential-free endpoint, not the original input string.
+    assert_eq!(
+        request::endpoint_url("http://@localhost/completions").unwrap(),
+        "http://localhost/completions"
+    );
     for bad in [
         "",
         "example.com/completions",
@@ -231,7 +237,6 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         "ftp://localhost/file",
         "http://",
         "http://user@localhost/completions",
-        "http://@localhost/completions",
         "http://%40@localhost/completions",
         "https://user:password@localhost/completions",
         "https://localhost/completions#fragment",
