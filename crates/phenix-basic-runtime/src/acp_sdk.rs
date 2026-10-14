@@ -74,9 +74,8 @@ fn invalid(message: &str) -> acp::Error {
     acp::Error::invalid_params().data(message)
 }
 
-/// Render via the selected Phenix Frontend, then hand typed notifications to
-/// the SDK. R1-ACP3 will make the Frontend output contract typed so this
-/// transitional JSON serialization round-trip disappears.
+/// The native Frontend returns serialized, typed v1 SessionNotification
+/// payloads, not JSON-RPC frames. Only the SDK writes protocol envelopes.
 fn send_updates(
     kernel: &Kernel,
     graph: Option<&GraphExecution<'_>>,
@@ -96,9 +95,7 @@ fn send_updates(
     )
     .map_err(internal)?;
     for line in String::from_utf8(encoded).map_err(internal)?.lines() {
-        let frame: serde_json::Value = serde_json::from_str(line).map_err(internal)?;
-        let notification: SessionNotification =
-            serde_json::from_value(frame["params"].clone()).map_err(internal)?;
+        let notification: SessionNotification = serde_json::from_str(line).map_err(internal)?;
         peer.send_notification(notification)?;
     }
     Ok(())
