@@ -214,44 +214,28 @@ mod jsonl {
 /// ACP v1 prompt and cancel frames. Initialize and session creation belong
 /// to the connection host; this provider only decodes authorized turn input.
 #[cfg(feature = "acp")]
-pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
-    use agent_client_protocol_schema::v1::{CancelNotification, ContentBlock, PromptRequest};
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AcpInput {
+    // Internal, tagged SDK-to-plugin payloads. No JSON-RPC frames.
+    Prompt(agent_client_protocol_schema::v1::PromptRequest),
+    Cancel(agent_client_protocol_schema::v1::CancelNotification),
+}
 
-    let frame: serde_json::Value = serde_json::from_str(&request.line)
-        .map_err(|_| error(ErrorCode::InvalidInput, "malformed ACP JSON-RPC frame"))?;
-    if frame.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
-        return Err(error(ErrorCode::InvalidInput, "invalid JSON-RPC version"));
-    }
-    let method = frame
-        .get("method")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| error(ErrorCode::InvalidInput, "missing ACP method"))?;
-    match method {
-        "session/cancel" => {
-            if frame.get("id").is_some() {
-                return Err(error(
-                    ErrorCode::InvalidInput,
-                    "ACP cancel must be a notification",
-                ));
-            }
-            let cancel: CancelNotification =
-                serde_json::from_value(frame.get("params").cloned().unwrap_or_default())
-                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid ACP cancel parameters"))?;
+#[cfg(feature = "acp")]
+pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
+    use agent_client_protocol_schema::v1::ContentBlock;
+
+    let packet: AcpInput = serde_json::from_str(&request.line)
+        .map_err(|_| error(ErrorCode::InvalidInput, "invalid typed ACP input"))?;
+    match packet {
+        AcpInput::Cancel(cancel) => {
             if cancel.session_id.to_string() != request.session {
                 return Err(error(ErrorCode::Denied, "ACP session mismatch"));
             }
             Ok(cancellation())
         }
-        "session/prompt" => {
-            if frame.get("id").is_none() {
-                return Err(error(
-                    ErrorCode::InvalidInput,
-                    "ACP prompt requires request ID",
-                ));
-            }
-            let incoming: PromptRequest =
-                serde_json::from_value(frame.get("params").cloned().unwrap_or_default())
-                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid ACP prompt parameters"))?;
+        AcpInput::Prompt(incoming) => {
             if incoming.session_id.to_string() != request.session {
                 return Err(error(ErrorCode::Denied, "ACP session mismatch"));
             }
@@ -259,20 +243,14 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
             for block in incoming.prompt {
                 match block {
                     ContentBlock::Text(text) => texts.push(text.text),
-                    _ => {
-                        return Err(error(
-                            ErrorCode::InvalidInput,
-                            "unsupported ACP content block",
-                        ))
-                    }
+                    _ => return Err(error(
+                        ErrorCode::InvalidInput,
+                        "unsupported ACP content block",
+                    )),
                 }
             }
             prompt(request.session, texts.join("\n"), Limits::default())
         }
-        _ => Err(error(
-            ErrorCode::InvalidInput,
-            "unsupported ACP turn method",
-        )),
     }
 }
 
