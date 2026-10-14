@@ -64,9 +64,11 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('branches: [main,' in dag, 'generated DAG main gate removed prematurely')
     require('P1 official ACP SDK interop' in acp and 'branches: [main]' in acp,
             'independent ACP SDK main check removed')
-
-    # The verifier must check the *same* upstream revision that executes builds.
-    verify_refs = re.findall(r'(?m)^          ref: ([0-9a-f]{40})
+    verify_refs = re.findall(r'(?m)^          ref: ([0-9a-f]{40})$', verifier)
+    require(verify_refs == [EXPECTED_SOURCE_PIN],
+            'verifier checkout does not match generated remote backend pin')
+    require('      - ci/m1-p1-cache-benchmark' in verifier,
+            'cache benchmark branch bypasses the verifier')
 
 
 def files():
@@ -98,7 +100,7 @@ def self_test():
     good[9] = good[9].replace('          ref: 25da62028d5d72d2e5ae3aca9d1571c425eb0d09',
                                '          ref: ' + EXPECTED_SOURCE_PIN)
     good[9] = good[9].replace('      - ci/m1-p1-ci-cutover',
-                               '      - ci/m1-p1-ci-cutover\\n      - ci/m1-p1-cache-benchmark')
+                               '      - ci/m1-p1-ci-cutover\n      - ci/m1-p1-cache-benchmark')
     verify(*good)
     mutations = [
         (0, '      - "' + REMOTE_BRANCH + '"', '      - "main"'),
@@ -112,68 +114,6 @@ def self_test():
              '          ref: ' + 'f' * 40),
         (9, '      - ci/m1-p1-cache-benchmark',
              '      - ci/unknown-benchmark'),
-    ]
-    for index, before, after in mutations:
-        sample = good.copy()
-        require(before in sample[index], 'invalid test fixture: ' + before)
-        sample[index] = sample[index].replace(before, after)
-        try:
-            verify(*sample)
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError('forged CI policy was admitted: ' + before)
-
-
-if __name__ == '__main__':
-    if sys.argv[1:] == ['--self-test']:
-        self_test()
-    elif not sys.argv[1:]:
-        verify(*files())
-        print('Staged P1 CI remote-builder trigger and release policy passed')
-    else:
-        raise SystemExit('usage: ci-cutover-policy.py [--self-test]')
-, verifier)
-    require(verify_refs == [EXPECTED_SOURCE_PIN],
-            'verifier checkout does not match generated remote backend pin')
-    require('      - ci/m1-p1-cache-benchmark' in verifier,
-            'cache benchmark branch bypasses the verifier')
-
-
-def files():
-    def read(path):
-        return (ROOT / path).read_text()
-    return [
-        read('.github/workflows/phenix-flake-ci-generated.yml'),
-        read('ci/render-flake-workflow.nix'),
-        read('ci/flake-backend.nix'),
-        read('ci/flake-check-config.nix'),
-        read('flake.nix'),
-        read('.github/workflows/minimal-kernel.yml'),
-        read('.github/workflows/minimal-kernel-flake.yml'),
-        read('.github/workflows/minimal-kernel-dag.yml'),
-        read('.github/workflows/p1-acp-sdk-interop.yml'),
-    ]
-
-
-def self_test():
-    originals = files()
-    # Synthetic valid policy is permitted only for testing this validator;
-    # the real repository policy is checked by verify(*files()) separately.
-    good = originals.copy()
-    good[0] = good[0].replace('      - "' + OLD_BENCHMARK_BRANCH + '"',
-                              '      - "' + OLD_BENCHMARK_BRANCH + '"\n      - "' + REMOTE_BRANCH + '"')
-    good[2] = good[2].replace('credentials = "oidc";',
-                              'credentials = "oidc";\n    workers = 4;\n    slotsPerWorker = 2;')
-    verify(*good)
-    mutations = [
-        (0, '      - "' + REMOTE_BRANCH + '"', '      - "main"'),
-        (0, 'on:\n  push:', 'on:\n  pull_request:\n  push:'),
-        (0, '      worker_count: 4', '      worker_count: 8'),
-        (0, 'library_ref: "' + EXPECTED_SOURCE_PIN + '"',
-             'library_ref: "' + 'f' * 40 + '"'),
-        (2, 'workers = 4;', 'workers = 8;'),
-        (4, 'p1-release-preflight', 'not-an-actual-release-check'),
     ]
     for index, before, after in mutations:
         sample = good.copy()
