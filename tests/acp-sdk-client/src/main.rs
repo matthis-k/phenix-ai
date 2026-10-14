@@ -172,9 +172,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     let events = updates.lock().expect("ACP event list poisoned");
-    if events.len() != original.len() * 3
-        || events[original.len() * 2..] != original
-    {
+    if events.len() != original.len() * 3 || events[original.len() * 2..] != original {
         return Err("separate ACP process failed to replay the exact durable journal".into());
     }
     println!("official-acp-sdk-v1: exact replay after load and process restart");
