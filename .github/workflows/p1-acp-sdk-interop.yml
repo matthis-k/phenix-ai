@@ -2,6 +2,8 @@
 # test crate; it must not become a dependency of the Phenix kernel or host.
 name: P1 official ACP SDK interop
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "crates/phenix-basic-runtime/**"
