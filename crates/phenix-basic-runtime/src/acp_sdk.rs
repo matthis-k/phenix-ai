@@ -59,10 +59,7 @@ fn submit(sender: &SyncSender<Command>, cmd: Command) -> acp::Result<()> {
 
 /// A cancellation targets the earliest admitted prompt for the session, even
 /// before the controller starts its root. Unrelated sessions are unaffected.
-fn signal_cancel(
-    pending: &PendingPrompts,
-    session: &str,
-) -> acp::Result<()> {
+fn signal_cancel(pending: &PendingPrompts, session: &str) -> acp::Result<()> {
     let queued = pending.lock().map_err(internal)?;
     if let Some((_, flag)) = queued.iter().find(|(owner, _)| owner == session) {
         flag.store(true, Ordering::Release);
@@ -395,8 +392,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
     // the race between queued requests and the first graph pump.
-    let queued: Arc<PendingPrompts> =
-        Arc::new(Mutex::new(VecDeque::new()));
+    let queued: Arc<PendingPrompts> = Arc::new(Mutex::new(VecDeque::new()));
     let controller = Controller::start(
         composition.clone(),
         Arc::clone(&queued),
