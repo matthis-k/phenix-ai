@@ -22,12 +22,12 @@ def events(source):
 
 def immutable_pin(source, filename):
     match = re.search(
-        r"uses: matthis-k/phenix-flake-ci/\\.github/workflows/"
+        r"uses: matthis-k/phenix-flake-ci/\.github/workflows/"
         + re.escape(filename) + r"@([0-9a-f]{40})", source,
     )
     assert match, "Missing pinned reusable workflow: " + filename
     sha = match.group(1)
-    assert re.search(r"library_ref:\\s*[\"']?" + sha + r"\\b", source), (
+    assert re.search(r"library_ref:\s*[\"']?" + sha + r"\b", source), (
         "Reusable code pin and workflow pin differ: " + filename
     )
     return sha
@@ -46,7 +46,7 @@ def verify():
     for name, text in [("legacy canonical", legacy), ("old matrix", matrix)]:
         event = events(text)
         assert "pull_request:" not in event, name + " still runs full PR builds"
-        assert not re.search(r"(?m)^\\s+[- ]+main\\b", event), (
+        assert not re.search(r"(?m)^\s+[- ]+main\b", event), (
             name + " still runs full builds on main"
         )
         assert "workflow_dispatch:" in event, name + " has no manual fallback"
@@ -60,7 +60,7 @@ def verify():
     assert "cargo fmt --manifest-path examples/Cargo.toml --all --check" in dag, (
         "external SDK/example formatting was lost"
     )
-    assert re.search(r"(?m)^  quality:\\s*$", dag), "fast quality job missing"
+    assert re.search(r"(?m)^  quality:\s*$", dag), "fast quality job missing"
     assert "github.event_name == 'pull_request'" in dag, (
         "DAG must not run expensive checks on trusted main pushes"
     )
