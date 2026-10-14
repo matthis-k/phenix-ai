@@ -8,17 +8,6 @@ on:
       - ci/m1-p1-ci-cutover
       - ci/m1-p1-cache-benchmark
   pull_request:
-    paths:
-      - ci/flake-backend.nix
-      - tests/ci-cutover-policy.py
-      - tests/ci-remote-cache-comparison.py
-      - tests/ci-authority-policy.py
-      - .github/workflows/p1-rustfmt.yml
-      - .github/workflows/remote-cold-warm-benchmark.yml
-      - ci/flake-check-config.nix
-      - ci/render-flake-workflow.nix
-      - .github/workflows/phenix-flake-ci-generated.yml
-      - .github/workflows/verify-generated-flake-ci.yml
 
 permissions:
   contents: read
