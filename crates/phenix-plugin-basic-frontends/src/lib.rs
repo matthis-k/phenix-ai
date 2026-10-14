@@ -243,6 +243,12 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
             for block in incoming.prompt {
                 match block {
                     ContentBlock::Text(text) => texts.push(text.text),
+                    ContentBlock::ResourceLink(link) => {
+                        // ACP v1 requires resource links. Basic carries the
+                        // reference to the model as text; the frontend never
+                        // dereferences a URI or grants filesystem authority.
+                        texts.push(format!("Resource link: {} ({})", link.name, link.uri));
+                    }
                     _ => {
                         return Err(error(
                             ErrorCode::InvalidInput,
@@ -388,6 +394,27 @@ mod tests {
         let payload: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
+
+        let resource = decode(serde_json::json!({
+            "prompt": {
+                "sessionId": "s1",
+                "prompt": [
+                    {"type": "text", "text": "read this reference"},
+                    {
+                        "type": "resource_link",
+                        "name": "design notes",
+                        "uri": "file:///tmp/design.md"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+        let resource_payload: PromptSubmitted =
+            phenix_basic_contracts::decode(&resource.payload).unwrap();
+        assert_eq!(
+            resource_payload.text,
+            "read this reference\nResource link: design notes (file:///tmp/design.md)"
+        );
 
         assert!(
             decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
