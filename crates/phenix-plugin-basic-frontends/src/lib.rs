@@ -275,28 +275,28 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
 }
 
 /// Each output line is a protocol notification, never a terminal transcript.
+#[cfg(feature = "acp")]
 pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
+    use agent_client_protocol_schema::v1::{
+        ContentBlock, ContentChunk, MessageId, SessionNotification, SessionUpdate, TextContent,
+        ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    };
+
     let mut output = Vec::new();
     for event in request.events {
         if event.session != request.session {
             return Err(error(ErrorCode::Denied, "cross-session ACP output"));
         }
         let update = match event.kind {
-            EventKind::TextDelta => Some(serde_json::json!({
-                "sessionUpdate": "agent_message_chunk",
-                "messageId": event.run,
-                "content": {"type": "text", "text": event.text}
-            })),
-            EventKind::ToolStarted => Some(serde_json::json!({
-                "sessionUpdate": "tool_call",
-                "toolCallId": event.call_id,
-                "title": event.text,
-                "kind": "other",
-                "status": "pending"
-            })),
+            EventKind::TextDelta => Some(SessionUpdate::AgentMessageChunk(
+                ContentChunk::new(ContentBlock::Text(TextContent::new(event.text)))
+                    .message_id(MessageId::new(event.run)),
+            )),
+            EventKind::ToolStarted => Some(SessionUpdate::ToolCall(
+                ToolCall::new(event.call_id, event.text).status(ToolCallStatus::Pending),
+            )),
             EventKind::ToolFinished => {
-                // Old journal entries had no payload and represented success.
-                // All new entries carry a Portable-encoded ToolCompletion.
+                // Durable pre-payload entries represented successful work.
                 let failed = if event.data.0.is_empty() {
                     false
                 } else {
@@ -306,21 +306,30 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
                         })?
                         .failed
                 };
-                Some(serde_json::json!({
-                    "sessionUpdate": "tool_call_update",
-                    "toolCallId": event.call_id,
-                    "status": if failed { "failed" } else { "completed" },
-                    "content": [{"type": "content", "content": {"type": "text", "text": event.text}}]
-                }))
+                let status = if failed {
+                    ToolCallStatus::Failed
+                } else {
+                    ToolCallStatus::Completed
+                };
+                let fields = ToolCallUpdateFields::new()
+                    .status(status)
+                    .content(vec![ToolCallContent::from(ContentBlock::Text(
+                        TextContent::new(event.text),
+                    ))]);
+                Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                    event.call_id,
+                    fields,
+                )))
             }
             _ => None,
         };
         if let Some(update) = update {
+            let notification = SessionNotification::new(request.session.clone(), update);
             output.push(
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "method": "session/update",
-                    "params": {"sessionId": request.session, "update": update}
+                    "params": notification,
                 })
                 .to_string(),
             );
@@ -502,6 +511,7 @@ mod tests {
         assert_eq!(lines, vec!["cancelled"]);
     }
 
+    #[cfg(feature = "acp")]
     #[test]
     fn acp_reports_typed_tool_outcomes_and_rejects_corrupt_metadata() {
         let render = |data: Blob| {
