@@ -311,11 +311,9 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
                 } else {
                     ToolCallStatus::Completed
                 };
-                let fields = ToolCallUpdateFields::new()
-                    .status(status)
-                    .content(vec![ToolCallContent::from(ContentBlock::Text(
-                        TextContent::new(event.text),
-                    ))]);
+                let fields = ToolCallUpdateFields::new().status(status).content(vec![
+                    ToolCallContent::from(ContentBlock::Text(TextContent::new(event.text))),
+                ]);
                 Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                     event.call_id,
                     fields,
@@ -415,13 +413,15 @@ mod tests {
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
-        assert!(decode(serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session/cancel",
-            "params": {"sessionId": "s1"}
-        }))
-        .unwrap()
-        .cancel);
+        assert!(
+            decode(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "session/cancel",
+                "params": {"sessionId": "s1"}
+            }))
+            .unwrap()
+            .cancel
+        );
         let refused = decode(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 4,
