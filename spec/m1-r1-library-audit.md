@@ -109,7 +109,7 @@ not optional advice for new plugins.
 | #822 and #831 | Official ACP SDK is used as an **independent client test**, not as the host codec. | Keep the external SDK tests; their success is compatibility evidence, not proof that the server is SDK-backed. |
 | #815 | Direct SQLite FFI was replaced with `rusqlite`. | Accepted library reuse. Preserve single Storage provider for Session, Memory and EventJournal; do not fork a second SQLite implementation. |
 | #823 | SSE framing was replaced by `sse-parse`; JSON delta and ToolCall checks remain the Model provider's typed contract. | Accepted framing reuse. Future HTTP variants should use this transport/parser or a maintained provider-specific model SDK rather than new SSE decoders. |
-| `phenix-plugin-model-http::request::Config` | Handwritten endpoint authority detection duplicates URL parsing. | Migrate to `url` in the follow-up implementation, with one canonical parsed URL handed to libcurl. Confirm new transitive dependency cost and Nix lockfile before acceptance. |
+| `phenix-plugin-model-http::request::Config` | Handwritten endpoint authority detection duplicates URL parsing. | Migrate to `url` in #840's implementation branch, with one canonical parsed URL handed to libcurl. The exact `Cargo.lock` was resolved by a temporary GitHub Actions job and adds 27 registry packages. The temporary job has been removed. Native compile, integration and full Nix acceptance remain unverified until exact-head CI. |
 
 The `url` 2.5.8 option adds 27 packages to the current 66-package
 Cargo.lock, mainly to support IDNA through ICU4X. That is a meaningful

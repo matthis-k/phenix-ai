@@ -9,21 +9,33 @@ pub(crate) struct Config {
     pub credential: Option<String>,
     pub ca_file: Option<String>,
 }
+// Normalize with the same parsed URL that libcurl receives. This avoids
+// accepting an authority under one parser and connecting to another host.
+pub(crate) fn endpoint_url(input: &str) -> Result<String, BasicError> {
+    let malformed = || error(ErrorCode::InvalidInput, "invalid HTTP model configuration");
+    if input != input.trim() || input.chars().any(char::is_control) || input.contains('#') {
+        return Err(malformed());
+    }
+    let parsed = url::Url::parse(input).map_err(|_| malformed())?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.has_host()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(malformed());
+    }
+    Ok(parsed.to_string())
+}
+
 impl Config {
     pub fn load() -> Result<Self, BasicError> {
         let endpoint = env::var("PHENIX_MODEL_HTTP_ENDPOINT")
             .map_err(|_| failed("HTTP model endpoint is not configured"))?;
         let model = env::var("PHENIX_MODEL_HTTP_MODEL")
             .map_err(|_| failed("HTTP model identity is not configured"))?;
-        let authority = endpoint
-            .split_once("://")
-            .map(|(_, rest)| rest.split('/').next().unwrap_or(""));
-        if !(endpoint.starts_with("http://") || endpoint.starts_with("https://"))
-            || endpoint.chars().any(char::is_control)
-            || endpoint.contains('#')
-            || authority.is_none_or(|a| a.is_empty() || a.contains('@'))
-            || model.is_empty()
-        {
+        let endpoint = endpoint_url(&endpoint)?;
+        if model.is_empty() {
             return Err(error(
                 ErrorCode::InvalidInput,
                 "invalid HTTP model configuration",

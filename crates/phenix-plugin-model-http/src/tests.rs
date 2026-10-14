@@ -209,3 +209,34 @@ fn unmatched_tool_history_and_zero_limits_reject_before_transport() {
         ErrorCode::InvalidInput
     );
 }
+
+#[test]
+fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
+    assert_eq!(
+        request::endpoint_url("https://[::1]:9443/completions?stream=1").unwrap(),
+        "https://[::1]:9443/completions?stream=1"
+    );
+    assert_eq!(
+        request::endpoint_url("http://localhost:8800").unwrap(),
+        "http://localhost:8800/"
+    );
+    for bad in [
+        "",
+        "example.com/completions",
+        "file:///etc/passwd",
+        "ftp://localhost/file",
+        "http://",
+        "http://user@localhost/completions",
+        "https://user:password@localhost/completions",
+        "https://localhost/completions#fragment",
+        "http://localhost:70000/completions",
+        "https://localhost/\ncompletions",
+        "http://localhost/?q=1\r\n",
+    ] {
+        assert_eq!(
+            request::endpoint_url(bad).unwrap_err().code,
+            ErrorCode::InvalidInput,
+            "unexpected endpoint acceptance: {bad:?}"
+        );
+    }
+}
