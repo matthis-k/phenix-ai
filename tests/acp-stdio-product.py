@@ -104,7 +104,9 @@ first.stdin.write(json.dumps({
 first.stdin.flush()
 invalid_version = json.loads(first.stdout.readline())
 assert invalid_version["id"] == 92, invalid_version
-assert invalid_version["error"]["code"] == -32602, invalid_version
+# The SDK rejects pre-release v0 during protocol compatibility admission,
+# before the Phenix InitializeRequest handler can return invalid params.
+assert invalid_version["error"]["code"] == -32600, invalid_version
 
 # A notification cannot initialize the connection or admit a new session.
 first.stdin.write(json.dumps({
