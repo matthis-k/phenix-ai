@@ -11,7 +11,7 @@ def require(ok, message):
         raise AssertionError(message)
 
 
-def verify(remote, canonical, matrix, dag, fmt, acp):
+def verify(remote, canonical, matrix, dag, fmt, acp, verifier):
     # Only trusted main pushes and explicit trusted dispatch get remote OIDC.
     require('      - "main"' in remote, "trusted main push lacks complete remote CI")
     require("  pull_request:" not in remote, "remote OIDC granted to PRs")
@@ -51,6 +51,12 @@ def verify(remote, canonical, matrix, dag, fmt, acp):
             "format gate omits Rust workspace or external fixtures")
     require("P1 official ACP SDK interop" in acp and "branches: [main]" in acp and
             "  pull_request:" in acp, "independent official ACP SDK gate removed")
+    # Required statuses cannot depend on the PR's changed paths.
+    require("    paths:" not in acp and "    paths-ignore:" not in acp,
+            "independent ACP SDK required check is path-filtered")
+    require("  pull_request:" in verifier and "    paths:" not in verifier
+            and "    paths-ignore:" not in verifier,
+            "generated policy required check is absent on unrelated PRs")
 
 
 def files():
@@ -59,7 +65,8 @@ def files():
     return [get(name) for name in (
         "phenix-flake-ci-generated.yml", "minimal-kernel.yml",
         "minimal-kernel-flake.yml", "minimal-kernel-dag.yml",
-        "p1-rustfmt.yml", "p1-acp-sdk-interop.yml")]
+        "p1-rustfmt.yml", "p1-acp-sdk-interop.yml",
+        "verify-generated-flake-ci.yml")]
 
 
 def self_test():
@@ -74,6 +81,7 @@ def self_test():
         "cargo fmt --manifest-path examples/Cargo.toml --all --check\n"
         "cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml --all --check\n",
         "name: P1 official ACP SDK interop\non:\n  push:\n    branches: [main]\n  pull_request:\n",
+        "name: Verify generated flake CI caller\non:\n  pull_request:\n",
     ]
     verify(*good)
     cases = [
@@ -85,6 +93,8 @@ def self_test():
         (3, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (4, "cargo fmt --manifest-path examples/Cargo.toml --all --check", ""),
         (5, "P1 official ACP SDK interop", "Unverified ACP client"),
+        (5, "  pull_request:\n", "  pull_request:\n    paths:\n      - crates/**\n"),
+        (6, "  pull_request:\n", "  pull_request:\n    paths:\n      - .github/**\n"),
     ]
     for idx, old, new in cases:
         candidate = good.copy()
