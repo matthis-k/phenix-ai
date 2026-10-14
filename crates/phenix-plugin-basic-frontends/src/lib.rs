@@ -276,7 +276,8 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
     }
 }
 
-/// Each output line is a protocol notification, never a terminal transcript.
+/// Serialize only typed ACP v1 SessionNotification payloads across the native
+/// Frontend ABI. The official SDK owns JSON-RPC method/envelope framing.
 #[cfg(feature = "acp")]
 pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
     use agent_client_protocol_schema::v1::{
@@ -326,12 +327,8 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
         if let Some(update) = update {
             let notification = SessionNotification::new(request.session.clone(), update);
             output.push(
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": notification,
-                })
-                .to_string(),
+                serde_json::to_string(&notification)
+                    .map_err(|_| error(ErrorCode::InvalidReply, "invalid ACP update payload"))?,
             );
         }
     }
@@ -537,13 +534,13 @@ mod tests {
             let frame: serde_json::Value = serde_json::from_str(&frames[0]).unwrap();
             assert_eq!(
                 frame
-                    .pointer("/params/update/status")
+                    .pointer("/update/status")
                     .and_then(|status| status.as_str()),
                 Some(expected),
             );
             assert_eq!(
                 frame
-                    .pointer("/params/update/toolCallId")
+                    .pointer("/update/toolCallId")
                     .and_then(|id| id.as_str()),
                 Some("call-1"),
             );
@@ -553,7 +550,7 @@ mod tests {
         let legacy: serde_json::Value = serde_json::from_str(&legacy[0]).unwrap();
         assert_eq!(
             legacy
-                .pointer("/params/update/status")
+                .pointer("/update/status")
                 .and_then(|status| status.as_str()),
             Some("completed"),
         );
