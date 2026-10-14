@@ -186,7 +186,8 @@ for call_id in ("call-1", "call-2"):
     assert next(i for i, x in started if x["toolCallId"] == call_id) < next(
         i for i, x in finished if x["toolCallId"] == call_id
     )
-assert all(entry["status"] == "pending" for _, entry in started)
+# The official v1 schema omits Pending because it is the default status.
+assert all(entry.get("status", "pending") == "pending" for _, entry in started)
 assert all(entry["status"] == "completed" for _, entry in finished)
 assert "".join(
     event.get("content", {}).get("text", "")
