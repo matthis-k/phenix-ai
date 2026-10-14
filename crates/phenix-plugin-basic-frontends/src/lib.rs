@@ -403,7 +403,7 @@ mod tests {
         .unwrap();
         assert_eq!(accepted.action, "phenix.basic.submit");
         let payload: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
-        assert_eq!(payload.text, "hello\\nworld");
+        assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
         assert!(decode(serde_json::json!({
