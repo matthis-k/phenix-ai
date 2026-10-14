@@ -404,7 +404,11 @@ GraphExecution on its controller thread and durable event journal semantics.
   queue saturation, notification flood, active cancellation, request-id
   rejection, disconnected client, session denial and crash recovery against
   the **new SDK host**, not just the legacy host. Resolve supported
-  `ResourceLink` content-block behavior explicitly. Pass canonical
+  `ResourceLink` content-block behavior explicitly. The Basic Frontend
+  now preserves each required v1 resource link as an inert text reference
+  (name and URI), never opening it or granting filesystem access. Native
+  conformance and process-level SDK fixtures cover this mapping; optional
+  image/audio/embedded-content blocks remain unsupported unless advertised. Pass canonical
   conformance, Nix flake matrix, generated DAG and negative ABI/security
   checks on the exact final head. Then mark R1 and integrated P1 accepted.
 
