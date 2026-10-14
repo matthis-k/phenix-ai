@@ -168,6 +168,19 @@ def self_test():
             else:
                 raise AssertionError("tampered evidence was admitted: " + field)
             path.write_text(json.dumps(original))
+        # An artifact may not declare P1 accepted before external CI
+        # and a verified main integration independently establish it.
+        declaration = host / "evidence.json"
+        forged = dict(sample[declaration], p1_accepted=True)
+        declaration.write_text(json.dumps(forged))
+        try:
+            verify(host, pending, shipping)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("host evidence forged premature P1 acceptance")
+        declaration.write_text(json.dumps(sample[declaration]))
+
         missing = host / "jsonl-multisession.json"
         broken = {"cases": list(HOST_CASES[missing.name] - {"caller-tool-limit-no-effect"})}
         missing.write_text(json.dumps(broken))
