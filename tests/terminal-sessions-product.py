@@ -49,19 +49,17 @@ tool_reply = terminal("s2", "tools-fail:hello\n")
 assert "answer: mock:call-1:error:scripted failure|call-2:5" in tool_reply
 assert terminal("s2") == "", "Terminal replayed an acknowledged failed-tool turn"
 
-# Terminal exits on a Model domain error. Restarting the same session must
-# permit a fresh prompt without re-executing its previous effects.
-model_failure = subprocess.run(
-    [binary, "terminal", composition, "--session", "s2"],
-    input="model-error\n", text=True, capture_output=True,
-    env=env, timeout=45,
+# A failed Model request must not terminate an interactive Terminal
+# host or consume the next queued prompt. Failure and completion are distinct
+# journal events; restarting the host must not duplicate acknowledged output.
+live_recovered = terminal("s2", "model-error\nterminal-after-model-error\n")
+assert live_recovered.count("error: scripted model failure") == 1, live_recovered
+assert live_recovered.count("answer: mock:terminal-after-model-error") == 1, live_recovered
+assert terminal("s2") == "", "Terminal repeated acknowledged live recovery"
+assert "answer: mock:terminal-after-restart" in terminal(
+    "s2", "terminal-after-restart\n"
 )
-assert model_failure.returncode != 0, (
-    model_failure.stdout, model_failure.stderr
-)
-resumed = terminal("s2", "terminal-after-model-error\n")
-assert "answer: mock:terminal-after-model-error" in resumed
-assert terminal("s2") == "", "Terminal repeated acknowledged recovery output"
+assert terminal("s2") == "", "Terminal replayed an acknowledged restart reply"
 assert "answer: mock:terminal-isolated" in terminal(
     "s1", "terminal-isolated\n"
 )
@@ -79,5 +77,6 @@ assert (output / "terminal-sessions.db").is_file()
         "invalid-session-identity-refused",
         "failed-tool-model-continuation",
         "model-failure-process-restart",
+        "same-process-model-failure-continuation",
     ],
 }, indent=2, sort_keys=True))
