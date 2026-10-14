@@ -364,7 +364,7 @@ GraphExecution on its controller thread and durable event journal semantics.
   checks pending. This is not itself a new host transport.
 - [ ] **R1-ACP2: SDK-backed host on one graph owner.** Replace
   `run_acp`'s handwritten JSON-RPC reader/router/writer with the official
-  SDK's `Agent.builder()` handlers and `Stdio` transport. SDK callbacks
+  SDK's `Agent.builder()` handlers and `Lines` transport backed by Phenix's existing bounded 1 MiB stdin reader. SDK callbacks
   enqueue typed v1 requests on a bounded queue and receive typed responses
   from exactly one Phenix controller. Cancellation/EOF signals reach the live
   graph root without moving Kernel or GraphExecution into protocol tasks.
@@ -373,8 +373,7 @@ GraphExecution on its controller thread and durable event journal semantics.
   independent official client, pending exact-head CI. The old host remains
   the default strictly during comparison; it MUST be removed before R1-ACP3
   acceptance. Keep session/resource grants, durable owner markers and
-  journal offsets Phenix-owned. Resolve SDK lockfile, bound stdio frames,
-  and measure queue/EOF behavior before switching the default.
+  journal offsets Phenix-owned. The SDK lockfile now resolves 200 packages, and SDK `Lines` is fed by the pre-existing bounded stdin reader with a 64-entry backpressured frame channel. Prove the physical frame limit and queue/EOF behavior before switching the default.
 - [ ] **R1-ACP3: delete old ACP protocol code.** Remove
   `parse_acp_frame`, custom JSON-RPC reply/error framing and the remaining
   notification envelope encoding after the SDK-backed host consumes the
