@@ -676,7 +676,10 @@ fn main() {
         let (after_a_epoch, after_a) = execution.committed_changes_since(after_b_epoch);
         assert!(after_a_epoch > after_b_epoch);
         assert_eq!(after_a, ["example.graph-a/result"]);
-        assert!(execution.committed_changes_since(after_a_epoch).1.is_empty());
+        assert!(execution
+            .committed_changes_since(after_a_epoch)
+            .1
+            .is_empty());
         assert_eq!(execution.completion(), Some(GraphCompletion::Success));
         assert_eq!(execution.steps().len(), 4);
         assert_eq!(execution.steps()[1].node, "example.graph-a/slow");
