@@ -13,7 +13,7 @@ use acp::schema::{
 use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
-use phenix_basic_contracts::{Limits, PromptSubmitted};
+use phenix_basic_contracts::ErrorCode;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -282,28 +282,26 @@ impl Controller {
         let Some(kernel) = self.sessions.get(&session) else {
             return Err(invalid("unknown ACP session"));
         };
-        let mut text = Vec::with_capacity(request.prompt.len());
-        for block in request.prompt {
-            match block {
-                ContentBlock::Text(chunk) => text.push(chunk.text),
-                _ => return Err(invalid("unsupported ACP prompt content")),
+        // The SDK has already decoded the JSON-RPC envelope into a typed
+        // PromptRequest. The native frontend maps only that schema payload
+        // into Phenix's typed Submission action.
+        let submission: Submission = invoke(
+            kernel,
+            "phenix.basic.frontend-acp",
+            "phenix.basic.frontend@1/decode",
+            ClientInput {
+                session: session.clone(),
+                line: serde_json::json!({"prompt": request}).to_string(),
+            },
+        )
+        .map_err(internal)?
+        .map_err(|cause| {
+            if cause.code == ErrorCode::InvalidInput {
+                invalid(&cause.message)
+            } else {
+                internal(format!("{:?}: {}", cause.code, cause.message))
             }
-        }
-        let text = text.join("\n");
-        if text.is_empty() {
-            return Err(invalid("empty ACP prompt"));
-        }
-        let payload = phenix_basic_contracts::encode(&PromptSubmitted {
-            session: session.clone(),
-            text,
-            limits: Limits::default(),
-        })
-        .map_err(internal)?;
-        let submission = Submission {
-            action: "phenix.basic.submit".into(),
-            payload,
-            cancel: false,
-        };
+        })?;
         let mut owner = session_lock(&session).map_err(internal)?;
         recover_owned_run(kernel, &session, &mut owner).map_err(internal)?;
         let execution =
