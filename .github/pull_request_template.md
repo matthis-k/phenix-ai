@@ -7,6 +7,10 @@ State the concrete behavior and owning milestone. Link the acceptance matrix and
 | Question | Evidence |
 | --- | --- |
 | Which named invariant requires this? | |
+| Which existing crates or `std` APIs cover its generic protocol, I/O, parser, transport or persistence work? | |
+| Which crate/version/features were selected, or what concrete incompatibility justifies custom code? | |
+| What do the crate's license, dependency/build cost, maintenance and cancellation/size semantics imply? | |
+| Which duplicate protocol/parser implementation is removed, or which follow-up PR must remove it before milestone acceptance? | |
 | Can an ordinary plugin implement it? | |
 | Does provider lookup use the canonical resolver? | |
 | Does execution retain one root owner and authority boundary? | |
