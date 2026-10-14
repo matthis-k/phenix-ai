@@ -13,9 +13,9 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             selector: "",
             operation: "example.graph.task@1/run",
             writes: &[
+                "example.graph-a/pending_signal",
                 "example.graph-a/result",
                 "example.graph-a/signal",
-                "example.graph-a/pending_signal",
             ],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::Skip,
