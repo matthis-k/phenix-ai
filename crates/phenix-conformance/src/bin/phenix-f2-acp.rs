@@ -122,14 +122,16 @@ fn main() {
     .unwrap();
     assert_eq!(output.len(), 1);
     let notification: serde_json::Value = serde_json::from_str(&output[0]).unwrap();
-    assert_eq!(notification["method"], "session/update");
-    assert_eq!(notification["params"]["sessionId"], "s1");
+    // Frontend encodes only the official schema payload; SDK owns the method
+    // and JSON-RPC framing when this notification reaches the ACP peer.
+    assert!(notification.get("jsonrpc").is_none());
+    assert_eq!(notification["sessionId"], "s1");
     assert_eq!(
-        notification["params"]["update"]["sessionUpdate"],
+        notification["update"]["sessionUpdate"],
         "agent_message_chunk"
     );
     assert_eq!(
-        notification["params"]["update"]["content"]["text"],
+        notification["update"]["content"]["text"],
         "mock:hello"
     );
     assert_eq!(
