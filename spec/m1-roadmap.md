@@ -44,7 +44,7 @@ Each numbered stage below owns one **focused implementation PR** after the speci
 | S3a | Typed Rust value SDK and static schemas | S2 | Independent vectors, native host fixture and compile failures | PROVEN at `b47f7d95`, CI 38170898637; `m1-value-sdk-matrix.md` |
 | S3b | Contract/property macros and generated ABI | S3a | External SDK-only annotated plugin | Accepted at `75a255b9`, CI 38205255204; generated native metadata, ABI 3, typed fields/slots, pending imports and property/security completion proven |
 | S4 | Contributed graph descriptor, resolve, validation, identity | S3b | Independent plugin contributions compile deterministically | Refined into G1/G2: shipping CI passed, remaining acceptance cases open |
-| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation | G3/G4 slices implemented; committed-state triggers and full reactive acceptance remain |
+| S5 | Serial readiness execution and reactive on-change integration | S4 | Correct multi-root DAG partial order and cancellation; typed macro-generated change/event handlers with no manual subscription plumbing, proven by independent plugins | G3/G4 slices implemented; committed-state triggers and declarative hook authoring remain unaccepted |
 | S6 | Parallel-ready tasks and multi-admission concurrency | S5 | Independent branches run concurrently, safe instance lifetimes | Not started |
 | A0 | Basic synchronous agent plugin preflight | Accepted M0 services; S1b branch baseline | Replaceable model/tool imports and real CLI gate | PROVEN at `4d47e783` in full CI 38134340209; `spec/a0-agent-matrix.md` |
 | Basic | Triggered agent, providers, durable sessions and frontends | G4 and Basic providers | Terminal, JSONL and ACP run the same agent | Partial implementation; B1-B5, F1-F2 and P1 below own evidence and remaining gates |
@@ -219,6 +219,44 @@ Owner: one S5 implementation PR. Reuse one kernel runtime and central dispatcher
 
 Gate: A and B complete before C if both active; no global barrier for `A->C`, `B->D`; only A active does not wait for B; `after` alone does not trigger a node; transactional updates trigger one epoch; dependent failure never masquerades as successful completion; cancellation and retirement observe existing leases; no duplicate executor. Serial topological order is an allowed implementation, not a cross-branch promise.
 
+### S5 declarative reactivity and macro ergonomics
+
+S5 is incomplete if `ValueRef<T>::watch` and `Watch::next` work but each plugin
+must still register, poll, dispatch and clean up subscriptions itself. Extend
+the existing `#[plugin]` macro and typed SDK to let an independently authored
+plugin declare reactions. Prefer `#[on_change(...)]` for committed properties
+and `#[on_event(...)]` for typed semantic events. These spellings are proposed,
+not implemented or frozen. Generate registrations, metadata, typed callback
+bindings and lifecycle cleanup from the declarations. Reuse the existing
+resolver, graph executor, dispatcher, pending tickets and authority checks.
+
+The generated API must preserve two distinct delivery contracts:
+
+- **State changes:** a committed `ValueRef<T>` update activates an authorized
+  handler with a typed snapshot, revision and epoch. Coalescing is permitted.
+  Atomic read/subscription bootstrap prevents missed commits; writes made by a
+  handler start a new epoch rather than reentering the current callback.
+- **Semantic events:** typed event handlers consume ordered events with stable
+  identities and session/run correlation. Progress and tool events cannot be
+  silently coalesced or dropped. Durable replay and observer acknowledgements
+  remain the EventJournal plugin's responsibility; reconnects may redeliver
+  events, so consumers must handle at-least-once delivery.
+- **Lifecycle and authority:** declaration metadata specifies source bindings,
+  schemas, required grants and ordering. Generated bindings respect selected
+  providers and the admitted root, and release watches/leases on cancellation,
+  generation retirement and plugin shutdown. Denied sources cannot invoke a
+  handler. A source with no permission is not implicitly subscribed.
+
+Acceptance: compile two independently packaged plugins against the public SDK.
+One exposes a watched property; the other declares an `on_change` handler and
+an ordered `on_event` handler. Exercise committed changes, simultaneous
+changes, event ordering and replay, cross-session denial, errors, cancellation,
+and owner retirement. The plugin source must contain no manual watch polling,
+subscription registration, raw ABI callbacks or custom dispatch loop. Generated
+code uses the single kernel executor. This authoring gate does not add a new
+P1 prerequisite; the post-P1 F3 gate applies it to real frontends.
+
+
 ## 7. S6: concurrency and independent branches
 
 Owner: one S6 implementation PR. Do not fold the runtime ownership refactor into S5.
@@ -273,6 +311,8 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 multi-session stdio host, live HTTP progress/cancellation and durable replay are implemented. The independent official SDK client covers prompt/tool turns and two-process `session/load` (#831). #832 through #836 passed canonical conformance, flake matrix, generated DAG and official ACP SDK checks on their exact heads. These slices cover load validation, bounded stdin, JSON-RPC envelopes, invalid prompt parameters and pending-queue isolation. Active `session/cancel` requests are rejected without deferral on `impl/m1-p1-acp-cancel-request-admission`, pending exact-head checks. Active ACP stdin-disconnect cancellation is implementing on `impl/m1-p1-acp-eof-cancellation`; the real HTTP fixture checks prompt cancellation before the upstream model responds, pending exact-head acceptance. The SDK-only stable-v1 host passed exact-head checks in #843; R1-ACP4 parity remains open. |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in each plugin and host; select maintained Rust libraries or document narrow exceptions | Thin provider adapters over established protocol, transport, parser, storage and process crates; keep Phenix-specific contracts, graph admission, authority, session and replay rules | [ ] PARTIAL: `rusqlite` Storage #815, `sse-parse` SSE #823, `url` endpoint parsing #840 and the official SDK-only ACP v1 host/codec #843 passed their exact-head CI. #843 passed canonical conformance, the flake matrix, generated DAG and independent SDK interoperability at `fb1ba478`. The [plugin ownership audit](m1-r1-library-audit.md) remains the crate-first review reference. R1-ACP4 full negative parity, including independent resource-link replay in #853, and integrated P1 release evidence remain open. |
 | P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] INTEGRATED PRODUCT IMPLEMENTED, FINAL-HEAD ACCEPTANCE PENDING. Basic, durable SQLite/Session/Journal, streaming HTTP, multi-tool turns, caller limits, cancellation and Terminal/JSONL/official ACP v1 are in the stacked rewrite. Independent SDK recovery/isolation tests #864–#866 and Terminal/JSONL recovery tests #867–#871 provide exact-head regression evidence. PR #872 adds a realized P1 product-evidence preflight. Tests-only heads #868 and #870 are intentionally red. Require the final unified P1 SHA to pass all canonical, flake-matrix, generated DAG, independent SDK and P1 preflight gates; then integrate and repeat checks on main. See [P1 release acceptance](p1-release-acceptance.md). |
+| F3 | P1, S5; S6 only for concurrent-session acceptance | Migrate named reactive plugin consumers/producers and the frontend host to generated hooks; prove ACP and Terminal/JSONL parity | All required plugins in the F3 migration inventory use typed declarative handlers instead of redundant watch registration, journal polling or event dispatch; preserve durable event order, cancellation, scopes and transport ownership | [ ] PLANNED POST-P1: inventory and migration gates specified; implementation pending |
+
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -601,6 +641,72 @@ advance model turns in new epochs, so the static graph stays acyclic.
 The journal retains every accepted semantic event in order. Value watches can
 coalesce and cannot replace journal cursors. During pending I/O, one same-root,
 non-reentrant control pump admits cancellation and publishes progress.
+
+### F3 post-P1 reactive plugin migration and frontend proof
+
+F3 is a **migration milestone**, not only a new SDK example. Use S5's
+macro-generated typed `on_change` and ordered `on_event` handlers to remove
+the manual subscriptions, journal polling and event routing already present
+in M1 plugins. Migrate existing providers and consumers where they benefit;
+do not introduce an ACP-specific abstraction or a second dispatcher. Keep
+P1's previously accepted behavior unchanged during this post-P1 migration.
+The target annotation spellings are proposed until S5 freezes them.
+
+#### Required migration inventory
+
+These are actual packages in the active minimal M1 tree. Each row is an F3
+completion requirement, with a concrete behavior to preserve.
+
+| Status | Package or component | Reactive migration and acceptance |
+| --- | --- | --- |
+| [ ] | `phenix-plugin-basic-frontends` (ACP, Terminal, JSONL variants) | Replace explicit decode/render/cancel event plumbing with typed input-event and output-event declarations. Stream text, tool start/finish, failures and cancellation in journal order; use selected session scopes and independent delivery cursors. ACP and Terminal/JSONL must both pass product fixtures. |
+| [ ] | `phenix-plugin-event-journal` | Publish an authorized ordered-event notification only **after** the durable append commits. Generate subscriptions and observer dispatch instead of requiring frontend loops to discover new pages. Retain monotonically ordered sequences, independent per-observer checkpoint/replay and at-least-once delivery. A wake notification never substitutes for persisted events. |
+| [ ] | `phenix-plugin-basic-session` | Expose committed session-status and checkpoint changes as typed, scoped reactions. Ensure run state, cancellation and explicit interrupted-tool reconciliation remain durable. Never infer process death from plugin-local state or retry unknown external effects. |
+| [ ] | `phenix-plugin-basic-agent` | Move progress, model/tool continuation and completion event wiring to declared typed reactions where applicable. Keep the existing agent graph, pending-import/ticket lifecycle, call-ID correlation, tool-error recovery and exactly-once checkpoint/effect rules. Do not implement a second agent loop through callbacks. |
+| [ ] | `phenix-plugin-model-http` | Use generated output-event publication and completion/cancellation bindings instead of bespoke reactive notification wiring. Retain the established `curl`/SSE transport, worker I/O, typed model stream, pending ticket draining and journal consistency; no duplicate text deltas after resume. |
+| [ ] | `phenix-plugin-basic-memory` (Skills and Context providers) | Make committed `Skills::set` and `Context::set` revisions observable through typed `on_change` hooks, so selected consumers refresh or invalidate derived context without polling. Keep Storage CAS, session authorization and catalog/query behavior. |
+| [ ] | `phenix-basic-runtime` (host executable, **not** a plugin) | Replace the ACP-specific `drive_acp_prompt`/journal `render_new` coordination and equivalent Terminal/JSONL polling with a shared event-driven frontend controller. The host retains stdio/network I/O, protocol framing, bounded queues and flushing. The kernel retains the single generic graph wake/pump mechanism. |
+
+The migration cannot close by modifying only the ACP adapter: verify the
+event producer, durable journal, session owner, agent, and frontend consumer
+as one end-to-end composition. Retain the separate independently packaged
+providers and public typed contracts.
+
+#### Conditional and future plugin adoption
+
+| Status | Package or planned plugin | Decision |
+| --- | --- | --- |
+| [ ] Review | `phenix-plugin-basic-tools` | Migrate **only** tool-catalog mutations or lifecycle subscriptions that otherwise need polling. Its current deterministic synchronous `ToolCatalog`/`ToolExecute` functions stay ordinary services; do not duplicate the agent's existing ToolStarted/ToolFinished journal events. Record the decision in F3 evidence. |
+| [ ] Review | `phenix-plugin-model-scripted` | Keep the synchronous model implementation simple. Extend scripted fixtures to prove reactive agent/frontend consumers and correct ordered events; migrate only if real subscription boilerplate is added. |
+| [ ] Adopt on implementation | Planned `phenix-plugin-logging` and `phenix-plugin-introspection` (L1/I1 after K3) | Use generated subscriptions from the outset for authenticated kernel diagnostics and authorized state/contract changes. Keep logging sinks and inspection projections in their plugins, not the kernel. Diagnostic events remain distinct from the durable semantic journal. |
+| [ ] Adopt when applicable | Future separately packaged Skills, Context, Workspace or graph-decorator plugins | Use the same typed change/event declarations whenever they maintain derived state or observe tool/runtime events; no adapter-specific watcher registry. Do not claim these packages exist in the current M1 tree. |
+| N/A | `phenix-plugin-storage-sqlite` and `phenix-plugin-storage-fixture` | No compulsory rewrite of transactional CRUD providers. They stay synchronous unless an actual consumer needs post-commit notifications; preserve CAS and rollback semantics. |
+
+#### F3 completion and migration order
+
+1. Accept S5's independent, SDK-only `on_change` and `on_event` conformance,
+   including generated subscription lifetime, authority, and ordered-event
+   cursor support.
+2. Migrate EventJournal and Session publication first, then agent/Model
+   producers and Skills/Context state-change consumers. Prove no lost wake,
+   unauthorized callback, duplicate journal append or implicit tool replay.
+3. Migrate all three Frontend variants and the common host controller.
+   Remove superseded per-frontend polling, registrations and dispatch glue;
+   keep transport-specific ACP encoding in the owning adapter and adopt the
+   official ACP SDK where R1 permits.
+4. Run the same Terminal, JSONL and independent official ACP SDK product
+   fixtures before and after. Require streaming text/tool updates in order,
+   cancellation, bounded slow observers, restart and session continuation,
+   cross-session denial, owner retirement and observer replay. Cursor
+   acknowledgements follow successful output delivery. Count removed
+   boilerplate and reject any second scheduler, registry or root-admission
+   bypass. Check and record the conditional decisions above.
+
+State-watch notifications may coalesce revisions; ordered journal events
+must not coalesce or disappear. Generated callbacks cannot bypass scoped
+admission. S6 gates independently concurrent ACP sessions, not initial F3
+migration. F3 remains post-P1 and cannot retroactively block P1 shipping.
+
 
 ### Basic product boundaries
 
