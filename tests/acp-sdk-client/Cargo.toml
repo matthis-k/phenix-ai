@@ -1,5 +1,6 @@
 [package]
 name = "phenix-p1-acp-client-check"
+default-run = "phenix-p1-acp-client-check"
 version = "0.1.0"
 edition = "2021"
 publish = false
