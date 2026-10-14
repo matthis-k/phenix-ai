@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   cold:
-    name: Cold project Nix cache
+    name: cold
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
     with:
       config: ci/flake-check-config.nix
@@ -28,7 +28,7 @@ jobs:
       TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
 
   warm:
-    name: Warm same-head project Nix cache
+    name: warm
     needs: cold
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
     with:
