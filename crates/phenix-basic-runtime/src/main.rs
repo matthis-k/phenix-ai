@@ -912,14 +912,21 @@ fn drive_acp_prompt(
     deferred: &mut VecDeque<String>,
     after: &mut u64,
     mut output: impl Write,
-) -> Result<serde_json::Value, String> {
+) -> Result<(serde_json::Value, bool), String> {
     let mut marked = false;
+    let mut input_closed = false;
     loop {
         // Bound this batch so a busy client cannot starve the graph pump.
         for _ in 0..32 {
             let line = match receiver.try_recv() {
                 Ok(line) => line?,
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    // Cancel the graph when the ACP peer disconnects.
+                    execution.cancel().map_err(|e| format!("{e:?}"))?;
+                    input_closed = true;
+                    break;
+                }
             };
             let frame = match parse_acp_frame(&line) {
                 Ok(frame) => frame,
@@ -1015,7 +1022,7 @@ fn drive_acp_prompt(
                 )?;
             }
             let reason = if cancelled { "cancelled" } else { "end_turn" };
-            return Ok(serde_json::json!({"stopReason": reason}));
+            return Ok((serde_json::json!({"stopReason": reason}), input_closed));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1065,6 +1072,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
             // Other notifications cannot create sessions or initialize ACP.
             continue;
         }
+        let mut input_closed = false;
         let result: Result<serde_json::Value, (i32, String)> = (|| {
             match method {
                 "initialize" => {
@@ -1210,7 +1218,7 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         let execution =
                             begin_submission(kernel, submission, basic_scope(composition, session))
                                 .map_err(|e| (-32000, e))?;
-                        let result = drive_acp_prompt(
+                        let (result, closed) = drive_acp_prompt(
                             kernel,
                             (session, &mut owner),
                             execution,
@@ -1221,6 +1229,10 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                         )
                         .map_err(|e| (-32000, e))?;
                         set_owner_marker(&mut owner, None).map_err(|e| (-32000, e))?;
+                        if closed {
+                            input_closed = true;
+                            deferred.clear();
+                        }
                         Ok(result)
                     } else {
                         Err((-32602, "unknown sessionId".into()))
@@ -1245,6 +1257,11 @@ fn run_acp(composition: &Composition, mut output: impl Write) -> Result<(), Stri
                 _ => Err((-32601, "method unavailable in this Basic host".into())),
             }
         })();
+        if input_closed {
+            // No more requests can arrive. The cancelled graph has released
+            // its durable marker, so shut down the scoped kernels now.
+            break;
+        }
         if is_notification {
             continue;
         }
