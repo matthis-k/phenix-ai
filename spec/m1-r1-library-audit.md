@@ -145,8 +145,8 @@ related packages. The temporary GitHub Actions resolver was removed.
 All ACP native checks, Rustfmt, ABI, streaming and independent SDK
 fixtures must pass before accepting the typed-input slice.
 
-The next slice must use the official SDK's stable-v1 `Agent.builder()`
-handlers, `Stdio` transport and typed notifications. SDK dispatch
+The SDK host slice uses the official stable-v1 `Agent.builder()`
+handlers, `Lines` transport and typed notifications. SDK dispatch
 must not own Phenix's GraphExecution: a bounded typed command/event
 channel hands protocol requests to the existing single-thread kernel
 controller. Responses and journal progress return to the SDK writer.
@@ -178,16 +178,15 @@ GraphExecution and the durable session lock on the caller thread; only
 SDK wire dispatch moves to a transport thread. A 64-entry controller queue
 admits requests, and a session-scoped atomic cancellation signal bypasses
 the queue during a live graph. SDK notifications are typed before writing.
-The current SDK adapter temporarily serializes the existing Frontend
-render output back into `SessionNotification`; remove that translation
-when R1-ACP3 changes the Frontend render contract.
+The SDK-only cutover maps native Frontend results to official typed
+`SessionNotification` payloads, without constructing JSON-RPC envelopes.
+The SDK alone serializes the outbound wire framing.
 
 **R1-ACP2 is not accepted yet.** Independently test the new SDK path for
 initialize, new/load, durable replay, prompt, streamed text, tool updates,
 queue saturation, cross-session cancellation and stdin EOF. Preserve a
-bounded physical stdio frame policy: the SDK's standard `Stdio` reader
-must be checked for equivalent limits or wrapped with bounded SDK
-`Lines`/transport primitives before replacing the legacy host. Verify
+bounded physical stdio frame policy using the official SDK `Lines`
+transport fed by Phenix's common 1 MiB bounded line reader. Verify
 graceful close and exactly-once owner marker cleanup. The stacked single-host branch deletes `run_acp`,
 `drive_acp_prompt`, `parse_acp_frame` and their legacy tests.
 It uses the SDK by default. Keep the deletion after independent
