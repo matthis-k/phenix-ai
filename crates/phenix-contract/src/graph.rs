@@ -148,6 +148,24 @@ pub fn valid_node_key(key: &str) -> bool {
         .is_some_and(|(plugin, local)| identifier(plugin) && plugin != "root" && identifier(local))
 }
 
+/// State triggers reuse the graph's existing trigger list and canonical
+/// encoding. The qualified property key is explicit; an ordering edge alone
+/// never subscribes to a value.
+pub fn state_change_property(trigger: &str) -> Option<&str> {
+    trigger
+        .strip_prefix("state:")
+        .filter(|key| valid_node_key(key))
+}
+
+/// The hook receives the committed epoch and property identity, then reads
+/// any required values through its already authorized property imports.
+pub fn state_change_schema() -> ValueSchema {
+    ValueSchema::Struct(std::collections::BTreeMap::from([
+        ("epoch".into(), ValueSchema::U64),
+        ("property".into(), ValueSchema::String),
+    ]))
+}
+
 impl GraphContribution {
     /// Normalize authored order and check every local declaration before packaging.
     pub fn normalized(&self) -> Result<Self, Failure> {
@@ -200,7 +218,10 @@ impl GraphContribution {
                 || !sorted(node.after.iter().map(String::as_str))
                 || !sorted(node.triggers.iter().map(String::as_str))
                 || !sorted(node.writes.iter().map(String::as_str))
-                || node.triggers.iter().any(|id| !identifier(id))
+                || node
+                    .triggers
+                    .iter()
+                    .any(|id| !identifier(id) && state_change_property(id).is_none())
                 || node.after.iter().any(|id| !valid_node_key(id))
                 || node.writes.iter().any(|id| !valid_node_key(id))
             {
