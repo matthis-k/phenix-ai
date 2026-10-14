@@ -289,6 +289,18 @@ drivers, transports, serialization, async I/O and common utilities. Optimize
 for less maintained code and fewer custom failure modes, not the fewest crates.
 Use `std` where it already solves the problem cleanly.
 
+**Required for existing and future PRs.** Before implementation or acceptance,
+inventory the relevant protocol, parser, transport, persistence and I/O work.
+Check established crates first and name the selected crate (with version and
+features) or the matching `std` API. Prefer thin typed plugins wrapping those
+libraries. Evaluate license, release health, dependency and Nix build cost,
+size limits, cancellation/async behavior, failure handling and whether the
+crate can preserve Phenix authority and lifecycle semantics. A passing
+compatibility test is not a substitute for replacing duplicate protocol
+code. Remove the old production implementation after migration rather than
+shipping two independently maintained versions of the same standard.
+Apply the audit to current open P1 PRs as well as new ones.
+
 A PR that adds custom code for a standard mechanism must first compare
 established libraries. Record a short exception when none fits, covering the
 missing capability, safety and maintenance costs, and compatibility evidence.
