@@ -630,6 +630,8 @@
         mkdir -p "$out"
         python ${./tests/basic-history-verification-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification ${basicComposition} ${historyVerificationComposition} "$out"
         test -s "$out/history-verification.json"
+        python ${./tests/basic-history-verification-acp.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
+        test -s "$out/acp-history-verification.json"
         # User-facing Basic must not close over the test-only model package.
         ! grep -Fq "${historyTestModel}" ${basicBinaryClosure}/store-paths
         test -x ${basicBinary}/bin/phenix-basic
