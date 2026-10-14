@@ -1,10 +1,10 @@
-//! Experimental SDK-backed ACP transport. Only this adapter owns ACP wire
-//! dispatch; the Basic graph, session locks and journal stay on one controller
-//! thread. The legacy host remains the shipped default until parity is proven.
+//! SDK-backed ACP transport. The SDK owns JSON-RPC framing, dispatch and
+//! session updates; the Basic controller owns Kernel, graph, sessions and
+//! authority on one thread.
 use super::*;
 use acp::schema::{
     v1::{
-        AgentCapabilities, CancelNotification, ContentBlock, Implementation, InitializeRequest,
+        AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptRequest, PromptResponse, SessionNotification, StopReason,
     },
