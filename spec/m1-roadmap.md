@@ -352,13 +352,16 @@ and `agent-client-protocol-schema` 1.11.0 stable-v1 APIs are the selected crates
 Phenix retains session/resource authorization, per-session ownership,
 GraphExecution on its controller thread and durable event journal semantics.
 
-- [ ] **R1-ACP1: typed frontend protocol payloads.** Replace manual extraction
-  of `session/prompt` and `session/cancel` fields with official v1
-  `PromptRequest`, `ContentBlock` and `CancelNotification`. Keep the ACP
-  dependency feature-gated in the ACP frontend artifact. Preserve domain
-  denials, text joining and unsupported-content refusal. Branch
-  `impl/m1-r1-acp-schema-frontend`; exact-head Cargo, Nix, and ABI checks
-  pending. This is not itself a new host transport.
+- [ ] **R1-ACP1: typed frontend protocol payloads and updates.** Replace
+  manually extracted `session/prompt` and `session/cancel` fields with
+  official v1 `PromptRequest`, `ContentBlock`, `CancelNotification`, and
+  render journal events as typed `SessionNotification` / `SessionUpdate`,
+  including `ToolCall`, `ToolCallUpdate` and `ContentChunk`. Keep the ACP
+  dependency feature-gated in the ACP frontend artifact. Preserve resource
+  denials, tool identities, error state and text joining. The official schema
+  may omit `pending` tool status because it is the protocol default.
+  Branch `impl/m1-r1-acp-schema-frontend`; exact-head Cargo, Nix, and ABI
+  checks pending. This is not itself a new host transport.
 - [ ] **R1-ACP2: SDK-backed host on one graph owner.** Replace
   `run_acp`'s handwritten JSON-RPC reader/router/writer with the SDK's
   `Agent.builder()` handlers and `Stdio` transport. SDK protocol handlers
@@ -368,11 +371,12 @@ GraphExecution on its controller thread and durable event journal semantics.
   error-domain mapping. Do not await graph work inside an SDK dispatch
   callback or introduce a second graph controller.
 - [ ] **R1-ACP3: delete old ACP protocol code.** Remove
-  `parse_acp_frame`, custom JSON-RPC reply/error framing and custom
-  `session/update` message encoding after the SDK-backed host and typed
-  frontend output work. Replace, never retain, the old host as a production
-  compatibility fallback. Keep only policy/contract mapping and bounded
-  backpressure in Phenix.
+  `parse_acp_frame`, custom JSON-RPC reply/error framing and the remaining
+  notification envelope encoding after the SDK-backed host consumes the
+  typed frontend updates. The ACP frontend maps typed journal events to
+  SDK v1 updates in R1-ACP1; the host must send them through the SDK transport
+  instead of writing JSON-RPC lines itself. Replace, never retain, the old
+  host as a production fallback. Keep only Phenix policy and backpressure.
 - [ ] **R1-ACP4: prove parity and release.** Run independent official SDK
   stable-v1 client tests, two-process `session/load` replay, ordered tool
   updates, malformed envelopes, unsupported/invalid payloads, bounded input,
