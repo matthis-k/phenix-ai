@@ -381,6 +381,28 @@
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-sessions.db"
         ${conformanceBinary}/bin/phenix-b2-sqlite seed ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        test "$(${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH" 'PRAGMA user_version;')" = 1
+
+        # Migrate a pre-versioned database while preserving its durable
+        # session and event journal. The initial v0 layout is unchanged.
+        cp "$PHENIX_BASIC_SQLITE_PATH" "$TMPDIR/legacy-basic.db"
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$TMPDIR/legacy-basic.db" "PRAGMA user_version = 0;"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/legacy-basic.db" ${conformanceBinary}/bin/phenix-b2-sqlite resume ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        test "$(${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$TMPDIR/legacy-basic.db" 'PRAGMA user_version;')" = 1
+
+        # Never overwrite a future file or accept a v1 file with a missing
+        # table. An incompatible unversioned layout also fails closed.
+        cp "$PHENIX_BASIC_SQLITE_PATH" "$TMPDIR/future-basic.db"
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$TMPDIR/future-basic.db" "PRAGMA user_version = 2;"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/future-basic.db" ${conformanceBinary}/bin/phenix-b2-sqlite schema-rejected ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$TMPDIR/malformed-basic.db" "CREATE TABLE basic_records (session TEXT NOT NULL, name TEXT NOT NULL);"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/malformed-basic.db" ${conformanceBinary}/bin/phenix-b2-sqlite schema-rejected ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$TMPDIR/missing-basic.db" "PRAGMA user_version = 1;"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/missing-basic.db" ${conformanceBinary}/bin/phenix-b2-sqlite schema-rejected ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        cat > "$out/sqlite-schema-migration.json" <<'JSON'
+        {"format":"phenix.b2.sqlite-schema.v1","cases":["new-schema-v1","legacy-v0-upgrade-preserves-data","future-v2-rejected","malformed-v0-rejected","missing-v1-table-rejected"]}
+        JSON
+
         # Inject a real SQLite statement error on the second update in a
         # two-record CAS transaction; verify the first update also rolls back.
         ${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH" \
