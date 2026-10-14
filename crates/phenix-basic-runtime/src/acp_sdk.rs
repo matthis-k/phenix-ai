@@ -56,6 +56,19 @@ fn submit(sender: &SyncSender<Command>, cmd: Command) -> acp::Result<()> {
     }
 }
 
+/// A cancellation targets the earliest admitted prompt for the session, even
+/// before the controller starts its root. Unrelated sessions are unaffected.
+fn signal_cancel(
+    pending: &Mutex<VecDeque<(String, Arc<AtomicBool>)>>,
+    session: &str,
+) -> acp::Result<()> {
+    let queued = pending.lock().map_err(internal)?;
+    if let Some((_, flag)) = queued.iter().find(|(owner, _)| owner == session) {
+        flag.store(true, Ordering::Release);
+    }
+    Ok(())
+}
+
 fn internal(error: impl ToString) -> acp::Error {
     acp::Error::internal_error().data(error.to_string())
 }
@@ -449,14 +462,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         )
         .on_receive_notification(
             async move |notice: CancelNotification, _peer| {
-                let pending = cancel_pending.lock().map_err(internal)?;
-                if let Some((_, flag)) = pending
-                    .iter()
-                    .find(|(session, _)| session == &notice.session_id.to_string())
-                {
-                    flag.store(true, Ordering::Release);
-                }
-                Ok(())
+                signal_cancel(&cancel_pending, &notice.session_id.to_string())
             },
             acp::on_receive_notification!(),
         )
@@ -477,4 +483,31 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .map_err(|_| "ACP transport panicked".to_string())?;
     controller_result?;
     transport_result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_cancel_targets_first_matching_session() {
+        let oldest = Arc::new(AtomicBool::new(false));
+        let another = Arc::new(AtomicBool::new(false));
+        let second = Arc::new(AtomicBool::new(false));
+        let queue = Mutex::new(VecDeque::from([
+            ("s1".to_string(), Arc::clone(&oldest)),
+            ("s2".to_string(), Arc::clone(&another)),
+            ("s1".to_string(), Arc::clone(&second)),
+        ]));
+        signal_cancel(&queue, "unknown").unwrap();
+        assert!(!oldest.load(Ordering::Acquire));
+        signal_cancel(&queue, "s1").unwrap();
+        assert!(oldest.load(Ordering::Acquire));
+        assert!(!another.load(Ordering::Acquire));
+        assert!(!second.load(Ordering::Acquire));
+        queue.lock().unwrap().pop_front();
+        signal_cancel(&queue, "s1").unwrap();
+        assert!(second.load(Ordering::Acquire));
+        assert!(!another.load(Ordering::Acquire));
+    }
 }
