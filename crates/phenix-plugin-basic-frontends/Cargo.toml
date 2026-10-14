@@ -11,10 +11,11 @@ crate-type = ["cdylib", "rlib"]
 default = ["terminal"]
 terminal = []
 jsonl = []
-acp = []
+acp = ["dep:agent-client-protocol-schema"]
 
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+agent-client-protocol-schema = { version = "=1.11.0", default-features = false, optional = true }
