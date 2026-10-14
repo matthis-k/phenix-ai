@@ -46,9 +46,7 @@ def verify():
     for name, text in [("legacy canonical", legacy), ("old matrix", matrix)]:
         event = events(text)
         assert "pull_request:" not in event, name + " still runs full PR builds"
-        assert not re.search(r"(?m)^\s+[- ]+main\b", event), (
-            name + " still runs full builds on main"
-        )
+        assert "main" not in event, name + " still runs full builds on main"
         assert "workflow_dispatch:" in event, name + " has no manual fallback"
 
     # Normal fork/PR execution never asks for Tailscale secrets. One reusable
