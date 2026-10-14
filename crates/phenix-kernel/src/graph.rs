@@ -7,8 +7,8 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
-    ScopedRequest, Value, ValueSchema,
+    graph_node_key, state_change_property, state_change_schema, ActionDefinition, Code,
+    EventDefinition, Failure, GraphContribution, GraphNode, ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -140,7 +140,7 @@ impl CompiledGraph {
         }
         for (id, node) in &nodes {
             for trigger in &node.definition.triggers {
-                if !events.contains_key(trigger) {
+                if state_change_property(trigger).is_none() && !events.contains_key(trigger) {
                     return Err(invalid(format!("node {id} has absent trigger {trigger}")));
                 }
             }
@@ -197,15 +197,9 @@ impl CompiledGraph {
         })
     }
 
-    /// G3 preparation: derive the active projection for one admitted event set.
-    /// Declared ordering edges do not activate successors or dormant ancestors.
-    /// Runtime execution is deliberately outside this method.
-    pub fn activation_order(&self, event_ids: &BTreeSet<String>) -> Result<Vec<String>, Failure> {
-        for id in event_ids {
-            if !self.events.contains_key(id) {
-                return Err(invalid(format!("unknown admitted event {id}")));
-            }
-        }
+    /// Derive one active projection. Ordering edges never activate nodes.
+    /// The event and committed-property paths share the same DAG algorithm.
+    fn project_triggers(&self, triggers: &BTreeSet<String>) -> Result<Vec<String>, Failure> {
         let active: BTreeSet<_> = self
             .nodes
             .iter()
@@ -213,7 +207,7 @@ impl CompiledGraph {
                 node.definition
                     .triggers
                     .iter()
-                    .any(|id| event_ids.contains(id))
+                    .any(|id| triggers.contains(id))
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -233,6 +227,32 @@ impl CompiledGraph {
                 cycle.join(" -> ")
             ))
         })
+    }
+
+    /// Action event projection; unknown event identities fail closed.
+    pub fn activation_order(&self, event_ids: &BTreeSet<String>) -> Result<Vec<String>, Failure> {
+        for id in event_ids {
+            if !self.events.contains_key(id) {
+                return Err(invalid(format!("unknown admitted event {id}")));
+            }
+        }
+        self.project_triggers(event_ids)
+    }
+
+    /// Plan committed-state hooks from verified property identities.
+    /// This is graph preparation, not a second runner or implicit root.
+    pub fn state_change_activation_order(
+        &self,
+        changed: &BTreeSet<String>,
+    ) -> Result<Vec<String>, Failure> {
+        let mut triggers = BTreeSet::new();
+        for property in changed {
+            if !phenix_contract::valid_node_key(property) {
+                return Err(invalid(format!("invalid committed property {property}")));
+            }
+            triggers.insert(format!("state:{property}"));
+        }
+        self.project_triggers(&triggers)
     }
 
     pub fn discover(&self) -> impl Iterator<Item = &ActionInfo> {
@@ -278,11 +298,54 @@ impl crate::resolve::Prepared {
         for (id, node) in &graph.nodes {
             let operation =
                 &self.operations[&(node.provider.clone(), node.definition.operation.clone())];
-            for event in &node.definition.triggers {
-                if operation.schema.request != graph.events[event].payload {
+            for trigger in &node.definition.triggers {
+                if let Some(property_key) = state_change_property(trigger) {
+                    let (owner, property) =
+                        property_key.split_once('/').expect("validated property trigger");
+                    let field = self
+                        .packages
+                        .get(owner)
+                        .and_then(|package| {
+                            package
+                                .metadata()
+                                .properties
+                                .iter()
+                                .find(|field| field.id == property)
+                        })
+                        .ok_or_else(|| {
+                            Failure::new(
+                                Code::MissingBinding,
+                                format!("state trigger {trigger} has no selected property"),
+                            )
+                        })?;
+                    if !field.watch {
+                        return Err(Failure::new(
+                            Code::Denied,
+                            format!("state trigger {trigger} targets an unwatched property"),
+                        ));
+                    }
+                    let key = format!(
+                        "{}/watch",
+                        phenix_contract::property_contract(owner, property)?
+                    );
+                    if !self.permits(&node.owner, &key)
+                        || !self.grants.contains_key(&(node.owner.clone(), key))
+                    {
+                        return Err(Failure::new(
+                            Code::Denied,
+                            format!("state trigger {trigger} lacks watch grant"),
+                        ));
+                    }
+                    if operation.schema.request != state_change_schema() {
+                        return Err(Failure::new(
+                            Code::SchemaRejected,
+                            format!("state trigger {trigger} request schema mismatch"),
+                        ));
+                    }
+                } else if operation.schema.request != graph.events[trigger].payload {
                     return Err(Failure::new(
                         Code::SchemaRejected,
-                        format!("node {id} request schema does not match event {event}"),
+                        format!("node {id} request schema does not match event {trigger}"),
                     ));
                 }
             }
