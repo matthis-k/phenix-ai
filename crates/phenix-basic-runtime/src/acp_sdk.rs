@@ -10,7 +10,8 @@ use acp::schema::{
     },
     ProtocolVersion,
 };
-use acp::{Agent, Client, ConnectionTo, Responder, Stdio};
+use acp::{Agent, Client, ConnectionTo, Responder};
+use futures::SinkExt;
 use agent_client_protocol as acp;
 use phenix_basic_contracts::{Limits, PromptSubmitted};
 use std::sync::{
@@ -90,6 +91,42 @@ fn send_updates(
         peer.send_notification(notification)?;
     }
     Ok(())
+}
+
+/// Bounded physical stdio adapter built from the SDK's Lines transport.
+/// The Phenix reader enforces only byte, UTF-8 and FIFO limits; the official
+/// SDK owns every ACP/JSON-RPC envelope and protocol operation.
+fn bounded_transport() -> impl acp::ConnectTo<Agent> {
+    let (mut incoming_sender, incoming_receiver) =
+        futures::channel::mpsc::channel::<std::io::Result<String>>(64);
+    std::thread::spawn(move || {
+        let mut input = std::io::stdin().lock();
+        loop {
+            match bounded_input_line(&mut input) {
+                Ok(Some(line)) => {
+                    if futures::executor::block_on(incoming_sender.send(Ok(line))).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = futures::executor::block_on(incoming_sender.send(Err(error)));
+                    break;
+                }
+            }
+        }
+    });
+    let outgoing = futures::sink::unfold(
+        blocking::Unblock::new(std::io::stdout()),
+        |mut output, line: String| async move {
+            use futures::AsyncWriteExt;
+            output.write_all(line.as_bytes()).await?;
+            output.write_all(b"\n").await?;
+            output.flush().await?;
+            Ok::<_, std::io::Error>(output)
+        },
+    );
+    acp::Lines::new(outgoing, incoming_receiver)
 }
 
 struct Controller {
@@ -429,7 +466,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
             Ok(())
         });
     let wire = std::thread::spawn(move || {
-        futures::executor::block_on(connection.connect_to(Stdio::new()))
+        futures::executor::block_on(connection.connect_to(bounded_transport()))
             .map_err(|e| format!("{e:?}"))
     });
     let controller_result = controller.serve(receiver);
