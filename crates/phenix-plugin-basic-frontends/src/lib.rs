@@ -366,17 +366,14 @@ mod tests {
     #[cfg(feature = "acp")]
     #[test]
     fn official_acp_v1_schema_decodes_authorized_turns() {
-        let decode = |frame: serde_json::Value| {
+        let decode = |packet: serde_json::Value| {
             acp_decode(ClientInput {
                 session: "s1".into(),
-                line: frame.to_string(),
+                line: packet.to_string(),
             })
         };
         let accepted = decode(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "session/prompt",
-            "params": {
+            "prompt": {
                 "sessionId": "s1",
                 "prompt": [
                     {"type": "text", "text": "hello"},
@@ -390,42 +387,33 @@ mod tests {
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
-        assert!(
-            decode(serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "session/cancel",
-                "params": {"sessionId": "s1"}
-            }))
+        assert!(decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
             .unwrap()
-            .cancel
-        );
+            .cancel);
         let refused = decode(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "session/prompt",
-            "params": {"sessionId": "s2", "prompt": [{"type": "text", "text": "other"}]}
+            "prompt": {"sessionId": "s2", "prompt": [{"type": "text", "text": "other"}]}
         }))
         .unwrap_err();
         assert_eq!(refused.code, ErrorCode::Denied);
-        for frame in [
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": 5, "method": "session/prompt",
-                "params": {"sessionId": "s1", "prompt": [{"type": "text", "text": 12}]}
-            }),
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": 6, "method": "session/prompt",
-                "params": {"sessionId": "s1", "prompt": [{"type": "image", "data": "x"}]}
-            }),
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": 7, "method": "session/cancel",
-                "params": {"sessionId": "s1"}
-            }),
+        for packet in [
+            serde_json::json!({"prompt": {
+                "sessionId": "s1", "prompt": [{"type": "text", "text": 12}]
+            }}),
+            serde_json::json!({"prompt": {
+                "sessionId": "s1", "prompt": [{"type": "image", "data": "x"}]
+            }}),
+            serde_json::json!({"prompt": {"sessionId": "s1"}}),
+            serde_json::json!({"prompt": {
+                "sessionId": "s1", "prompt": []
+            }}),
+            serde_json::json!({"unknown": {"sessionId": "s1"}}),
+            // JSON-RPC envelopes must be handled by the SDK, never here.
             serde_json::json!({
                 "jsonrpc": "2.0", "id": 8, "method": "session/prompt",
-                "params": {"sessionId": "s1"}
+                "params": {"sessionId": "s1", "prompt": []}
             }),
         ] {
-            assert_eq!(decode(frame).unwrap_err().code, ErrorCode::InvalidInput);
+            assert_eq!(decode(packet).unwrap_err().code, ErrorCode::InvalidInput);
         }
     }
 
