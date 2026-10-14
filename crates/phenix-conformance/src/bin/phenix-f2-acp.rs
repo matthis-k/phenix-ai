@@ -63,7 +63,7 @@ fn main() {
     .load()
     .unwrap();
 
-    let message = r#"{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"hello"}]}}"#;
+    let message = r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"text","text":"hello"}]}}"#;
     let accepted: Submission = call(
         &kernel,
         "decode",
@@ -83,7 +83,7 @@ fn main() {
         "decode",
         ClientInput {
             session: "s1".into(),
-            line: r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}"#
+            line: r#"{"cancel":{"sessionId":"s1"}}"#
                 .into(),
         },
     )
@@ -93,13 +93,13 @@ fn main() {
     assert_eq!(call::<Submission>(
         &kernel, "decode", ClientInput {
             session: "s1".into(),
-            line: r#"{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"s2","prompt":[{"type":"text","text":"forged"}]}}"#.into(),
+            line: r#"{"prompt":{"sessionId":"s2","prompt":[{"type":"text","text":"forged"}]}}"#.into(),
         },
     ).unwrap().unwrap_err().code, ErrorCode::Denied);
     assert_eq!(call::<Submission>(
         &kernel, "decode", ClientInput {
             session: "s1".into(),
-            line: r#"{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"image","data":"abc"}]}}"#.into(),
+            line: r#"{"prompt":{"sessionId":"s1","prompt":[{"type":"image","data":"abc"}]}}"#.into(),
         },
     ).unwrap().unwrap_err().code, ErrorCode::InvalidInput);
     let output: Vec<String> = call(
