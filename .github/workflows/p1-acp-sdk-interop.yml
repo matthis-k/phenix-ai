@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tests/acp-sdk-client
+      - name: Validate independent ACP client formatting
+        run: cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml --all -- --check
       - name: Build the packaged Phenix ACP host
         run: nix build .#phenix-basic-acp -L --out-link result-acp
       - name: Exercise host through official stable-v1 SDK
