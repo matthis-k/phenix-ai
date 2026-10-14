@@ -596,17 +596,33 @@
             else binding
           ) basicCompositionSpec.slots;
         }));
-      historyVerificationBinary = pkgs.writeShellApplication {
-        name = "phenix-basic-verification";
+      # A complete immutable composition, rather than a runtime that asks
+      # users to supply the composition JSON on every invocation.
+      basicPreset = name: composition: pkgs.writeShellApplication {
+        inherit name;
         text = ''
-          if [ "$#" -lt 1 ]; then
-            echo "usage: phenix-basic-verification terminal|jsonl|acp [--session ID for terminal]" >&2
-            exit 2
+          if [ "$#" -eq 0 ]; then
+            mode=terminal
+          else
+            case "$1" in
+              terminal|jsonl|acp)
+                mode="$1"
+                shift
+                ;;
+              *)
+                echo "usage: ${name} [terminal|jsonl|acp] [--session ID for terminal]" >&2
+                exit 2
+                ;;
+            esac
           fi
-          mode="$1"
-          shift
-          exec ${basicRuntime}/bin/phenix-basic-runtime "$mode" ${historyVerificationComposition} "$@"
+          exec ${basicRuntime}/bin/phenix-basic-runtime "$mode" ${composition} "$@"
         '';
+      };
+      basicBinary = basicPreset "phenix-basic" basicComposition;
+      historyVerificationBinary = basicPreset
+        "phenix-basic-verification" historyVerificationComposition;
+      basicBinaryClosure = pkgs.closureInfo {
+        rootPaths = [ basicBinary ];
       };
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -614,6 +630,9 @@
         mkdir -p "$out"
         python ${./tests/basic-history-verification-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification ${basicComposition} ${historyVerificationComposition} "$out"
         test -s "$out/history-verification.json"
+        # User-facing Basic must not close over the test-only model package.
+        ! grep -Fq "${historyTestModel}" ${basicBinaryClosure}/store-paths
+        test -x ${basicBinary}/bin/phenix-basic
       '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
@@ -1067,6 +1086,8 @@
         phenix-plugin-frontend-acp = frontendAcp;
         phenix-basic-runtime = basicRuntime;
         phenix-basic-composition = basicComposition;
+        phenix-basic = basicBinary;
+        phenix-basic-verification-composition = historyVerificationComposition;
         # Explicit opt-in test binary: Basic runtime plus a history-only Model.
         phenix-basic-verification = historyVerificationBinary;
         phenix-basic-terminal = pkgs.writeShellApplication {
