@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REMOTE_BRANCH = 'ci/m1-p1-ci-cutover'
 OLD_BENCHMARK_BRANCH = 'ci/m1-generated-backend-consumer'
-EXPECTED_SOURCE_PIN = '25da62028d5d72d2e5ae3aca9d1571c425eb0d09'
+EXPECTED_SOURCE_PIN = 'a1480620950508215bdda4a5404f046becf65cf8'
 
 
 def require(condition, message):
