@@ -100,11 +100,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 ))
                 .block_task()
                 .await;
-            assert!(model_failure.is_err(), "model failure was accepted as success");
+            assert!(
+                model_failure.is_err(),
+                "model failure was accepted as success"
+            );
             let resumed = connection
                 .send_request(PromptRequest::new(
                     session.session_id.clone(),
-                    vec![ContentBlock::Text(TextContent::new("sdk-after-model-error"))],
+                    vec![ContentBlock::Text(TextContent::new(
+                        "sdk-after-model-error",
+                    ))],
                 ))
                 .block_task()
                 .await?;
