@@ -257,6 +257,118 @@ fn main() {
             .code,
             ErrorCode::Denied
         );
+    } else if args[1] == "faults" {
+        // The driver installs a SQLite BEFORE UPDATE trigger that aborts
+        // writes to atomic-b. atomic-a is written first inside the same
+        // transaction. The failed second edit must roll back the first.
+        let rejected: Result<Vec<StoredRecord>, BasicError> = call(
+            &kernel,
+            write,
+            storage,
+            StorageTransaction {
+                session: "s1".into(),
+                edits: vec![
+                    StorageEdit {
+                        key: "atomic-a".into(),
+                        expected: 1,
+                        data: Blob(b"rolled-back".to_vec()),
+                    },
+                    StorageEdit {
+                        key: "atomic-b".into(),
+                        expected: 1,
+                        data: Blob(b"trigger-rejected".to_vec()),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(rejected.unwrap_err().code, ErrorCode::StorageFailed);
+
+        // Validate that both values and revisions survived the failed SQL
+        // statement. A later process reopens this same database to resume.
+        for (key, value) in [("atomic-a", b"A".as_slice()), ("atomic-b", b"B".as_slice())] {
+            let record: StoredRecord = call(
+                &kernel,
+                read,
+                storage,
+                phenix_basic_contracts::RecordKey {
+                    session: "s1".into(),
+                    key: key.into(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(record.revision, 1, "{key} revision changed on rollback");
+            assert_eq!(record.data.0, value, "{key} data changed on rollback");
+        }
+
+        // Overflow and duplicate edit keys fail before touching SQLite.
+        for (edits, expected_code) in [
+            (
+                vec![StorageEdit {
+                    key: "atomic-a".into(),
+                    expected: u64::MAX,
+                    data: Blob(b"overflow".to_vec()),
+                }],
+                ErrorCode::Conflict,
+            ),
+            (
+                vec![
+                    StorageEdit {
+                        key: "atomic-a".into(),
+                        expected: 1,
+                        data: Blob(b"duplicate-1".to_vec()),
+                    },
+                    StorageEdit {
+                        key: "atomic-a".into(),
+                        expected: 1,
+                        data: Blob(b"duplicate-2".to_vec()),
+                    },
+                ],
+                ErrorCode::InvalidInput,
+            ),
+        ] {
+            let rejected: Result<Vec<StoredRecord>, BasicError> = call(
+                &kernel,
+                write,
+                storage,
+                StorageTransaction {
+                    session: "s1".into(),
+                    edits,
+                },
+            )
+            .unwrap();
+            assert_eq!(rejected.unwrap_err().code, expected_code);
+        }
+        let unchanged: StoredRecord = call(
+            &kernel,
+            read,
+            storage,
+            phenix_basic_contracts::RecordKey {
+                session: "s1".into(),
+                key: "atomic-a".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(unchanged.revision, 1);
+        assert_eq!(unchanged.data.0, b"A");
+
+        fs::write(
+            output.join("sqlite-faults.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "format": "phenix.b2.sqlite-faults.v1",
+                "separate_process": true,
+                "cases": [
+                    "sql-trigger-error-rolls-back-earlier-update",
+                    "both-record-revisions-unchanged",
+                    "revision-overflow-before-write",
+                    "duplicate-edit-key-before-write"
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     } else if args[1] == "resume" {
         // This process has no in-memory plugin instances from the seed run.
         let restored: SessionSnapshot = call(
@@ -396,6 +508,6 @@ fn main() {
         )
         .unwrap();
     } else {
-        panic!("expected seed or resume");
+        panic!("expected seed, faults or resume");
     }
 }
