@@ -368,11 +368,9 @@ GraphExecution on its controller thread and durable event journal semantics.
   enqueue typed v1 requests on a bounded queue and receive typed responses
   from exactly one Phenix controller. Cancellation/EOF signals reach the live
   graph root without moving Kernel or GraphExecution into protocol tasks.
-  Implementation branch `impl/m1-r1-acp-sdk-host-v1` creates an opt-in
-  SDK-backed host (`PHENIX_BASIC_USE_ACP_SDK=1`) and exercises it via the
-  independent official client, pending exact-head CI. The old host remains
-  the default strictly during comparison; it MUST be removed before R1-ACP3
-  acceptance. Keep session/resource grants, durable owner markers and
+  PR #842 introduces the SDK host behind a temporary comparison flag.
+  The stacked `impl/m1-r1-acp-single-sdk-host` branch removes the old host
+  and uses the SDK alone. Exact-head legacy-fixture parity remains pending. Keep session/resource grants, durable owner markers and
   journal offsets Phenix-owned. The SDK lockfile now resolves 200 packages, and SDK `Lines` is fed by the pre-existing bounded stdin reader with a 64-entry backpressured frame channel. Prove the physical frame limit and queue/EOF behavior before switching the default.
 - [ ] **R1-ACP3: delete old ACP protocol code.** Remove
   `parse_acp_frame`, custom JSON-RPC reply/error framing and the remaining
@@ -381,6 +379,11 @@ GraphExecution on its controller thread and durable event journal semantics.
   SDK v1 updates in R1-ACP1; the host must send them through the SDK transport
   instead of writing JSON-RPC lines itself. Replace, never retain, the old
   host as a production fallback. Keep only Phenix policy and backpressure.
+  The `impl/m1-r1-acp-single-sdk-host` slice deletes `run_acp`,
+  `drive_acp_prompt`, `parse_acp_frame`, their custom error/reply code and
+  old envelope tests. The Frontend notification envelope still causes a
+  serialization round-trip in the SDK host. Remove it through a typed
+  contract before accepting R1-ACP3. R1-ACP4 parity tests are still required.
 - [ ] **R1-ACP4: prove parity and release.** Run independent official SDK
   stable-v1 client tests, two-process `session/load` replay, ordered tool
   updates, malformed envelopes, unsupported/invalid payloads, bounded input,
