@@ -26,6 +26,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
     resources.insert(pending_signal.trim_end_matches("@1").to_owned());
     let receipt = phenix_contract::property_contract("example.graph-c", "receipt").unwrap();
     resources.insert(receipt.trim_end_matches("@1").to_owned());
+    let cancel_probe = phenix_contract::property_contract("example.graph-c", "cancel_probe").unwrap();
+    resources.insert(cancel_probe.trim_end_matches("@1").to_owned());
     let mut grants = Vec::new();
     for caller in ["root", ids[0], ids[1], ids[2]] {
         grants.push(ScopedGrant {
@@ -114,6 +116,15 @@ fn composition(artifacts: Vec<String>) -> Composition {
             resources: resources.clone(),
         });
         operations.insert(format!("{receipt}/{operation}"));
+    }
+    for operation in ["get", "set"] {
+        grants.push(ScopedGrant {
+            caller: "example.graph-c".into(),
+            interface: cancel_probe.clone(),
+            operation: operation.into(),
+            resources: resources.clone(),
+        });
+        operations.insert(format!("{cancel_probe}/{operation}"));
     }
     Composition {
         format: "phenix.composition.v2".into(),
