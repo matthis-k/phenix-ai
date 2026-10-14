@@ -313,7 +313,11 @@ fn main() {
             .unwrap()
             .unwrap();
             assert_eq!(record.revision, 1, "{key} revision changed on rollback");
-            assert_eq!(record.data.0.as_slice(), value, "{key} data changed on rollback");
+            assert_eq!(
+                record.data.0.as_slice(),
+                value,
+                "{key} data changed on rollback"
+            );
         }
 
         // Overflow and duplicate edit keys fail before touching SQLite.
