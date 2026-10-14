@@ -11,6 +11,8 @@ on:
       - ci/flake-backend.nix
       - tests/ci-cutover-policy.py
       - tests/ci-remote-cache-comparison.py
+      - tests/ci-authority-policy.py
+      - .github/workflows/p1-rustfmt.yml
       - .github/workflows/remote-cold-warm-benchmark.yml
       - ci/flake-check-config.nix
       - ci/render-flake-workflow.nix
@@ -35,6 +37,8 @@ jobs:
           python3 tests/ci-cutover-policy.py
           python3 tests/ci-remote-cache-comparison.py --self-test
           python3 tests/ci-remote-cache-comparison.py --policy
+          python3 tests/ci-authority-policy.py --self-test
+          python3 tests/ci-authority-policy.py
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: matthis-k/phenix-flake-ci
