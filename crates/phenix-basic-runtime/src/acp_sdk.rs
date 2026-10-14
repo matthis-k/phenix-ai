@@ -82,6 +82,7 @@ fn send_updates(
     session: &str,
     after: &mut u64,
     peer: &Peer,
+    disconnected: &AtomicBool,
 ) -> acp::Result<()> {
     let mut encoded = Vec::new();
     render_new(
@@ -96,7 +97,13 @@ fn send_updates(
     .map_err(internal)?;
     for line in String::from_utf8(encoded).map_err(internal)?.lines() {
         let notification: SessionNotification = serde_json::from_str(line).map_err(internal)?;
-        peer.send_notification(notification)?;
+        if peer.send_notification(notification).is_err() {
+            // The client may vanish before SDK on_close runs. Never abandon
+            // a live graph with a durable owner marker on a broken writer.
+            // Treat the lost peer as disconnect; drive cancels and drains.
+            disconnected.store(true, Ordering::Release);
+            break;
+        }
     }
     Ok(())
 }
@@ -268,7 +275,7 @@ impl Controller {
         let offset = self.offsets.entry(session.clone()).or_default();
         *offset = 0;
         let loaded = self.sessions.get(&session).expect("just inserted");
-        send_updates(loaded, None, &session, offset, peer)?;
+        send_updates(loaded, None, &session, offset, peer, &self.closed)?;
         Ok(LoadSessionResponse::new())
     }
 
@@ -345,7 +352,7 @@ impl Controller {
                 marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
             }
             if !closed.load(Ordering::Acquire) {
-                send_updates(kernel, Some(&execution), session, after, peer)?;
+                send_updates(kernel, Some(&execution), session, after, peer, closed)?;
             }
             if status == GraphStatus::Finished {
                 let cancelled = finish_submission(&execution).map_err(internal)?;
@@ -353,7 +360,7 @@ impl Controller {
                 if cancelled {
                     record_cancelled(kernel, session).map_err(internal)?;
                     if !closed.load(Ordering::Acquire) {
-                        send_updates(kernel, None, session, after, peer)?;
+                        send_updates(kernel, None, session, after, peer, closed)?;
                     }
                 }
                 set_owner_marker(owner, None).map_err(internal)?;
