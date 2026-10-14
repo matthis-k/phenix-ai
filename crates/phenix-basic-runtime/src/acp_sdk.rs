@@ -174,10 +174,17 @@ impl Controller {
 
     fn dispatch(&mut self, command: Command) {
         match command {
-            Command::Initialize(_request, reply) => {
+            Command::Initialize(request, reply) => {
                 let result = if self.initialized {
                     Err(invalid("connection already initialized"))
+                } else if request.protocol_version == ProtocolVersion::V0 {
+                    // V0 is the pre-release protocol. Keep the connection
+                    // uninitialized so the client can retry with stable v1.
+                    Err(invalid("unsupported ACP protocol version"))
                 } else {
+                    // This handler is v1-only. A higher client version may
+                    // negotiate down to stable v1, never silently activate
+                    // the SDK's separate draft-v2 lifecycle.
                     self.initialized = true;
                     Ok(InitializeResponse::new(ProtocolVersion::V1)
                         .agent_capabilities(AgentCapabilities::new().load_session(true))
