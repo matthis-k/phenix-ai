@@ -1,6 +1,6 @@
 //! Independent official SDK negotiation check for the gated v1/v2 router.
 //! This checks only initialization, not the unfinished v2 session lifecycle.
-use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
+use agent_client_protocol::schema::{ProtocolVersion, v1, v2};
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use std::error::Error;
 
