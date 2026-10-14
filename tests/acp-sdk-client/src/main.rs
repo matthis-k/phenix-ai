@@ -227,6 +227,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 *saved_ids.lock().expect("isolated ACP IDs poisoned") =
                     Some((alpha.session_id.clone(), beta.session_id.clone()));
 
+                // A failed load must leave existing sessions available.
+                // Use a stable ID the host cannot have issued itself.
+                let unknown_load = connection
+                    .send_request(LoadSessionRequest::new(
+                        SessionId::new("phenix-never-issued-session"),
+                        cwd.clone(),
+                    ))
+                    .block_task()
+                    .await;
+                assert!(unknown_load.is_err(), "unknown ACP session/load succeeded");
+
                 // Even a valid persisted identity must not be admitted on
                 // a new connection before an explicit session/load.
                 let unowned = connection
