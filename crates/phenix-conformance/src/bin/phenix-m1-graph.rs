@@ -1019,6 +1019,22 @@ fn main() {
         Code::Denied
     );
 
+    // A pending state hook must pass the same offline watch-grant gate.
+    let mut denied_pending_watch = policy.clone();
+    denied_pending_watch.grants.retain(|grant| {
+        !(grant.caller == "example.graph-c"
+            && grant.interface
+                == phenix_contract::property_contract("example.graph-a", "pending_signal").unwrap()
+            && grant.operation == "watch")
+    });
+    assert_eq!(
+        Prepared::prepare(denied_pending_watch)
+            .err()
+            .expect("pending state hooks require watch grants")
+            .code,
+        Code::Denied
+    );
+
     kernel.shutdown().unwrap();
 
     // The graph caller must inherit the root requirement's resource ceiling.
@@ -1099,6 +1115,7 @@ fn main() {
             "native-pending-hook-cancel-revokes-state-authority",
             "native-pending-hook-one-terminal-event",
             "native-state-hook-grant-denied-before-load",
+            "native-pending-hook-grant-denied-before-load",
             "native-state-hook-receives-only-matching-property",
             "watched-b-commit-projected-before-pending-a-settles",
             "watched-a-commit-projected-after-pending-completes",
