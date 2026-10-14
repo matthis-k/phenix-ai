@@ -76,6 +76,8 @@ assert (output / "terminal-sessions.db").is_file()
         "explicit-session-selection",
         "independent-session-restart",
         "observer-cursor-isolation",
-        "invalid-session-identity-refused",\n        "failed-tool-model-continuation",\n        "model-failure-process-restart",
+        "invalid-session-identity-refused",
+        "failed-tool-model-continuation",
+        "model-failure-process-restart",
     ],
 }, indent=2, sort_keys=True))
