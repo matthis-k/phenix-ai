@@ -191,8 +191,13 @@ must be checked for equivalent limits or wrapped with bounded SDK
 graceful close and exactly-once owner marker cleanup. The stacked single-host branch deletes `run_acp`,
 `drive_acp_prompt`, `parse_acp_frame` and their legacy tests.
 It uses the SDK by default. Keep the deletion after independent
-stdio/HTTP/cancellation parity passes. The Frontend serialized notification
-envelope remains a separate R1-ACP3 removal item.
+stdio/HTTP/cancellation parity passes. The Frontend now encodes only official typed
+`SessionNotification` payloads, which the SDK alone wraps in JSON-RPC.
+The SDK host passes typed `PromptRequest` payloads through the native
+Frontend `decode` operation to obtain a Phenix `Submission`; the
+Frontend no longer parses JSON-RPC envelopes. Only schema payload
+serialization crosses the native ABI, not a duplicate protocol parser.
+R1-ACP3 acceptance still requires exact-head native and negative CI.
 
 The `unstable_protocol_v2` feature currently only makes SDK v2 APIs
 available at build time. Serving and negotiating v2 requires a separate
