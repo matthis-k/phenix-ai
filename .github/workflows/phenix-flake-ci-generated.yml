@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - "ci/m1-generated-backend-consumer"
+      - "ci/m1-p1-ci-cutover"
   workflow_dispatch:
 
 permissions:
