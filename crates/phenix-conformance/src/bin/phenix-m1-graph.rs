@@ -644,6 +644,7 @@ fn main() {
                 scope.clone(),
             )
             .unwrap();
+        let (before_epoch, _) = execution.committed_changes_since(0);
         let mut pending_root = None;
         assert_eq!(
             execution
@@ -655,6 +656,10 @@ fn main() {
         );
         assert_eq!(execution.steps().len(), 1);
         assert_eq!(execution.steps()[0].node, "example.graph-b/b");
+        // B commits before the pending A branch settles. Observe the
+        // committed epoch without admitting or reentering any new node.
+        let (after_b_epoch, after_b) = execution.committed_changes_since(before_epoch);
+        assert_eq!(after_b, ["example.graph-b/result"]);
         assert!(
             !successor_witness.exists(),
             "join ran before slow source settled"
@@ -668,6 +673,10 @@ fn main() {
         assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Pending);
         assert!(!successor_witness.exists());
         assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Finished);
+        let (after_a_epoch, after_a) = execution.committed_changes_since(after_b_epoch);
+        assert!(after_a_epoch > after_b_epoch);
+        assert_eq!(after_a, ["example.graph-a/result"]);
+        assert!(execution.committed_changes_since(after_a_epoch).1.is_empty());
         assert_eq!(execution.completion(), Some(GraphCompletion::Success));
         assert_eq!(execution.steps().len(), 4);
         assert_eq!(execution.steps()[1].node, "example.graph-a/slow");
