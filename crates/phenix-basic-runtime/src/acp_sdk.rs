@@ -11,6 +11,8 @@ use acp::schema::{
     ProtocolVersion,
 };
 use acp::{Agent, Client, ConnectionTo, Responder};
+#[cfg(feature = "acp_v2_preview")]
+use acp::ConnectTo;
 use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
