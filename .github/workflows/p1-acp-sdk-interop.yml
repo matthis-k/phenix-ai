@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# Only the newest source commit needs PR evidence. Manual and push runs
+# retain independent identities and are never cancelled by a PR update.
+concurrency:
+  group: p1-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   official-sdk:
     runs-on: ubuntu-latest

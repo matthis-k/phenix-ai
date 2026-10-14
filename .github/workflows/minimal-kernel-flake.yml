@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# Only the newest source commit needs PR evidence. Manual and push runs
+# retain independent identities and are never cancelled by a PR update.
+concurrency:
+  group: p1-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   candidate:
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@d5173342ebaaefc2b62ae866ac57de41786f5bd5
