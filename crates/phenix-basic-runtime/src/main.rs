@@ -198,6 +198,24 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     Ok(cancelled)
 }
 
+/// Terminal and JSONL remain live after a typed domain error. The
+/// Basic agent already checkpointed its Failed state and journaled the
+/// failure, so these frontends can render that event and admit the next
+/// queued prompt. A kernel failure or invalid domain payload still stops
+/// the host; ACP keeps its independent SDK request-error response.
+fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
+    if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
+        for step in execution.steps() {
+            if let Outcome::Domain(value) = &step.outcome {
+                BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
+                return Ok(false);
+            }
+        }
+        return Err("domain graph finished without a domain outcome".into());
+    }
+    finish_submission(execution)
+}
+
 /// The kernel's cancel callback has no Storage authority. Once its tickets
 /// physically drain, the host records the explicit user cancellation through
 /// the separately authorized Session and Journal providers.
@@ -649,7 +667,7 @@ fn run_console(
                 &mut stdout,
             )?;
             if status == GraphStatus::Finished {
-                let outcome = finish_submission(execution);
+                let outcome = finish_stream_submission(execution);
                 active = None;
                 if outcome? {
                     record_cancelled(&kernel, session)?;
@@ -835,7 +853,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 &mut output,
             )?;
             if status == GraphStatus::Finished {
-                let cancelled = finish_submission(&execution)?;
+                let cancelled = finish_stream_submission(&execution)?;
                 drop(execution);
                 if cancelled {
                     record_cancelled(kernel, &session)?;
