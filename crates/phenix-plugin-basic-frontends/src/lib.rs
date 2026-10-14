@@ -409,10 +409,10 @@ pub fn acp_render_v2(request: RenderRequest) -> Result<Vec<String>, BasicError> 
         if let Some(update) = update {
             let notification =
                 UpdateSessionNotification::new(SessionId::new(request.session.clone()), update);
-            output.push(
-                serde_json::to_string(&notification)
-                    .map_err(|_| error(ErrorCode::InvalidReply, "invalid ACP v2 update payload"))?,
-            );
+            output
+                .push(serde_json::to_string(&notification).map_err(|_| {
+                    error(ErrorCode::InvalidReply, "invalid ACP v2 update payload")
+                })?);
         }
     }
     Ok(output)
@@ -577,8 +577,7 @@ mod tests {
         let values: Vec<serde_json::Value> = updates
             .iter()
             .map(|line| {
-                let notification: UpdateSessionNotification =
-                    serde_json::from_str(line).unwrap();
+                let notification: UpdateSessionNotification = serde_json::from_str(line).unwrap();
                 assert_eq!(notification.session_id.to_string(), "s1");
                 let value: serde_json::Value = serde_json::from_str(line).unwrap();
                 assert!(value.get("jsonrpc").is_none());
