@@ -944,6 +944,16 @@
       shippingCheck = pkgs.runCommand "phenix-m1-shipping" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         python ${./tests/shipping-product.py} ${kernel} ${publicSdkCheck} ${conformance} ${productionClosure} ${exampleSource}/examples $out
       '';
+      # P1 is not accepted by this Nix fixture alone: the independent
+      # official ACP SDK CI workflow must also pass at the final exact head.
+      p1ReleasePreflight = pkgs.runCommand "phenix-p1-release-preflight" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p $out
+        python ${./tests/p1-release-evidence.py} --self-test
+        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} $out
+        test -s "$out/evidence.json"
+      '';
       release = pkgs.runCommand "phenix-m1-release" { } ''
         mkdir -p $out
         cp -rs ${conformance}/. $out/
@@ -1005,6 +1015,7 @@
         # Expose the existing runner to the CI matrix without changing its semantics.
         phenix-m1-conformance-runner = conformanceBinary;
         phenix-m1-release = release;
+        phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
@@ -1069,6 +1080,7 @@
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
+        p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
         m1-value-sdk-product = valueSdkProduct;
         m1-live-state = stateCheck;
