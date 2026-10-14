@@ -199,46 +199,49 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
             agent_client_protocol::on_receive_notification!(),
         )
-        .connect_with(isolated_agent, |connection: ConnectionTo<Agent>| async move {
-            let init = connection
-                .send_request(InitializeRequest::new(ProtocolVersion::V1))
-                .block_task()
-                .await?;
-            assert_eq!(init.protocol_version, ProtocolVersion::V1);
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-            let alpha = connection
-                .send_request(NewSessionRequest::new(cwd.clone()))
-                .block_task()
-                .await?;
-            let beta = connection
-                .send_request(NewSessionRequest::new(cwd.clone()))
-                .block_task()
-                .await?;
-            assert_ne!(alpha.session_id, beta.session_id);
-            *saved_ids.lock().expect("isolated ACP IDs poisoned") =
-                Some((alpha.session_id.clone(), beta.session_id.clone()));
-
-            for (session, prompt) in [
-                (alpha.session_id.clone(), "sdk-isolated-alpha"),
-                (beta.session_id.clone(), "sdk-isolated-beta"),
-            ] {
-                let answer = connection
-                    .send_request(PromptRequest::new(
-                        session,
-                        vec![ContentBlock::Text(TextContent::new(prompt))],
-                    ))
+        .connect_with(
+            isolated_agent,
+            |connection: ConnectionTo<Agent>| async move {
+                let init = connection
+                    .send_request(InitializeRequest::new(ProtocolVersion::V1))
                     .block_task()
                     .await?;
-                assert_eq!(format!("{:?}", answer.stop_reason), "EndTurn");
-            }
-            // Only alpha replays. Beta's delivered sequence must remain
-            // unchanged even though both sessions share one ACP connection.
-            connection
-                .send_request(LoadSessionRequest::new(alpha.session_id, cwd))
-                .block_task()
-                .await?;
-            Ok(())
-        })
+                assert_eq!(init.protocol_version, ProtocolVersion::V1);
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+                let alpha = connection
+                    .send_request(NewSessionRequest::new(cwd.clone()))
+                    .block_task()
+                    .await?;
+                let beta = connection
+                    .send_request(NewSessionRequest::new(cwd.clone()))
+                    .block_task()
+                    .await?;
+                assert_ne!(alpha.session_id, beta.session_id);
+                *saved_ids.lock().expect("isolated ACP IDs poisoned") =
+                    Some((alpha.session_id.clone(), beta.session_id.clone()));
+
+                for (session, prompt) in [
+                    (alpha.session_id.clone(), "sdk-isolated-alpha"),
+                    (beta.session_id.clone(), "sdk-isolated-beta"),
+                ] {
+                    let answer = connection
+                        .send_request(PromptRequest::new(
+                            session,
+                            vec![ContentBlock::Text(TextContent::new(prompt))],
+                        ))
+                        .block_task()
+                        .await?;
+                    assert_eq!(format!("{:?}", answer.stop_reason), "EndTurn");
+                }
+                // Only alpha replays. Beta's delivered sequence must remain
+                // unchanged even though both sessions share one ACP connection.
+                connection
+                    .send_request(LoadSessionRequest::new(alpha.session_id, cwd))
+                    .block_task()
+                    .await?;
+                Ok(())
+            },
+        )
         .await?;
 
     let (alpha, beta) = isolated_ids
