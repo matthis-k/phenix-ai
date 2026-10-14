@@ -198,17 +198,20 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     Ok(cancelled)
 }
 
-/// Terminal and JSONL remain live after a typed domain error. The
-/// Basic agent already checkpointed its Failed state and journaled the
-/// failure, so these frontends can render that event and admit the next
-/// queued prompt. A kernel failure or invalid domain payload still stops
-/// the host; ACP keeps its independent SDK request-error response.
+/// A failed Model turn checkpoints a Failed session and journals a
+/// Failure event. Keep Terminal/JSONL alive to deliver queued prompts,
+/// but never treat failed Storage, admission or other domain work as a
+/// successful turn. ACP retains its independent SDK request-error path.
 fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
         for step in execution.steps() {
             if let Outcome::Domain(value) = &step.outcome {
-                BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-                return Ok(false);
+                let cause = BasicError::from_value(value.clone())
+                    .map_err(|e| format!("{e:?}"))?;
+                if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed {
+                    return Ok(false);
+                }
+                return Err(format!("{:?}: {}", cause.code, cause.message));
             }
         }
         return Err("domain graph finished without a domain outcome".into());
