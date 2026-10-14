@@ -928,6 +928,20 @@ fn drive_acp_prompt(
                     continue;
                 }
             };
+            if frame["method"] == "session/cancel" {
+                if let Some(id) = frame.get("id") {
+                    // A cancel is a notification in ACP v1. Reject an
+                    // incorrectly framed request now, even while another
+                    // request is waiting for its admitted graph to finish.
+                    let reply = serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32600, "message": "cancel must be a notification"}
+                    });
+                    writeln!(output, "{reply}").map_err(|e| e.to_string())?;
+                    output.flush().map_err(|e| e.to_string())?;
+                    continue;
+                }
+            }
             if frame.get("id").is_none() {
                 // Match the idle controller: unrelated notifications do not
                 // consume the deferred request queue while a graph is live.
