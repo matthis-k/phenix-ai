@@ -132,9 +132,12 @@ feature-gates `agent-client-protocol-schema` 1.11.0 to the native ACP
 Frontend plugin. `acp_decode` now deserializes the SDK's stable-v1
 `PromptRequest`, `CancelNotification` and `ContentBlock` payloads
 instead of selecting `params.sessionId` and `params.prompt` by hand.
-It still checks the selected Phenix session and limits content to what
-Basic accepts. Host JSON-RPC framing and output remain legacy code until
-the SDK-backed connection migration.
+It renders journal output with the official v1 `SessionNotification`,
+`SessionUpdate`, `ContentChunk`, `ToolCall` and `ToolCallUpdate` types.
+The schema omits `Pending` tool status by default; ACP consumers infer the
+standard default. Phenix still checks the selected session and limits input
+to Basic-supported content. The host's JSON-RPC envelope framing remains
+legacy code until the SDK-backed connection migration.
 
 The resolved lockfile grows from 93 to 169 packages: this is a real
 dependency cost of the official schema, including its `serde_with` and
