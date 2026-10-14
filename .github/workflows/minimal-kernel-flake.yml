@@ -10,6 +10,13 @@ on:
 permissions:
   contents: read
 
+# Each PR needs exact-head verification, never simultaneous stale-head
+# compilations. Scope by workflow and PR ID so different PRs and validation
+# gates do not cancel one another (and push/manual runs use their ref).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   candidate:
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@d5173342ebaaefc2b62ae866ac57de41786f5bd5

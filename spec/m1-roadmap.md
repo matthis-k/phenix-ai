@@ -440,6 +440,20 @@ The prior old-main selective CI took about 5-6 minutes with different coverage;
 do not use it as a full-suite speedup claim. Logs show repeated independent
 Cargo compilation of shared contract, SDK and macro crates.
 
+CI0.1 — **latest-head cancellation** (branch
+`ci/m1-latest-head-concurrency`): the canonical conformance, flake-aware
+matrix candidate, generated Nix DAG candidate and official ACP SDK v1
+interop workflows use GitHub Actions' built-in workflow/PR-scoped
+`concurrency` to cancel superseded heads. During #843's ACP adapter
+iteration, dozens of outdated jobs remained queued or compiling across
+prior heads, consuming runner minutes and delaying the newest gate.
+Keep the four workflow scopes independent and never cancel one PR from
+another. Verify a rapid two-commit test cancels the older check, the
+newest exact head completes, and distinct PRs do not interfere. This
+change optimizes CI orchestration only: it neither skips release checks
+nor proves any runtime milestone. Compare runner minutes and wall time
+after verification; mark CI0.1 accepted only with workflow evidence.
+
 [The M1 matrix rollout](m1-ci-matrix.md) records the current benchmark and
 shipping gate. [The proposed generic flake-aware design](https://github.com/matthis-k/phenix-flake-ci/pull/17)
 records FC1-FC4, owned by `phenix-flake-ci`. AI-CI1-AI-CI4 are consumer

@@ -1,5 +1,6 @@
-# Independent protocol compatibility test. The SDK belongs only to this
-# test crate; it must not become a dependency of the Phenix kernel or host.
+# Independent official SDK client tested against the SDK-backed Phenix ACP
+# host over stdio. The generic Phenix kernel must not depend on this protocol;
+# host and test client may both use the same maintained SDK crate.
 name: P1 official ACP SDK interop
 on:
   pull_request:
@@ -14,6 +15,13 @@ on:
 
 permissions:
   contents: read
+
+# Each PR needs exact-head verification, never simultaneous stale-head
+# compilations. Scope by workflow and PR ID so different PRs and validation
+# gates do not cancel one another (and push/manual runs use their ref).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   official-sdk:
