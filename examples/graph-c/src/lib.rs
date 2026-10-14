@@ -43,7 +43,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             after: &[],
             selector: "",
             operation: "example.graph.pending-change@1/run",
-            writes: &[],
+            writes: &["example.graph-c/cancel_probe"],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::FailRoot,
         },
@@ -89,6 +89,9 @@ mod provider {
 
     #[derive(Default)]
     struct State {
+        #[get]
+        #[set]
+        cancel_probe: String,
         #[get]
         #[set]
         #[watch]
@@ -194,8 +197,13 @@ mod provider {
         state.pending_polls += 1;
         if state.pending_cancelled {
             assert!(
-                state.receipt.edit(host).is_err(),
+                state.cancel_probe.edit(host).is_err(),
                 "cancelled pending hook recovered write authority"
+            );
+        } else {
+            assert!(
+                state.cancel_probe.edit(host).is_ok(),
+                "pending hook lacked write authority before cancellation"
             );
         }
         if state.pending_polls < 3 {
