@@ -31,6 +31,7 @@ jobs:
       - name: Exercise host through official stable-v1 SDK
         env:
           RUST_BACKTRACE: "1"
+          PHENIX_BASIC_USE_ACP_SDK: "1"
         run: |
           set -euo pipefail
           export PHENIX_BASIC_SQLITE_PATH="$RUNNER_TEMP/phenix-p1-official-acp.db"

@@ -1,0 +1,443 @@
+//! Experimental SDK-backed ACP transport. Only this adapter owns ACP wire
+//! dispatch; the Basic graph, session locks and journal stay on one controller
+//! thread. The legacy host remains the shipped default until parity is proven.
+use super::*;
+use acp::schema::{
+    v1::{
+        AgentCapabilities, CancelNotification, ContentBlock, Implementation, InitializeRequest,
+        InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+        NewSessionResponse, PromptRequest, PromptResponse, SessionNotification, StopReason,
+    },
+    ProtocolVersion,
+};
+use acp::{Agent, Client, ConnectionTo, Responder, Stdio};
+use agent_client_protocol as acp;
+use phenix_basic_contracts::{Limits, PromptSubmitted};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+    Arc, Mutex,
+};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+type Reply<T> = Responder<T>;
+type Peer = ConnectionTo<Client>;
+
+enum Command {
+    Initialize(InitializeRequest, Reply<InitializeResponse>),
+    New(NewSessionRequest, Reply<NewSessionResponse>),
+    Load(LoadSessionRequest, Reply<LoadSessionResponse>, Peer),
+    Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
+    Closed,
+}
+
+impl Command {
+    fn reject(self, error: acp::Error) -> acp::Result<()> {
+        match self {
+            Self::Initialize(_, reply) => reply.respond_with_error(error),
+            Self::New(_, reply) => reply.respond_with_error(error),
+            Self::Load(_, reply, _) => reply.respond_with_error(error),
+            Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
+            Self::Closed => Ok(()),
+        }
+    }
+}
+
+fn submit(sender: &SyncSender<Command>, cmd: Command) -> acp::Result<()> {
+    match sender.try_send(cmd) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(cmd)) => {
+            cmd.reject(acp::Error::internal_error().data("ACP controller request queue full"))
+        }
+        Err(TrySendError::Disconnected(cmd)) => {
+            cmd.reject(acp::Error::internal_error().data("ACP controller disconnected"))
+        }
+    }
+}
+
+fn internal(error: impl ToString) -> acp::Error {
+    acp::Error::internal_error().data(error.to_string())
+}
+fn invalid(message: &str) -> acp::Error {
+    acp::Error::invalid_params().data(message)
+}
+
+/// Render via the selected Phenix Frontend, then hand typed notifications to
+/// the SDK. R1-ACP3 will make the Frontend output contract typed so this
+/// transitional JSON serialization round-trip disappears.
+fn send_updates(
+    kernel: &Kernel,
+    graph: Option<&GraphExecution<'_>>,
+    session: &str,
+    after: &mut u64,
+    peer: &Peer,
+) -> acp::Result<()> {
+    let mut encoded = Vec::new();
+    render_new(
+        kernel,
+        graph,
+        "phenix.basic.frontend-acp",
+        session,
+        after,
+        None,
+        &mut encoded,
+    )
+    .map_err(internal)?;
+    for line in String::from_utf8(encoded).map_err(internal)?.lines() {
+        let frame: serde_json::Value = serde_json::from_str(line).map_err(internal)?;
+        let notification: SessionNotification =
+            serde_json::from_value(frame["params"].clone()).map_err(internal)?;
+        peer.send_notification(notification)?;
+    }
+    Ok(())
+}
+
+struct Controller {
+    composition: Composition,
+    sessions: BTreeMap<String, Kernel>,
+    offsets: BTreeMap<String, u64>,
+    initialized: bool,
+    issued: u64,
+    queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>>,
+    closed: Arc<AtomicBool>,
+}
+
+impl Controller {
+    fn start(
+        composition: Composition,
+        queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>>,
+        closed: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            composition,
+            sessions: BTreeMap::new(),
+            offsets: BTreeMap::new(),
+            initialized: false,
+            issued: 0,
+            queued,
+            closed,
+        }
+    }
+
+    fn dispatch(&mut self, command: Command) {
+        match command {
+            Command::Initialize(_request, reply) => {
+                let result = if self.initialized {
+                    Err(invalid("connection already initialized"))
+                } else {
+                    self.initialized = true;
+                    Ok(InitializeResponse::new(ProtocolVersion::V1)
+                        .agent_capabilities(AgentCapabilities::new().load_session(true))
+                        .agent_info(
+                            Implementation::new("phenix-basic", "0.1.0").title("Phenix Basic"),
+                        ))
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::New(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.new_session(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::Load(request, reply, peer) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.load_session(request, &peer)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::Prompt(request, reply, peer, flag) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.prompt(request, &peer, &flag)
+                };
+                if let Ok(mut pending) = self.queued.lock() {
+                    pending.retain(|(_, current)| !Arc::ptr_eq(current, &flag));
+                }
+                let _ = reply.respond_with_result(result);
+            }
+            Command::Closed => self.closed.store(true, Ordering::Release),
+        }
+    }
+
+    fn new_session(&mut self, request: NewSessionRequest) -> acp::Result<NewSessionResponse> {
+        if !request.cwd.is_absolute()
+            || !request.mcp_servers.is_empty()
+            || !request.additional_directories.is_empty()
+        {
+            return Err(invalid("unsupported ACP session configuration"));
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(internal)?
+            .as_nanos();
+        self.issued = self
+            .issued
+            .checked_add(1)
+            .ok_or_else(|| internal("session ID overflow"))?;
+        let session = format!("s{}_{}_{}", std::process::id(), stamp, self.issued);
+        let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
+        self.sessions.insert(session.clone(), kernel);
+        self.offsets.insert(session.clone(), 0);
+        Ok(NewSessionResponse::new(session))
+    }
+
+    fn load_session(
+        &mut self,
+        request: LoadSessionRequest,
+        peer: &Peer,
+    ) -> acp::Result<LoadSessionResponse> {
+        if !request.cwd.is_absolute()
+            || !request.mcp_servers.is_empty()
+            || !request.additional_directories.is_empty()
+        {
+            return Err(invalid("unsupported ACP session load configuration"));
+        }
+        let session = request.session_id.to_string();
+        phenix_basic_contracts::session_resource(&session)
+            .map_err(|_| invalid("invalid ACP session ID"))?;
+        let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
+        let snapshot: SessionSnapshot = completed(invoke(
+            &kernel,
+            "phenix.basic.session",
+            "phenix.basic.session@1/open",
+            Scope {
+                session: session.clone(),
+            },
+        ))
+        .map_err(internal)?;
+        if snapshot.revision == 0 && !self.sessions.contains_key(&session) {
+            kernel.shutdown().map_err(internal)?;
+            return Err(invalid("unknown persisted ACP session"));
+        }
+        if let Some(previous) = self.sessions.remove(&session) {
+            previous.shutdown().map_err(internal)?;
+        }
+        self.sessions.insert(session.clone(), kernel);
+        let offset = self.offsets.entry(session.clone()).or_default();
+        *offset = 0;
+        let loaded = self.sessions.get(&session).expect("just inserted");
+        send_updates(loaded, None, &session, offset, peer)?;
+        Ok(LoadSessionResponse::new())
+    }
+
+    fn prompt(
+        &mut self,
+        request: PromptRequest,
+        peer: &Peer,
+        cancelled: &AtomicBool,
+    ) -> acp::Result<PromptResponse> {
+        let session = request.session_id.to_string();
+        let Some(kernel) = self.sessions.get(&session) else {
+            return Err(invalid("unknown ACP session"));
+        };
+        let mut text = Vec::with_capacity(request.prompt.len());
+        for block in request.prompt {
+            match block {
+                ContentBlock::Text(chunk) => text.push(chunk.text),
+                _ => return Err(invalid("unsupported ACP prompt content")),
+            }
+        }
+        let text = text.join("\n");
+        if text.is_empty() {
+            return Err(invalid("empty ACP prompt"));
+        }
+        let payload = phenix_basic_contracts::encode(&PromptSubmitted {
+            session: session.clone(),
+            text,
+            limits: Limits::default(),
+        })
+        .map_err(internal)?;
+        let submission = Submission {
+            action: "phenix.basic.submit".into(),
+            payload,
+            cancel: false,
+        };
+        let mut owner = session_lock(&session).map_err(internal)?;
+        recover_owned_run(kernel, &session, &mut owner).map_err(internal)?;
+        let execution =
+            begin_submission(kernel, submission, basic_scope(&self.composition, &session))
+                .map_err(internal)?;
+        let offset = self.offsets.entry(session.clone()).or_default();
+        let result = Self::drive(
+            kernel,
+            execution,
+            &session,
+            &mut owner,
+            offset,
+            peer,
+            cancelled,
+            &self.closed,
+        );
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn drive(
+        kernel: &Kernel,
+        mut execution: GraphExecution<'_>,
+        session: &str,
+        owner: &mut std::fs::File,
+        after: &mut u64,
+        peer: &Peer,
+        cancel_flag: &AtomicBool,
+        closed: &AtomicBool,
+    ) -> acp::Result<PromptResponse> {
+        let mut marked = false;
+        let mut stopping = false;
+        loop {
+            if !stopping
+                && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
+            {
+                execution.cancel().map_err(internal)?;
+                stopping = true;
+            }
+            let status = execution.pump(|_| {}).map_err(internal)?;
+            if !marked {
+                marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
+            }
+            if !closed.load(Ordering::Acquire) {
+                send_updates(kernel, Some(&execution), session, after, peer)?;
+            }
+            if status == GraphStatus::Finished {
+                let cancelled = finish_submission(&execution).map_err(internal)?;
+                drop(execution);
+                if cancelled {
+                    record_cancelled(kernel, session).map_err(internal)?;
+                    if !closed.load(Ordering::Acquire) {
+                        send_updates(kernel, None, session, after, peer)?;
+                    }
+                }
+                set_owner_marker(owner, None).map_err(internal)?;
+                return Ok(PromptResponse::new(if cancelled {
+                    StopReason::Cancelled
+                } else {
+                    StopReason::EndTurn
+                }));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn serve(mut self, receiver: Receiver<Command>) -> Result<(), String> {
+        while !self.closed.load(Ordering::Acquire) {
+            match receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(command) => self.dispatch(command),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        for (_, kernel) in self.sessions {
+            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn run(composition: &Composition) -> Result<(), String> {
+    let (tx, receiver) = sync_channel::<Command>(64);
+    let closed = Arc::new(AtomicBool::new(false));
+    // A prompt cancellation flag is registered before admission, closing
+    // the race between queued requests and the first graph pump.
+    let queued: Arc<Mutex<VecDeque<(String, Arc<AtomicBool>)>>> =
+        Arc::new(Mutex::new(VecDeque::new()));
+    let controller = Controller::start(
+        composition.clone(),
+        Arc::clone(&queued),
+        Arc::clone(&closed),
+    );
+    // Kernel is deliberately !Send. Keep the controller on the caller
+    // thread and move only the SDK wire dispatcher to a worker.
+
+    let initialize = tx.clone();
+    let new = tx.clone();
+    let load = tx.clone();
+    let prompt = tx.clone();
+    let on_close = tx.clone();
+    let pending_prompts = Arc::clone(&queued);
+    let cancel_pending = Arc::clone(&queued);
+    let close_flag = Arc::clone(&closed);
+    let connection = Agent
+        .builder()
+        .name("phenix-basic")
+        .on_receive_request(
+            async move |request: InitializeRequest, reply, _peer| {
+                submit(&initialize, Command::Initialize(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: NewSessionRequest, reply, _peer| {
+                submit(&new, Command::New(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: LoadSessionRequest, reply, peer| {
+                submit(&load, Command::Load(request, reply, peer))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: PromptRequest, reply, peer| {
+                let flag = Arc::new(AtomicBool::new(false));
+                {
+                    let mut pending = pending_prompts.lock().map_err(internal)?;
+                    pending.push_back((request.session_id.to_string(), Arc::clone(&flag)));
+                }
+                match prompt.try_send(Command::Prompt(request, reply, peer, Arc::clone(&flag))) {
+                    Ok(()) => Ok(()),
+                    Err(problem) => {
+                        pending_prompts
+                            .lock()
+                            .map_err(internal)?
+                            .retain(|(_, current)| !Arc::ptr_eq(current, &flag));
+                        match problem {
+                            TrySendError::Full(command) => {
+                                command.reject(internal("ACP controller request queue full"))
+                            }
+                            TrySendError::Disconnected(command) => {
+                                command.reject(internal("ACP controller disconnected"))
+                            }
+                        }
+                    }
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_notification(
+            async move |notice: CancelNotification, _peer| {
+                let pending = cancel_pending.lock().map_err(internal)?;
+                if let Some((_, flag)) = pending
+                    .iter()
+                    .find(|(session, _)| session == &notice.session_id.to_string())
+                {
+                    flag.store(true, Ordering::Release);
+                }
+                Ok(())
+            },
+            acp::on_receive_notification!(),
+        )
+        .on_close(move |_peer| async move {
+            close_flag.store(true, Ordering::Release);
+            let _ = on_close.try_send(Command::Closed);
+            Ok(())
+        });
+    let wire = std::thread::spawn(move || {
+        futures::executor::block_on(connection.connect_to(Stdio::new()))
+            .map_err(|e| format!("{e:?}"))
+    });
+    let controller_result = controller.serve(receiver);
+    closed.store(true, Ordering::Release);
+    drop(tx);
+    let transport_result = wire
+        .join()
+        .map_err(|_| "ACP transport panicked".to_string())?;
+    controller_result?;
+    transport_result
+}

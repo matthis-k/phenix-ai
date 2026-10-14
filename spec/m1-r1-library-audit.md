@@ -161,6 +161,43 @@ Client-side interoperability alone is insufficient. The new host
 must also define how ACP's baseline `ResourceLink` prompt content
 is handled, rather than silently claiming complete ACP compliance.
 
+### SDK-backed host integration (R1-ACP2)
+
+The implementation branch `impl/m1-r1-acp-sdk-host-v1` introduces a
+`phenix-basic-runtime::acp_sdk` adapter using
+`agent-client-protocol` 3.3.0, with `stdio` and draft
+`unstable_protocol_v2` enabled. The v1 adapter registers official
+`Agent.builder()` request/notification handlers and sends typed replies,
+while the protocol transport uses the SDK's `Stdio`. It is selected with
+`PHENIX_BASIC_USE_ACP_SDK=1` until independent fixtures pass and the
+legacy `run_acp` implementation can be removed.
+
+The first remote Cargo check exposed that the Phenix Kernel intentionally
+contains non-`Send` state. The adapter keeps Controller, Kernel,
+GraphExecution and the durable session lock on the caller thread; only
+SDK wire dispatch moves to a transport thread. A 64-entry controller queue
+admits requests, and a session-scoped atomic cancellation signal bypasses
+the queue during a live graph. SDK notifications are typed before writing.
+The current SDK adapter temporarily serializes the existing Frontend
+render output back into `SessionNotification`; remove that translation
+when R1-ACP3 changes the Frontend render contract.
+
+**R1-ACP2 is not accepted yet.** Independently test the new SDK path for
+initialize, new/load, durable replay, prompt, streamed text, tool updates,
+queue saturation, cross-session cancellation and stdin EOF. Preserve a
+bounded physical stdio frame policy: the SDK's standard `Stdio` reader
+must be checked for equivalent limits or wrapped with bounded SDK
+`Lines`/transport primitives before replacing the legacy host. Verify
+graceful close and exactly-once owner marker cleanup. Then make the SDK
+path the default and delete `run_acp`, `drive_acp_prompt` and
+`parse_acp_frame`, including their legacy-specific tests. Do not retain
+both paths as selectable production implementations.
+
+The `unstable_protocol_v2` feature currently only makes SDK v2 APIs
+available at build time. Serving and negotiating v2 requires a separate
+typed v2 session/prompt lifecycle adapter (R1-ACP5); that is not implied
+by v1 conformance or enabling the Cargo feature.
+
 ### R1 migration order
 
 1. **ACP codec and transport.** Replace the handwritten host and frontend JSON-RPC implementation with the official `agent-client-protocol` stable-v1 API. The independent SDK client already passes against the custom host. Compare both implementations on invalid envelopes, sessions, live progress, tool events, FIFO requests, EOF, cancellation and crash recovery before deleting the old path.

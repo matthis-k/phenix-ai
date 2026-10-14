@@ -1,5 +1,7 @@
 //! Terminal and JSONL Basic product host. Plugins perform domain work;
 //! only this frontend executable reads stdin and submits graph actions.
+
+mod acp_sdk;
 use phenix_basic_contracts::{
     BasicError, ClientInput, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery,
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
@@ -1311,6 +1313,9 @@ fn run() -> Result<(), String> {
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
     let composition: Composition = serde_json::from_slice(&config).map_err(|e| e.to_string())?;
     match args[1].as_str() {
+        "acp" if env::var("PHENIX_BASIC_USE_ACP_SDK").as_deref() == Ok("1") => {
+            acp_sdk::run(&composition)
+        }
         "acp" => run_acp(&composition, io::stdout().lock()),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(

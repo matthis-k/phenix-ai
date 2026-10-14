@@ -363,13 +363,18 @@ GraphExecution on its controller thread and durable event journal semantics.
   Branch `impl/m1-r1-acp-schema-frontend`; exact-head Cargo, Nix, and ABI
   checks pending. This is not itself a new host transport.
 - [ ] **R1-ACP2: SDK-backed host on one graph owner.** Replace
-  `run_acp`'s handwritten JSON-RPC reader/router/writer with the SDK's
-  `Agent.builder()` handlers and `Stdio` transport. SDK protocol handlers
-  enqueue typed requests/notifications and receive typed responses on a
-  bounded FIFO. The Phenix controller alone owns scoped Kernel instances,
-  journal offsets, OS session locks, GraphExecution, cancellation and
-  error-domain mapping. Do not await graph work inside an SDK dispatch
-  callback or introduce a second graph controller.
+  `run_acp`'s handwritten JSON-RPC reader/router/writer with the official
+  SDK's `Agent.builder()` handlers and `Stdio` transport. SDK callbacks
+  enqueue typed v1 requests on a bounded queue and receive typed responses
+  from exactly one Phenix controller. Cancellation/EOF signals reach the live
+  graph root without moving Kernel or GraphExecution into protocol tasks.
+  Implementation branch `impl/m1-r1-acp-sdk-host-v1` creates an opt-in
+  SDK-backed host (`PHENIX_BASIC_USE_ACP_SDK=1`) and exercises it via the
+  independent official client, pending exact-head CI. The old host remains
+  the default strictly during comparison; it MUST be removed before R1-ACP3
+  acceptance. Keep session/resource grants, durable owner markers and
+  journal offsets Phenix-owned. Resolve SDK lockfile, bound stdio frames,
+  and measure queue/EOF behavior before switching the default.
 - [ ] **R1-ACP3: delete old ACP protocol code.** Remove
   `parse_acp_frame`, custom JSON-RPC reply/error framing and the remaining
   notification envelope encoding after the SDK-backed host consumes the
@@ -392,6 +397,18 @@ implementation lock it expands the Cargo workspace from 93 to 169 packages,
 while the feature-gated dependency compiles only for the ACP adapter. Review
 feature flags and cache cost after R1-ACP2; do not create a second JSON-RPC
 transport to save compile time.
+
+- [ ] **R1-ACP5: draft ACP v2 on the same official SDK.** Enable
+  `agent-client-protocol` 3.3.0's `unstable_protocol_v2` feature only for
+  a separately tested v2 adapter. Use the SDK's v1/v2 protocol routing when
+  supporting both on the same endpoint, never a second JSON-RPC stack.
+  Adapt v2's prompt-acceptance and session-running/idle semantics rather
+  than treating them as v1 `PromptResponse` equivalents. Preserve graph
+  controller ownership, authority, cancellation and durable replay. Test
+  negotiated v1 and v2 separately, including version mismatch, reconnection,
+  v2 session updates, cancellation and the new request lifecycle. Do not
+  advertise v2 until those checks pass. Stable v1 P1 acceptance does not
+  imply draft v2 acceptance.
 
 
 ### CI performance and flake-aware planning
