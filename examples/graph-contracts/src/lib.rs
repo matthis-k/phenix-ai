@@ -97,6 +97,11 @@ pub trait StateHook {
     fn run(&mut self, input: ChangeNotice) -> Result<String, String>;
 }
 
+#[contract(id = "example.graph.pending-change@1")]
+pub trait PendingStateHook {
+    fn run(&mut self, input: ChangeNotice) -> Result<String, String>;
+}
+
 #[property(owner = "example.graph-a", id = "result", get, set)]
 pub type ResultA = String;
 
@@ -106,3 +111,6 @@ pub type ResultB = String;
 /// An imported watch capability. The graph grant alone is not an import.
 #[property(owner = "example.graph-a", id = "signal", get, watch)]
 pub type SignalA = String;
+
+#[property(owner = "example.graph-a", id = "pending_signal", get, watch)]
+pub type PendingSignalA = String;

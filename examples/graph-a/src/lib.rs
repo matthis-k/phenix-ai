@@ -12,7 +12,11 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             after: &[],
             selector: "",
             operation: "example.graph.task@1/run",
-            writes: &["example.graph-a/result", "example.graph-a/signal"],
+            writes: &[
+                "example.graph-a/result",
+                "example.graph-a/signal",
+                "example.graph-a/pending_signal",
+            ],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::Skip,
         },
@@ -50,6 +54,10 @@ mod provider {
         #[set]
         #[watch]
         signal: String,
+        #[get]
+        #[set]
+        #[watch]
+        pending_signal: String,
         input: Option<Start>,
         polls: u64,
         cancelled: bool,
@@ -76,6 +84,16 @@ mod provider {
                 .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
             *signal = "committed".into();
             signal
+                .commit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+        }
+        if input.text == "g4-pending-hook" || input.text == "g4-pending-drain" {
+            let mut pending = state
+                .pending_signal
+                .edit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+            *pending = input.text.clone();
+            pending
                 .commit(host)
                 .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
         }

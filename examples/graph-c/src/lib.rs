@@ -1,4 +1,7 @@
-use example_graph_contracts::{ChangeNotice, ResultA, ResultB, SignalA, Start, StateHook, Task};
+use example_graph_contracts::{
+    ChangeNotice, PendingSignalA, PendingStateHook, ResultA, ResultB, SignalA, Start, StateHook,
+    Task,
+};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -35,6 +38,16 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             failure: FailurePolicy::FailRoot,
         },
         StaticGraphNode {
+            id: "pending",
+            triggers: &["state:example.graph-a/pending_signal"],
+            after: &[],
+            selector: "",
+            operation: "example.graph.pending-change@1/run",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
             id: "receipt",
             triggers: &["state:example.graph-c/receipt"],
             after: &["example.graph-c/watch"],
@@ -61,11 +74,14 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     id = "example.graph-c",
     define(Task),
     define(StateHook),
+    define(PendingStateHook),
     provide(Task, slot = "task"),
     provide(StateHook, slot = "hook"),
+    provide(PendingStateHook, slot = "pending-hook"),
     require(ResultA, slot = "a"),
     require(ResultB, slot = "b"),
     require(SignalA, slot = "signal"),
+    require(PendingSignalA, slot = "pending_signal"),
     graph(GRAPH)
 )]
 mod provider {
@@ -77,6 +93,10 @@ mod provider {
         #[set]
         #[watch]
         receipt: String,
+        pending_notice: Option<ChangeNotice>,
+        pending_polls: u64,
+        pending_cancelled: bool,
+        pending_worker: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
     }
 
     #[provide(Task::run)]
@@ -138,5 +158,63 @@ mod provider {
             }
         }
         Ok(result)
+    }
+
+    #[pending(PendingStateHook::run)]
+    fn wait(state: &mut State, change: ChangeNotice) -> live::PendingResult<String, String> {
+        assert_eq!(change.properties, ["example.graph-a/pending_signal"]);
+        let (stop, receive) = std::sync::mpsc::channel();
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            let file = std::fs::File::open("/dev/null").unwrap();
+            ready.send(()).unwrap();
+            receive.recv().unwrap();
+            drop(file);
+        });
+        started.recv().unwrap();
+        state.pending_worker = Some((stop, worker));
+        state.pending_notice = Some(change);
+        state.pending_polls = 0;
+        state.pending_cancelled = false;
+        live::PendingResult::Pending
+    }
+
+    fn drain_pending(state: &mut State) {
+        if let Some((stop, worker)) = state.pending_worker.take() {
+            stop.send(()).unwrap();
+            worker.join().unwrap();
+        }
+    }
+
+    #[poll(PendingStateHook::run)]
+    fn poll_pending(
+        state: &mut State,
+        host: &live::Host<'_>,
+    ) -> live::PendingResult<String, String> {
+        state.pending_polls += 1;
+        if state.pending_cancelled {
+            assert!(
+                state.receipt.edit(host).is_err(),
+                "cancelled pending hook recovered write authority"
+            );
+        }
+        if state.pending_polls < 3 {
+            return live::PendingResult::Pending;
+        }
+        drain_pending(state);
+        state.pending_notice.take();
+        live::PendingResult::Ready(Ok("drained".into()))
+    }
+
+    #[cancel(PendingStateHook::run)]
+    fn cancel_pending(state: &mut State) -> Result<bool, Failure> {
+        state.pending_cancelled = true;
+        if std::env::var_os("PHENIX_GRAPH_PENDING_DRAIN").is_some() {
+            Ok(false)
+        } else {
+            drain_pending(state);
+            state.pending_notice.take();
+            Ok(true)
+        }
     }
 }

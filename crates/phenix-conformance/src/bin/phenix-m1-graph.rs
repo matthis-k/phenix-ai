@@ -21,6 +21,9 @@ fn composition(artifacts: Vec<String>) -> Composition {
         .collect();
     let signal = phenix_contract::property_contract("example.graph-a", "signal").unwrap();
     resources.insert(signal.trim_end_matches("@1").to_owned());
+    let pending_signal =
+        phenix_contract::property_contract("example.graph-a", "pending_signal").unwrap();
+    resources.insert(pending_signal.trim_end_matches("@1").to_owned());
     let receipt = phenix_contract::property_contract("example.graph-c", "receipt").unwrap();
     resources.insert(receipt.trim_end_matches("@1").to_owned());
     let mut grants = Vec::new();
@@ -38,10 +41,17 @@ fn composition(artifacts: Vec<String>) -> Composition {
         KEY.into(),
         "example.graph.slow@1/run".into(),
         "example.graph.changed@1/run".into(),
+        "example.graph.pending-change@1/run".into(),
     ]);
     grants.push(ScopedGrant {
         caller: "example.graph-c".into(),
         interface: "example.graph.changed@1".into(),
+        operation: "run".into(),
+        resources: resources.clone(),
+    });
+    grants.push(ScopedGrant {
+        caller: "example.graph-c".into(),
+        interface: "example.graph.pending-change@1".into(),
         operation: "run".into(),
         resources: resources.clone(),
     });
@@ -83,6 +93,19 @@ fn composition(artifacts: Vec<String>) -> Composition {
         });
         operations.insert(format!("{signal}/{operation}"));
     }
+    for (caller, operation) in [
+        ("example.graph-a", "get"),
+        ("example.graph-a", "set"),
+        ("example.graph-c", "watch"),
+    ] {
+        grants.push(ScopedGrant {
+            caller: caller.into(),
+            interface: pending_signal.clone(),
+            operation: operation.into(),
+            resources: resources.clone(),
+        });
+        operations.insert(format!("{pending_signal}/{operation}"));
+    }
     for operation in ["get", "set", "watch"] {
         grants.push(ScopedGrant {
             caller: "example.graph-c".into(),
@@ -123,6 +146,13 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 provider: "example.graph-a".into(),
                 export: "property.signal".into(),
             },
+            SlotBinding {
+                caller: "example.graph-c".into(),
+                slot: "pending_signal".into(),
+                index: 0,
+                provider: "example.graph-a".into(),
+                export: "property.pending_signal".into(),
+            },
         ],
         grants,
         excluded: BTreeSet::new(),
@@ -162,7 +192,7 @@ fn main() {
             if index == 1 {
                 1
             } else if index == 2 {
-                4
+                5
             } else {
                 2
             }
@@ -177,7 +207,7 @@ fn main() {
         "offline resolution ran native constructor"
     );
     let graph = prepared.compiled_graph().expect("verified graph");
-    assert_eq!(graph.nodes.len(), 7);
+    assert_eq!(graph.nodes.len(), 8);
     assert_eq!(
         graph.events[EVENT].payload,
         phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
@@ -193,6 +223,7 @@ fn main() {
             "example.graph-b/b",
             "example.graph-c/c",
             "example.graph-c/d",
+            "example.graph-c/pending",
             "example.graph-c/watch",
             "example.graph-c/receipt"
         ]
@@ -892,6 +923,74 @@ fn main() {
         .unwrap();
     assert_eq!(recovered.len(), 4);
 
+    // Start a true pending state hook after the action wave has committed.
+    // Both cancellation paths must retain the original root and revoke
+    // writes before the worker's physical file lease is released.
+    for (input, drain) in [("g4-pending-hook", false), ("g4-pending-drain", true)] {
+        let descriptors_before = fs::read_dir("/proc/self/fd").unwrap().count();
+        let mut execution = kernel
+            .begin_action_scoped(
+                "example.graph.submit",
+                &Value::map([("text", Value::String(input.into()))]),
+                scope.clone(),
+            )
+            .unwrap();
+        let mut correlated = None;
+        assert_eq!(
+            execution
+                .pump(|update| {
+                    assert_eq!(*correlated.get_or_insert(update.root), update.root);
+                })
+                .unwrap(),
+            GraphStatus::Pending
+        );
+        assert_eq!(execution.steps().len(), 4);
+        assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+        assert_eq!(
+            fs::read_dir("/proc/self/fd").unwrap().count(),
+            descriptors_before + 1
+        );
+        let before_cancel = kernel.inspect()["live_state"].clone();
+        if drain {
+            std::env::set_var("PHENIX_GRAPH_PENDING_DRAIN", "1");
+        }
+        execution.cancel().unwrap();
+        let mut terminals = 0;
+        let first = execution
+            .pump(|update| {
+                if let GraphEvent::Finished(GraphCompletion::Cancelled) = &update.event {
+                    terminals += 1;
+                }
+            })
+            .unwrap();
+        if drain {
+            assert_eq!(first, GraphStatus::Draining);
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+            assert!(kernel.shutdown().is_err());
+            assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Draining);
+            assert_eq!(execution.pump(|_| {}).unwrap(), GraphStatus::Finished);
+            std::env::remove_var("PHENIX_GRAPH_PENDING_DRAIN");
+        } else {
+            assert_eq!(first, GraphStatus::Finished);
+        }
+        assert_eq!(terminals, 1);
+        assert_eq!(
+            execution
+                .pump(|_| panic!("pending hook terminal emitted twice"))
+                .unwrap(),
+            GraphStatus::Finished
+        );
+        assert_eq!(execution.completion(), Some(GraphCompletion::Cancelled));
+        assert_eq!(execution.steps().len(), 4);
+        assert_eq!(kernel.inspect()["live_state"], before_cancel);
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+        assert_eq!(
+            fs::read_dir("/proc/self/fd").unwrap().count(),
+            descriptors_before
+        );
+    }
+
     // A selected watch permission is necessary even for an offline hook.
     let mut denied_watch = policy.clone();
     denied_watch.grants.retain(|grant| {
@@ -983,6 +1082,10 @@ fn main() {
             "native-state-hook-nonrecursive-receipt",
             "native-state-hook-bounded-sync-self-cycle",
             "native-state-hook-recovers-fresh-root-after-cycle",
+            "native-pending-hook-cancel-no-late-effects",
+            "native-pending-hook-drain-holds-physical-lease",
+            "native-pending-hook-cancel-revokes-state-authority",
+            "native-pending-hook-one-terminal-event",
             "native-state-hook-grant-denied-before-load",
             "native-state-hook-receives-only-matching-property",
             "watched-b-commit-projected-before-pending-a-settles",
