@@ -220,6 +220,10 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         request::endpoint_url("http://localhost:8800").unwrap(),
         "http://localhost:8800/"
     );
+    assert_eq!(
+        request::endpoint_url("https://example.org/@scope?mention=@alice").unwrap(),
+        "https://example.org/@scope?mention=@alice"
+    );
     for bad in [
         "",
         "example.com/completions",
@@ -227,6 +231,8 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         "ftp://localhost/file",
         "http://",
         "http://user@localhost/completions",
+        "http://@localhost/completions",
+        "http://%40@localhost/completions",
         "https://user:password@localhost/completions",
         "https://localhost/completions#fragment",
         "http://localhost:70000/completions",
