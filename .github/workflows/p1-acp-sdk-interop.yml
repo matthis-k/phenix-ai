@@ -29,6 +29,8 @@ jobs:
           workspaces: tests/acp-sdk-client
       - name: Build the packaged Phenix ACP host
         run: nix build .#phenix-basic-acp -L --out-link result-acp
+      - name: Validate independent ACP client formatting
+        run: cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml --all -- --check
       - name: Exercise host through official stable-v1 SDK
         timeout-minutes: 3
         env:
