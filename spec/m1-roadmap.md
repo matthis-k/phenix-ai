@@ -265,7 +265,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [ ] PLANNED: existing serial shipping gate remains authoritative until parity |
 | AI-CI4 | AI-CI3, FC2; FC4 for cache rollout | Phenix AI selective PR checks and shared cache | Small edits run only proven affected checks; main/release/manual-full run complete inventory and shipping | [ ] PLANNED: cold/warm timing and unaffected-check evidence required |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
-| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] PARTIAL: observer checkpoint slice proven at `f235d68f` by full conformance 38321349932 and matrix 38321349890. The new SQLite injected-write-failure rollback fixture is under test on `test/m1-p1-b2-sqlite-fault-rollback`. Storage migrations and remaining fault cases stay open |
+| B2 | B1 | New `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] PARTIAL: observer checkpoint slice proven at `f235d68f` by full conformance 38321349932 and matrix 38321349890. The new SQLite injected-write-failure rollback fixture is under test on `test/m1-p1-b2-sqlite-fault-rollback`. Versioned SQLite migration from legacy `user_version=0` to v1, and future/malformed schema rejection, are implementing on `impl/m1-p1-b2-sqlite-versioned-migration`. Exact-head acceptance and further B2 fault cases stay open |
 | B3 | B1, B2 | New Basic tools, skills, context, executor and optional workspace-backed shell plugins | Selectable independent tools; denied execution has no effect; query-bound pagination and revisions reject stale cursors; skills/context persist; catalog discovery grants no execution permission | [ ] IMPLEMENTING: typed native ToolCatalog/ToolExecute and a new Skills/Context plugin with selected Storage CAS, session checks and two-process SQLite restart fixture on impl/m1-basic-skills-context. Exact-head CI and complete B2 integration remain open |
 | B4 | B1 | New `phenix-plugin-model-scripted/`, `phenix-plugin-model-http/` | Same portable contract carries complete history, text, structured calls, usage and failures; local HTTP fixture verifies streaming, malformed replies, provider errors and cancellation | [ ] IMPLEMENTING: scripted reference and pending HTTP/HTTPS provider with live journal deltas, typed usage, function calls, limits and draining on impl/m1-model-http. Exact-head CI and pending Basic-agent integration remain |
 | B5 | G4, B2-B4 | New `phenix-plugin-basic-agent/` | Prompt trigger starts a multi-turn run with complete history, multiple call IDs, skill/context use, tool-error recovery, usage, partial output, session continuation and cancellation; limits are caller-selected | [ ] IMPLEMENTING on impl/m1-basic-agent: independently packaged BasicInput/BasicOutput plugin with prompt graph trigger, selected providers, persistent checkpoints, journal events, multiple tool calls and caller limits. Pending model streaming, cancellation, full continuation and CI acceptance remain |
@@ -546,7 +546,18 @@ either revision changed. It also rejects duplicate edit keys and revision
 overflow before writing. The driver removes the trigger before resuming
 the original session in another process. The new report is
 `sqlite-faults.json`. Exact-head CI must pass before this case is accepted;
-database version migrations remain separate B2 work.
+database version migrations are tracked by the separate B2 schema slice.
+
+SQLite Storage now proposes a single schema version, v1. Existing files with
+`PRAGMA user_version = 0` retain their records and move to v1 within
+an immediate transaction. Concurrent first opens recheck the version under
+the write lock. Every open validates the four required columns, types,
+nullability and primary-key positions. Future versions, malformed legacy
+tables and missing v1 tables return StorageFailed before any record operation.
+The Nix B2 gate uses separate processes to verify legacy restart, schema
+rejection and continued restart on the original v1 file. The report is
+`sqlite-schema-migration.json`. This does not claim future schema upgrades;
+the exact-head full conformance gate is pending.
 
 The observer slice below adds per-observer persistence and startup replay.
 B2 remains unchecked until exact-head acceptance, migration/versioning checks
