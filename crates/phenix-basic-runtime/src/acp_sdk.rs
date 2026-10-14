@@ -493,12 +493,10 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let transport_rejected = Arc::clone(&rejected);
     let transport_closed = Arc::clone(&closed);
     let wire = std::thread::spawn(move || {
-        let result = futures::executor::block_on(
-            connection.connect_to(bounded_transport(
-                transport_rejected,
-                Arc::clone(&transport_closed),
-            )),
-        )
+        let result = futures::executor::block_on(connection.connect_to(bounded_transport(
+            transport_rejected,
+            Arc::clone(&transport_closed),
+        )))
         .map_err(|e| format!("{e:?}"));
         // A transport error does not always invoke the SDK's on_close hook.
         // Wake the single-thread kernel controller on EOF or a bad frame.
