@@ -111,7 +111,10 @@ fn send_updates(
 /// Bounded physical stdio adapter built from the SDK's Lines transport.
 /// The Phenix reader enforces only byte, UTF-8 and FIFO limits; the official
 /// SDK owns every ACP/JSON-RPC envelope and protocol operation.
-fn bounded_transport(rejected: Arc<AtomicBool>) -> impl acp::ConnectTo<Agent> {
+fn bounded_transport(
+    rejected: Arc<AtomicBool>,
+    disconnected: Arc<AtomicBool>,
+) -> impl acp::ConnectTo<Agent> {
     let (mut incoming_sender, incoming_receiver) =
         futures::channel::mpsc::channel::<std::io::Result<String>>(64);
     std::thread::spawn(move || {
@@ -123,10 +126,19 @@ fn bounded_transport(rejected: Arc<AtomicBool>) -> impl acp::ConnectTo<Agent> {
                         break;
                     }
                 }
-                Ok(None) => break,
+                Ok(None) => {
+                    // EOF can arrive while the SDK still holds a pending
+                    // prompt responder. Inform the kernel-owning controller
+                    // now rather than waiting for protocol shutdown.
+                    disconnected.store(true, Ordering::Release);
+                    break;
+                }
                 Err(error) => {
                     rejected.store(true, Ordering::Release);
-                    let _ = futures::executor::block_on(incoming_sender.send(Err(error)));
+                    disconnected.store(true, Ordering::Release);
+                    // Preserve the physical transport error for the SDK,
+                    // but cancellation must not wait on a full input queue.
+                    let _ = incoming_sender.try_send(Err(error));
                     break;
                 }
             }
@@ -482,7 +494,10 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let transport_closed = Arc::clone(&closed);
     let wire = std::thread::spawn(move || {
         let result = futures::executor::block_on(
-            connection.connect_to(bounded_transport(transport_rejected)),
+            connection.connect_to(bounded_transport(
+                transport_rejected,
+                Arc::clone(&transport_closed),
+            )),
         )
         .map_err(|e| format!("{e:?}"));
         // A transport error does not always invoke the SDK's on_close hook.
