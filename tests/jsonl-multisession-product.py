@@ -93,6 +93,43 @@ assert answers(restarted) == [
 ], answers(restarted)
 assert run([]) == [], "restart repeated a previously acknowledged JSONL event"
 
+# Caller-selected limits stop their individual Basic run but must never
+# kill the JSONL controller, strand an owner marker or lose queued inputs.
+# The tool-call cap rejects both proposed calls before either executes.
+tool_cap = prompt("s2", "tools:hello")
+tool_cap["limits"] = {"tool_calls": 1}
+# The model-turn cap allows two tools, then stops before model continuation.
+turn_cap = prompt("s2", "tools:hello")
+turn_cap["limits"] = {"model_turns": 1, "tool_calls": 2}
+limited = run([
+    tool_cap,
+    prompt("s1", "independent-after-limit"),
+    turn_cap,
+    prompt("s2", "same-session-after-limit"),
+])
+limited_failures = [
+    event for event in limited
+    if event["kind"] == "Failure" and event["session"] == "s2"
+]
+assert [event["text"] for event in limited_failures] == [
+    "tool call limit reached",
+    "model turn limit reached",
+], limited_failures
+# No tool side effect from the denied first run; exactly two from the
+# allowed tool phase of the second, which then hits its model-turn cap.
+started = [event for event in limited if event["kind"] == "ToolStarted"]
+finished = [event for event in limited if event["kind"] == "ToolFinished"]
+assert len(started) == len(finished) == 2, limited
+assert answers(limited) == [
+    ("s1", "mock:independent-after-limit"),
+    ("s2", "mock:same-session-after-limit"),
+], answers(limited)
+assert run([]) == [], "limit failure duplicated acknowledged JSONL output"
+assert answers(run([prompt("s2", "after-limits-restart")])) == [
+    ("s2", "mock:after-limits-restart"),
+]
+assert run([]) == [], "limit-recovery restart duplicated JSONL output"
+
 assert (output / "jsonl-multisession.db").is_file()
 
 (output / "jsonl-multisession.json").write_text(json.dumps({
@@ -106,6 +143,9 @@ assert (output / "jsonl-multisession.db").is_file()
         "failed-tool-model-continuation",
         "model-failure-process-restart",
         "same-process-model-failure-continuation",
+        "caller-tool-limit-no-effect",
+        "caller-model-turn-limit-continuation",
+        "limit-recovery-session-isolation",
     ],
     "accepted": True,
 }, indent=2, sort_keys=True))
