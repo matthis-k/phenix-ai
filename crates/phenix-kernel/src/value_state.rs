@@ -242,6 +242,22 @@ impl Cells {
         self.epoch = Epoch(epoch);
         Ok(Value::List(vec![Value::U64(epoch), Value::List(snapshots)]))
     }
+    /// Latest committed watchable properties after an observed epoch.
+    ///
+    /// State snapshots are the source of truth: rapid updates coalesce to
+    /// the latest revision without storing a second event queue. The caller
+    /// advances its cursor only after handling this projection.
+    pub(super) fn watched_changes_since(&self, after: Epoch) -> (Epoch, Vec<String>) {
+        let mut changed = self
+            .cells
+            .values()
+            .filter(|cell| cell.property.watch && cell.snapshot.epoch > after)
+            .map(|cell| format!("{}/{}", cell.owner, cell.property.id))
+            .collect::<Vec<_>>();
+        changed.sort();
+        (self.epoch, changed)
+    }
+
     pub(super) fn subscribe(
         &mut self,
         root: u64,
@@ -326,5 +342,97 @@ impl Cells {
     }
     pub(super) fn inspect(&self) -> serde_json::Value {
         serde_json::json!({"cells":self.cells.len(),"subscriptions":self.subscriptions.len(),"epoch":self.epoch.0,"revisions":self.cells.values().map(|c|serde_json::json!({"owner":c.owner,"property":c.property.id,"revision":c.snapshot.revision.0,"epoch":c.snapshot.epoch.0})).collect::<Vec<_>>()})
+    }
+}
+
+#[cfg(test)]
+mod reactive_epoch_tests {
+    use super::*;
+
+    fn field(id: &str, watch: bool) -> PropertyDefinition {
+        PropertyDefinition {
+            id: id.into(),
+            schema: ValueSchema::U64,
+            get: true,
+            set: true,
+            watch,
+        }
+    }
+
+    use phenix_contract::ValueSchema;
+
+    #[test]
+    fn watched_changes_are_committed_coalesced_and_sorted() {
+        let mut cells = Cells::new(&[7; 32]).unwrap();
+        cells.register_owner("test.owner").unwrap();
+        let a = cells
+            .create("test.owner", &field("a", true), Value::U64(0))
+            .unwrap();
+        let b = cells
+            .create("test.owner", &field("b", true), Value::U64(0))
+            .unwrap();
+        let private = cells
+            .create("test.owner", &field("private", false), Value::U64(0))
+            .unwrap();
+
+        let (initial, changes) = cells.watched_changes_since(Epoch(0));
+        assert_eq!(initial, Epoch(0));
+        assert!(changes.is_empty());
+
+        let committed = cells
+            .commit(&[
+                CompareExchange {
+                    location: b,
+                    expected: Revision(0),
+                    value: Value::U64(1),
+                },
+                CompareExchange {
+                    location: a,
+                    expected: Revision(0),
+                    value: Value::U64(1),
+                },
+                CompareExchange {
+                    location: private,
+                    expected: Revision(0),
+                    value: Value::U64(1),
+                },
+            ])
+            .unwrap();
+        assert!(matches!(committed, Value::List(_)));
+        let (epoch, changes) = cells.watched_changes_since(initial);
+        assert_eq!(epoch, Epoch(1));
+        assert_eq!(changes, ["test.owner/a", "test.owner/b"]);
+
+        // Two changes between graph pumps produce one coalesced identity.
+        cells
+            .commit(&[CompareExchange {
+                location: a,
+                expected: Revision(1),
+                value: Value::U64(2),
+            }])
+            .unwrap();
+        cells
+            .commit(&[CompareExchange {
+                location: a,
+                expected: Revision(2),
+                value: Value::U64(3),
+            }])
+            .unwrap();
+        let (later, changes) = cells.watched_changes_since(epoch);
+        assert_eq!(later, Epoch(3));
+        assert_eq!(changes, ["test.owner/a"]);
+
+        // Failed compare-exchange cannot move the epoch or publish changes.
+        assert!(matches!(
+            cells.commit(&[CompareExchange {
+                location: b,
+                expected: Revision(0),
+                value: Value::U64(99),
+            }]),
+            Err(Error::Conflict { .. })
+        ));
+        let (unchanged, changes) = cells.watched_changes_since(later);
+        assert_eq!(unchanged, later);
+        assert!(changes.is_empty());
     }
 }
