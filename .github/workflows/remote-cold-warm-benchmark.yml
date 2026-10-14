@@ -80,7 +80,7 @@ jobs:
             job_id="$(jq -er --arg phase "$phase" \
               '[.jobs[] | select(.name | startswith($phase + " / ") and endswith("Nix DAG scheduler / 4 builders")) | .id] | if length == 1 then .[0] else error("missing coordinator") end' \
               comparison/jobs.json)"
-            gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}/logs" > "comparison/$phase.log"
+            gh api --allow-escape-sequences "repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}/logs" > "comparison/$phase.log"
           done
       - name: Verify full output parity, cache miss/hit and runner costs
         shell: bash
