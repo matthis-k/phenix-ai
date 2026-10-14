@@ -221,9 +221,27 @@ downgraded = request(version_probe, 90, "initialize", {
     "clientCapabilities": {},
 })
 assert downgraded["protocolVersion"] == 1, downgraded
-assert request(version_probe, 91, "session/new", {
+resource_session = request(version_probe, 91, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
 })["sessionId"]
+# V1 resource_link is mandatory, but Basic never dereferences its URI.
+# Preserve the reference for the Model/Tool layer rather than adding
+# filesystem operations to the Frontend or kernel.
+before_resource = len(updates)
+resource_reply = request(version_probe, 92, "session/prompt", {
+    "sessionId": resource_session,
+    "prompt": [
+        {"type": "text", "text": "reference"},
+        {"type": "resource_link", "name": "notes", "uri": "file:///tmp/notes.md"},
+    ],
+})
+assert resource_reply["stopReason"] == "end_turn", resource_reply
+assert any(
+    u["params"]["sessionId"] == resource_session
+    and u["params"]["update"].get("content", {}).get("text")
+        == "mock:reference\nResource link: notes (file:///tmp/notes.md)"
+    for u in updates[before_resource:]
+), "required v1 resource link was dropped"
 exit_cleanly(version_probe)
 
 # An explicit null ID is a request, not a notification. Preserve the
@@ -292,6 +310,7 @@ assert "stdin frame exceeds 1 MiB" in stderr, stderr
             "malformed-frame-recovers", "invalid-jsonrpc-rejected",
             "invalid-protocol-version-rejected",
             "newer-client-negotiates-down-to-v1",
+            "v1-resource-link-preserved-without-dereference",
             "notifications-do-not-initialize",
             "invalid-request-id-rejected",
             "explicit-null-request-id-replied",
