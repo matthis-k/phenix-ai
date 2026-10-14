@@ -29,6 +29,7 @@ jobs:
       - name: Build the packaged Phenix ACP host
         run: nix build .#phenix-basic-acp -L --out-link result-acp
       - name: Exercise host through official stable-v1 SDK
+        timeout-minutes: 3
         env:
           RUST_BACKTRACE: "1"
           PHENIX_BASIC_USE_ACP_SDK: "1"
