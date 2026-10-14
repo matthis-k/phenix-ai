@@ -168,9 +168,12 @@ The implementation branch `impl/m1-r1-acp-sdk-host-v1` introduces a
 `agent-client-protocol` 3.3.0, with `stdio` and draft
 `unstable_protocol_v2` enabled. The v1 adapter registers official
 `Agent.builder()` request/notification handlers and sends typed replies,
-while the protocol transport uses the SDK's `Lines` abstraction over bounded stdin and an asynchronous stdout writer. It is selected with
-`PHENIX_BASIC_USE_ACP_SDK=1` until independent fixtures pass and the
-legacy `run_acp` implementation can be removed.
+while the protocol transport uses the SDK's `Lines` abstraction over bounded stdin and an asynchronous stdout writer. #842 initially selected this adapter with an opt-in environment flag.
+The follow-up `impl/m1-r1-acp-sdk-cutover` routes every `acp`
+host invocation through the official SDK and deletes the legacy
+`run_acp`, `drive_acp_prompt`, `parse_acp_frame` and reply writer.
+These removals require exact-head canonical and negative-product
+validation; v2 remains a separate lifecycle milestone.
 
 The first remote Cargo check exposed that the Phenix Kernel intentionally
 contains non-`Send` state. The adapter keeps Controller, Kernel,
