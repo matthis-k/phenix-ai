@@ -196,6 +196,12 @@ The SDK host passes typed `PromptRequest` payloads through the native
 Frontend `decode` operation to obtain a Phenix `Submission`; the
 Frontend no longer parses JSON-RPC envelopes. Only schema payload
 serialization crosses the native ABI, not a duplicate protocol parser.
+
+ACP v1 requires support for `resource_link` prompt blocks. The Basic
+Frontend now preserves link name and URI as text for the graph/Model,
+without fetching file/HTTP contents or extending kernel authority. Native
+conformance and the real stdio v1 product test cover the mapping; images,
+audio and embedded resources still require explicit capability/Tool support.
 R1-ACP3 acceptance still requires exact-head native and negative CI.
 
 The `unstable_protocol_v2` feature currently only makes SDK v2 APIs
