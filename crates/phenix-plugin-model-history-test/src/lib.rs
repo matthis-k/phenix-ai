@@ -74,6 +74,36 @@ fn tool_continuation(history: &[Message], start: usize) -> Result<String, BasicE
     Ok("tool-result:HELLO".into())
 }
 
+fn failing_tool_continuation(history: &[Message], start: usize) -> Result<String, BasicError> {
+    let tail = &history[start + 1..];
+    if tail.len() != 3 {
+        return Err(invalid("expected two tool results"));
+    }
+    let assistant = &tail[0];
+    if assistant.role != Role::Assistant || assistant.calls.len() != 2 {
+        return Err(invalid("missing two assistant tool calls"));
+    }
+    let first = &assistant.calls[0];
+    let second = &assistant.calls[1];
+    if first.id != "history-fail-1"
+        || first.tool != "fail"
+        || first.arguments != r#""hello""#
+        || second.id != "history-length-2"
+        || second.tool != "length"
+        || second.arguments != r#""hello""#
+        || tail[1].role != Role::Tool
+        || tail[1].call_id != first.id
+        || tail[1].error.as_deref() != Some("scripted failure")
+        || tail[2].role != Role::Tool
+        || tail[2].call_id != second.id
+        || tail[2].error.is_some()
+        || tail[2].text != "5"
+    {
+        return Err(invalid("failed tool continuation transcript mismatch"));
+    }
+    Ok("tools-recovered:scripted failure|5".into())
+}
+
 /// Pure function. No state is retained between model calls, sessions or processes.
 pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     session_resource(&request.session)?;
@@ -91,12 +121,18 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     }
 
     let (text, calls) = if request.history.last().is_some_and(|m| m.role == Role::Tool) {
-        if prompt.text != "tools:hello" {
-            return Err(invalid("unexpected tool continuation"));
-        }
-        (tool_continuation(&request.history, start)?, vec![])
+        let reply = match prompt.text.as_str() {
+            "tools:hello" => tool_continuation(&request.history, start)?,
+            "tools-fail:hello" => failing_tool_continuation(&request.history, start)?,
+            _ => return Err(invalid("unexpected tool continuation")),
+        };
+        (reply, vec![])
     } else if start + 1 != request.history.len() {
         return Err(invalid("unexpected transcript tail"));
+    } else if prompt.text == "model-error" {
+        return Err(error(ErrorCode::ModelFailed, "verification model failure"));
+    } else if let Some(text) = prompt.text.strip_prefix("echo:") {
+        (format!("echo:{text}"), vec![])
     } else if let Some((key, value)) = fact(&prompt.text) {
         (format!("stored:{key}={value}"), vec![])
     } else if let Some(key) = prompt.text.strip_prefix("recall:") {
@@ -137,6 +173,27 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 tool: "uppercase".into(),
                 arguments: serde_json::to_string("hello").expect("string serialization"),
             }],
+        )
+    } else if prompt.text == "tools-fail:hello" {
+        if !request.tools.iter().any(|tool| tool.id == "fail")
+            || !request.tools.iter().any(|tool| tool.id == "length")
+        {
+            return Err(invalid("failed tool fixture unavailable"));
+        }
+        (
+            String::new(),
+            vec![
+                ToolCall {
+                    id: "history-fail-1".into(),
+                    tool: "fail".into(),
+                    arguments: r#""hello""#.into(),
+                },
+                ToolCall {
+                    id: "history-length-2".into(),
+                    tool: "length".into(),
+                    arguments: r#""hello""#.into(),
+                },
+            ],
         )
     } else if prompt.text == "recall-tool" {
         let text = linked_tool_result(&request.history[..start])
