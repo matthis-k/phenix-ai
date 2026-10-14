@@ -243,10 +243,12 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
             for block in incoming.prompt {
                 match block {
                     ContentBlock::Text(text) => texts.push(text.text),
-                    _ => return Err(error(
-                        ErrorCode::InvalidInput,
-                        "unsupported ACP content block",
-                    )),
+                    _ => {
+                        return Err(error(
+                            ErrorCode::InvalidInput,
+                            "unsupported ACP content block",
+                        ))
+                    }
                 }
             }
             prompt(request.session, texts.join("\n"), Limits::default())
@@ -387,9 +389,11 @@ mod tests {
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
-        assert!(decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
-            .unwrap()
-            .cancel);
+        assert!(
+            decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
+                .unwrap()
+                .cancel
+        );
         let refused = decode(serde_json::json!({
             "prompt": {"sessionId": "s2", "prompt": [{"type": "text", "text": "other"}]}
         }))
