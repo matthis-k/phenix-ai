@@ -48,8 +48,17 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         if prompt.text == "model-error" {
             return Err(error(ErrorCode::ModelFailed, "scripted model failure"));
         }
-        if let Some(input) = prompt.text.strip_prefix("tools:") {
-            let requested = ["uppercase", "length"];
+        let plan = prompt
+            .text
+            .strip_prefix("tools:")
+            .map(|input| (input, ["uppercase", "length"]))
+            .or_else(|| {
+                prompt
+                    .text
+                    .strip_prefix("tools-fail:")
+                    .map(|input| (input, ["fail", "length"]))
+            });
+        if let Some((input, requested)) = plan {
             for tool in requested {
                 if !request.tools.iter().any(|entry| entry.id == tool) {
                     return Err(error(ErrorCode::InvalidInput, "required tool unavailable"));
@@ -230,6 +239,46 @@ mod tests {
         );
         input.history.last_mut().unwrap().call_id = "call-1".into();
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
+    }
+
+    #[test]
+    fn failed_tool_is_recovered_by_the_model() {
+        let mut input = request("tools-fail:hello");
+        input.tools.push(ToolInfo {
+            id: "fail".into(),
+            description: String::new(),
+            arguments_schema: String::new(),
+            idempotent: true,
+        });
+        let first = complete(&input).unwrap();
+        assert_eq!(first.calls.len(), 2);
+        assert_eq!(first.calls[0].tool, "fail");
+        assert_eq!(first.calls[1].tool, "length");
+        input.history.push(Message {
+            role: Role::Assistant,
+            text: String::new(),
+            calls: first.calls,
+            call_id: String::new(),
+            error: None,
+        });
+        input.history.push(Message {
+            role: Role::Tool,
+            text: String::new(),
+            calls: vec![],
+            call_id: "call-1".into(),
+            error: Some("scripted failure".into()),
+        });
+        input.history.push(Message {
+            role: Role::Tool,
+            text: "5".into(),
+            calls: vec![],
+            call_id: "call-2".into(),
+            error: None,
+        });
+        assert_eq!(
+            complete(&input).unwrap().text,
+            "mock:call-1:error:scripted failure|call-2:5"
+        );
     }
 
     #[test]
