@@ -32,3 +32,15 @@ CI checks out the exact PR head. Its artifact records `kernel-commit.txt`,
 `ci-run.txt`, realized Nix paths and the full conformance/release reports. Bind
 acceptance to that commit and evidence. Historical M0 documents describe retired
 profiles; the M1 matrices own current behavior and remaining stage gates.
+
+## Basic history verification
+
+The packaged products have three distinct levels:
+
+- `phenix-kernel`: the M1 kernel without Basic.
+- `phenix-basic-terminal`, `phenix-basic-jsonl` and `phenix-basic-acp`: the normal Basic composition with its selected scripted Model.
+- `phenix-basic-verification`: the same Basic runtime and providers, with one extra test-only Model plugin selected for deterministic transcript checks.
+
+Run `nix build .#checks.x86_64-linux.basic-history-verification` to verify user and assistant history, a real tool call/result, session isolation and history after restarting the process. For manual use, set `PHENIX_BASIC_SQLITE_PATH` to a writable database path and run `nix run .#phenix-basic-verification -- terminal` or `-- jsonl`. The commands `remember:key=value`, `recall:key`, `verify-assistant:key`, `tools:hello`, and `recall-tool` exercise the Model history contract.
+
+The test plugin has no state. It derives every response from the Model request. It is never selected by the normal Basic packages. Compaction, system-message configuration and non-text content are outside this verification package.
