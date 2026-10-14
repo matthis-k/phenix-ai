@@ -77,7 +77,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(PendingStateHook),
     provide(Task, slot = "task"),
     provide(StateHook, slot = "hook"),
-    provide(PendingStateHook, slot = "pending-hook"),
+    provide(PendingStateHook, slot = "pending_hook"),
     require(ResultA, slot = "a"),
     require(ResultB, slot = "b"),
     require(SignalA, slot = "signal"),
