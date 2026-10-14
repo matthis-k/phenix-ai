@@ -340,6 +340,11 @@
         "phenix-plugin-model-scripted"
         "phenix_plugin_model_scripted"
         ./crates/phenix-plugin-model-scripted;
+      # Verification remains outside the default Basic product and batches.
+      historyTestModel = basicNativePlugin
+        "phenix-plugin-model-history-test"
+        "phenix_plugin_model_history_test"
+        ./crates/phenix-plugin-model-history-test;
       httpModel = (basicNativePlugin
         "phenix-plugin-model-http"
         "phenix_plugin_model_http"
@@ -537,7 +542,7 @@
         inherit caller slot provider export;
         index = 0;
       };
-      basicComposition = pkgs.writeText "phenix-basic-composition.json" (builtins.toJSON {
+      basicCompositionSpec = {
         format = "phenix.composition.v2";
         entry = {
           interface = "phenix.basic.input@1";
@@ -577,7 +582,39 @@
           resources = [ "phenix.session.s1" ];
         };
         resource = "phenix.session.s1";
-      });
+      };
+      basicComposition = pkgs.writeText "phenix-basic-composition.json"
+        (builtins.toJSON basicCompositionSpec);
+      # The original Basic composition stays byte-for-byte equivalent. The
+      # verification product adds one provider artifact and changes one slot.
+      historyVerificationComposition = pkgs.writeText "phenix-basic-history-verification.json"
+        (builtins.toJSON (basicCompositionSpec // {
+          artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];
+          slots = map (binding:
+            if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
+            then binding // { provider = "phenix.model.history-test"; }
+            else binding
+          ) basicCompositionSpec.slots;
+        }));
+      historyVerificationBinary = pkgs.writeShellApplication {
+        name = "phenix-basic-verification";
+        text = ''
+          if [ "$#" -lt 1 ]; then
+            echo "usage: phenix-basic-verification terminal|jsonl|acp [--session ID for terminal]" >&2
+            exit 2
+          fi
+          mode="$1"
+          shift
+          exec ${basicRuntime}/bin/phenix-basic-runtime "$mode" ${historyVerificationComposition} "$@"
+        '';
+      };
+      historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-history-verification-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification ${basicComposition} ${historyVerificationComposition} "$out"
+        test -s "$out/history-verification.json"
+      '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
@@ -1030,6 +1067,8 @@
         phenix-plugin-frontend-acp = frontendAcp;
         phenix-basic-runtime = basicRuntime;
         phenix-basic-composition = basicComposition;
+        # Explicit opt-in test binary: Basic runtime plus a history-only Model.
+        phenix-basic-verification = historyVerificationBinary;
         phenix-basic-terminal = pkgs.writeShellApplication {
           name = "phenix-basic-terminal";
           text = "exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition}";
@@ -1079,6 +1118,7 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        basic-history-verification = historyVerificationCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
