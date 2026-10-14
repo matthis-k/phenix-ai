@@ -24,6 +24,67 @@ fn checked_i64(value: u64) -> Result<i64, BasicError> {
     i64::try_from(value).map_err(|_| error(ErrorCode::Conflict, "storage revision overflow"))
 }
 
+/// Database files made before schema versioning use user_version = 0.
+/// The only supported migration retains the original record layout and marks
+/// it as version 1. Reject future or malformed schemas before any Storage I/O.
+fn schema_version(conn: &Connection) -> Result<i64, BasicError> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| failed())
+}
+
+fn check_schema(conn: &Connection) -> Result<(), BasicError> {
+    let mut statement = conn
+        .prepare("PRAGMA table_info(basic_records)")
+        .map_err(|_| failed())?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })
+        .map_err(|_| failed())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|_| failed())?;
+    let expected = [
+        ("session".into(), "TEXT".into(), 1_i64, 1_i64),
+        ("name".into(), "TEXT".into(), 1_i64, 2_i64),
+        ("revision".into(), "INTEGER".into(), 1_i64, 0_i64),
+        ("data".into(), "BLOB".into(), 1_i64, 0_i64),
+    ];
+    if columns.as_slice() != expected.as_slice() {
+        return Err(failed());
+    }
+    Ok(())
+}
+
+fn ensure_schema(conn: &mut Connection) -> Result<(), BasicError> {
+    match schema_version(conn)? {
+        1 => check_schema(conn),
+        0 => {
+            // Serialize competing first opens across processes. Recheck the
+            // version after BEGIN IMMEDIATE so only one process migrates.
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|_| failed())?;
+            match schema_version(&tx)? {
+                0 => {
+                    tx.execute_batch(CREATE).map_err(|_| failed())?;
+                    check_schema(&tx)?;
+                    tx.execute_batch("PRAGMA user_version = 1")
+                        .map_err(|_| failed())?;
+                }
+                1 => check_schema(&tx)?,
+                _ => return Err(failed()),
+            }
+            tx.commit().map_err(|_| failed())
+        }
+        _ => Err(failed()),
+    }
+}
+
 struct Db(Connection);
 impl Db {
     fn open() -> Result<Self, BasicError> {
@@ -34,12 +95,12 @@ impl Db {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
-        let conn = Connection::open_with_flags(name, flags).map_err(|_| failed())?;
+        let mut conn = Connection::open_with_flags(name, flags).map_err(|_| failed())?;
         conn.busy_timeout(Duration::from_secs(5))
             .map_err(|_| failed())?;
         conn.execute_batch("PRAGMA synchronous = FULL")
             .map_err(|_| failed())?;
-        conn.execute_batch(CREATE).map_err(|_| failed())?;
+        ensure_schema(&mut conn)?;
         Ok(Self(conn))
     }
 
