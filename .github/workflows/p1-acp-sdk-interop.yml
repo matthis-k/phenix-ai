@@ -40,8 +40,6 @@ jobs:
             "$PWD/result-acp/bin/phenix-basic-acp"
       - name: Require bounded SDK stdio input
         timeout-minutes: 2
-        env:
-          PHENIX_BASIC_USE_ACP_SDK: "1"
         run: |
           python tests/acp-sdk-frame-bounds.py "$PWD/result-acp/bin/phenix-basic-acp"
       - name: Record SDK dependency resolution
