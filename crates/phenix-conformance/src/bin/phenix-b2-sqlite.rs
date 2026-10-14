@@ -257,6 +257,20 @@ fn main() {
             .code,
             ErrorCode::Denied
         );
+    } else if args[1] == "schema-rejected" {
+        // Unsupported future versions, absent versioned tables, and malformed
+        // unversioned tables must all fail before exposing Storage records.
+        let rejected: Result<StoredRecord, BasicError> = call(
+            &kernel,
+            read,
+            storage,
+            phenix_basic_contracts::RecordKey {
+                session: "s1".into(),
+                key: "atomic-a".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(rejected.unwrap_err().code, ErrorCode::StorageFailed);
     } else if args[1] == "faults" {
         // The driver installs a SQLite BEFORE UPDATE trigger that aborts
         // writes to atomic-b. atomic-a is written first inside the same
@@ -508,6 +522,6 @@ fn main() {
         )
         .unwrap();
     } else {
-        panic!("expected seed, faults or resume");
+        panic!("expected seed, faults, schema-rejected or resume");
     }
 }
