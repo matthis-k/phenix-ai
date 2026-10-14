@@ -4,6 +4,7 @@ on:
     branches:
       - "ci/m1-generated-backend-consumer"
       - "ci/m1-p1-ci-cutover"
+      - "ci/m1-p1-cache-benchmark"
   workflow_dispatch:
 
 permissions:
@@ -12,10 +13,10 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25da62028d5d72d2e5ae3aca9d1571c425eb0d09
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@a1480620950508215bdda4a5404f046becf65cf8
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "25da62028d5d72d2e5ae3aca9d1571c425eb0d09"
+      library_ref: "a1480620950508215bdda4a5404f046becf65cf8"
       worker_count: 4
       slots_per_worker: 2
     secrets:
