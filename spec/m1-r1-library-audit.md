@@ -42,11 +42,13 @@ Use the maintained SDK instead of extending Phenix's handwritten JSON-RPC
 router for additional protocol features. Keep kernel graph admission, resource
 authority and the one-thread execution requirement owned by Phenix.
 
-The current lightweight ACP host remains a P1 test implementation. It
-handles stable-v1 initialization, session entry, journal progress and prompt
-cancellation. A client requesting a newer protocol version receives the
-supported version 1 so that the client may negotiate down. Malformed
-JSON-RPC envelopes do not terminate an idle connection.
+The earlier handwritten ACP host was a P1 test implementation with
+a permissive higher-version downgrade. The selected SDK-only production
+host uses the official stable-v1 `Agent.builder()` API, not custom
+handwritten JSON-RPC compatibility handling. The official SDK rejects
+version 0 or draft v2 initialize requests with invalid request `-32600`
+and permits a fresh v1 initialize; separate v1/v2 routing remains R1-ACP5c.
+Malformed JSON-RPC envelopes remain SDK-owned and recoverable.
 
 R1 acceptance includes a real official-SDK ACP client exercising the
 native host over stdio. The isolated `tests/acp-sdk-client` crate pins the

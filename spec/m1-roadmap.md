@@ -785,10 +785,13 @@ canonical shipping checks must still pass before P1 acceptance.
 `impl/m1-p1-acp-protocol-boundary` keeps malformed idle JSON-RPC from
 terminating the connection. It returns the standard parse/invalid-request
 errors. It rejects missing or invalid protocol versions without consuming
-the initialization slot. When a client advertises a newer ACP version, the
-v1-only agent responds with `protocolVersion: 1` for client-controlled
-downgrade. These behaviors are tested through the real stdio product
-fixture. The official-SDK client compatibility gate remains open.
+the initialization slot. The original handwritten host permitted a higher
+client version to negotiate down to v1. The official SDK 3.3.0 v1-only
+`Agent.builder()` instead rejects version 0 and draft v2 at its protocol
+compatibility boundary with JSON-RPC invalid request `-32600`;
+after a rejected version the client may retry stable v1. Dual-version
+negotiation requires the separate SDK router (R1-ACP5c). The stdio product
+fixture proves rejection and subsequent stable-v1 initialization.
 
 ### P1 live ACP controller
 
