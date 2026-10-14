@@ -1,0 +1,47 @@
+name: Basic deterministic session history
+on:
+  pull_request:
+    paths:
+      - "flake.nix"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/phenix-plugin-model-history-test/**"
+      - "tests/basic-history-verification-product.py"
+      - ".github/workflows/p1-basic-history-verification.yml"
+  workflow_dispatch:
+
+jobs:
+  deterministic-history:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Verify provider formatting
+        run: |
+          nix develop --command cargo fmt --all --check
+      - name: Run the packaged Basic agent with deterministic expected history
+        run: |
+          nix build -L --show-trace .#checks.x86_64-linux.basic-history-verification
+      - name: Require exact acceptance cases
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("result/history-verification.json").read_text())
+          expected = [
+              "existing-basic-composition-unchanged",
+              "only-selected-model-overridden",
+              "previous-user-message",
+              "previous-assistant-message",
+              "interleaved-multi-session",
+              "cross-session-isolation",
+              "restart-continues-history",
+              "tool-call-and-result-history",
+              "tool-history-after-restart",
+              "terminal-reuses-jsonl-session",
+          ]
+          assert report["format"] == "phenix.basic.history-verification.v1"
+          assert report["accepted"] is True
+          assert report["cases"] == expected, report
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
