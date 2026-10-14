@@ -207,11 +207,9 @@ fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, Stri
         for step in execution.steps() {
             if let Outcome::Domain(value) = &step.outcome {
                 let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-                if matches!(
-                    cause.code,
-                    phenix_basic_contracts::ErrorCode::ModelFailed
-                        | phenix_basic_contracts::ErrorCode::TurnLimit
-                ) {
+                if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
+                    || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
+                {
                     return Ok(false);
                 }
                 return Err(format!("{:?}: {}", cause.code, cause.message));
