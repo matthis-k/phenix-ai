@@ -75,7 +75,7 @@ def verify(host, pending, shipping):
     require(summary.get("format") == "phenix.basic.host-smoke.v1", "host evidence format")
     for flag in ("terminal", "jsonl", "acp_v1_session_reload"):
         require(summary.get(flag) is True, "missing host frontend: " + flag)
-    require(isinstance(summary.get("p1_accepted"), bool), "missing explicit P1 flag")
+    require(summary.get("p1_accepted") is False, "premature P1 acceptance declaration")
 
     for filename, cases in HOST_CASES.items():
         result = load(host / filename)
