@@ -19,8 +19,7 @@ pub(crate) fn endpoint_url(input: &str) -> Result<String, BasicError> {
     let parsed = url::Url::parse(input).map_err(|_| malformed())?;
     if !matches!(parsed.scheme(), "http" | "https")
         || !parsed.has_host()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
+        || !parsed[url::Position::BeforeUsername..url::Position::BeforeHost].is_empty()
         || parsed.fragment().is_some()
     {
         return Err(malformed());
