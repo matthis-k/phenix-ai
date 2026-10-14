@@ -39,9 +39,38 @@ jobs:
               "tool-call-and-result-history",
               "tool-history-after-restart",
               "terminal-reuses-jsonl-session",
+              "direct-text-and-unicode",
+              "interleaved-text-replies",
+              "latest-fact-wins",
+              "missing-fact-is-absent",
+              "two-tools-one-domain-failure",
+              "model-failure-recovery",
+              "per-session-model-error-isolation",
+              "model-token-limit",
+              "tool-call-limit-denies-all",
+              "model-turn-limit-after-tool",
+              "failure-does-not-poison-followup",
+              "idle-cancellation",
+              "observer-checkpoint-no-replay",
+              "invalid-session-resource-refused",
           ]
           assert report["format"] == "phenix.basic.history-verification.v1"
           assert report["accepted"] is True
           assert report["cases"] == expected, report
-          print(json.dumps(report, indent=2, sort_keys=True))
+          acp = json.loads(Path("result/acp-history-verification.json").read_text())
+          assert acp["format"] == "phenix.basic.acp-history-verification.v1"
+          assert acp["accepted"] is True
+          assert acp["cases"] == [
+              "acp-initialize-and-session-new",
+              "acp-direct-response",
+              "acp-user-and-assistant-recall",
+              "acp-tool-call-result-stream",
+              "acp-session-isolation",
+              "acp-invalid-content-rejected",
+              "acp-recovery-after-invalid-input",
+              "acp-session-load-process-restart",
+              "acp-tool-history-reloaded",
+              "acp-multiple-session-loads",
+          ], acp
+          print(json.dumps({"jsonl_terminal": report, "acp": acp}, indent=2, sort_keys=True))
           PY
