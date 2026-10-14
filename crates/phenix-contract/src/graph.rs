@@ -501,6 +501,30 @@ mod tests {
         );
     }
     #[test]
+    fn state_trigger_uses_existing_canonical_graph_encoding() {
+        let mut graph = sample();
+        graph.nodes[0].triggers = vec!["state:skills.api/items".into()];
+        let bytes = graph.encode().unwrap();
+        assert_eq!(GraphContribution::decode(&bytes).unwrap(), graph);
+        assert_eq!(
+            state_change_property("state:skills.api/items"),
+            Some("skills.api/items")
+        );
+        assert!(state_change_property("state:skills.api/").is_none());
+        assert!(state_change_property("state:root/items").is_none());
+        let mut malformed = graph;
+        malformed.nodes[0].triggers = vec!["state:invalid".into()];
+        assert!(malformed.encode().is_err());
+        assert_eq!(
+            state_change_schema(),
+            ValueSchema::Struct(std::collections::BTreeMap::from([
+                ("epoch".into(), ValueSchema::U64),
+                ("property".into(), ValueSchema::String),
+            ]))
+        );
+    }
+
+    #[test]
     fn duplicates_and_malformed_payloads_reject() {
         let mut bad = sample();
         let duplicate = bad.nodes[0].clone();
