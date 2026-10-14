@@ -212,6 +212,8 @@ mod jsonl {
 /// ACP v1 prompt and cancel frames. Initialize and session creation belong
 /// to the connection host; this provider only decodes authorized turn input.
 pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
+    use agent_client_protocol_schema::v1::{CancelNotification, ContentBlock, PromptRequest};
+
     let frame: serde_json::Value = serde_json::from_str(&request.line)
         .map_err(|_| error(ErrorCode::InvalidInput, "malformed ACP JSON-RPC frame"))?;
     if frame.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
@@ -221,13 +223,6 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
         .get("method")
         .and_then(|value| value.as_str())
         .ok_or_else(|| error(ErrorCode::InvalidInput, "missing ACP method"))?;
-    let session = frame
-        .pointer("/params/sessionId")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| error(ErrorCode::InvalidInput, "missing ACP sessionId"))?;
-    if session != request.session {
-        return Err(error(ErrorCode::Denied, "ACP session mismatch"));
-    }
     match method {
         "session/cancel" => {
             if frame.get("id").is_some() {
@@ -235,6 +230,12 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
                     ErrorCode::InvalidInput,
                     "ACP cancel must be a notification",
                 ));
+            }
+            let cancel: CancelNotification =
+                serde_json::from_value(frame.get("params").cloned().unwrap_or_default())
+                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid ACP cancel parameters"))?;
+            if cancel.session_id.to_string() != request.session {
+                return Err(error(ErrorCode::Denied, "ACP session mismatch"));
             }
             Ok(cancellation())
         }
@@ -245,23 +246,23 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
                     "ACP prompt requires request ID",
                 ));
             }
-            let blocks = frame
-                .pointer("/params/prompt")
-                .and_then(|value| value.as_array())
-                .ok_or_else(|| error(ErrorCode::InvalidInput, "missing ACP prompt blocks"))?;
-            let mut texts = Vec::with_capacity(blocks.len());
-            for block in blocks {
-                if block.get("type").and_then(|value| value.as_str()) != Some("text") {
-                    return Err(error(
-                        ErrorCode::InvalidInput,
-                        "unsupported ACP content block",
-                    ));
+            let incoming: PromptRequest =
+                serde_json::from_value(frame.get("params").cloned().unwrap_or_default())
+                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid ACP prompt parameters"))?;
+            if incoming.session_id.to_string() != request.session {
+                return Err(error(ErrorCode::Denied, "ACP session mismatch"));
+            }
+            let mut texts = Vec::with_capacity(incoming.prompt.len());
+            for block in incoming.prompt {
+                match block {
+                    ContentBlock::Text(text) => texts.push(text.text),
+                    _ => {
+                        return Err(error(
+                            ErrorCode::InvalidInput,
+                            "unsupported ACP content block",
+                        ))
+                    }
                 }
-                let text = block
-                    .get("text")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| error(ErrorCode::InvalidInput, "invalid ACP text block"))?;
-                texts.push(text);
             }
             prompt(request.session, texts.join("\n"), Limits::default())
         }
