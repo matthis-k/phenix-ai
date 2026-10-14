@@ -215,14 +215,15 @@ assert updates[len(original_updates):] == original_updates, (
 )
 exit_cleanly(first)
 
-# A v1-only agent negotiates down to protocol version 1 when the
-# client advertises a newer version. The client may continue at v1.
+# A v1-only official SDK Agent.builder() endpoint rejects the draft-v2
+# wire version, and the rejected initialize must not consume its slot.
+# Dual-version selection belongs to the separate SDK v1/v2 router.
 version_probe = start()
-downgraded = request(version_probe, 90, "initialize", {
+request_error(version_probe, 90, "initialize", {
     "protocolVersion": 2,
     "clientCapabilities": {},
-})
-assert downgraded["protocolVersion"] == 1, downgraded
+}, -32600)
+initialize(version_probe)
 resource_session = request(version_probe, 91, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
 })["sessionId"]
@@ -311,7 +312,8 @@ assert "stdin frame exceeds 1 MiB" in stderr, stderr
             "two-session-isolation",
             "malformed-frame-recovers", "invalid-jsonrpc-rejected",
             "invalid-protocol-version-rejected",
-            "newer-client-negotiates-down-to-v1",
+            "draft-v2-rejected-by-stable-v1-only-sdk",
+            "v1-retry-after-rejected-v2-initialize",
             "v1-resource-link-preserved-without-dereference",
             "notifications-do-not-initialize",
             "invalid-request-id-rejected",
