@@ -987,6 +987,64 @@ mod tests {
     }
 
     #[test]
+    fn committed_state_projection_activates_only_watching_nodes() {
+        let declarations = vec![
+            contribution(
+                "alpha",
+                true,
+                vec![node("a", &["state:skills.api/items"], &[], &[])],
+            ),
+            contribution(
+                "beta",
+                false,
+                vec![node("b", &["state:context.api/items"], &[], &[])],
+            ),
+            contribution(
+                "gamma",
+                false,
+                vec![node(
+                    "c",
+                    &["state:skills.api/items"],
+                    &["alpha/a", "beta/b"],
+                    &[],
+                )],
+            ),
+            contribution("delta", false, vec![node("d", &[], &["alpha/a"], &[])]),
+        ];
+        let graph = compile(&declarations).unwrap();
+        let mut reverse = declarations;
+        reverse.reverse();
+        assert_eq!(graph.identity, compile(&reverse).unwrap().identity);
+        assert_eq!(
+            graph
+                .state_change_activation_order(&BTreeSet::from(["skills.api/items".into()]))
+                .unwrap(),
+            ["alpha/a", "gamma/c"]
+        );
+        assert_eq!(
+            graph
+                .state_change_activation_order(&BTreeSet::from([
+                    "skills.api/items".into(),
+                    "context.api/items".into(),
+                ]))
+                .unwrap(),
+            ["alpha/a", "beta/b", "gamma/c"]
+        );
+        assert!(
+            graph
+                .state_change_activation_order(&BTreeSet::from(["missing/api/id".into()]))
+                .is_err()
+        );
+        assert!(graph
+            .state_change_activation_order(&BTreeSet::from(["skills.api/absent".into()]))
+            .unwrap()
+            .is_empty());
+        assert!(graph
+            .activation_order(&BTreeSet::from(["state:skills.api/items".into()]))
+            .is_err());
+    }
+
+    #[test]
     fn ordered_writers_are_permitted() {
         let input = vec![contribution(
             "alpha",
