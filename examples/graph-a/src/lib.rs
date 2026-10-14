@@ -12,7 +12,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             after: &[],
             selector: "",
             operation: "example.graph.task@1/run",
-            writes: &["example.graph-a/result"],
+            writes: &["example.graph-a/result", "example.graph-a/signal"],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::Skip,
         },
@@ -46,6 +46,10 @@ mod provider {
         #[set]
         #[watch]
         result: String,
+        #[get]
+        #[set]
+        #[watch]
+        signal: String,
         input: Option<Start>,
         polls: u64,
         cancelled: bool,
@@ -65,6 +69,16 @@ mod provider {
         *edit = format!("A:{}", input.text);
         edit.commit(host)
             .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+        if input.text == "g4-hook" {
+            let mut signal = state
+                .signal
+                .edit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+            *signal = "committed".into();
+            signal
+                .commit(host)
+                .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
+        }
         Ok(input.text)
     }
 

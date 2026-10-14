@@ -242,6 +242,10 @@ impl Cells {
         self.epoch = Epoch(epoch);
         Ok(Value::List(vec![Value::U64(epoch), Value::List(snapshots)]))
     }
+    pub(super) fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     /// Latest committed watchable properties after an observed epoch.
     ///
     /// State snapshots are the source of truth: rapid updates coalesce to

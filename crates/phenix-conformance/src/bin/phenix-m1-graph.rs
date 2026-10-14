@@ -10,7 +10,7 @@ const KEY: &str = "example.graph.task@1/run";
 
 fn composition(artifacts: Vec<String>) -> Composition {
     let ids = ["example.graph-a", "example.graph-b", "example.graph-c"];
-    let resources: BTreeSet<_> = ids[..2]
+    let mut resources: BTreeSet<_> = ids[..2]
         .iter()
         .map(|id| {
             phenix_contract::property_contract(id, "result")
@@ -19,6 +19,8 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 .to_owned()
         })
         .collect();
+    let signal = phenix_contract::property_contract("example.graph-a", "signal").unwrap();
+    resources.insert(signal.trim_end_matches("@1").to_owned());
     let mut grants = Vec::new();
     for caller in ["root", ids[0], ids[1], ids[2]] {
         grants.push(ScopedGrant {
@@ -30,7 +32,17 @@ fn composition(artifacts: Vec<String>) -> Composition {
     }
     // The graph nodes use the existing state host API. A and B commit their
     // own properties; C reads those values through selected property imports.
-    let mut operations = BTreeSet::from([KEY.into(), "example.graph.slow@1/run".into()]);
+    let mut operations = BTreeSet::from([
+        KEY.into(),
+        "example.graph.slow@1/run".into(),
+        "example.graph.changed@1/run".into(),
+    ]);
+    grants.push(ScopedGrant {
+        caller: "example.graph-c".into(),
+        interface: "example.graph.changed@1".into(),
+        operation: "run".into(),
+        resources: resources.clone(),
+    });
     for caller in ["root", "example.graph-a"] {
         grants.push(ScopedGrant {
             caller: caller.into(),
@@ -56,6 +68,19 @@ fn composition(artifacts: Vec<String>) -> Composition {
             operations.insert(format!("{interface}/{operation}"));
         }
     }
+    for (caller, operation) in [
+        ("example.graph-a", "get"),
+        ("example.graph-a", "set"),
+        ("example.graph-c", "watch"),
+    ] {
+        grants.push(ScopedGrant {
+            caller: caller.into(),
+            interface: signal.clone(),
+            operation: operation.into(),
+            resources: resources.clone(),
+        });
+        operations.insert(format!("{signal}/{operation}"));
+    }
     Composition {
         format: "phenix.composition.v2".into(),
         artifacts,
@@ -80,6 +105,13 @@ fn composition(artifacts: Vec<String>) -> Composition {
                 provider: "example.graph-b".into(),
                 export: "property.result".into(),
             },
+            SlotBinding {
+                caller: "example.graph-c".into(),
+                slot: "signal".into(),
+                index: 0,
+                provider: "example.graph-a".into(),
+                export: "property.signal".into(),
+            },
         ],
         grants,
         excluded: BTreeSet::new(),
@@ -101,6 +133,8 @@ fn main() {
     std::env::set_var("PHENIX_GRAPH_CONSTRUCTOR_WITNESS", &witness);
     let successor_witness = output.join("graph-c-invoked");
     std::env::set_var("PHENIX_GRAPH_C_WITNESS", &successor_witness);
+    let hook_witness = output.join("graph-c-state-hook");
+    std::env::set_var("PHENIX_GRAPH_HOOK_WITNESS", &hook_witness);
     let packages = args[1..4].to_vec();
     for (index, package) in packages.iter().enumerate() {
         let loaded =
@@ -110,7 +144,16 @@ fn main() {
             graph.plugin,
             format!("example.graph-{}", ["a", "b", "c"][index])
         );
-        assert_eq!(graph.nodes.len(), if index == 1 { 1 } else { 2 });
+        assert_eq!(
+            graph.nodes.len(),
+            if index == 1 {
+                1
+            } else if index == 2 {
+                3
+            } else {
+                2
+            }
+        );
         assert!(graph.events.is_empty());
     }
     let mut policy = composition(packages.clone());
@@ -121,7 +164,7 @@ fn main() {
         "offline resolution ran native constructor"
     );
     let graph = prepared.compiled_graph().expect("verified graph");
-    assert_eq!(graph.nodes.len(), 5);
+    assert_eq!(graph.nodes.len(), 6);
     assert_eq!(
         graph.events[EVENT].payload,
         phenix_contract::ValueSchema::Struct(std::collections::BTreeMap::from([(
@@ -136,7 +179,8 @@ fn main() {
             "example.graph-a/slow",
             "example.graph-b/b",
             "example.graph-c/c",
-            "example.graph-c/d"
+            "example.graph-c/d",
+            "example.graph-c/watch"
         ]
     );
     assert_eq!(graph.predecessors["example.graph-c/c"].len(), 3);
@@ -777,6 +821,50 @@ fn main() {
             "failed branch allowed successor"
         );
     }
+    assert!(!hook_witness.exists());
+    let mut hook_root = None;
+    let mut hook_terminal = 0;
+    let changed = kernel
+        .submit_action_observed(
+            "example.graph.submit",
+            &Value::map([("text", Value::String("g4-hook".into()))]),
+            scope.clone(),
+            |update| {
+                assert_eq!(*hook_root.get_or_insert(update.root), update.root);
+                if let GraphEvent::Finished(GraphCompletion::Success) = &update.event {
+                    hook_terminal += 1;
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        hook_terminal, 1,
+        "reactive waves emitted multiple terminal events"
+    );
+    assert_eq!(changed.len(), 5);
+    assert_eq!(changed[4].node, "example.graph-c/watch");
+    let hook_text = fs::read_to_string(&hook_witness).unwrap();
+    let (hook_epoch, hook_property) = hook_text.split_once(':').unwrap();
+    assert!(hook_epoch.parse::<u64>().unwrap() > 0);
+    assert_eq!(hook_property, "example.graph-a/signal");
+    fs::remove_file(&hook_witness).unwrap();
+
+    // A selected watch permission is necessary even for an offline hook.
+    let mut denied_watch = policy.clone();
+    denied_watch.grants.retain(|grant| {
+        !(grant.caller == "example.graph-c"
+            && grant.interface
+                == phenix_contract::property_contract("example.graph-a", "signal").unwrap()
+            && grant.operation == "watch")
+    });
+    assert_eq!(
+        Prepared::prepare(denied_watch)
+            .err()
+            .expect("state hooks require watch grants")
+            .code,
+        Code::Denied
+    );
+
     kernel.shutdown().unwrap();
 
     // The graph caller must inherit the root requirement's resource ceiling.
@@ -846,6 +934,10 @@ fn main() {
             "root-resource-ceiling-bounds-graph-delegation",
             "action-resource-inherited-by-four-native-nodes",
             "pending-a-independent-b-and-delayed-c",
+            "native-state-hook-same-root-after-commit",
+            "native-state-hook-one-terminal-event",
+            "native-state-hook-grant-denied-before-load",
+            "native-state-hook-receives-only-matching-property",
             "watched-b-commit-projected-before-pending-a-settles",
             "watched-a-commit-projected-after-pending-completes",
             "watched-change-cursor-does-not-replay-commits",

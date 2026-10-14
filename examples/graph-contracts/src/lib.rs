@@ -85,8 +85,24 @@ pub trait SlowTask {
     fn run(&mut self, input: Start) -> Result<String, String>;
 }
 
+/// The graph kernel sends one filtered change batch per watcher per epoch.
+#[derive(Debug, Clone, Portable)]
+pub struct ChangeNotice {
+    pub epoch: u64,
+    pub properties: Vec<String>,
+}
+
+#[contract(id = "example.graph.changed@1")]
+pub trait StateHook {
+    fn run(&mut self, input: ChangeNotice) -> Result<String, String>;
+}
+
 #[property(owner = "example.graph-a", id = "result", get, set)]
 pub type ResultA = String;
 
 #[property(owner = "example.graph-b", id = "result", get, set)]
 pub type ResultB = String;
+
+/// An imported watch capability. The graph grant alone is not an import.
+#[property(owner = "example.graph-a", id = "signal", get, watch)]
+pub type SignalA = String;

@@ -474,7 +474,9 @@ impl Kernel {
         mut observe: impl FnMut(&GraphUpdate<'_>),
     ) -> Result<Vec<GraphStep>, Failure> {
         let mut execution = self.begin_action_inner(action_id, payload, scope, false)?;
-        execution.pump(&mut observe)?;
+        // A synchronous action can commit state that admits reactive hooks.
+        // Drive every ready wave under its original root before returning.
+        while execution.pump(&mut observe)? != GraphStatus::Finished {}
         if let Some(failure) = execution.failure.take() {
             return Err(failure);
         }
@@ -545,11 +547,15 @@ impl Kernel {
         }
 
         let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
+        let epoch_cursor = self.cells.borrow().epoch().0;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
         Ok(GraphExecution {
             root,
             action: action_id.into(),
             payload: payload.clone(),
+            node_requests: BTreeMap::new(),
+            state_cursor: epoch_cursor,
+            had_domain: false,
             waiting: active.iter().cloned().collect(),
             active,
             pending: BTreeMap::new(),
@@ -573,12 +579,51 @@ pub enum GraphStatus {
     Finished,
 }
 
+/// A node receives only the changed properties it declared. Multiple
+/// committed properties activate it once, with the same epoch stamp.
+fn state_hook_requests(
+    graph: &CompiledGraph,
+    active: &[String],
+    changed: &BTreeSet<String>,
+    epoch: u64,
+) -> Result<BTreeMap<String, Value>, Failure> {
+    let mut requests = BTreeMap::new();
+    for node in active {
+        let matching = graph.nodes[node]
+            .definition
+            .triggers
+            .iter()
+            .filter_map(|trigger| state_change_property(trigger))
+            .filter(|property| changed.contains(*property))
+            .map(|property| Value::String(property.into()))
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            return Err(Failure::new(
+                Code::InfrastructureFailure,
+                "state hook activated without a changed property",
+            ));
+        }
+        requests.insert(
+            node.clone(),
+            Value::map([
+                ("epoch", Value::U64(epoch)),
+                ("properties", Value::List(matching)),
+            ]),
+        );
+    }
+    Ok(requests)
+}
+
 /// Readiness bookkeeping around one existing Root and its Ticket handles.
 /// The host controls polling; no timeout or busy loop is imposed by the kernel.
 pub struct GraphExecution<'a> {
     root: Root<'a>,
     action: String,
     payload: Value,
+    /// Event nodes use the action payload; state hooks get scoped epoch data.
+    node_requests: BTreeMap<String, Value>,
+    state_cursor: u64,
+    had_domain: bool,
     active: Vec<String>,
     waiting: BTreeSet<String>,
     pending: BTreeMap<String, Ticket>,
@@ -624,10 +669,10 @@ impl GraphExecution<'_> {
                 GraphCompletion::Failure(failure)
             } else if self.cancelled {
                 GraphCompletion::Cancelled
-            } else if self.unsuccessful.is_empty() {
-                GraphCompletion::Success
-            } else {
+            } else if self.had_domain {
                 GraphCompletion::Domain
+            } else {
+                GraphCompletion::Success
             }
         })
     }
@@ -646,6 +691,7 @@ impl GraphExecution<'_> {
         match result {
             Ok(outcome) => {
                 if matches!(outcome, Outcome::Domain(_)) {
+                    self.had_domain = true;
                     self.unsuccessful.insert(node.clone());
                     if self.root.kernel.prepared.graph.as_ref().unwrap().nodes[&node]
                         .definition
@@ -725,6 +771,34 @@ impl GraphExecution<'_> {
         }
         Ok(())
     }
+    /// Admit one committed epoch through the prepared state-trigger DAG.
+    /// This uses the existing root, provider selection and ticket lifecycle.
+    /// The caller pumps the new wave just like the original event wave.
+    fn admit_state_wave(&mut self) -> Result<bool, Failure> {
+        let (epoch, changed) = self
+            .root
+            .kernel
+            .cells
+            .borrow()
+            .watched_changes_since(phenix_contract::Epoch(self.state_cursor));
+        self.state_cursor = epoch.0;
+        if changed.is_empty() {
+            return Ok(false);
+        }
+        let changed: BTreeSet<String> = changed.into_iter().collect();
+        let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+        let active = graph.state_change_activation_order(&changed)?;
+        if active.is_empty() {
+            return Ok(false);
+        }
+        let node_requests = state_hook_requests(graph, &active, &changed, epoch.0)?;
+        self.waiting = active.iter().cloned().collect();
+        self.active = active;
+        self.unsuccessful.clear();
+        self.node_requests = node_requests;
+        Ok(true)
+    }
+
     pub fn pump(
         &mut self,
         mut observe: impl FnMut(&GraphUpdate<'_>),
@@ -775,6 +849,7 @@ impl GraphExecution<'_> {
                 if predecessors.iter().any(|id| self.unsuccessful.contains(id)) {
                     self.waiting.remove(&node);
                     self.unsuccessful.insert(node.clone());
+                    self.had_domain = true;
                     self.emit(GraphEvent::NodeSkipped { node: &node }, &mut observe);
                     continue;
                 }
@@ -804,9 +879,10 @@ impl GraphExecution<'_> {
                 };
                 let owner = compiled.owner.clone();
                 self.waiting.remove(&node);
+                let request = self.node_requests.get(&node).unwrap_or(&self.payload);
                 match self
                     .root
-                    .call_graph(&owner, &target, &self.payload, self.pending_allowed)
+                    .call_graph(&owner, &target, request, self.pending_allowed)
                 {
                     Ok(Call::Ready(outcome)) => self.finish_node(node, Ok(outcome), &mut observe),
                     Ok(Call::Pending(ticket)) => {
@@ -825,6 +901,12 @@ impl GraphExecution<'_> {
         }
         if self.stopped {
             self.cancel_pending()?;
+        }
+        // A finished wave may have published watched cells. Activate their
+        // hooks before declaring the admitted root terminal. Hooks can publish
+        // further epochs; each is observed after its own wave settles.
+        if !self.terminal && !self.stopped && self.waiting.is_empty() && self.pending.is_empty() {
+            self.admit_state_wave()?;
         }
         if !self.terminal && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
         {
@@ -1041,6 +1123,65 @@ mod tests {
         assert!(graph
             .activation_order(&BTreeSet::from(["state:skills.api/items".into()]))
             .is_err());
+    }
+
+    #[test]
+    fn state_hook_payload_filters_unwatched_changes_per_node() {
+        let graph = compile(&[
+            contribution(
+                "alpha",
+                true,
+                vec![node(
+                    "a",
+                    &["state:skills.api/items", "state:skills.api/revision"],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "beta",
+                false,
+                vec![node("b", &["state:context.api/items"], &[], &[])],
+            ),
+        ])
+        .unwrap();
+        let changed = BTreeSet::from([
+            "skills.api/items".into(),
+            "skills.api/revision".into(),
+            "context.api/items".into(),
+        ]);
+        let active = graph.state_change_activation_order(&changed).unwrap();
+        let requests = state_hook_requests(&graph, &active, &changed, 5).unwrap();
+        assert_eq!(
+            requests["alpha/a"],
+            Value::map([
+                ("epoch", Value::U64(5)),
+                (
+                    "properties",
+                    Value::List(vec![
+                        Value::String("skills.api/items".into()),
+                        Value::String("skills.api/revision".into()),
+                    ]),
+                ),
+            ])
+        );
+        assert_eq!(
+            requests["beta/b"],
+            Value::map([
+                ("epoch", Value::U64(5)),
+                (
+                    "properties",
+                    Value::List(vec![Value::String("context.api/items".into())]),
+                ),
+            ])
+        );
+        assert!(state_hook_requests(
+            &graph,
+            &["alpha/a".into()],
+            &BTreeSet::from(["context.api/items".into()]),
+            6,
+        )
+        .is_err());
     }
 
     #[test]

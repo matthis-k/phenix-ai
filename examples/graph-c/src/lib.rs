@@ -1,4 +1,4 @@
-use example_graph_contracts::{ResultA, ResultB, Start, Task};
+use example_graph_contracts::{ChangeNotice, ResultA, ResultB, SignalA, Start, StateHook, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -34,15 +34,28 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::FailRoot,
         },
+        StaticGraphNode {
+            id: "watch",
+            triggers: &["state:example.graph-a/signal"],
+            after: &[],
+            selector: "",
+            operation: "example.graph.changed@1/run",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
     ],
 };
 
 #[plugin(
     id = "example.graph-c",
     define(Task),
+    define(StateHook),
     provide(Task, slot = "task"),
+    provide(StateHook, slot = "hook"),
     require(ResultA, slot = "a"),
     require(ResultB, slot = "b"),
+    require(SignalA, slot = "signal"),
     graph(GRAPH)
 )]
 mod provider {
@@ -63,5 +76,18 @@ mod provider {
             std::fs::write(path, observed.as_bytes()).expect("graph-c invocation witness");
         }
         Ok(observed)
+    }
+
+    #[provide(StateHook::run)]
+    fn on_change(host: &live::Host<'_>, change: ChangeNotice) -> CallResult<String, String> {
+        assert!(change.epoch > 0);
+        assert_eq!(change.properties, ["example.graph-a/signal"]);
+        // The same admitted scope remains available during hook dispatch.
+        let _ = host.resource()?;
+        let result = format!("{}:{}", change.epoch, change.properties.join(","));
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_HOOK_WITNESS") {
+            std::fs::write(path, result.as_bytes()).expect("graph state-hook witness");
+        }
+        Ok(result)
     }
 }
