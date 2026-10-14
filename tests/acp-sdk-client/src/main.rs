@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             agent_client_protocol::on_receive_notification!(),
         )
         .connect_with(agent, |connection: ConnectionTo<Agent>| async move {
+            eprintln!("SDK interop: first initialize");
             let init = connection
                 .send_request(InitializeRequest::new(ProtocolVersion::V1))
                 .block_task()
@@ -48,12 +49,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             assert_eq!(init.protocol_version, ProtocolVersion::V1);
 
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+            eprintln!("SDK interop: new session");
             let session = connection
                 .send_request(NewSessionRequest::new(cwd.clone()))
                 .block_task()
                 .await?;
             *first_session.lock().expect("session identity poisoned") =
                 Some(session.session_id.clone());
+            eprintln!("SDK interop: first prompt");
             let answer = connection
                 .send_request(PromptRequest::new(
                     session.session_id.clone(),
@@ -65,6 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             // Exercise typed tool-call and tool-call-update notifications,
             // not just agent_message_chunk. The SDK decodes every update.
+            eprintln!("SDK interop: tool prompt");
             let tool_answer = connection
                 .send_request(PromptRequest::new(
                     session.session_id.clone(),
@@ -74,6 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             assert_eq!(format!("{:?}", tool_answer.stop_reason), "EndTurn");
 
+            eprintln!("SDK interop: replay same process");
             // Loading the persisted session on the same stdio connection
             // must replay its journal as valid, ordered ACP notifications.
             // This exercises the host's session/load path through the official
@@ -86,6 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await?;
 
+    eprintln!("SDK interop: first connection complete");
     // The first host sent two prompts, then loaded the same session.
     // A second process must see identical persisted journal entries.
     let original = {
@@ -105,6 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .clone()
         .ok_or("ACP host did not return a session ID")?;
     let restart_events = Arc::clone(&updates);
+    eprintln!("SDK interop: start second process");
     let restarted_agent = AcpAgent::from_args([binary])?;
     Client
         .builder()
@@ -122,6 +129,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .connect_with(
             restarted_agent,
             |connection: ConnectionTo<Agent>| async move {
+                eprintln!("SDK interop: second initialize");
                 let init = connection
                     .send_request(InitializeRequest::new(ProtocolVersion::V1))
                     .block_task()
