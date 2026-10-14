@@ -14,10 +14,10 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@a1480620950508215bdda4a5404f046becf65cf8
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "a1480620950508215bdda4a5404f046becf65cf8"
+      library_ref: "1a733ae1daae2cb99989b735b171bc5dedd80d63"
       worker_count: 4
       slots_per_worker: 2
     secrets:
