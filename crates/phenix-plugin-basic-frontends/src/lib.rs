@@ -7,12 +7,12 @@
 ))]
 compile_error!("select exactly one Basic frontend adapter");
 
+#[cfg(feature = "acp")]
+use phenix_basic_contracts::{decode, ToolCompletion};
 use phenix_basic_contracts::{
     encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits, PromptSubmitted,
     RenderRequest, Submission,
 };
-#[cfg(feature = "acp")]
-use phenix_basic_contracts::{decode, ToolCompletion};
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
 
