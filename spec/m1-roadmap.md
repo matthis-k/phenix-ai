@@ -481,10 +481,11 @@ transport to save compile time.
     the opt-in feature. The stacked `test/m1-r1-acp-v2-router-sdk-client`
     slice adds an independent, official SDK v2 initialize check plus a stable
     v1 initialize check against the same opt-in runtime binary. It asserts
-    that v2 session capabilities remain absent. This proves only SDK
-    negotiation, not v2 prompt or session acceptance. Run independent v2 SDK client tests for interleaved
-    updates, replay cursors, cancellation, session close/reopen and
-    v1/v2 version mismatches. Only then advertise draft v2 support.
+    that v2 session capabilities remain absent. This proves SDK negotiation
+    only, not v2 prompt or session acceptance.
+    Before advertising draft v2, run independent SDK client tests for
+    interleaved updates, replay cursors, cancellation, session close/reopen
+    and v1/v2 version mismatches.
 
 
 ### CI performance and flake-aware planning
