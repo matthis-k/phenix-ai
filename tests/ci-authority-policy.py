@@ -15,6 +15,14 @@ def verify(remote, canonical, matrix, dag, fmt, acp):
     # Only trusted main pushes and explicit trusted dispatch get remote OIDC.
     require('      - "main"' in remote, "trusted main push lacks complete remote CI")
     require("  pull_request:" not in remote, "remote OIDC granted to PRs")
+    # After cutover, only the protected release branch receives automatic
+    # privileged remote CI; historical staging branches must not retain OIDC.
+    before = remote.split("on:\\n  push:\\n    branches:\\n", 1)
+    require(len(before) == 2, "remote CI lacks a strict push allowlist")
+    push = before[1].split("\\n  workflow_dispatch:", 1)[0]
+    require(push.strip().splitlines() == ['- "main"'],
+            "temporary CI staging branches still receive remote OIDC")
+
     require("  id-token: write" in remote, "remote OIDC missing")
     require("      worker_count: 4" in remote and "      slots_per_worker: 2" in remote,
             "remote pool changed")
@@ -66,6 +74,7 @@ def self_test():
     verify(*good)
     cases = [
         (0, '      - "main"', '      - "ci/sandbox"'),
+        (0, '      - "main"', '      - "main"\\n      - "ci/temporary"'),
         (0, "on:\n  push:", "on:\n  pull_request:\n  push:"),
         (1, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (2, "permissions:\n  contents: read", "permissions:\n  id-token: write"),
