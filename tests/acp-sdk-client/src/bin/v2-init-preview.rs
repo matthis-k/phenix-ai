@@ -1,6 +1,6 @@
 //! Independent official SDK negotiation check for the gated v1/v2 router.
 //! This checks only initialization, not the unfinished v2 session lifecycle.
-use agent_client_protocol::schema::{ProtocolVersion, v1, v2};
+use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use std::error::Error;
 
@@ -14,24 +14,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Client
         .v2()
         .name("phenix-v2-preview-sdk-client")
-        .connect_with(
-            AcpAgent::from_args(command.clone())?,
-            async |connection| {
-                let response = connection
-                    .send_request(v2::InitializeRequest::new(
-                        ProtocolVersion::V2,
-                        v2::Implementation::new("phenix-v2-preview-test", "0.1.0"),
-                    ))
-                    .block_task()
-                    .await?;
-                assert_eq!(response.protocol_version, ProtocolVersion::V2);
-                assert!(
-                    response.capabilities.session.is_none(),
-                    "preview must not advertise an unfinished v2 session lifecycle"
-                );
-                Ok(())
-            },
-        )
+        .connect_with(AcpAgent::from_args(command.clone())?, async |connection| {
+            let response = connection
+                .send_request(v2::InitializeRequest::new(
+                    ProtocolVersion::V2,
+                    v2::Implementation::new("phenix-v2-preview-test", "0.1.0"),
+                ))
+                .block_task()
+                .await?;
+            assert_eq!(response.protocol_version, ProtocolVersion::V2);
+            assert!(
+                response.capabilities.session.is_none(),
+                "preview must not advertise an unfinished v2 session lifecycle"
+            );
+            Ok(())
+        })
         .await?;
 
     // The same opt-in binary must still route a stable-v1 client to the
