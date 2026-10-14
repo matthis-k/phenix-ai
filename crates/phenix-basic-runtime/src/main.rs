@@ -198,16 +198,20 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     Ok(cancelled)
 }
 
-/// A failed Model turn checkpoints a Failed session and journals a
-/// Failure event. Keep Terminal/JSONL alive to deliver queued prompts,
-/// but never treat failed Storage, admission or other domain work as a
-/// successful turn. ACP retains its independent SDK request-error path.
+/// A failed Model turn or caller-selected run limit checkpoints a Failed
+/// session and journals a Failure event. Keep Terminal/JSONL alive for
+/// later queued prompts; Storage, admission and other domain failures
+/// remain fatal. ACP retains its SDK request-error path.
 fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
         for step in execution.steps() {
             if let Outcome::Domain(value) = &step.outcome {
                 let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-                if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed {
+                if matches!(
+                    cause.code,
+                    phenix_basic_contracts::ErrorCode::ModelFailed
+                        | phenix_basic_contracts::ErrorCode::TurnLimit
+                ) {
                     return Ok(false);
                 }
                 return Err(format!("{:?}: {}", cause.code, cause.message));
