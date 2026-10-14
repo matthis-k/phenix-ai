@@ -98,6 +98,33 @@ Phenix's authority, contract or graph semantics to that library.
 | `phenix-plugin-event-journal` | Storage provider for persistent append/compare-and-swap and SDK Portable values | **Keep typed event sequence, cursor and observer semantics.** The library already supplies database transaction mechanics through Storage. A second event-log engine would duplicate persistence and could change at-least-once replay behavior. |
 | `phenix-plugin-basic-agent` | SDK graph and typed Model, Tool, Skills, Context, Session, Journal interfaces | **Keep the Basic graph topology and turn policy.** No duplicated transport, JSON-RPC, filesystem discovery, scheduling or persistence implementation belongs here. |
 
+### Review of the existing P1 PR stack
+
+The following entries are migration requirements for code that already exists,
+not optional advice for new plugins.
+
+| Existing PRs | Review finding | Required disposition |
+| --- | --- | --- |
+| #818, #821, #832, #833, #834, #835, #836, #837 and #838 | `phenix-basic-runtime` and the ACP Frontend still manually route JSON-RPC requests, frame replies and map protocol events. Those patches repair live P1 correctness, but expand a host that duplicates part of the official SDK. | Keep the verified behavior and independent fixtures as regression tests. Implement an official `agent-client-protocol` v1 adapter, then remove the handwritten ACP router and codec before R1/P1 acceptance. Do not keep two production ACP protocol implementations. |
+| #822 and #831 | Official ACP SDK is used as an **independent client test**, not as the host codec. | Keep the external SDK tests; their success is compatibility evidence, not proof that the server is SDK-backed. |
+| #815 | Direct SQLite FFI was replaced with `rusqlite`. | Accepted library reuse. Preserve single Storage provider for Session, Memory and EventJournal; do not fork a second SQLite implementation. |
+| #823 | SSE framing was replaced by `sse-parse`; JSON delta and ToolCall checks remain the Model provider's typed contract. | Accepted framing reuse. Future HTTP variants should use this transport/parser or a maintained provider-specific model SDK rather than new SSE decoders. |
+| `phenix-plugin-model-http::request::Config` | Handwritten endpoint authority detection duplicates URL parsing. | Migrate to `url` in the follow-up implementation, with one canonical parsed URL handed to libcurl. Confirm new transitive dependency cost and Nix lockfile before acceptance. |
+
+The `url` 2.5.8 option adds 27 packages to the current 66-package
+Cargo.lock, mainly to support IDNA through ICU4X. That is a meaningful
+compile and cache cost. It also buys a maintained WHATWG URL parser, IPv6,
+Unicode hosts, normalized paths and parsed userinfo. Keep `curl` as the
+sole HTTP/TLS transport; no second HTTP client is warranted. Reconsider
+the choice only if an equally maintained parser with matching validation
+semantics has a materially smaller dependency cost.
+
+**Gate for the existing stack:** a green test of handwritten ACP protocol
+handling proves behavior, not R1 completion. R1 closes only after the SDK
+adapter replaces that code and all current malformed-frame, cancellation,
+streaming, restart, tool-event and EOF fixtures pass without a parallel
+handwritten implementation.
+
 ### R1 migration order
 
 1. **ACP codec and transport.** Replace the handwritten host and frontend JSON-RPC implementation with the official `agent-client-protocol` stable-v1 API. The independent SDK client already passes against the custom host. Compare both implementations on invalid envelopes, sessions, live progress, tool events, FIFO requests, EOF, cancellation and crash recovery before deleting the old path.
