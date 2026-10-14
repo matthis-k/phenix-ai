@@ -2,8 +2,6 @@
 # All execution, caching, sharding and evidence logic lives in phenix-flake-ci.
 name: Minimal kernel flake-aware matrix candidate
 on:
-  push:
-    branches: [main, ci/m1-flake-generic-checks]
   pull_request:
   workflow_dispatch:
 

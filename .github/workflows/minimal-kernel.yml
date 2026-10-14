@@ -1,8 +1,5 @@
 name: Minimal kernel conformance
 on:
-  push:
-    branches: [main, rewrite/minimal-kernel]
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read

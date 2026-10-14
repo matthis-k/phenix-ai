@@ -5,6 +5,7 @@ on:
       - "ci/m1-generated-backend-consumer"
       - "ci/m1-p1-ci-cutover"
       - "ci/m1-p1-cache-benchmark"
+      - "main"
   workflow_dispatch:
 
 permissions:

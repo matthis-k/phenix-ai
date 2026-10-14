@@ -24,7 +24,7 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('  pull_request:' not in generated, 'untrusted remote PR event')
     require('  id-token: write' in generated, 'missing OIDC permission')
     require('      - "' + REMOTE_BRANCH + '"' in generated, 'cutover branch not enabled')
-    require('      - "main"' not in generated, 'remote main promotion is premature')
+    require('      - "main"' in generated, 'trusted main push lacks full remote CI')
     require('      - "' + OLD_BENCHMARK_BRANCH + '"' in generated,
             'established remote benchmark branch disappeared')
     require('on:\n  push:\n    branches:' in generated, 'remote workflow needs push-only event')
@@ -59,9 +59,12 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('shardCount = 5;' in check_config, 'existing experimental matrix was altered')
     # Preserve independent authoritative release checks until same-head remote
     # full-inventory, security and cold/warm checks are proven.
-    require('branches: [main,' in canonical, 'canonical main gate removed prematurely')
-    require('branches: [main,' in matrix, 'flake-matrix main gate removed prematurely')
-    require('branches: [main,' in dag, 'generated DAG main gate removed prematurely')
+    require('branches: [main,' not in canonical and '  workflow_dispatch:' in canonical,
+            'legacy canonical build still duplicates main')
+    require('branches: [main,' not in matrix and '  pull_request:' in matrix,
+            'PR full-inventory matrix missing or duplicates main')
+    require('branches: [main,' not in dag and '  workflow_dispatch:' in dag,
+            'legacy DAG still duplicates main')
     require('P1 official ACP SDK interop' in acp and 'branches: [main]' in acp,
             'independent ACP SDK main check removed')
     verify_refs = re.findall(r'(?m)^          ref: ([0-9a-f]{40})$', verifier)
@@ -101,9 +104,19 @@ def self_test():
                                '          ref: ' + EXPECTED_SOURCE_PIN)
     good[9] = good[9].replace('      - ci/m1-p1-ci-cutover',
                                '      - ci/m1-p1-ci-cutover\n      - ci/m1-p1-cache-benchmark')
+    if '      - "main"' not in good[0]:
+        good[0] = good[0].replace('      - "' + REMOTE_BRANCH + '"',
+                                  '      - "' + REMOTE_BRANCH + '"\n      - "main"')
+    good[5] = good[5].replace('branches: [main, rewrite/minimal-kernel]', 'branches: [rewrite/minimal-kernel]')
+    good[5] = good[5].replace('  pull_request:\n', '')
+    good[6] = good[6].replace('branches: [main, ci/m1-flake-generic-checks]',
+                              'branches: [ci/m1-flake-generic-checks]')
+    good[7] = good[7].replace('branches: [main, ci/m1-dag-staged]',
+                              'branches: [ci/m1-dag-staged]')
+    good[7] = good[7].replace('  pull_request:\n', '')
     verify(*good)
     mutations = [
-        (0, '      - "' + REMOTE_BRANCH + '"', '      - "main"'),
+        (0, '      - "main"', '      - "ci/unauthorized"'),
         (0, 'on:\n  push:', 'on:\n  pull_request:\n  push:'),
         (0, '      worker_count: 4', '      worker_count: 8'),
         (0, 'library_ref: "' + EXPECTED_SOURCE_PIN + '"',

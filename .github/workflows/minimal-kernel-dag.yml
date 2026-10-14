@@ -2,9 +2,6 @@
 # full-matrix workflows remain intact for same-head evidence comparison.
 name: Phenix generated Nix DAG candidate
 on:
-  push:
-    branches: [main, ci/m1-dag-staged]
-  pull_request:
   workflow_dispatch:
 
 permissions:
