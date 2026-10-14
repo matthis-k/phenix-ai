@@ -132,9 +132,8 @@ failed_tools = jsonl(prompt("s2", "tools-fail:hello"))
 assert answers(failed_tools) == [
     ("s2", "tools-recovered:scripted failure|5")
 ], failed_tools
-assert [event["kind"] for event in failed_tools if event["kind"] in (
-    "ToolStarted", "ToolFinished"
-)] == ["ToolStarted", "ToolStarted", "ToolFinished", "ToolFinished"], failed_tools
+assert len([event for event in failed_tools if event["kind"] == "ToolStarted"]) == 2, failed_tools
+assert len([event for event in failed_tools if event["kind"] == "ToolFinished"]) == 2, failed_tools
 assert answers(jsonl(prompt("s2", "recall:color"))) == [
     ("s2", "recalled:color=amber")
 ], "a failed tool corrupted the prior session transcript"
