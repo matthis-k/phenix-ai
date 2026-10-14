@@ -10,7 +10,7 @@ flakeCi.mkFlakeCiWorkflow {
   name = "Phenix generated Nix CI (4 remote builders)";
   events = {
     pullRequest = false;
-    pushBranches = [ "ci/m1-generated-backend-consumer" "ci/m1-p1-ci-cutover" "ci/m1-p1-cache-benchmark" "main" ];
+    pushBranches = [ "main" ];
     workflowDispatch = true;
   };
 }

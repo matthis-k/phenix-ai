@@ -2,9 +2,6 @@ name: "Phenix generated Nix CI (4 remote builders)"
 on:
   push:
     branches:
-      - "ci/m1-generated-backend-consumer"
-      - "ci/m1-p1-ci-cutover"
-      - "ci/m1-p1-cache-benchmark"
       - "main"
   workflow_dispatch:
 

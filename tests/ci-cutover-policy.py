@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REMOTE_BRANCH = 'ci/m1-p1-ci-cutover'
-OLD_BENCHMARK_BRANCH = 'ci/m1-generated-backend-consumer'
 EXPECTED_SOURCE_PIN = '1a733ae1daae2cb99989b735b171bc5dedd80d63'
 
 
@@ -19,15 +17,11 @@ def require(condition, message):
 
 
 def verify(generated, renderer, backend, check_config, flake, canonical, matrix, dag, acp, verifier):
-    # Neither a fork PR nor an unreviewed main push may receive tailnet
-    # credentials before the remote backend completes cutover acceptance.
+    # Only main's trusted push may automatically receive remote credentials.
     require('  pull_request:' not in generated, 'untrusted remote PR event')
     require('  id-token: write' in generated, 'missing OIDC permission')
-    require('      - "' + REMOTE_BRANCH + '"' in generated, 'cutover branch not enabled')
-    require('      - "main"' in generated, 'trusted main push lacks full remote CI')
-    require('      - "' + OLD_BENCHMARK_BRANCH + '"' in generated,
-            'established remote benchmark branch disappeared')
-    require('on:\n  push:\n    branches:' in generated, 'remote workflow needs push-only event')
+    require('on:\n  push:\n    branches:\n      - "main"\n  workflow_dispatch:' in generated,
+            'privileged remote push admission must be main-only')
     require('      worker_count: 4' in generated, 'four-builder setting missing')
     require('      slots_per_worker: 2' in generated, 'two-slot setting missing')
     require('    secrets:\n      TS_OAUTH_CLIENT_ID:' in generated,
@@ -96,17 +90,12 @@ def self_test():
     # Synthetic valid policy is permitted only for testing this validator;
     # the real repository policy is checked by verify(*files()) separately.
     good = originals.copy()
-    good[0] = good[0].replace('      - "' + OLD_BENCHMARK_BRANCH + '"',
-                              '      - "' + OLD_BENCHMARK_BRANCH + '"\n      - "' + REMOTE_BRANCH + '"')
     good[2] = good[2].replace('credentials = "oidc";',
                               'credentials = "oidc";\n    workers = 4;\n    slotsPerWorker = 2;')
     good[9] = good[9].replace('          ref: 25da62028d5d72d2e5ae3aca9d1571c425eb0d09',
                                '          ref: ' + EXPECTED_SOURCE_PIN)
     good[9] = good[9].replace('      - ci/m1-p1-ci-cutover',
                                '      - ci/m1-p1-ci-cutover\n      - ci/m1-p1-cache-benchmark')
-    if '      - "main"' not in good[0]:
-        good[0] = good[0].replace('      - "' + REMOTE_BRANCH + '"',
-                                  '      - "' + REMOTE_BRANCH + '"\n      - "main"')
     good[5] = good[5].replace('branches: [main, rewrite/minimal-kernel]', 'branches: [rewrite/minimal-kernel]')
     good[5] = good[5].replace('  pull_request:\n', '')
     good[6] = good[6].replace('branches: [main, ci/m1-flake-generic-checks]',
@@ -117,6 +106,7 @@ def self_test():
     verify(*good)
     mutations = [
         (0, '      - "main"', '      - "ci/unauthorized"'),
+        (0, '      - "main"', '      - "main"\n      - "ci/temporary"'),
         (0, 'on:\n  push:', 'on:\n  pull_request:\n  push:'),
         (0, '      worker_count: 4', '      worker_count: 8'),
         (0, 'library_ref: "' + EXPECTED_SOURCE_PIN + '"',
