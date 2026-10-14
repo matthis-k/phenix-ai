@@ -56,6 +56,37 @@ assert {event["session"] for event in second} == {"s1", "s2"}
 assert run([{"type": "cancel", "session": "s1"}]) == []
 third = run([prompt("s2", "fourth-two")])
 assert answers(third) == [("s2", "mock:fourth-two")], answers(third)
+# Failed tools are domain outcomes, not terminal agent failures. Two
+# sessions must keep separate journal and observer cursors after recovery.
+tool_recovery = run([
+    prompt("s2", "tools-fail:hello"),
+    prompt("s1", "after-tool-failure"),
+])
+assert answers(tool_recovery) == [
+    ("s2", "mock:call-1:error:scripted failure|call-2:5"),
+    ("s1", "mock:after-tool-failure"),
+], answers(tool_recovery)
+assert run([]) == [], "tool-recovery journal was delivered twice"
+
+# A Model domain failure terminates the host's current prompt. Re-admit
+# the same persisted session in a fresh process; it must not be locked or
+# mistaken for an incomplete tool effect.
+failed = subprocess.run(
+    [binary, "jsonl", composition],
+    input=json.dumps(prompt("s2", "model-error")) + "\n",
+    text=True, capture_output=True, env=env, timeout=45,
+)
+assert failed.returncode != 0, (failed.stdout, failed.stderr)
+resumed = run([
+    prompt("s2", "jsonl-after-model-error"),
+    prompt("s1", "jsonl-other-session"),
+])
+assert answers(resumed) == [
+    ("s2", "mock:jsonl-after-model-error"),
+    ("s1", "mock:jsonl-other-session"),
+], answers(resumed)
+assert run([]) == [], "model-failure recovery replayed acknowledged JSONL events"
+
 assert (output / "jsonl-multisession.db").is_file()
 
 (output / "jsonl-multisession.json").write_text(json.dumps({
@@ -65,7 +96,7 @@ assert (output / "jsonl-multisession.db").is_file()
         "scoped-output-isolation",
         "independent-observer-checkpoints",
         "process-restart-continuation",
-        "idle-cancel-isolation",
+        "idle-cancel-isolation",\n        "failed-tool-model-continuation",\n        "model-failure-process-restart",
     ],
     "accepted": True,
 }, indent=2, sort_keys=True))
