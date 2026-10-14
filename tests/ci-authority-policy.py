@@ -19,8 +19,12 @@ def verify(remote, canonical, matrix, dag, fmt, acp):
     # privileged remote CI; historical staging branches must not retain OIDC.
     before = remote.split("on:\n  push:\n    branches:\n", 1)
     require(len(before) == 2, "remote CI lacks a strict push allowlist")
-    push = before[1].split("\n  workflow_dispatch:", 1)[0]
-    require(push.strip().splitlines() == ['- "main"'],
+    candidates = []
+    for line in before[1].splitlines():
+        if not line.startswith("      - "):
+            break
+        candidates.append(line.strip())
+    require(candidates == ['- "main"'],
             "temporary CI staging branches still receive remote OIDC")
 
     require("  id-token: write" in remote, "remote OIDC missing")
