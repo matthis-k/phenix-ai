@@ -136,7 +136,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("ACP host did not return a session ID")?;
     let restart_events = Arc::clone(&updates);
     eprintln!("SDK interop: start second process");
-    let restarted_agent = AcpAgent::from_args([binary])?;
+    let restarted_agent = AcpAgent::from_args([binary.clone()])?;
     Client
         .builder()
         .name("phenix-p1-official-sdk-restart")
@@ -175,6 +175,114 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if events.len() != original.len() * 3 || events[original.len() * 2..] != original {
         return Err("separate ACP process failed to replay the exact durable journal".into());
     }
+    // A third independent SDK connection verifies that two live ACP
+    // sessions do not share journal events or replay cursors.
+    eprintln!("SDK interop: two isolated sessions");
+    let isolated_agent = AcpAgent::from_args([binary])?;
+    let isolated_updates = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let receiver_updates = Arc::clone(&isolated_updates);
+    let isolated_ids = Arc::new(Mutex::new(None::<(SessionId, SessionId)>));
+    let saved_ids = Arc::clone(&isolated_ids);
+    Client
+        .builder()
+        .name("phenix-p1-official-sdk-session-isolation")
+        .on_receive_notification(
+            async move |notification: SessionNotification, _connection| {
+                receiver_updates
+                    .lock()
+                    .expect("isolated ACP events poisoned")
+                    .push((
+                        notification.session_id.to_string(),
+                        format!("{notification:?}"),
+                    ));
+                Ok(())
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .connect_with(isolated_agent, |connection: ConnectionTo<Agent>| async move {
+            let init = connection
+                .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                .block_task()
+                .await?;
+            assert_eq!(init.protocol_version, ProtocolVersion::V1);
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+            let alpha = connection
+                .send_request(NewSessionRequest::new(cwd.clone()))
+                .block_task()
+                .await?;
+            let beta = connection
+                .send_request(NewSessionRequest::new(cwd.clone()))
+                .block_task()
+                .await?;
+            assert_ne!(alpha.session_id, beta.session_id);
+            *saved_ids.lock().expect("isolated ACP IDs poisoned") =
+                Some((alpha.session_id.clone(), beta.session_id.clone()));
+
+            for (session, prompt) in [
+                (alpha.session_id.clone(), "sdk-isolated-alpha"),
+                (beta.session_id.clone(), "sdk-isolated-beta"),
+            ] {
+                let answer = connection
+                    .send_request(PromptRequest::new(
+                        session,
+                        vec![ContentBlock::Text(TextContent::new(prompt))],
+                    ))
+                    .block_task()
+                    .await?;
+                assert_eq!(format!("{:?}", answer.stop_reason), "EndTurn");
+            }
+            // Only alpha replays. Beta's delivered sequence must remain
+            // unchanged even though both sessions share one ACP connection.
+            connection
+                .send_request(LoadSessionRequest::new(alpha.session_id, cwd))
+                .block_task()
+                .await?;
+            Ok(())
+        })
+        .await?;
+
+    let (alpha, beta) = isolated_ids
+        .lock()
+        .expect("isolated ACP IDs poisoned")
+        .clone()
+        .ok_or("ACP client did not create both isolated sessions")?;
+    let events = isolated_updates
+        .lock()
+        .expect("isolated ACP events poisoned");
+    let alpha_updates: Vec<_> = events
+        .iter()
+        .filter(|(session, _)| session == &alpha.to_string())
+        .map(|(_, event)| event.as_str())
+        .collect();
+    let beta_updates: Vec<_> = events
+        .iter()
+        .filter(|(session, _)| session == &beta.to_string())
+        .map(|(_, event)| event.as_str())
+        .collect();
+    if alpha_updates.len() < 2 || alpha_updates.len() % 2 != 0 {
+        return Err("isolated alpha session did not replay its journal".into());
+    }
+    let (delivered, replayed) = alpha_updates.split_at(alpha_updates.len() / 2);
+    if delivered != replayed {
+        return Err("isolated alpha session replay differs from its own updates".into());
+    }
+    if !delivered
+        .iter()
+        .any(|event| event.contains("mock:sdk-isolated-alpha"))
+        || beta_updates.is_empty()
+        || !beta_updates
+            .iter()
+            .any(|event| event.contains("mock:sdk-isolated-beta"))
+        || alpha_updates
+            .iter()
+            .any(|event| event.contains("sdk-isolated-beta"))
+        || beta_updates
+            .iter()
+            .any(|event| event.contains("sdk-isolated-alpha"))
+    {
+        return Err("ACP SDK crossed the session journal or observer boundary".into());
+    }
+    println!("official-acp-sdk-v1: isolated multi-session replay");
     println!("official-acp-sdk-v1: exact replay after load and process restart");
     Ok(())
 }
