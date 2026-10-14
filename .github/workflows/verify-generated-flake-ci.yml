@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - ci/m1-generated-backend-consumer
+      - ci/m1-p1-ci-cutover
   pull_request:
     paths:
       - ci/flake-backend.nix
+      - tests/ci-cutover-policy.py
+      - ci/flake-check-config.nix
       - ci/render-flake-workflow.nix
       - .github/workflows/phenix-flake-ci-generated.yml
       - .github/workflows/verify-generated-flake-ci.yml
@@ -23,6 +26,10 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Check staged remote CI policy and adversarial fixtures
+        run: |
+          python3 tests/ci-cutover-policy.py --self-test
+          python3 tests/ci-cutover-policy.py
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: matthis-k/phenix-flake-ci
