@@ -970,6 +970,7 @@ name = "phenix-basic-runtime"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "blocking",
  "futures",
  "phenix-basic-contracts",
  "phenix-contract",
