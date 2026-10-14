@@ -181,11 +181,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if (started, completed, failed) != (4, 3, 1) {
             return Err("ACP SDK lost successful or failed tool status updates".into());
         }
-        if !turns
+        // Domain Model failure cannot duplicate the next successful answer,
+        // including before session/load replay and after process restart.
+        let resumed_messages = turns
             .iter()
-            .any(|event| event.contains("mock:sdk-after-model-error"))
-        {
-            return Err("ACP session did not resume after model provider failure".into());
+            .filter(|event| event.contains("mock:sdk-after-model-error"))
+            .count();
+        if resumed_messages != 1 {
+            return Err("ACP session produced missing or duplicate recovery output".into());
         }
         if !turns
             .iter()
