@@ -90,6 +90,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await?;
             assert_eq!(format!("{:?}", failed_tool_answer.stop_reason), "EndTurn");
 
+            // A domain model failure must finish its graph and release
+            // ownership. The same ACP session must accept another prompt.
+            eprintln!("SDK interop: failed model and same-session recovery");
+            let model_failure = connection
+                .send_request(PromptRequest::new(
+                    session.session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new("model-error"))],
+                ))
+                .block_task()
+                .await;
+            assert!(model_failure.is_err(), "model failure was accepted as success");
+            let resumed = connection
+                .send_request(PromptRequest::new(
+                    session.session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new("sdk-after-model-error"))],
+                ))
+                .block_task()
+                .await?;
+            assert_eq!(format!("{:?}", resumed.stop_reason), "EndTurn");
+
             // ACP v1 requires resource links. The frontend must preserve the
             // name and URI in the Basic prompt, without opening the resource.
             eprintln!("SDK interop: resource link prompt");
@@ -155,6 +175,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .count();
         if (started, completed, failed) != (4, 3, 1) {
             return Err("ACP SDK lost successful or failed tool status updates".into());
+        }
+        if !turns
+            .iter()
+            .any(|event| event.contains("mock:sdk-after-model-error"))
+        {
+            return Err("ACP session did not resume after model provider failure".into());
         }
         if !turns
             .iter()
