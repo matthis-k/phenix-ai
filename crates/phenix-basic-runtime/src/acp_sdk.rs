@@ -11,8 +11,8 @@ use acp::schema::{
     ProtocolVersion,
 };
 use acp::{Agent, Client, ConnectionTo, Responder};
-use futures::SinkExt;
 use agent_client_protocol as acp;
+use futures::SinkExt;
 use phenix_basic_contracts::{Limits, PromptSubmitted};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
