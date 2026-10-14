@@ -1,6 +1,5 @@
-//! Experimental SDK-backed ACP transport. Only this adapter owns ACP wire
-//! dispatch; the Basic graph, session locks and journal stay on one controller
-//! thread. The legacy host remains the shipped default until parity is proven.
+//! Official SDK-backed ACP transport. The SDK owns JSON-RPC; only the Basic
+//! controller owns Kernel, graph roots, durable sessions and authority.
 use super::*;
 use acp::schema::{
     v1::{
