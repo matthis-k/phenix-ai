@@ -30,6 +30,7 @@ mod provider {
     struct State {
         #[get(id = "result")]
         #[set]
+        #[watch]
         result: String,
     }
 
