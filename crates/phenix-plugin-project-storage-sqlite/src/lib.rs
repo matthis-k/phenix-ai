@@ -407,6 +407,7 @@ mod plugin {
         SourceObservation, SourceRef,
     };
     use phenix_sdk::{CallError, CallResult, Host};
+    use rusqlite::TransactionBehavior;
 
     #[derive(Default)]
     pub struct State;
@@ -498,13 +499,21 @@ mod plugin {
         reference: SourceRef,
     ) -> CallResult<SourceObservation, EvidenceError> {
         let key = parse_project_source(&reference).map_err(CallError::Domain)?;
-        let conn = open().map_err(|_| {
+        let mut conn = open().map_err(|_| {
             CallError::Domain(source_error(
                 EvidenceProblem::StorageFailed,
                 "project source storage failed",
             ))
         })?;
-        authorized_project_read(&conn, host, &reference.scope.id).map_err(|error| match error {
+        // The membership check and source read share one SQLite snapshot.
+        // A concurrent revocation cannot commit between those two reads.
+        let txn = conn.transaction_with_behavior(TransactionBehavior::Deferred).map_err(|_| {
+            CallError::Domain(source_error(
+                EvidenceProblem::StorageFailed,
+                "project source read transaction failed",
+            ))
+        })?;
+        authorized_project_read(&txn, host, &reference.scope.id).map_err(|error| match error {
             CallError::Kernel(failure) => CallError::Kernel(failure),
             CallError::Domain(inner) => CallError::Domain(source_error(
                 if inner.problem == ProjectStorageProblem::Denied {
@@ -515,7 +524,7 @@ mod plugin {
                 "project source access denied or unavailable",
             )),
         })?;
-        let actual = select(&conn, &reference.scope.id, key)
+        let actual = select(&txn, &reference.scope.id, key)
             .map_err(|_| {
                 CallError::Domain(source_error(
                     EvidenceProblem::StorageFailed,
@@ -547,9 +556,15 @@ mod plugin {
         if !valid(&key.project, &key.key) {
             return Err(CallError::Domain(invalid()));
         }
-        let conn = open().map_err(CallError::Domain)?;
-        authorized_project_read(&conn, host, &key.project)?;
-        select(&conn, &key.project, &key.key)
+        let mut conn = open().map_err(CallError::Domain)?;
+        // Freeze authorization and record data in the same snapshot.
+        let txn = conn.transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| CallError::Domain(error(
+                ProjectStorageProblem::StorageFailed,
+                "project read transaction failed",
+            )))?;
+        authorized_project_read(&txn, host, &key.project)?;
+        select(&txn, &key.project, &key.key)
             .and_then(|record| {
                 record
                     .ok_or_else(|| error(ProjectStorageProblem::NotFound, "project record missing"))
