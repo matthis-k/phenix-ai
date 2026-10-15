@@ -333,6 +333,36 @@ pub trait EvidenceStore {
     fn search(&self, request: EvidenceSearch) -> Result<EvidencePage, EvidenceError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct CheckpointKey {
+    pub session: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum CheckpointStoreProblem {
+    InvalidCheckpoint,
+    Conflict,
+    NotFound,
+    ScopeDenied,
+    SourceChanged,
+    StorageFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct CheckpointStoreError {
+    pub problem: CheckpointStoreProblem,
+    pub message: String,
+}
+
+/// A versioned metadata ledger. Checkpoint creation and lookup revalidate the
+/// Basic journal; the journal stays authoritative and no Model view is changed.
+#[contract(id = "phenix.advanced.compaction-checkpoints@1")]
+pub trait CompactionStore {
+    fn put(&self, checkpoint: CompactionCheckpoint) -> Result<CompactionCheckpoint, CheckpointStoreError>;
+    fn get(&self, key: CheckpointKey) -> Result<CompactionCheckpoint, CheckpointStoreError>;
+}
+
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.advanced-contracts",
     events: &[],
@@ -348,6 +378,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(EvidenceStore),
     define(ProjectStorage),
     define(ProjectMembership),
+    define(CompactionStore),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -362,7 +393,7 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 4);
+        assert_eq!(metadata.definitions.len(), 5);
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());
