@@ -424,6 +424,17 @@ fn project_recall(packages: &Packages) -> serde_json::Value {
     };
     stranger.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
     stranger.denied(
+        "search",
+        EvidenceSearch {
+            scopes: vec![project_scope()],
+            query: "project color".into(),
+            as_of: None,
+            limit: 5,
+        }
+        .to_value(),
+        EvidenceProblem::ScopeDenied,
+    );
+    stranger.denied(
         "put",
         project_fact().to_value(),
         EvidenceProblem::ScopeDenied,
@@ -431,6 +442,17 @@ fn project_recall(packages: &Packages) -> serde_json::Value {
     let mut foreign = key;
     foreign.scope.id = "beta".into();
     packages.denied("get", foreign.to_value(), EvidenceProblem::ScopeDenied);
+    packages.denied(
+        "search",
+        EvidenceSearch {
+            scopes: vec![foreign.scope.clone()],
+            query: "project color".into(),
+            as_of: None,
+            limit: 5,
+        }
+        .to_value(),
+        EvidenceProblem::ScopeDenied,
+    );
     let mut foreign_fact = project_fact();
     foreign_fact.scope.id = "beta".into();
     packages.denied("put", foreign_fact.to_value(), EvidenceProblem::ScopeDenied);
@@ -439,8 +461,9 @@ fn project_recall(packages: &Packages) -> serde_json::Value {
         record
     );
     serde_json::json!({"reader": "s2", "statement": record.statement,
-        "unapproved_session_denied": true, "unapproved_write_denied": true,
-        "cross_project_denied": true, "cross_project_write_denied": true})
+        "unapproved_session_denied": true, "unapproved_search_denied": true,
+        "unapproved_write_denied": true, "cross_project_denied": true,
+        "cross_project_search_denied": true, "cross_project_write_denied": true})
 }
 fn project_stale(packages: &Packages) -> serde_json::Value {
     let key = EvidenceKey {
@@ -448,7 +471,24 @@ fn project_stale(packages: &Packages) -> serde_json::Value {
         scope: project_scope(),
     };
     packages.denied("get", key.to_value(), EvidenceProblem::SourceChanged);
-    serde_json::json!({"source_changed": true})
+    packages.denied(
+        "search",
+        EvidenceSearch {
+            scopes: vec![project_scope()],
+            query: "project color".into(),
+            as_of: None,
+            limit: 5,
+        }
+        .to_value(),
+        EvidenceProblem::SourceChanged,
+    );
+    let mut correction = project_fact();
+    correction.revision = 2;
+    correction.observed_at += 1;
+    correction.statement = "The project color is no longer blue".into();
+    packages.denied("put", correction.to_value(), EvidenceProblem::SourceChanged);
+    serde_json::json!({"source_changed": true, "stale_search_denied": true,
+        "stale_write_denied": true})
 }
 fn project_revoked(packages: &Packages) -> serde_json::Value {
     let key = EvidenceKey {
@@ -456,6 +496,17 @@ fn project_revoked(packages: &Packages) -> serde_json::Value {
         scope: project_scope(),
     };
     packages.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
+    packages.denied(
+        "search",
+        EvidenceSearch {
+            scopes: vec![project_scope()],
+            query: "project color".into(),
+            as_of: None,
+            limit: 5,
+        }
+        .to_value(),
+        EvidenceProblem::ScopeDenied,
+    );
     packages.denied(
         "put",
         project_fact().to_value(),
@@ -466,8 +517,8 @@ fn project_revoked(packages: &Packages) -> serde_json::Value {
         ..packages.clone()
     };
     retained.denied("get", key.to_value(), EvidenceProblem::SourceChanged);
-    serde_json::json!({"revoked_session_denied": true, "revoked_write_denied": true,
-        "retained_session_source_changed": true})
+    serde_json::json!({"revoked_session_denied": true, "revoked_search_denied": true,
+        "revoked_write_denied": true, "retained_session_source_changed": true})
 }
 
 fn main() {
