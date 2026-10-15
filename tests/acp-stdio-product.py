@@ -78,6 +78,20 @@ def exit_cleanly(process):
     process.stderr.close()
 
 
+def assert_model_options(response):
+    options = response["configOptions"]
+    assert len(options) == 1, options
+    model = options[0]
+    assert model["id"] == "model", model
+    assert model["category"] == "model", model
+    assert model["type"] == "select", model
+    assert model["currentValue"] == "phenix.model.scripted", model
+    assert model["options"] == [{
+        "value": "phenix.model.scripted",
+        "name": "phenix.model.scripted",
+    }], model
+
+
 first = start()
 
 # A malformed idle frame must get a JSON-RPC error, not terminate ACP.
@@ -126,9 +140,11 @@ assert bad_id["error"]["code"] == -32600, bad_id
 assert bad_id["id"] is None, bad_id
 
 initialize(first)
-session = request(first, 2, "session/new", {
+new_session = request(first, 2, "session/new", {
     "cwd": "/tmp", "mcpServers": [],
-})["sessionId"]
+})
+assert_model_options(new_session)
+session = new_session["sessionId"]
 assert session
 # Invalid prompt content is a client parameter error. These cases must
 # leave the session idle, with no output or Model admission.
@@ -148,14 +164,20 @@ request_error(first, 101, "session/load", {
 }, -32602)
 # The ID returned by session/new is still live even before its first
 # durable checkpoint. Reloading it in the same connection remains valid.
-assert request(first, 102, "session/load", {
+assert_model_options(request(first, 102, "session/load", {
     "sessionId": session, "cwd": "/tmp", "mcpServers": [],
-}) == {}
+}))
 done = request(first, 3, "session/prompt", {
     "sessionId": session,
     "prompt": [{"type": "text", "text": "first"}],
 })
 assert done["stopReason"] == "end_turn"
+assert any(
+    entry["params"]["sessionId"] == session
+    and entry["params"]["update"].get("sessionUpdate") == "user_message_chunk"
+    and entry["params"]["update"].get("content", {}).get("text") == "first"
+    for entry in updates
+), "ACP must project accepted user input from the durable journal"
 assert any(
     entry["params"]["sessionId"] == session
     and entry["params"]["update"].get("content", {}).get("text") == "mock:first"
@@ -207,9 +229,9 @@ request_error(first, 104, "session/load", {
     "sessionId": "s_nonexistent", "cwd": "/tmp", "mcpServers": [],
 }, -32602)
 assert updates == original_updates, "invalid session loads emitted output"
-assert request(first, 105, "session/load", {
+assert_model_options(request(first, 105, "session/load", {
     "sessionId": session, "cwd": "/tmp", "mcpServers": [],
-}) == {}
+}))
 assert updates[len(original_updates):] == original_updates, (
     "live session journal did not survive refused load"
 )
@@ -268,7 +290,7 @@ result = request(second, 4, "session/load", {
     "cwd": "/tmp",
     "mcpServers": [],
 })
-assert result == {}
+assert_model_options(result)
 assert any(
     entry["params"]["sessionId"] == session
     and entry["params"]["update"].get("content", {}).get("text") == "mock:first"
@@ -308,6 +330,8 @@ assert "stdin frame exceeds 1 MiB" in stderr, stderr
         "format": "phenix.acp.host.v1",
         "cases": [
             "initialize", "session-new", "prompt", "stream-notifications",
+            "composition-model-catalog-advertised-on-new-and-load",
+            "accepted-user-prompts-replay-as-acp-user-message-chunks",
             "process-restart-load", "session-continuation",
             "two-session-isolation",
             "malformed-frame-recovers", "invalid-jsonrpc-rejected",

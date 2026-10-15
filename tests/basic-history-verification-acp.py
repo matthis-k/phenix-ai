@@ -51,10 +51,25 @@ def initialize(proc):
     assert init["agentCapabilities"]["loadSession"] is True, init
 
 
+def verify_model_options(result):
+    """The host owns the model config; it must be stable across reload."""
+    options = result.get("configOptions")
+    assert isinstance(options, list) and len(options) == 1, result
+    option = options[0]
+    assert option["id"] == "model" and option["category"] == "model", option
+    assert option["type"] == "select", option
+    assert option["currentValue"] in [
+        candidate["value"] for candidate in option["options"]
+    ], option
+    return option["currentValue"]
+
+
 def new_session(proc, number):
-    return request(proc, number, "session/new", {
+    result = request(proc, number, "session/new", {
         "cwd": "/tmp", "mcpServers": [],
-    })["sessionId"]
+    })
+    verify_model_options(result)
+    return result["sessionId"]
 
 
 def prompt(proc, number, session, text):
@@ -117,14 +132,14 @@ close(first)
 # be simulated by a stateful mock model hidden inside the original process.
 second = start()
 initialize(second)
-assert request(second, 15, "session/load", {
+assert verify_model_options(request(second, 15, "session/load", {
     "sessionId": s1, "cwd": "/tmp", "mcpServers": [],
-}) == {}
+}))
 assert prompt(second, 16, s1, "recall:language")[0] == "recalled:language=Rust"
 assert prompt(second, 17, s1, "recall-tool")[0] == "tool-recalled:HELLO"
-assert request(second, 18, "session/load", {
+assert verify_model_options(request(second, 18, "session/load", {
     "sessionId": s2, "cwd": "/tmp", "mcpServers": [],
-}) == {}
+}))
 assert prompt(second, 19, s2, "recall:language")[0] == "recalled:language=Python"
 close(second)
 
@@ -139,6 +154,7 @@ close(second)
         "acp-invalid-content-rejected",
         "acp-recovery-after-invalid-input",
         "acp-session-load-process-restart",
+        "acp-composition-model-options-after-restart",
         "acp-tool-history-reloaded",
         "acp-multiple-session-loads",
     ],
