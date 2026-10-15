@@ -277,6 +277,12 @@ pub fn acp_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
             return Err(error(ErrorCode::Denied, "cross-session ACP output"));
         }
         let update = match event.kind {
+            // Project the accepted user prompt from the authoritative journal.
+            // Loading the session replays it exactly like assistant/tool events.
+            EventKind::PromptAccepted => Some(SessionUpdate::UserMessageChunk(
+                ContentChunk::new(ContentBlock::Text(TextContent::new(event.text)))
+                    .message_id(MessageId::new(format!("{}:user", event.run))),
+            )),
             EventKind::TextDelta => Some(SessionUpdate::AgentMessageChunk(
                 ContentChunk::new(ContentBlock::Text(TextContent::new(event.text)))
                     .message_id(MessageId::new(event.run)),
