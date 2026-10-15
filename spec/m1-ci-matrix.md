@@ -1,5 +1,62 @@
 # M1 CI matrix rollout
 
+## Current CI principles and applied assessment (15 October 2026)
+
+This section supersedes the **historical candidate/cutover status** recorded below, not its benchmark measurements or uncompleted optimization tasks. It is an engineering guide, not a second validation authority. The [M1 roadmap](m1-roadmap.md) remains the milestone tracker. A generated CI workflow and `flake.nix` remain the source of executable check definitions.
+
+**General standard:** CI should give quick, reliable evidence of *behavioral correctness*, including failure behavior and permissions, while keeping integration frequent and main consistently usable. Do not introduce a separately maintained architecture-rule model or AI reviewer as a CI gate. The Rust SDK, typed contract resolver, graph compiler and runtime authority implementation define admissibility; tests exercise their true positive and negative behaviors. Use code review and optional development-time Architecture skills for qualitative design choices.
+
+Evidence-based guidance: [DORA continuous integration](https://dora.dev/capabilities/continuous-integration/) and [test automation](https://dora.dev/capabilities/test-automation/), [Martin Fowler's CI](https://martinfowler.com/articles/continuousIntegration.html), [Google on reliability vs fidelity](https://testing.googleblog.com/2024/02/increase-test-fidelity-by-avoiding-mocks.html), and [GitHub's workflow/cache trust guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+
+### Observed production layout
+
+| Surface | Current design | Purpose / caveat |
+| --- | --- | --- |
+| `flake.nix` `checks.x86_64-linux` | Canonical complete check inventory | Do not duplicate names in a handwritten YAML suite table |
+| `ci/flake-check-config.nix` | Flake-derived, five-shard Rust strategy and measured prebuild hotset | Planner parameters are performance hints; Nix derivations define actual tests |
+| `minimal-kernel-flake.yml` | Credential-free full PR matrix candidate calling pinned `phenix-flake-ci` | Its aggregate must require every discovered check and exact-head evidence; preserve until stronger measured alternative |
+| `p1-rustfmt.yml` + `verify-generated-flake-ci.yml` | Quick, independent PR feedback | The first checks formatting; the second checks generated workflow drift and existing security/CI boundary assertions |
+| `p1-acp-sdk-interop.yml` | Independent official ACP client against the packaged Phenix host | Important high-fidelity product test; build time must be measured before optimization |
+| `phenix-flake-ci-generated.yml` | Full privileged remote-builder CI on trusted `main` push | Generated from pinned Nix policy; OIDC and remote credentials must never flow into untrusted PR jobs |
+| Manual benchmark workflows | Exact-head cold/warm, remote-builder comparison | Performance evidence, not separate definitions of software correctness |
+
+The complete PR matrix run [38683762185](https://github.com/matthis-k/phenix-ai/actions/runs/38683762185) completed successfully in about 35 minutes on 15 October. Separate formatting/CI-policy jobs on nearby heads completed within tens of seconds, while official ACP integration took several minutes. These are observed end-to-end durations, **not isolated build-time or warm-cache benchmarks**. Do not attribute the 35 minutes to a particular cause without a same-head step/derivation breakdown. Older 12 October timings remain historical baselines.
+
+### Feedback stages, not duplicated suites
+
+1. **Fast PR feedback:** formatting, generated-policy integrity and inexpensive deterministic functional checks that genuinely catch common mistakes quickly. Prefer existing Rust unit tests and targeted Nix check derivations; no new handwritten copy of test expectations. Aim for feedback in minutes, measure p50/p95 time-to-first-actionable-failure, and do not add a job merely to make a new badge.
+2. **Complete PR verification:** compiled artifact and real kernel/plugin behavioral tests, cancellation, authorization denial, restart, selected provider substitution, and independent ACP interoperability. Check *all* discovered Nix targets while impact selection remains unproven. Invalid configurations must be rejected by the actual kernel, not by an alternate CI validator.
+3. **Trusted main/release:** full exact-head verification of the integrated commit, publication or attestation of verified outputs, and the required independent compatibility evidence. Never infer that green stacked PR heads imply the final combined main SHA is green.
+4. **Manual/periodic diagnostics:** cold/warm cache, different remote-builder counts, sustained performance, toolchain upgrades or expensive adversarial workloads. Their outputs inform optimization; they do not silently bypass required functional checks.
+
+Google's test-size/fidelity guidance motivates mostly fast isolated deterministic tests, complemented by enough real provider/product tests to prove important interactions. Avoid asserting exact model prose, unconstrained live network behavior, real-time sleeps or timing-sensitive test outcomes when a deterministic fixture is sufficient. Real external protocols still require separate compatibility tests.
+
+**Do not enumerate every plugin subset.** Test provider selection and rejection semantics with focused representative fixtures; run the packaged kernel-only, Basic, verification and (when implemented) Advanced presets. A test should fail when its actual feature is broken, not because the same feature is restated in a second architecture policy file.
+
+### Prioritized improvements and measurement gates
+
+| Order | Work | Evidence required before calling it an improvement |
+| --- | --- | --- |
+| 1 | **Diagnose latency first:** collect exact-head per-phase/shard Nix build and cache restore/save durations, local-versus-remote realized derivations, queue time, cold/warm hit/miss bytes, and the first meaningful failure | A reproducible bottleneck ranking; measure wall clock **and** runner-minutes, not only the number of parallel workers |
+| 2 | **Reuse compatible compilation:** shrink Nix source closures and share Cargo outputs where ABI/toolchain assumptions match; retain independent native ABI/security-negative fixtures | Same exact-head check inventory and semantic negatives, fewer realized derivations/recompilations, verified warm and cold comparison |
+| 3 | **Move valuable failures earlier:** identify slow product-test failures whose invariant can also be exercised by an existing cheap Rust/unit/contract test | Smaller p50/p95 time-to-first-actionable-failure while the full product behavior test still passes and remains required |
+| 4 | **Tune the existing five-shard planner and 4×2 backend only from measurements** | Balanced shard critical path and lower wall time or cost without reducing evidence or weakening the trusted/untrusted boundary |
+| 5 | **Consider conservative impacted-check selection** only when the shared planner can derive reverse dependencies from the actual Nix/Cargo build and explain every skipped check | Adversarial proof that changed shared contracts, tools, Nix config or unknown paths trigger full validation; main/release always full; skip is not a pass |
+| 6 | **Track flaky failures explicitly** and repair nondeterminism instead of accepting silent retries | Every reported flaky case has a reproducer, named owner and visible status; no genuine regression becomes green due to retries |
+
+Prefer existing GitHub workflow summaries and Nix logs for these measurements rather than a new telemetry service. Distinguish time spent waiting for runners, preparing the environment, restoring caches, compiling, running tests and collecting artifacts. A faster workflow that hides a failure, drops a check or exposes credentials is a regression.
+
+### Acceptance policy
+
+- Same source revision, same selected composition and complete observable outcomes. Any missing, skipped, failed or canceled required check makes the aggregate unsuccessful.
+- No additional architecture CI gate, model inference, YAML contract mirror or independent test-orchestration engine.
+- Cache substitution is performance only; pinned build inputs, verified artifacts and runtime admission remain authoritative.
+- Keep PR execution credential-free and repository/token permissions minimal. Trusted cache publication and remote OIDC stay on explicitly trusted triggers.
+- Evaluate any optimization on **comparable cold and warm runs at the same SHA**. Preserve the original full check inventory, negative tests and real product behavior.
+- New functionality adds tests at its actual owning implementation boundary; remove superseded or redundant test scaffolding only after proving equivalent behavioral coverage.
+
+## Historical rollout and baseline measurements
+
 ## Scope
 
 Restore the earlier dependency-oriented CI layout for the M1-only kernel.
