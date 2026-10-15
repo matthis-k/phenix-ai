@@ -222,6 +222,55 @@ pub fn decode<T: Portable>(value: &Blob) -> Result<T, Failure> {
     T::from_value(Value::decode(&value.0)?)
 }
 
+/// Project identity is a resource selected by a trusted host admission,
+/// not a capability carried by a caller-provided project string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum ProjectStorageProblem {
+    NotFound,
+    Conflict,
+    Denied,
+    InvalidInput,
+    StorageFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectStorageError {
+    pub problem: ProjectStorageProblem,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectRecordKey {
+    pub project: String,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectRecord {
+    pub revision: u64,
+    pub data: Blob,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectEdit {
+    pub key: String,
+    pub expected: u64,
+    pub data: Blob,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectTransaction {
+    pub project: String,
+    pub edits: Vec<ProjectEdit>,
+}
+
+#[contract(id = "phenix.advanced.project-storage@1")]
+pub trait ProjectStorage {
+    fn read(&self, key: ProjectRecordKey) -> Result<ProjectRecord, ProjectStorageError>;
+    fn transact(&self, edit: ProjectTransaction)
+        -> Result<Vec<ProjectRecord>, ProjectStorageError>;
+}
+
 #[contract(id = "phenix.advanced.source@1")]
 pub trait SourceEvidence {
     fn observe(&self, reference: SourceRef) -> Result<SourceObservation, EvidenceError>;
@@ -247,6 +296,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     profile = "definitions",
     define(SourceEvidence),
     define(EvidenceStore),
+    define(ProjectStorage),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -261,7 +311,7 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 2);
+        assert_eq!(metadata.definitions.len(), 3);
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());

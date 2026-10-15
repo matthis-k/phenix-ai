@@ -1041,6 +1041,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-p2-project-storage"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-contract",
+ "phenix-kernel",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-p2-source-evidence"
 version = "0.1.0"
 dependencies = [
@@ -1159,6 +1169,15 @@ version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
+]
+
+[[package]]
+name = "phenix-plugin-project-storage-sqlite"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-sdk",
+ "rusqlite",
 ]
 
 [[package]]
