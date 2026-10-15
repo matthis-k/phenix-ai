@@ -1,6 +1,8 @@
 //! P2-3 checkpoint metadata. Checkpoints select prompt views; they do not
 //! replace the Basic journal or grant access to its stored event bytes.
-use crate::{valid_digest, valid_identity, validate_reference, EvidenceProblem, EvidenceScopeKind, SourceRef};
+use crate::{
+    valid_digest, valid_identity, validate_reference, EvidenceProblem, EvidenceScopeKind, SourceRef,
+};
 use phenix_sdk::Portable;
 use serde::{Deserialize, Serialize};
 
@@ -62,15 +64,19 @@ pub fn validate_checkpoint(checkpoint: &CompactionCheckpoint) -> Result<(), Comp
     if !valid_identity(&checkpoint.id)
         || !valid_identity(&checkpoint.session)
         || !valid_identity(&checkpoint.policy)
-        || checkpoint.model.as_ref().is_some_and(|model| !valid_identity(model))
+        || checkpoint
+            .model
+            .as_ref()
+            .is_some_and(|model| !valid_identity(model))
     {
         return Err(CompactionProblem::InvalidIdentity);
     }
     if checkpoint.revision == 0
         || checkpoint.policy_version == 0
-        || checkpoint.parent_checkpoint.as_ref().is_some_and(|parent| {
-            !valid_identity(parent) || parent == &checkpoint.id
-        })
+        || checkpoint
+            .parent_checkpoint
+            .as_ref()
+            .is_some_and(|parent| !valid_identity(parent) || parent == &checkpoint.id)
     {
         return Err(CompactionProblem::InvalidLineage);
     }
