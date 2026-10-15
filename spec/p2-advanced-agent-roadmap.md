@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: IN PROGRESS. P2-0 composition, P2-1 evidence components and P2-2a project storage are merged into `main`. The Advanced product and P2 release gates remain unaccepted.
+Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. The Advanced product and P2 release gates remain unaccepted.
 Updated: 2026-10-15
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
@@ -46,6 +46,10 @@ Refactor the P1 flake's basicCompositionSpec, historyVerificationComposition and
 | P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
 | P2-9: inspection and efficiency | P2-0; instrument P2-2 through P2-8 | Separate logging, introspection/debug and efficiency-evaluation plugins consuming permitted kernel events and projections | Durable/replayable traces, redacted inspection, cost/latency/usage metrics and repeatable comparisons |
 | P2-10: advanced verification and release | P2-2 through P2-9, including P2-6A | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
+
+P2-2b has two integrated prerequisites: [#906](https://github.com/matthis-k/phenix-ai/pull/906) authenticates durable project membership, and [#907](https://github.com/matthis-k/phenix-ai/pull/907) revalidates project-record sources. [#908](https://github.com/matthis-k/phenix-ai/pull/908) owns packaged cross-session EvidenceStore behavior and remains subject to exact-head CI. Runtime session/project admission and revocation of already-active roots remain tracked in [#891](https://github.com/matthis-k/phenix-ai/issues/891); these slices alone do not accept P2-2b.
+
+P2-3 begins with [#909](https://github.com/matthis-k/phenix-ai/pull/909), the tests-first typed checkpoint and exact journal-range partition validator. It does not persist checkpoints, select prompt views, verify source bytes or implement replay. Those remain the P2-3 functional acceptance requirements below.
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 

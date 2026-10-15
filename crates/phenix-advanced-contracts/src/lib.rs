@@ -3,6 +3,9 @@
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
+pub mod compaction;
+pub use compaction::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum EvidenceScopeKind {
     Session,
