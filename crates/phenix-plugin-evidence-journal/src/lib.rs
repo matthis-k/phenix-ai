@@ -121,6 +121,9 @@ pub fn journal_observation(
 #[phenix_sdk::plugin(
     id = "phenix.advanced.evidence-journal",
     version = "1.0.0",
+    // The journal delegates read to Storage. Ancestor ceilings must admit it.
+    // A definition adds no import binding or effective grant.
+    define(phenix_basic_contracts::Storage),
     provide(phenix_advanced_contracts::SourceEvidence, slot = "Evidence"),
     require(phenix_basic_contracts::EventJournal, slot = "Journal")
 )]
