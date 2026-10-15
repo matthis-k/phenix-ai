@@ -49,9 +49,11 @@ fn scope() -> EvidenceScope {
     }
 }
 
+#[derive(Clone)]
 struct Packages {
     artifacts: Vec<String>,
     definitions: Vec<String>,
+    resource: String,
 }
 impl Packages {
     fn invoke(
@@ -61,7 +63,7 @@ impl Packages {
         provider: &str,
         input: Value,
     ) -> Result<Outcome, phenix_contract::Failure> {
-        let grants = vec![
+        let mut grants = vec![
             grant("root", "phenix.basic.journal@1", "read"),
             grant("root", "phenix.advanced.evidence@1", "put"),
             grant("root", "phenix.advanced.evidence@1", "get"),
@@ -92,6 +94,14 @@ impl Packages {
                 "read",
             ),
         ];
+        grants.extend([
+            grant("phenix.advanced.evidence-store", "phenix.advanced.project-membership@1", "get"),
+            grant("phenix.advanced.evidence-store", "phenix.advanced.project-storage@1", "read"),
+            grant("phenix.advanced.evidence-store", "phenix.advanced.project-storage@1", "transact"),
+        ]);
+        for grant in &mut grants {
+            grant.resources = BTreeSet::from([self.resource.clone()]);
+        }
         let composition = Composition {
             format: "phenix.composition.v2".into(),
             artifacts: self.artifacts.clone(),
@@ -122,15 +132,21 @@ impl Packages {
                     "phenix.basic.storage-sqlite",
                     "Storage",
                 ),
+                slot("phenix.advanced.evidence-store", "ProjectStorage",
+                     "phenix.advanced.project-storage-sqlite", "ProjectStorage"),
+                slot("phenix.advanced.evidence-store", "Membership",
+                     "phenix.advanced.project-storage-sqlite", "Membership"),
+                slot("phenix.advanced.evidence-store", "ProjectSource",
+                     "phenix.advanced.project-storage-sqlite", "ProjectSource"),
             ],
             authority: Authority {
                 operations: grants.iter().map(ScopedGrant::key).collect(),
-                resources: BTreeSet::from([RESOURCE.into()]),
+                resources: BTreeSet::from([self.resource.clone()]),
             },
             grants,
             excluded: BTreeSet::new(),
             substitutions: vec![],
-            resource: Some(RESOURCE.into()),
+            resource: Some(self.resource.clone()),
         };
         let kernel = Prepared::prepare(composition)?.load()?;
         let root = kernel.admit_default_root()?;
@@ -331,22 +347,87 @@ fn restart(packages: &Packages, first: SourceRef) -> serde_json::Value {
     })
 }
 
+fn project_scope() -> EvidenceScope {
+    EvidenceScope { kind: EvidenceScopeKind::Project, id: "alpha".into() }
+}
+fn project_fact() -> EvidenceRecord {
+    let digest = Sha256::digest(b"blue");
+    let source = SourceRef {
+        owner: "phenix.advanced.project-storage-sqlite".into(),
+        resource: "phenix.project.alpha".into(),
+        revision: "theme@1".into(),
+        digest_sha256: format!("{digest:x}"),
+        range_start: 0,
+        range_end: 0,
+        scope: project_scope(),
+    };
+    let mut record = fact("The project color is blue", source, 1, 1, None);
+    record.scope = project_scope();
+    record
+}
+fn project_write(packages: &Packages) -> serde_json::Value {
+    let record = project_fact();
+    assert_eq!(packages.success::<EvidenceRecord>("put", record.to_value()), record);
+    serde_json::json!({"source_verified": true, "stored_by_session": "s1"})
+}
+fn project_recall(packages: &Packages) -> serde_json::Value {
+    let key = EvidenceKey { id: "fact-project-color".into(), scope: project_scope() };
+    let record = packages.success::<EvidenceRecord>("get", key.to_value());
+    assert_eq!(record.statement, "The project color is blue");
+    let page = packages.success::<EvidencePage>("search", EvidenceSearch {
+        scopes: vec![project_scope()], query: "project color".into(), as_of: None, limit: 5,
+    }.to_value());
+    assert_eq!(page.records, vec![record.clone()]);
+    let stranger = Packages { resource: "phenix.session.s3".into(), ..packages.clone() };
+    stranger.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
+    let mut foreign = key;
+    foreign.scope.id = "beta".into();
+    packages.denied("get", foreign.to_value(), EvidenceProblem::ScopeDenied);
+    serde_json::json!({"reader": "s2", "statement": record.statement,
+        "unapproved_session_denied": true, "cross_project_denied": true})
+}
+fn project_stale(packages: &Packages) -> serde_json::Value {
+    let key = EvidenceKey { id: "fact-project-color".into(), scope: project_scope() };
+    packages.denied("get", key.to_value(), EvidenceProblem::SourceChanged);
+    serde_json::json!({"source_changed": true})
+}
+fn project_revoked(packages: &Packages) -> serde_json::Value {
+    let key = EvidenceKey { id: "fact-project-color".into(), scope: project_scope() };
+    packages.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
+    let retained = Packages { resource: RESOURCE.into(), ..packages.clone() };
+    retained.denied("get", key.to_value(), EvidenceProblem::SourceChanged);
+    serde_json::json!({"revoked_session_denied": true, "retained_session_source_changed": true})
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    assert_eq!(args.len(), 9, "usage: phenix-p2-evidence-store STORE SOURCE JOURNAL SQLITE BASIC-DEFS ADV-DEFS ACTION OUTPUT");
-    let packages = Packages {
-        artifacts: args[1..=4].to_vec(),
-        definitions: args[5..=6].to_vec(),
+    assert_eq!(args.len(), 10, "usage: phenix-p2-evidence-store STORE SOURCE JOURNAL SQLITE BASIC-DEFS ADV-DEFS PROJECT-STORAGE ACTION OUTPUT");
+    let action = args[8].as_str();
+    let resource = if action.starts_with("project-") && action != "project-write" {
+        "phenix.session.s2"
+    } else {
+        RESOURCE
     };
-    let page = packages.journal();
-    let first = source(answer(&page, FIRST));
-    let second = source(answer(&page, SECOND));
-    let report = match args[7].as_str() {
-        "write" => write(&packages, first, second),
-        "restart" => restart(&packages, first),
+    let packages = Packages {
+        artifacts: vec![args[1].clone(), args[2].clone(), args[3].clone(), args[4].clone(), args[7].clone()],
+        definitions: args[5..=6].to_vec(),
+        resource: resource.into(),
+    };
+    let report = match action {
+        "project-write" => project_write(&packages),
+        "project-recall" => project_recall(&packages),
+        "project-stale" => project_stale(&packages),
+        "project-revoked" => project_revoked(&packages),
+        "write" | "restart" => {
+            let page = packages.journal();
+            let first = source(answer(&page, FIRST));
+            let second = source(answer(&page, SECOND));
+            if action == "write" { write(&packages, first, second) }
+            else { restart(&packages, first) }
+        }
         other => panic!("unknown product action: {other}"),
     };
-    let output = Path::new(&args[8]);
+    let output = Path::new(&args[9]);
     fs::create_dir_all(output).unwrap();
     fs::write(
         output.join("evidence-store.json"),
