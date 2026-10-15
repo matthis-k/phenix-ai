@@ -53,11 +53,19 @@ impl Packages {
             grant(PROVIDER, "phenix.basic.storage@1", "read"),
             grant(PROVIDER, "phenix.basic.storage@1", "transact"),
             grant(PROVIDER, "phenix.basic.journal@1", "read"),
-            grant("phenix.basic.event-journal", "phenix.basic.storage@1", "read"),
+            grant(
+                "phenix.basic.event-journal",
+                "phenix.basic.storage@1",
+                "read",
+            ),
         ];
         let composition = Composition {
             format: "phenix.composition.v2".into(),
-            artifacts: vec![self.plugin.clone(), self.journal.clone(), self.storage.clone()],
+            artifacts: vec![
+                self.plugin.clone(),
+                self.journal.clone(),
+                self.storage.clone(),
+            ],
             definitions: vec![self.basic.clone(), self.advanced.clone()],
             entry: Selection {
                 interface: interface.into(),
@@ -65,9 +73,19 @@ impl Packages {
                 provider: provider.into(),
             },
             slots: vec![
-                slot(PROVIDER, "Storage", "phenix.basic.storage-sqlite", "Storage"),
+                slot(
+                    PROVIDER,
+                    "Storage",
+                    "phenix.basic.storage-sqlite",
+                    "Storage",
+                ),
                 slot(PROVIDER, "Journal", "phenix.basic.event-journal", "Journal"),
-                slot("phenix.basic.event-journal", "Storage", "phenix.basic.storage-sqlite", "Storage"),
+                slot(
+                    "phenix.basic.event-journal",
+                    "Storage",
+                    "phenix.basic.storage-sqlite",
+                    "Storage",
+                ),
             ],
             authority: Authority {
                 operations: grants.iter().map(ScopedGrant::key).collect(),
@@ -99,7 +117,10 @@ impl Packages {
             panic!("journal read failed: {outcome:?}");
         };
         let page = EventPage::from_value(value).unwrap();
-        assert!(page.events.len() >= 2, "expected at least two real Basic events");
+        assert!(
+            page.events.len() >= 2,
+            "expected at least two real Basic events"
+        );
         page.events
     }
 
@@ -120,11 +141,19 @@ impl Packages {
         let Outcome::Domain(value) = result else {
             panic!("expected checkpoint {op} denial, got {result:?}");
         };
-        assert_eq!(CompactionStoreError::from_value(value).unwrap().problem, expected);
+        assert_eq!(
+            CompactionStoreError::from_value(value).unwrap().problem,
+            expected
+        );
     }
 }
 
-fn checkpoint(events: &[Event], id: &str, revision: u64, parent: Option<&str>) -> CompactionCheckpoint {
+fn checkpoint(
+    events: &[Event],
+    id: &str,
+    revision: u64,
+    parent: Option<&str>,
+) -> CompactionCheckpoint {
     let input = span_for_events(events).unwrap();
     let summarized = span_for_events(&events[..1]).unwrap();
     let retained = span_for_events(&events[1..]).unwrap();
@@ -150,22 +179,31 @@ fn key(id: &str) -> Value {
     CompactionCheckpointKey {
         session: SESSION.into(),
         id: id.into(),
-    }.to_value()
+    }
+    .to_value()
 }
 
 fn commit(fixture: &Packages) -> serde_json::Value {
     let events = fixture.journal();
     let a = checkpoint(&events, "checkpoint-a", 1, None);
-    let first = fixture.good("commit", CompactionCheckpointCommit {
-        checkpoint: a,
-        expected: 0,
-    }.to_value());
+    let first = fixture.good(
+        "commit",
+        CompactionCheckpointCommit {
+            checkpoint: a,
+            expected: 0,
+        }
+        .to_value(),
+    );
     assert_eq!(first.storage_revision, 1);
     let b = checkpoint(&events, "checkpoint-b", 2, Some("checkpoint-a"));
-    let second = fixture.good("commit", CompactionCheckpointCommit {
-        checkpoint: b.clone(),
-        expected: 1,
-    }.to_value());
+    let second = fixture.good(
+        "commit",
+        CompactionCheckpointCommit {
+            checkpoint: b.clone(),
+            expected: 1,
+        }
+        .to_value(),
+    );
     assert_eq!(second.storage_revision, 2);
     let next = checkpoint(&events, "checkpoint-c", 3, Some("checkpoint-b"));
     fixture.deny(
@@ -173,7 +211,8 @@ fn commit(fixture: &Packages) -> serde_json::Value {
         CompactionCheckpointCommit {
             checkpoint: next,
             expected: 1,
-        }.to_value(),
+        }
+        .to_value(),
         CompactionStoreProblem::Conflict,
     );
     let mut foreign = checkpoint(&events, "foreign", 3, Some("checkpoint-b"));
@@ -183,7 +222,8 @@ fn commit(fixture: &Packages) -> serde_json::Value {
         CompactionCheckpointCommit {
             checkpoint: foreign,
             expected: 2,
-        }.to_value(),
+        }
+        .to_value(),
         CompactionStoreProblem::ScopeDenied,
     );
     serde_json::json!({
@@ -197,8 +237,14 @@ fn commit(fixture: &Packages) -> serde_json::Value {
 fn restart(fixture: &Packages) -> serde_json::Value {
     let restored = fixture.good("get", key("checkpoint-b"));
     assert_eq!(restored.storage_revision, 2);
-    assert_eq!(restored.checkpoint.parent_checkpoint.as_deref(), Some("checkpoint-a"));
-    assert_eq!(restored.checkpoint.input, span_for_events(&fixture.journal()).unwrap());
+    assert_eq!(
+        restored.checkpoint.parent_checkpoint.as_deref(),
+        Some("checkpoint-a")
+    );
+    assert_eq!(
+        restored.checkpoint.input,
+        span_for_events(&fixture.journal()).unwrap()
+    );
     serde_json::json!({
         "revision": restored.storage_revision,
         "parent_checkpoint": restored.checkpoint.parent_checkpoint,
@@ -237,5 +283,9 @@ fn main() {
     };
     let output = Path::new(&args[7]);
     fs::create_dir_all(output).unwrap();
-    fs::write(output.join("compaction.json"), serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+    fs::write(
+        output.join("compaction.json"),
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
 }
