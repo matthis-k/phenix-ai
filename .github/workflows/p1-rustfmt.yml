@@ -1,0 +1,30 @@
+# Cheap fail-fast quality gate independent of the full Nix scheduler.
+name: P1 Rust formatting
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p1-rustfmt-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  formatting:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.1"
+          components: rustfmt
+      - name: Check workspace, examples and ACP SDK formatting
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo fmt --manifest-path examples/Cargo.toml --all --check
+          cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml --all --check
