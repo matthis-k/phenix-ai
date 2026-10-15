@@ -1,10 +1,9 @@
 //! P2-2a packaged project isolation and revision test using real native SQLite.
 use phenix_advanced_contracts::{
-    ProjectEdit, ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembershipError,
+    compare_source, EvidenceError, EvidenceProblem, EvidenceScope, EvidenceScopeKind, ProjectEdit,
+    ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembershipError,
     ProjectMembershipProblem, ProjectRecord, ProjectRecordKey, ProjectStorageError,
-    ProjectStorageProblem, ProjectTransaction, SourceRef,
-    SourceObservation, EvidenceScope, EvidenceScopeKind, EvidenceProblem, EvidenceError,
-    SourceMatch, compare_source,
+    ProjectStorageProblem, ProjectTransaction, SourceMatch, SourceObservation, SourceRef,
 };
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
@@ -449,7 +448,10 @@ fn project_source(revision: u64, bytes: &[u8]) -> SourceRef {
         digest_sha256: format!("{digest:x}"),
         range_start: 0,
         range_end: 0,
-        scope: EvidenceScope { kind: EvidenceScopeKind::Project, id: "alpha".into() },
+        scope: EvidenceScope {
+            kind: EvidenceScopeKind::Project,
+            id: "alpha".into(),
+        },
     }
 }
 
@@ -473,13 +475,21 @@ fn source_current(fixture: &Fixture) -> serde_json::Value {
         let observed = source_observed(fixture, session, original.clone());
         assert_eq!(compare_source(&original, &observed), SourceMatch::Current);
     }
-    source_denied(fixture, "s3", original.clone(), EvidenceProblem::ScopeDenied);
+    source_denied(
+        fixture,
+        "s3",
+        original.clone(),
+        EvidenceProblem::ScopeDenied,
+    );
     let mut malformed = original.clone();
     malformed.scope.kind = EvidenceScopeKind::Session;
     source_denied(fixture, "s1", malformed, EvidenceProblem::InvalidIdentity);
     let mut forged = original.clone();
     forged.digest_sha256 = "f".repeat(64);
-    assert_eq!(compare_source(&forged, &source_observed(fixture, "s1", forged.clone())), SourceMatch::Changed);
+    assert_eq!(
+        compare_source(&forged, &source_observed(fixture, "s1", forged.clone())),
+        SourceMatch::Changed
+    );
     serde_json::json!({
         "both_members_current": true,
         "unapproved_session_denied": true,
@@ -491,15 +501,24 @@ fn source_changed(fixture: &Fixture) -> serde_json::Value {
     let before = project_source(1, b"blue");
     let updated = fixture.edit("alpha", "alpha", vec![edit("theme", 1, b"green")]);
     assert_eq!(updated[0].revision, 2);
-    assert_eq!(compare_source(&before, &source_observed(fixture, "s2", before.clone())), SourceMatch::Changed);
+    assert_eq!(
+        compare_source(&before, &source_observed(fixture, "s2", before.clone())),
+        SourceMatch::Changed
+    );
     let current = project_source(2, b"green");
-    assert_eq!(compare_source(&current, &source_observed(fixture, "s1", current.clone())), SourceMatch::Current);
+    assert_eq!(
+        compare_source(&current, &source_observed(fixture, "s1", current.clone())),
+        SourceMatch::Current
+    );
     serde_json::json!({"stale_revision_changed": true, "new_revision_current": true})
 }
 fn source_after_revoke(fixture: &Fixture) -> serde_json::Value {
     let current = project_source(2, b"green");
     source_denied(fixture, "s2", current.clone(), EvidenceProblem::ScopeDenied);
-    assert_eq!(compare_source(&current, &source_observed(fixture, "s1", current.clone())), SourceMatch::Current);
+    assert_eq!(
+        compare_source(&current, &source_observed(fixture, "s1", current.clone())),
+        SourceMatch::Current
+    );
     serde_json::json!({"revoked_source_denied": true, "remaining_member_current": true})
 }
 
