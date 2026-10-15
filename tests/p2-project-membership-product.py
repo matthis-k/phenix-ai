@@ -62,11 +62,27 @@ revoked = run("member-revoke")
 assert revoked["revision"] == 2
 after = run("member-after-revoke")
 assert after["revoked_member_denied"] == "s2"
+
+# Hold one admitted s1 root open across a separate authorized revocation.
 with sqlite3.connect(db) as conn:
+    before_live = conn.execute(
+        "SELECT project, name, revision, hex(data) FROM project_records "
+        "ORDER BY project, name"
+    ).fetchall()
+live = run("member-live-revoke")
+assert live["pre_revocation_read"] is True
+assert live["reused_root_denied"] is True
+assert live["new_membership_revision"] == 2
+with sqlite3.connect(db) as conn:
+    after_live = conn.execute(
+        "SELECT project, name, revision, hex(data) FROM project_records "
+        "ORDER BY project, name"
+    ).fetchall()
     rows = conn.execute(
         "SELECT project, session, revision, active FROM project_membership ORDER BY project, session"
     ).fetchall()
-assert rows == [("alpha", "s1", 1, 1), ("alpha", "s2", 2, 0)], rows
+assert before_live == after_live, "denied live root changed project storage"
+assert rows == [("alpha", "s1", 2, 0), ("alpha", "s2", 2, 0)], rows
 (out / "p2-project-membership-product.json").write_text(json.dumps({
     "format": "phenix.p2.project-membership-product.v1",
     "accepted": True,
@@ -79,6 +95,8 @@ assert rows == [("alpha", "s1", 1, 1), ("alpha", "s2", 2, 0)], rows
         "revocation-denies-project-record-retrieval",
         "cross-project-denial",
         "persistent-revocation-across-processes",
+        "same-admitted-root-revalidates-membership-after-revocation",
+        "denied-live-root-has-zero-project-storage-effects",
         "membership-cas-conflict",
         "unchanged-basic-storage",
     ],
