@@ -6,7 +6,8 @@ use acp::schema::{
     v1::{
         AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-        NewSessionResponse, PromptRequest, PromptResponse, SessionNotification, StopReason,
+        NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
+        SessionConfigOptionCategory, SessionConfigSelectOption, SessionNotification, StopReason,
     },
     ProtocolVersion,
 };
@@ -237,6 +238,30 @@ impl Controller {
         }
     }
 
+    /// The selected Model is an installed composition binding, not client configuration.
+    /// ACP's standard session config options let any frontend render the effective
+    /// model, even while this P1 composition has only one eligible binding.
+    fn model_options(&self) -> Vec<SessionConfigOption> {
+        self.composition
+            .slots
+            .iter()
+            .filter(|binding| binding.caller == "phenix.basic.agent"
+                && binding.slot == "Model" && binding.index == 0)
+            .map(|binding| {
+                SessionConfigOption::select(
+                    "model",
+                    "Model",
+                    binding.provider.clone(),
+                    vec![SessionConfigSelectOption::new(
+                        binding.provider.clone(),
+                        binding.provider.clone(),
+                    )],
+                )
+                .category(SessionConfigOptionCategory::Model)
+            })
+            .collect()
+    }
+
     fn new_session(&mut self, request: NewSessionRequest) -> acp::Result<NewSessionResponse> {
         if !request.cwd.is_absolute()
             || !request.mcp_servers.is_empty()
@@ -256,7 +281,7 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
-        Ok(NewSessionResponse::new(session))
+        Ok(NewSessionResponse::new(session).config_options(self.model_options()))
     }
 
     fn load_session(
@@ -295,7 +320,7 @@ impl Controller {
         *offset = 0;
         let loaded = self.sessions.get(&session).expect("just inserted");
         send_updates(loaded, None, &session, offset, peer, &self.closed)?;
-        Ok(LoadSessionResponse::new())
+        Ok(LoadSessionResponse::new().config_options(self.model_options()))
     }
 
     fn prompt(
