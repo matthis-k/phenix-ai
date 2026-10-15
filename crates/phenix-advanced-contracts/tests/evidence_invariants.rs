@@ -127,6 +127,6 @@ fn source_identity_does_not_itself_grant_read_access() {
         kind: EvidenceScopeKind::Session,
         id: "session-2".into(),
     };
-    assert!(!source.scope.authorizes(&foreign));
-    assert!(source.scope.authorizes(&scope()));
+    assert!(!source.scope.same_scope(&foreign));
+    assert!(source.scope.same_scope(&scope()));
 }
