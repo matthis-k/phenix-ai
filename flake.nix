@@ -730,7 +730,7 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
-        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" ];
+        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" ];
         replaceSlots = [
           (basicBinding "phenix.advanced.evidence-journal" "Journal"
             "phenix.basic.event-journal" "Journal")
@@ -740,6 +740,16 @@
             "phenix.advanced.evidence-journal" "Evidence")
         ];
         addGrants = [
+          { caller = "root";
+            interface = "phenix.advanced.project-membership@1";
+            operation = "get";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.project-storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "phenix.advanced.evidence-journal";
             interface = "phenix.basic.journal@1";
             operation = "read";
@@ -782,6 +792,8 @@
           }
         ];
         addOperations = [
+          "phenix.advanced.project-membership@1/get"
+          "phenix.advanced.project-storage@1/read"
           "phenix.basic.journal@1/read"
           "phenix.advanced.source@1/observe"
           "phenix.advanced.evidence@1/put"
