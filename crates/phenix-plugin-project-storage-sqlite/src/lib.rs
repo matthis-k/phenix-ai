@@ -2,8 +2,7 @@
 //! Reuses rusqlite and the Basic database file, but does not expose Basic
 //! session records or modify its storage contract or schema version.
 use phenix_advanced_contracts::{
-    ProjectEdit, ProjectRecord, ProjectStorageError, ProjectStorageProblem,
-    ProjectTransaction,
+    ProjectEdit, ProjectRecord, ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::{collections::BTreeSet, env, time::Duration};
@@ -21,10 +20,16 @@ fn error(problem: ProjectStorageProblem, message: &str) -> ProjectStorageError {
     }
 }
 fn failed() -> ProjectStorageError {
-    error(ProjectStorageProblem::StorageFailed, "project SQLite operation failed")
+    error(
+        ProjectStorageProblem::StorageFailed,
+        "project SQLite operation failed",
+    )
 }
 fn invalid() -> ProjectStorageError {
-    error(ProjectStorageProblem::InvalidInput, "invalid project record request")
+    error(
+        ProjectStorageProblem::InvalidInput,
+        "invalid project record request",
+    )
 }
 fn version_i64(n: u64) -> Result<i64, ProjectStorageError> {
     i64::try_from(n).map_err(|_| error(ProjectStorageProblem::Conflict, "revision overflow"))
@@ -47,7 +52,8 @@ fn open() -> Result<Connection, ProjectStorageError> {
     conn.execute_batch("PRAGMA synchronous = FULL")
         .map_err(|_| failed())?;
     conn.execute_batch(TABLE).map_err(|_| failed())?;
-    let mut statement = conn.prepare("PRAGMA table_info(project_records)")
+    let mut statement = conn
+        .prepare("PRAGMA table_info(project_records)")
         .map_err(|_| failed())?;
     let columns = statement
         .query_map([], |row| {
@@ -74,11 +80,15 @@ fn open() -> Result<Connection, ProjectStorageError> {
     Ok(conn)
 }
 
-fn select(conn: &Connection, project: &str, key: &str)
-    -> Result<Option<ProjectRecord>, ProjectStorageError>
-{
+fn select(
+    conn: &Connection,
+    project: &str,
+    key: &str,
+) -> Result<Option<ProjectRecord>, ProjectStorageError> {
     let row: Option<(i64, Vec<u8>)> = conn
-        .query_row(READ, params![project, key], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(READ, params![project, key], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .optional()
         .map_err(|_| failed())?;
     row.map(|(revision, bytes)| {
@@ -96,12 +106,8 @@ fn select(conn: &Connection, project: &str, key: &str)
 
 /// SQLite BEGIN IMMEDIATE serializes revisions across independent processes.
 /// Reject the whole change set before commit if any precondition fails.
-pub fn transact(request: ProjectTransaction)
-    -> Result<Vec<ProjectRecord>, ProjectStorageError>
-{
-    if !phenix_sdk::identifier(&request.project)
-        || request.edits.len() > MAX_EDITS
-    {
+pub fn transact(request: ProjectTransaction) -> Result<Vec<ProjectRecord>, ProjectStorageError> {
+    if !phenix_sdk::identifier(&request.project) || request.edits.len() > MAX_EDITS {
         return Err(invalid());
     }
     let mut keys = BTreeSet::new();
@@ -112,9 +118,11 @@ pub fn transact(request: ProjectTransaction)
         {
             return Err(invalid());
         }
-        version_i64(edit.expected.checked_add(1).ok_or_else(|| {
-            error(ProjectStorageProblem::Conflict, "revision overflow")
-        })?)?;
+        version_i64(
+            edit.expected
+                .checked_add(1)
+                .ok_or_else(|| error(ProjectStorageProblem::Conflict, "revision overflow"))?,
+        )?;
     }
     let mut conn = open()?;
     let transaction = conn
@@ -131,13 +139,18 @@ pub fn transact(request: ProjectTransaction)
             let actual = select(&transaction, &request.project, &key)?;
             let previous = actual.map_or(0, |record| record.revision);
             if previous != expected {
-                return Err(error(ProjectStorageProblem::Conflict, "project revision conflict"));
+                return Err(error(
+                    ProjectStorageProblem::Conflict,
+                    "project revision conflict",
+                ));
             }
             let revision = expected + 1;
-            transaction.execute(
-                UPSERT,
-                params![&request.project, &key, version_i64(revision)?, &data.0],
-            ).map_err(|_| failed())?;
+            transaction
+                .execute(
+                    UPSERT,
+                    params![&request.project, &key, version_i64(revision)?, &data.0],
+                )
+                .map_err(|_| failed())?;
             output.push(ProjectRecord { revision, data });
         }
         Ok(output)
@@ -170,9 +183,7 @@ mod plugin {
     #[derive(Default)]
     pub struct State;
 
-    fn authorized(host: &Host<'_>, project: &str)
-        -> CallResult<(), ProjectStorageError>
-    {
+    fn authorized(host: &Host<'_>, project: &str) -> CallResult<(), ProjectStorageError> {
         if !phenix_sdk::identifier(project) {
             return Err(CallError::Domain(invalid()));
         }
@@ -187,9 +198,11 @@ mod plugin {
     }
 
     #[provide(ProjectStorage::read)]
-    fn read(_: &mut State, host: &Host<'_>, key: ProjectRecordKey)
-        -> CallResult<ProjectRecord, ProjectStorageError>
-    {
+    fn read(
+        _: &mut State,
+        host: &Host<'_>,
+        key: ProjectRecordKey,
+    ) -> CallResult<ProjectRecord, ProjectStorageError> {
         authorized(host, &key.project)?;
         if !valid(&key.project, &key.key) {
             return Err(CallError::Domain(invalid()));
@@ -197,15 +210,18 @@ mod plugin {
         let conn = open().map_err(CallError::Domain)?;
         select(&conn, &key.project, &key.key)
             .and_then(|record| {
-                record.ok_or_else(|| error(ProjectStorageProblem::NotFound, "project record missing"))
+                record
+                    .ok_or_else(|| error(ProjectStorageProblem::NotFound, "project record missing"))
             })
             .map_err(CallError::Domain)
     }
 
     #[provide(ProjectStorage::transact)]
-    fn write(_: &mut State, host: &Host<'_>, edit: ProjectTransaction)
-        -> CallResult<Vec<ProjectRecord>, ProjectStorageError>
-    {
+    fn write(
+        _: &mut State,
+        host: &Host<'_>,
+        edit: ProjectTransaction,
+    ) -> CallResult<Vec<ProjectRecord>, ProjectStorageError> {
         authorized(host, &edit.project)?;
         transact(edit).map_err(CallError::Domain)
     }
@@ -220,11 +236,22 @@ mod tests {
         let invalid = ProjectTransaction {
             project: "alpha".into(),
             edits: vec![
-                ProjectEdit { key: "same".into(), expected: 0, data: phenix_sdk::Blob(vec![1]) },
-                ProjectEdit { key: "same".into(), expected: 0, data: phenix_sdk::Blob(vec![2]) },
+                ProjectEdit {
+                    key: "same".into(),
+                    expected: 0,
+                    data: phenix_sdk::Blob(vec![1]),
+                },
+                ProjectEdit {
+                    key: "same".into(),
+                    expected: 0,
+                    data: phenix_sdk::Blob(vec![2]),
+                },
             ],
         };
-        assert_eq!(transact(invalid).unwrap_err().problem, ProjectStorageProblem::InvalidInput);
+        assert_eq!(
+            transact(invalid).unwrap_err().problem,
+            ProjectStorageProblem::InvalidInput
+        );
         assert!(!valid("alpha", "../escape"));
     }
 }
