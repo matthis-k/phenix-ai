@@ -155,3 +155,35 @@ fn changed_source_or_forged_ranges_cannot_be_projected() {
         Err(ViewProblem::Replay(ReplayProblem::InvalidCheckpoint)),
     );
 }
+
+#[test]
+fn single_summary_must_be_an_initial_contiguous_prefix() {
+    let originals = journal();
+    let mut cp = checkpoint(&originals, 2, 6);
+    // Structural partitioning alone accepts these spans, but emitting one
+    // summary before retained text would rewrite the original chronology.
+    cp.summarized = vec![span_for_events(&originals[2..4]).unwrap()];
+    cp.retained = vec![
+        span_for_events(&originals[..2]).unwrap(),
+        span_for_events(&originals[4..]).unwrap(),
+    ];
+    assert_eq!(
+        compacted_view(&cp, &originals, 512),
+        Err(ViewProblem::NonPrefixSummary),
+    );
+}
+
+#[test]
+fn tool_start_and_finish_must_share_the_same_visibility_class() {
+    let originals = journal();
+    let mut cp = checkpoint(&originals, 3, 6);
+    // Preserve chronological coverage, but split the pair between excluded
+    // and retained. Neither may be silently hidden by the other.
+    cp.summarized = vec![span_for_events(&originals[..3]).unwrap()];
+    cp.excluded = vec![span_for_events(&originals[3..4]).unwrap()];
+    cp.retained = vec![span_for_events(&originals[4..]).unwrap()];
+    assert_eq!(
+        compacted_view(&cp, &originals, 512),
+        Err(ViewProblem::SplitToolCall),
+    );
+}
