@@ -684,15 +684,16 @@
         (builtins.toJSON basicCompositionSpec);
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
-      historyVerificationComposition = pkgs.writeText "phenix-basic-history-verification.json"
-        (builtins.toJSON (basicCompositionSpec // {
+      historyVerificationCompositionSpec = basicCompositionSpec // {
           artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];
           slots = map (binding:
             if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
             then binding // { provider = "phenix.model.history-test"; }
             else binding
           ) basicCompositionSpec.slots;
-        }));
+        };
+      historyVerificationComposition = pkgs.writeText "phenix-basic-history-verification.json"
+        (builtins.toJSON historyVerificationCompositionSpec);
       # P2-0: extend immutable package specifications without copying Basic's
       # agent implementation or modifying its selected providers. Later P2
       # plugins fill the additional artifacts/definitions/slots/grants.
@@ -791,14 +792,15 @@
       };
       advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
         (builtins.toJSON advancedCompositionSpec);
-      advancedVerificationComposition = pkgs.writeText
-        "phenix-advanced-verification-composition.json"
-        (builtins.toJSON (extendComposition advancedCompositionSpec {
+      advancedVerificationCompositionSpec = extendComposition advancedCompositionSpec {
           addArtifacts = [ "${historyTestModel}" ];
           replaceSlots = [
             (basicBinding "phenix.basic.agent" "Model" "phenix.model.history-test" "Model")
           ];
-        }));
+        };
+      advancedVerificationComposition = pkgs.writeText
+        "phenix-advanced-verification-composition.json"
+        (builtins.toJSON advancedVerificationCompositionSpec);
       p2CompositionFoundationManifest = pkgs.writeText
         "phenix-p2-composition-foundation.json"
         (builtins.toJSON {
@@ -841,12 +843,32 @@
           exec ${basicRuntime}/bin/phenix-basic-runtime "$mode" ${composition} "$@"
         '';
       };
-      basicBinary = basicPreset "phenix-basic" basicComposition;
-      historyVerificationBinary = basicPreset
-        "phenix-basic-verification" historyVerificationComposition;
-      advancedBinary = basicPreset "phenix-advanced" advancedComposition;
-      advancedVerificationBinary = basicPreset
-        "phenix-advanced-verification" advancedVerificationComposition;
+      # Standard .override changes package arguments while leaving the
+      # original preset and its exported composition unchanged.
+      overridablePreset = pkgs.lib.makeOverridable (
+        { name, compositionName, format, entry, artifacts, definitions, slots,
+          grants, excluded, substitutions, authority, resource }:
+        basicPreset name (pkgs.writeText compositionName (builtins.toJSON {
+          inherit format entry artifacts definitions slots grants excluded
+            substitutions authority resource;
+        }))
+      );
+      basicBinary = overridablePreset (basicCompositionSpec // {
+        name = "phenix-basic";
+        compositionName = "phenix-basic-composition.json";
+      });
+      historyVerificationBinary = overridablePreset (historyVerificationCompositionSpec // {
+        name = "phenix-basic-verification";
+        compositionName = "phenix-basic-history-verification.json";
+      });
+      advancedBinary = overridablePreset (advancedCompositionSpec // {
+        name = "phenix-advanced";
+        compositionName = "phenix-advanced-composition.json";
+      });
+      advancedVerificationBinary = overridablePreset (advancedVerificationCompositionSpec // {
+        name = "phenix-advanced-verification";
+        compositionName = "phenix-advanced-verification-composition.json";
+      });
       basicBinaryClosure = pkgs.closureInfo {
         rootPaths = [ basicBinary ];
       };
@@ -942,6 +964,38 @@
         grep -Fq "${historyTestModel}" ${(pkgs.closureInfo {
           rootPaths = [ advancedVerificationBinary ];
         })}/store-paths
+      '';
+      p2PresetOverrides = import ./tests/p2-preset-overrides.nix {
+        advanced = advancedBinary;
+        inherit historyTestModel;
+      };
+      p2ExternalPreset = (import ./tests/p2-external-override/flake.nix).outputs {
+        self = { };
+        phenix = {
+          packages.${system} = {
+            phenix-advanced = advancedBinary;
+            phenix-plugin-model-http = httpModel;
+          };
+        };
+      };
+      p2PresetOverridesCheck = pkgs.runCommand "phenix-p2-preset-overrides" { } ''
+        mkdir -p "$out"
+        # Evaluate the same standalone external flake output used by consumers.
+        test -x ${p2ExternalPreset.packages.${system}.default}/bin/phenix-advanced
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/preset-overrides.sqlite"
+        printf '%s\n' '{"type":"prompt","session":"s1","text":"remember:color=violet"}' \
+          | ${p2PresetOverrides.substituted}/bin/phenix-advanced jsonl > "$out/accepted.jsonl"
+        grep -Fq 'stored:color=violet' "$out/accepted.jsonl"
+        if printf '%s\n' '{"type":"prompt","session":"s1","text":"echo:hello"}' \
+          | ${p2PresetOverrides.missingProvider}/bin/phenix-advanced jsonl > "$out/missing.stdout" 2> "$out/missing.stderr"; then
+          echo "missing override provider unexpectedly accepted" >&2
+          exit 1
+        fi
+        if printf '%s\n' '{"type":"prompt","session":"s1","text":"echo:hello"}' \
+          | ${p2PresetOverrides.excessiveGrant}/bin/phenix-advanced jsonl > "$out/grant.stdout" 2> "$out/grant.stderr"; then
+          echo "excessive override grant unexpectedly accepted" >&2
+          exit 1
+        fi
       '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
@@ -1460,6 +1514,7 @@
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
+        p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
