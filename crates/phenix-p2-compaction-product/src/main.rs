@@ -199,7 +199,7 @@ fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 9, "STORE JOURNAL SQLITE BASIC-DEFS ADV-DEFS ACTION OUTPUT");
+    assert_eq!(args.len(), 8, "STORE JOURNAL SQLITE BASIC-DEFS ADV-DEFS ACTION OUTPUT");
     let fixture = Fixture {
         artifacts: args[1..=3].to_vec(),
         definitions: args[4..=5].to_vec(),
