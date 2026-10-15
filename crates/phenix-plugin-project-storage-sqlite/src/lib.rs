@@ -145,10 +145,18 @@ fn transact_scoped(
         .map_err(|_| failed())?;
     let changes = (|| {
         if let Some(session) = session {
-            let membership = membership_read(&transaction, &request.project, session)
-                .map_err(|_| error(ProjectStorageProblem::StorageFailed, "membership lookup failed"))?;
+            let membership =
+                membership_read(&transaction, &request.project, session).map_err(|_| {
+                    error(
+                        ProjectStorageProblem::StorageFailed,
+                        "membership lookup failed",
+                    )
+                })?;
             if !membership.is_some_and(|member| member.active) {
-                return Err(error(ProjectStorageProblem::Denied, "project write requires active membership"));
+                return Err(error(
+                    ProjectStorageProblem::Denied,
+                    "project write requires active membership",
+                ));
             }
         }
         let mut output = Vec::new();
@@ -563,11 +571,17 @@ mod plugin {
             transact(edit).map_err(CallError::Domain)
         } else if let Some(session) = current.strip_prefix("phenix.session.") {
             if !phenix_sdk::identifier(session) {
-                return Err(CallError::Domain(error(ProjectStorageProblem::Denied, "invalid session resource")));
+                return Err(CallError::Domain(error(
+                    ProjectStorageProblem::Denied,
+                    "invalid session resource",
+                )));
             }
             transact_scoped(edit, Some(session)).map_err(CallError::Domain)
         } else {
-            Err(CallError::Domain(error(ProjectStorageProblem::Denied, "project write is not authorized")))
+            Err(CallError::Domain(error(
+                ProjectStorageProblem::Denied,
+                "project write is not authorized",
+            )))
         }
     }
 }
