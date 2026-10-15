@@ -54,7 +54,9 @@ impl Fixture {
             resource: Some(resource),
         };
         let kernel = Prepared::prepare(policy)?.load()?;
-        kernel.admit_default_root()?.invoke(&input)
+        let root = kernel.admit_default_root()?;
+        let result = root.invoke(&input);
+        result
     }
 
     fn ok<T: Portable>(&self, root_project: &str, operation: &str, request: Value) -> T {
