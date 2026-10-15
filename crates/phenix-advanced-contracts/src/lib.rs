@@ -115,6 +115,12 @@ pub enum EvidenceProblem {
     InvalidValidity,
     InvalidConfidence,
     SelfSupersession,
+    NotFound,
+    Conflict,
+    ScopeDenied,
+    SourceChanged,
+    StorageFailed,
+    CapacityExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
