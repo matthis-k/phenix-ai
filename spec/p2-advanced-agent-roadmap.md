@@ -166,6 +166,30 @@ The implementation itself defines and enforces Phenix's actual constraints: type
 
 Accepted ADRs describe engineering rationale for agents and humans; they are not executable policy. They may influence design suggestions but do not create a second runtime authority. Optional manual, model-based design evaluations may compare alternative implementations and long-term maintainability to improve the Architecture plugin. They do not block normal PRs or P2 release, and CI consumes zero design-review Model tokens.
 
+## Development-time design skills, glossary and work slicing
+
+Study the [Matt Pocock skills](https://github.com/mattpocock/skills) patterns as reusable **skills**, not additional Phenix executors, registries or CI gates. Skills supply instructions through the existing selected Skills/Context contracts. Architecture uses authorized CodeIndex, Memory, Git/Workspace and Model providers where available. Reference the upstream skills as prior art; implement Phenix-specific workflows with its typed contracts, not an embedded copy of another agent harness.
+
+| Inspiration | Phenix workflow | Persistence / authority |
+| --- | --- | --- |
+| [`grilling`](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md) | When important design questions remain, build a dependency-ordered decision tree; ask the currently independent frontier with suggested options. Answer code-discoverable facts using tools, not user interrogation. Let unresolved prerequisites defer only dependent questions. | Working session/task context; a model's suggestion cannot mark a question decided for the user |
+| [`grill-me`](https://github.com/mattpocock/skills/blob/main/skills/productivity/grill-me/SKILL.md) | Opt-in interview without a repository or writes; same grilling primitive. | Conversation only |
+| [`grill-with-docs`](https://github.com/mattpocock/skills/blob/main/skills/engineering/grill-with-docs/SKILL.md) | Opt-in repository-aware grilling; combine interview with domain-modeling, progressively capturing agreed terms and consequential decisions. | Authenticated Git/Workspace writes; no hidden automatic commit |
+| [`domain-modeling`](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/SKILL.md) | Challenge ambiguous terminology, test edge-case scenarios and compare statements with actual code. | `GLOSSARY.md` for vocabulary only; ADR for consequential decisions |
+| [`to-spec`](https://github.com/mattpocock/skills/blob/main/skills/engineering/to-spec/SKILL.md) | Optionally synthesize a large, settled multi-session design without reopening decisions. Small tasks skip this step. | Reviewed spec/issue references; do not make a second implementation authority |
+| [`to-tickets`](https://github.com/mattpocock/skills/blob/main/skills/engineering/to-tickets/SKILL.md) | On request, turn accepted plans/specs into fresh-session-sized **vertical, demonstrable functional slices** with only genuine blocking edges and explicit acceptance outcomes. | Issue tracker or Git-tracked local task files via authorized existing tools; review breakdown before publishing |
+| [`codebase-design`](https://github.com/mattpocock/skills/blob/main/docs/engineering/codebase-design.md) | Use precise interface/seam/depth/locality vocabulary and test alternative design placements during development. | Reference guidance only; not a new validator or mandatory agent loop |
+
+### Capture at the right granularity
+
+- **Glossary:** use one project `GLOSSARY.md` (or explicitly mapped bounded-context glossaries when needed) to define domain words briefly, with no runtime mirror, policy schema, implementation plan or source-code duplication. Add terms when genuinely settled. Code/contract definitions remain authoritative for operational behavior.
+- **ADRs:** create under the repository's established design-document convention only when a decision is hard to reverse, surprising without its rationale **and** reflects a material trade-off. Review and accept through normal Git workflow. Existing accepted decisions stay the memory retrieval source; reject invented ADRs and unnecessary documents.
+- **Working memory:** capture provisional alternatives, rejected ideas, open questions, supporting source refs and explicitly resolved answers while grilling. Keep these separate from the glossary and accepted ADRs; pass settled context directly to a spec or implementation without lossy re-synthesis.
+- **Work items:** issue descriptions express behavior and evidence, not a mandated file-by-file implementation. Prefer vertical end-to-end slices; a coordinated wide refactor may require expand–migrate–contract or a single integration branch when no individually green slice exists. The task DAG is planning metadata, **not** an alternate runtime workflow graph or a second CI test framework.
+- **User agency and cost:** grilling and ticket publication are opt-in or triggered by genuine unresolved decisions. Do not interrogate for code facts, repeatedly grill settled decisions, invoke expensive models for trivial changes or publish issues without approval. Curation can suggest documentation updates but must not silently accept them.
+
+The existing Advanced agent's tests should demonstrate **functional** outcomes: a glossary update persists correctly and remains scoped; a previously accepted ADR is retrieved in a new session; a task handoff retains relevant evidence and blocker identity; unauthorized project/issue writes fail without effects. Use scripted models and existing product checks. There is **no** separate model-based architecture CI gate and no requirement to mechanically enforce the advice in these skills.
+
 ## Reversible compaction
 
 A compacted prompt is a derived view, never the sole durable record. The Session/EventJournal append-only ordered messages, complete tool requests/results and source references remain authoritative. A compaction checkpoint records its input event range and hashes, parent checkpoint, selection policy/version, model/version if a summarizer was used, generated summary, retained recent messages, excluded ranges and hydration references.
