@@ -969,8 +969,19 @@
         advanced = advancedBinary;
         inherit historyTestModel;
       };
+      p2ExternalPreset = (import ./tests/p2-external-override/flake.nix).outputs {
+        self = { };
+        phenix = {
+          packages.${system} = {
+            phenix-advanced = advancedBinary;
+            phenix-plugin-model-http = httpModel;
+          };
+        };
+      };
       p2PresetOverridesCheck = pkgs.runCommand "phenix-p2-preset-overrides" { } ''
         mkdir -p "$out"
+        # Evaluate the same standalone external flake output used by consumers.
+        test -x ${p2ExternalPreset.packages.${system}.default}/bin/phenix-advanced
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/preset-overrides.sqlite"
         printf '%s\n' '{"type":"prompt","session":"s1","text":"remember:color=violet"}' \
           | ${p2PresetOverrides.substituted}/bin/phenix-advanced jsonl > "$out/accepted.jsonl"
