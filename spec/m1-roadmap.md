@@ -1,10 +1,40 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
-Status: S1a, S1b, S2, S3a and S3b accepted; G1/G2 accepted at fbe55d3d; G3 serial CI passed; G4 pending
-Updated: 2026-10-12
+Status: P1 integrated product accepted at 68f46f63; C4 authoritative CI accepted on main at b7017042; post-P1 work resumed
+Updated: 2026-10-15
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
+
+## Current integrated acceptance and next stages
+
+P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
+The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
+merged at `b7017042`. Its first authoritative 4×2-builder release,
+independent official ACP SDK interoperability, Rust formatting and
+generated-policy checks all passed on that main commit.
+See [the C4 evidence ledger](ci-post-p1-cutover.md) for exact run links,
+the 38-check cold/warm comparison and trust policy. GitHub ruleset
+configuration is optional administration, not a CI or merge prerequisite.
+
+Post-P1 code has resumed. [#886](https://github.com/matthis-k/phenix-ai/pull/886)
+merged the opt-in deterministic Basic session-history product at `b96182d5`
+after its full PR matrix, DAG, official ACP SDK and dedicated verification
+passed. The latest production run on the resulting main commit is separate
+release evidence. [#892](https://github.com/matthis-k/phenix-ai/pull/892)
+implements composition-derived ACP model selection display and replay of
+accepted user prompts; it is not accepted until exact-head checks pass.
+Follow [runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891)
+and [multi-client projection #852](https://github.com/matthis-k/phenix-ai/pull/852),
+then the existing S5/F3 reactive, K1-K3 operations, L1/I1 observability
+and Advanced agent dependencies. Keep client UI state derived from runtime
+state and use established protocol libraries.
+
+Older per-stage entries below retain development-phase evidence where
+milestone-local acceptance was narrower than the final P1 release. The
+current integrated P1 and CI acceptance statements above supersede their
+pre-integration projections.
+
 
 ## Consolidation intervention
 
@@ -293,14 +323,14 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | G2 | G1 | New `phenix-kernel/src/graph.rs`, existing `resolve.rs`, `generation.rs`, contract descriptors | Static multi-source multi-root DAG; discovery-order-independent graph; cycles, missing anchors, ambiguous bindings, denied contributions and conflicting writes reject before activation; preparation executes no plugin code | [x] PROVEN at `fbe55d3d`, full CI 38231650549; definition-only, owner/schema/write and native active/dormant cases |
 | G3 | G2 | `graph.rs`, existing `runtime.rs`, `pending.rs`, SDK trigger contexts | Authenticated event activates two external nodes in declared order and a third reads the resulting state; frontend never invokes handlers directly | [ ] TESTED LOCALLY: follow-up on #785 fixes resource grants, implements Skip and transitive suppression, observes correlated serial results, and bounds delegation by root resource grants; serial shipping CI 38228548634 passed at `672b7f09`; definition/native dormant CI 38231650549 passed; generation-aware admission context remains |
 | G4 | G3 | Existing tickets, cancellation, leases and live values through one same-root control pump | Pending model emits progress; cancellation revokes child effects; retained leases drain; committed changes activate the same DAG | [ ] PARTIAL: G4a epoch projection #856 and G4b state-trigger preparation #857 passed all exact-head CI workflows. G4c same-root hook dispatch #858, G4d chained epochs #860, the bounded synchronous cycle #861 and native pending-hook cancellation #862 are implemented but await exact-head acceptance. No second scheduler, registry, event queue or authority store. |
-| CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [ ] BENCHMARKED on #790: four read-only-cache shards passed; 11m10s matrix vs 25m18s serial during the same PR revision; 878 MB cache shared within the run. Full shipping and persistent cross-run fixture reuse pending |
+| CI0 | Cross-cutting infrastructure; not a Basic dependency | Existing Nix checks, GitHub Actions shard orchestration and cache | Matrix must run all affected checks with exact-head evidence; full release/shipping parity remains mandatory before replacing serial acceptance | [x] ACCEPTED for P1: full exact-head matrix and release evidence on production main `b7017042`; historical #790 speed baseline retained in the CI evidence ledger. |
 | AI-CI1 | CI0; parallel with Basic | `flake.nix`, compatible example and Basic plugin builds | Share Cargo compilation across compatible fixtures, package each plugin independently, narrow Nix source sets; preserve isolated ABI, LTO/linker and malicious fixtures | [ ] PLANNED: same-head before/after benchmark; one fixture edit must not rebuild unrelated fixtures |
 | AI-CI2 | AI-CI1 | Phenix AI Rust/Nix test profiles | Provide fast semantic checks and separate optimized shipping proofs without weakening native ABI, negative/security or production closure tests | [ ] PLANNED: compare exact check coverage, artifacts and failure cases for both profiles |
-| FC1 | CI0 | `phenix-flake-ci` opt-in Nix check discovery | Derive exact-head check inventory and plan manifest from `checks.<system>`; new checks cannot be omitted by stale YAML | [ ] DESIGNED in [phenix-flake-ci #17](https://github.com/matthis-k/phenix-flake-ci/pull/17); implementation pending |
+| FC1 | CI0 | `phenix-flake-ci` opt-in Nix check discovery | Derive exact-head check inventory and plan manifest from `checks.<system>`; new checks cannot be omitted by stale YAML | [x] ACCEPTED: `phenix-flake-ci` pinned inventory/evaluation and generated caller on main `b7017042`. |
 | FC2 | FC1 | `phenix-flake-ci` checked Nix source-impact planner | Extend existing Cargo reverse-dependency rules with provable Nix input impact; unknown or shared changes fall back to full checks | [ ] DESIGNED in #17; implementation pending |
-| FC3 | FC1 | `phenix-flake-ci` check grouping, DAG and evidence gate | Schedule shared Nix outputs, shard without new compiles, account for every check and validate exact-head shipping evidence | [ ] DESIGNED in #17; implementation pending |
-| FC4 | FC1; may parallelize FC2/FC3 | `phenix-flake-ci` trusted cache policy and CI metrics | PRs restore verified Nix outputs read-only; validated trusted runs publish cache; report wall time, build counts and transfer costs | [ ] DESIGNED in #17; implementation pending |
-| AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [ ] PLANNED: existing serial shipping gate remains authoritative until parity |
+| FC3 | FC1 | `phenix-flake-ci` check grouping, DAG and evidence gate | Schedule shared Nix outputs, shard without new compiles, account for every check and validate exact-head shipping evidence | [x] ACCEPTED: pinned Nix DAG, 4 remote workers and exact-head shipping aggregation on main `b7017042`. |
+| FC4 | FC1; may parallelize FC2/FC3 | `phenix-flake-ci` trusted cache policy and CI metrics | PRs restore verified Nix outputs read-only; validated trusted runs publish cache; report wall time, build counts and transfer costs | [x] ACCEPTED for trusted remote releases: isolated cold/warm cache verified with 38 checks in each phase, run 38604657851; PRs remain credential-free. |
+| AI-CI3 | AI-CI1, AI-CI2, FC1, FC3 | Phenix AI generated workflow migration | Adopt the Nix-aware planner; prove full check and shipping-evidence parity on the same head; retire redundant serial workflow | [x] ACCEPTED: consolidated #890 merged at `b7017042`; first promoted `main` remote release and all independent checks passed. Legacy canonical/DAG workflows are manual fallbacks. |
 | AI-CI4 | AI-CI3, FC2; FC4 for cache rollout | Phenix AI selective PR checks and shared cache | Small edits run only proven affected checks; main/release/manual-full run complete inventory and shipping | [ ] PLANNED: cold/warm timing and unaffected-check evidence required |
 | B1 | G1 | New `phenix-basic-contracts/` | Independently compiled Model, ToolCatalog, ToolExecute, Skills, Context, Session, EventJournal, Storage, AgentInput and AgentOutput contracts; no kernel agent dependency | [ ] IMPLEMENTED on impl/m1-basic-contracts: eleven typed public contracts and an independently built definition package; exact-head acceptance pending |
 | B2 | B1 | `phenix-plugin-basic-session/`, `phenix-plugin-event-journal/`, `phenix-plugin-storage-sqlite/` | Restart restores history, call IDs/results, checkpoints and observer offsets; two observers replay independently; cross-session access rejects; interrupted non-idempotent tools remain indeterminate until reconciled | [ ] PARTIAL: observer checkpoint #813, SQLite injected rollback #854 at `334ee551` and schema v0-to-v1 migration #855 at `aa9f97a1` passed their focused exact-head gates. Full cross-process fault and integrated P1 acceptance remain open. |
@@ -310,7 +340,7 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F1 | G3, B1 | Terminal and JSONL frontend plugins | Input decoding submits discovered actions; observers render progress and completion without agent-specific kernel entry points | [ ] IMPLEMENTING: independently packaged terminal and JSONL Frontend adapters from shared Rust codecs; native decode/render/session checks on impl/m1-basic-frontends. Live input/output control pump and cancellation remain |
 | F2 | F1 contracts | ACP frontend plugin and protocol integration fixtures | ACP drives the same input/output contracts and passes session, progress and cancellation integration tests | [ ] PARTIAL: ACP v1 multi-session stdio host, live HTTP progress/cancellation and durable replay are implemented. The independent official SDK client covers prompt/tool turns and two-process `session/load` (#831). #832 through #836 passed canonical conformance, flake matrix, generated DAG and official ACP SDK checks on their exact heads. These slices cover load validation, bounded stdin, JSON-RPC envelopes, invalid prompt parameters and pending-queue isolation. Active `session/cancel` requests are rejected without deferral on `impl/m1-p1-acp-cancel-request-admission`, pending exact-head checks. Active ACP stdin-disconnect cancellation is implementing on `impl/m1-p1-acp-eof-cancellation`; the real HTTP fixture checks prompt cancellation before the upstream model responds, pending exact-head acceptance. The SDK-only stable-v1 host passed exact-head checks in #843; R1-ACP4 parity remains open. |
 | R1 | Cross-cutting; before P1 acceptance | Audit common infrastructure in each plugin and host; select maintained Rust libraries or document narrow exceptions | Thin provider adapters over established protocol, transport, parser, storage and process crates; keep Phenix-specific contracts, graph admission, authority, session and replay rules | [ ] PARTIAL: `rusqlite` Storage #815, `sse-parse` SSE #823, `url` endpoint parsing #840 and the official SDK-only ACP v1 host/codec #843 passed their exact-head CI. #843 passed canonical conformance, the flake matrix, generated DAG and independent SDK interoperability at `fb1ba478`. The [plugin ownership audit](m1-r1-library-audit.md) remains the crate-first review reference. R1-ACP4 full negative parity, including independent resource-link replay in #853, and integrated P1 release evidence remain open. |
-| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [ ] INTEGRATED PRODUCT IMPLEMENTED, FINAL-HEAD ACCEPTANCE PENDING. Basic, durable SQLite/Session/Journal, streaming HTTP, multi-tool turns, caller limits, cancellation and Terminal/JSONL/official ACP v1 are in the stacked rewrite. Independent SDK recovery/isolation tests #864–#866 and Terminal/JSONL recovery tests #867–#871 provide exact-head regression evidence. PR #872 adds a realized P1 product-evidence preflight. Tests-only heads #868 and #870 are intentionally red. Require the final unified P1 SHA to pass all canonical, flake-matrix, generated DAG, independent SDK and P1 preflight gates; then integrate and repeat checks on main. See [P1 release acceptance](p1-release-acceptance.md). |
+| P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [x] ACCEPTED: main `68f46f63` passed integrated P1 product, independent ACP, canonical, matrix, DAG and release preflight; see [P1 release acceptance](p1-release-acceptance.md). |
 | F3 | P1, S5; S6 only for concurrent-session acceptance | Migrate named reactive plugin consumers/producers and the frontend host to generated hooks; prove ACP and Terminal/JSONL parity | All required plugins in the F3 migration inventory use typed declarative handlers instead of redundant watch registration, journal polling or event dispatch; preserve durable event order, cancellation, scopes and transport ownership | [ ] PLANNED POST-P1: inventory and migration gates specified; implementation pending |
 
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
