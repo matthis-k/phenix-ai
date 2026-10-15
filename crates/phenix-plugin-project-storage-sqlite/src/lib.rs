@@ -507,12 +507,14 @@ mod plugin {
         })?;
         // The membership check and source read share one SQLite snapshot.
         // A concurrent revocation cannot commit between those two reads.
-        let txn = conn.transaction_with_behavior(TransactionBehavior::Deferred).map_err(|_| {
-            CallError::Domain(source_error(
-                EvidenceProblem::StorageFailed,
-                "project source read transaction failed",
-            ))
-        })?;
+        let txn = conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::StorageFailed,
+                    "project source read transaction failed",
+                ))
+            })?;
         authorized_project_read(&txn, host, &reference.scope.id).map_err(|error| match error {
             CallError::Kernel(failure) => CallError::Kernel(failure),
             CallError::Domain(inner) => CallError::Domain(source_error(
@@ -558,11 +560,14 @@ mod plugin {
         }
         let mut conn = open().map_err(CallError::Domain)?;
         // Freeze authorization and record data in the same snapshot.
-        let txn = conn.transaction_with_behavior(TransactionBehavior::Deferred)
-            .map_err(|_| CallError::Domain(error(
-                ProjectStorageProblem::StorageFailed,
-                "project read transaction failed",
-            )))?;
+        let txn = conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| {
+                CallError::Domain(error(
+                    ProjectStorageProblem::StorageFailed,
+                    "project read transaction failed",
+                ))
+            })?;
         authorized_project_read(&txn, host, &key.project)?;
         select(&txn, &key.project, &key.key)
             .and_then(|record| {
