@@ -89,7 +89,7 @@ assert basic_snapshot() == baseline
         "first-create-and-revision-cas",
         "multi-key-atomic-rollback",
         "two-independent-kernel-processes",
-        "cross-session-project-sharing",
+        "same-project-sharing-across-kernel-processes",
         "cross-project-identity-denial",
         "other-project-storage-isolation",
         "invalid-key-rejected",
