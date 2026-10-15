@@ -267,7 +267,8 @@ pub struct ProjectTransaction {
 #[contract(id = "phenix.advanced.project-storage@1")]
 pub trait ProjectStorage {
     fn read(&self, key: ProjectRecordKey) -> Result<ProjectRecord, ProjectStorageError>;
-    fn transact(&self, edit: ProjectTransaction) -> Result<Vec<ProjectRecord>, ProjectStorageError>;
+    fn transact(&self, edit: ProjectTransaction)
+        -> Result<Vec<ProjectRecord>, ProjectStorageError>;
 }
 
 #[contract(id = "phenix.advanced.source@1")]
