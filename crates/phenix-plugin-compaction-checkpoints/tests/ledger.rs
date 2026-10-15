@@ -1,9 +1,7 @@
 //! RED P2-3c: append-only checkpoint metadata with one Storage CAS per
 //! successful revision. Journal source bytes are never replicated here.
 use phenix_advanced_contracts::{CheckpointStoreProblem, CompactionCheckpoint, JournalSpan};
-use phenix_plugin_compaction_checkpoints::{
-    append_checkpoint, find_checkpoint, validate_ledger,
-};
+use phenix_plugin_compaction_checkpoints::{append_checkpoint, find_checkpoint, validate_ledger};
 
 fn checkpoint(id: &str, revision: u64, parent: Option<&str>) -> CompactionCheckpoint {
     let span = JournalSpan {
