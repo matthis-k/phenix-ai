@@ -59,6 +59,12 @@ pub fn append_checkpoint(
     if checkpoint.session != session {
         return Err(CheckpointStoreProblem::ScopeDenied);
     }
+    // A persisted ID names exactly one checkpoint. Report attempts to reuse
+    // that ID as a revision conflict even if the candidate's own parent
+    // reference is structurally invalid (self-parenting).
+    if history.iter().any(|prior| prior.id == checkpoint.id) {
+        return Err(CheckpointStoreProblem::Conflict);
+    }
     validate_checkpoint(checkpoint).map_err(|_| CheckpointStoreProblem::InvalidCheckpoint)?;
     if history.len() >= MAX_CHECKPOINTS {
         return Err(CheckpointStoreProblem::Conflict);
