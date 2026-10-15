@@ -270,6 +270,23 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      # P2-3c uses native Basic Storage and EventJournal providers; do not
+      # add a second checkpoint database or a separate architecture CI gate.
+      p2CompactionStoreCheck = rust.buildRustPackage {
+        pname = "phenix-plugin-compaction-store";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-p2-compaction-replay
+          ./crates/phenix-plugin-compaction-store
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-compaction-store" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-compaction-store" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
         "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
@@ -281,7 +298,7 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 4, report
+        assert len(report["definitions"]) == 5, report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -1599,6 +1616,7 @@
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
+        p2-compaction-store = p2CompactionStoreCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
