@@ -343,6 +343,10 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | P1 | B5, F1, F2, R1 | Basic package composition, executable product fixtures and release evidence | Start terminal, submit prompt, discover/execute tools across turns, stream answer, restart/continue session; JSONL and ACP use unchanged agent/kernel logic | [x] ACCEPTED: main `68f46f63` passed integrated P1 product, independent ACP, canonical, matrix, DAG and release preflight; see [P1 release acceptance](p1-release-acceptance.md). |
 | F3 | P1, S5; S6 only for concurrent-session acceptance | Migrate named reactive plugin consumers/producers and the frontend host to generated hooks; prove ACP and Terminal/JSONL parity | All required plugins in the F3 migration inventory use typed declarative handlers instead of redundant watch registration, journal polling or event dispatch; preserve durable event order, cancellation, scopes and transport ownership | [ ] PLANNED POST-P1: inventory and migration gates specified; implementation pending |
 
+| P2a | P1 accepted | Common host-side session execution driver and SDK handles | Submit, observe, cancel and drain through one kernel-owning controller; remove frontend-specific polling without a second kernel scheduler | [ ] PLANNED: post-P1 only |
+| P2b | P2a | Session hub and independently typed client projections | Multiple authorized frontends observe one canonical session using separate subscriptions, cursors, replay boundaries, queues and protocol-specific views | [ ] PLANNED: post-P1 only |
+| P2c | P2a; P2b for projection routes | Plugin-declared typed I/O ports and configurable forwarding | Multiple ports and one-to-many sinks including pipes/sockets; route authority, backpressure, shutdown and revocation; no kernel dispatch per raw byte | [ ] PLANNED: post-P1 only |
+| P2d | P2b, P2c | Multi-client protocol and I/O fixtures | ACP v1, official ACP v2 and WebUI share session state without sharing wire streams; exercise reconnect, isolation, concurrent commands and multi-sink routing | [ ] PLANNED: post-P1 only |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -350,6 +354,66 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | I1 | K3 | `phenix-plugin-introspection` | Independent optional typed, discoverable contract projection over authorized kernel query APIs; no direct unrestricted host handles, no dependency on L1 | [ ] NOT STARTED |
 
 G1-G4 refine S4/S5 using one resolver and dispatcher. S6 remains outside the Basic critical path. B1 can proceed after G1, F1 after G3, and P1 requires G4. K1-K3 and L1/I1 are independent operations milestones, not Basic product blockers.
+
+### Post-P1 P2: shared session projections and typed I/O routing
+
+**Start gate.** Begin P2a-P2d only after P1 passes complete independent
+product and shipping acceptance. These stages do not expand P1 scope, alter
+its CI gates or block its integration. Keep separate follow-up implementation PRs.
+
+**Goal.** One Phenix instance owns the canonical session. Multiple frontend
+connections attach with independent read/action grants, subscriptions,
+protocol adapters, replay cursors and delivery queues. They synchronize
+their authorized view of state and events, not raw sockets, pipes or frames.
+ACP v1, ACP v2, ACP extensions and WebUI may coexist in one process.
+
+**P2a: execution driver.** Extract duplicated ACP, Terminal and JSONL graph
+polling, cancellation and draining into one host-side controller. Expose
+scoped handles with proposed `session.submit(...)`, `session.cancel(...)`
+and `session.attach(...)`. The controller retains `GraphExecution` on its
+kernel-owning thread and drives readiness, pending tickets and physical
+lease draining. Reuse existing authority, generation, root, dispatch and
+wake mechanisms; do not create another scheduler, dispatcher or agent loop.
+Prefer a wake-driven driver over each frontend's fixed-interval polling.
+
+**P2b: projections.** Provide versioned typed contracts for `SessionView`,
+`SessionChange`, `Subscription`, `Projector` and `Cursor`. Names remain
+proposals until SDK authoring review. Projectors map one canonical session
+into protocol-specific updates without copying the session or knowing what
+other frontends received. Reuse `ValueRef` watches for state and B2
+EventJournal cursors for durable ordered events. Attach using a consistent
+snapshot/replay boundary, including when changes commit during attachment.
+Each client owns a bounded queue, cursor, backpressure and disconnect policy.
+Filter by authorized resources before serialization. Slow or disconnected
+observers cannot stall execution or advance another observer's cursor.
+
+**P2c: I/O routing.** Plugins declare any number of distinct typed input and
+output ports, including names, payload schemas and authority requirements.
+Composition configures their destinations and one-to-many forwarding to
+other plugin ports, pipes, sockets and frontend sinks. Each sink has its
+own queue, error and close behavior. Authenticate source/destination grants
+when binding; handle generation changes, scope revocation and disconnect.
+Semantic state-mutating commands use kernel admission. Authorized raw-byte
+streams use maintained I/O crates rather than graph invocation per chunk.
+Reuse protocol/transport libraries, notably the official ACP SDK.
+
+**P2d: integration gate.** Start ACP v1 and WebUI clients on the same
+session, plus ACP v2 through its supported official protocol adapter.
+All receive the same permitted underlying conversation, tool lifecycle and
+run result through their own protocol projections. Extension clients may
+subscribe to additional fields without exposing them to basic clients.
+Permit authorized commands from either client without duplicate tool
+effects or bypassing session ownership. Reconnect only one client; verify
+consistent snapshot plus ordered replay, separate cursors and no missed
+commits. Exercise denied reads/routes, redaction, bounded slow consumers,
+multi-destination pipes/sockets, disconnect, cancellation and physical
+draining. A client disconnect does not cancel a shared run by default;
+explicit authorized lifetime policy may do so. Use independent SDK clients
+rather than only self-to-self mocks.
+
+**Non-goals.** No second session registry, event journal, agent executor
+or kernel-native network/protocol stack. No assumption that clients share
+wire bytes or that ACP v2 unsupported operations already work.
 
 ### Library and protocol reuse policy (R1)
 
