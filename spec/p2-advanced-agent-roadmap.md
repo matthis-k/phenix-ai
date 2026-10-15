@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: ROADMAP. P2-0/P2-1 have partial, unmerged review work in PRs #895-#898; the Advanced product and its release gates are not accepted.
+Status: IN PROGRESS. P2-0 composition, P2-1 evidence components and P2-2a project storage are merged into `main`. The Advanced product and P2 release gates remain unaccepted.
 Updated: 2026-10-15
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
@@ -12,7 +12,7 @@ P2 is the Advanced agent product. Its kernel is the same M1 kernel as P1. Phenix
 
 The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, architecture decision review and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
 
-**Sequence:** preserve the accepted P1 baseline and require the single-authority CI cutover before P2 release integration. Existing P2 implementation slices are unmerged review work, not release acceptance. Tests are written RED before implementation for every feature slice. Each implementation PR is ready for review when executable code exists. An exact-head full CI pass is required for release acceptance.
+**Sequence:** preserve the accepted P1 baseline and single-authority CI. PRs #897, #898, #899, #901 and #902 merged on 15 October 2026 after their PR-head checks passed. The resulting `main` commit is `aa48137bc2fb`. Its production CI is separate from PR-head verification. Tests are written RED before implementation for every feature slice. An exact-head full CI pass is required for release acceptance.
 
 ## Five immutable package compositions
 
@@ -36,7 +36,7 @@ Refactor the P1 flake's basicCompositionSpec, historyVerificationComposition and
 | --- | --- | --- | --- |
 | P2-0: composition and parity | P1 + CI authority | Freeze oldmain versus P1/P2 behavior inventory, five preset derivations, contracts, separate fixture package | Launch/inspect all presets; prove Basic binary/behavior unchanged; verification plugins excluded from public closure |
 | P2-1: evidence model | P2-0 | Typed references, memory scopes, temporal/freshness metadata and durable evidence links | Stable references survive restart; stale/forged/out-of-scope references reject |
-| P2-2: shared memory | P2-1 | Authenticated project/session scopes; durable evidence projections, retrieval, supersession and optional curation; retain the existing EvidenceStore contract | Cross-session project recall, CAS, restart, scope denial, temporal correction and no invented provenance |
+| P2-2: shared memory | P2-1 | P2-2a stores project records under authenticated project roots. P2-2b must bind Basic sessions to stable project identities through authorized membership, then retrieve source-checked evidence across those sessions. Optional curation follows. Keep the existing EvidenceStore contract. | Cross-session project recall, CAS, restart, revocation, scope denial, temporal correction and no invented provenance |
 | P2-3: reversible compaction | P2-1; may build alongside P2-2 | Policy, summaries, snapshot lineage, deterministic expansion and source hydration | Tight-window continuation, exact replay/rehydration, crash safety, no duplicated tool effects |
 | P2-4: deterministic code intelligence | P2-1; integrate with P2-6 workspace edits | Revisioned code-entity graph, lineage, edit validation, provider evidence, incremental reconciliation and memory links | Rename/move/split/delete, provider disagreement, failed edit, external change and crash/rebuild integrity |
 | P2-5: graph contributions and hot reload | P2-0; P2-1 for persistent plugin state | Recompose immutable candidate graph from versioned plugin node/edge/trigger contributions on replacement or authorized runtime selection | Updated plugin inserts workflow steps; new roots use new topology, old roots finish old graph; invalid candidates roll back |
