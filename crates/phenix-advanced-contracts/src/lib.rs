@@ -148,7 +148,9 @@ fn valid_identity(s: &str) -> bool {
 }
 
 fn valid_digest(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub fn validate_reference(source: &SourceRef) -> Result<(), EvidenceProblem> {
@@ -191,7 +193,10 @@ pub fn validate_record(record: &EvidenceRecord) -> Result<(), EvidenceProblem> {
     if record.confidence_basis_points > 10_000 {
         return Err(EvidenceProblem::InvalidConfidence);
     }
-    if record.valid_until.is_some_and(|end| end <= record.valid_from) {
+    if record
+        .valid_until
+        .is_some_and(|end| end <= record.valid_from)
+    {
         return Err(EvidenceProblem::InvalidValidity);
     }
     if record.supersedes.iter().any(|id| id == &record.id) {
