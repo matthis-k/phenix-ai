@@ -16,7 +16,11 @@ fn event(number: u64, kind: EventKind, text: &str, call_id: &str) -> Event {
         kind,
         call_id: call_id.into(),
         text: text.into(),
-        data: Blob(if number == 5 { b"exact-result".to_vec() } else { vec![] }),
+        data: Blob(if number == 5 {
+            b"exact-result".to_vec()
+        } else {
+            vec![]
+        }),
     }
 }
 
@@ -31,11 +35,7 @@ fn journal() -> Vec<Event> {
     ]
 }
 
-fn checkpoint(
-    source: &[Event],
-    summary_end: usize,
-    retained_end: usize,
-) -> CompactionCheckpoint {
+fn checkpoint(source: &[Event], summary_end: usize, retained_end: usize) -> CompactionCheckpoint {
     let summarized = vec![span_for_events(&source[..summary_end]).unwrap()];
     let retained = if retained_end > summary_end {
         vec![span_for_events(&source[summary_end..retained_end]).unwrap()]
@@ -110,8 +110,14 @@ fn in_flight_tool_calls_block_compaction() {
 fn a_tight_budget_refuses_truncation_instead_of_losing_provenance() {
     let originals = journal();
     let cp = checkpoint(&originals, 2, 6);
-    assert_eq!(compacted_view(&cp, &originals, 0), Err(ViewProblem::InvalidBudget));
-    assert_eq!(compacted_view(&cp, &originals, 12), Err(ViewProblem::OverBudget));
+    assert_eq!(
+        compacted_view(&cp, &originals, 0),
+        Err(ViewProblem::InvalidBudget)
+    );
+    assert_eq!(
+        compacted_view(&cp, &originals, 12),
+        Err(ViewProblem::OverBudget)
+    );
     assert_eq!(originals.len(), 6);
 }
 
