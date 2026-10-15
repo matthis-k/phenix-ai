@@ -783,6 +783,24 @@
       kernelBinaryClosure = pkgs.closureInfo {
         rootPaths = [ kernel ];
       };
+      p2SourceEvidenceRunner = build "phenix-p2-source-evidence" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-source-evidence
+      ]));
+      p2SourceEvidenceProductCheck = pkgs.runCommand "phenix-p2-source-evidence-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-source-evidence-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2SourceEvidenceRunner}/bin/phenix-p2-source-evidence \
+          ${evidenceJournal} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-source-evidence-product.json"
+      '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1321,6 +1339,7 @@
         basic-history-verification = historyVerificationCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-evidence-contracts = advancedContractsCheck;
+        p2-source-evidence-product = p2SourceEvidenceProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
