@@ -9,7 +9,8 @@ use std::{collections::BTreeSet, env, time::Duration};
 
 const TABLE: &str = "CREATE TABLE IF NOT EXISTS project_records (project TEXT NOT NULL, name TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0), data BLOB NOT NULL, PRIMARY KEY (project, name)) WITHOUT ROWID";
 const MEMBERSHIP_TABLE: &str = "CREATE TABLE IF NOT EXISTS project_membership (project TEXT NOT NULL, session TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0), active INTEGER NOT NULL CHECK (active IN (0, 1)), PRIMARY KEY (project, session)) WITHOUT ROWID";
-const MEMBER_READ: &str = "SELECT revision, active FROM project_membership WHERE project = ?1 AND session = ?2";
+const MEMBER_READ: &str =
+    "SELECT revision, active FROM project_membership WHERE project = ?1 AND session = ?2";
 const MEMBER_UPSERT: &str = "INSERT INTO project_membership (project, session, revision, active) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(project, session) DO UPDATE SET revision = excluded.revision, active = excluded.active";
 const READ: &str = "SELECT revision, data FROM project_records WHERE project = ?1 AND name = ?2";
 const UPSERT: &str = "INSERT INTO project_records (project, name, revision, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(project, name) DO UPDATE SET revision = excluded.revision, data = excluded.data";
@@ -202,7 +203,10 @@ fn membership_read(
     conn: &Connection,
     project: &str,
     session: &str,
-) -> Result<Option<phenix_advanced_contracts::ProjectMember>, phenix_advanced_contracts::ProjectMembershipError> {
+) -> Result<
+    Option<phenix_advanced_contracts::ProjectMember>,
+    phenix_advanced_contracts::ProjectMembershipError,
+> {
     let row: Option<(i64, i64)> = conn
         .query_row(MEMBER_READ, params![project, session], |row| {
             Ok((row.get(0)?, row.get(1)?))
@@ -220,35 +224,58 @@ fn membership_read(
             revision,
             active: active == 1,
         })
-    }).transpose()
+    })
+    .transpose()
 }
 
 /// Serialized compare-and-swap preserves grants and revocations across
 /// processes. Only the project-authorized host may call this operation.
 pub fn set_membership(
     change: phenix_advanced_contracts::ProjectMemberChange,
-) -> Result<phenix_advanced_contracts::ProjectMember, phenix_advanced_contracts::ProjectMembershipError> {
+) -> Result<
+    phenix_advanced_contracts::ProjectMember,
+    phenix_advanced_contracts::ProjectMembershipError,
+> {
     use phenix_advanced_contracts::{ProjectMember, ProjectMembershipProblem};
     if !valid(&change.project, &change.session) {
         return Err(membership_invalid());
     }
-    let revision = change.expected.checked_add(1)
+    let revision = change
+        .expected
+        .checked_add(1)
         .and_then(|next| i64::try_from(next).ok())
-        .ok_or_else(|| membership_error(ProjectMembershipProblem::Conflict, "membership revision overflow"))?;
+        .ok_or_else(|| {
+            membership_error(
+                ProjectMembershipProblem::Conflict,
+                "membership revision overflow",
+            )
+        })?;
     let mut conn = open().map_err(|_| membership_failed())?;
-    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| membership_failed())?;
     let old = membership_read(&transaction, &change.project, &change.session)?;
     let previous = old.as_ref().map_or(0, |record| record.revision);
     if previous != change.expected {
-        return Err(membership_error(ProjectMembershipProblem::Conflict, "membership revision conflict"));
+        return Err(membership_error(
+            ProjectMembershipProblem::Conflict,
+            "membership revision conflict",
+        ));
     }
     if previous == 0 && !change.active {
         return Err(membership_denied());
     }
-    transaction.execute(MEMBER_UPSERT, params![
-        &change.project, &change.session, revision, i64::from(change.active)
-    ]).map_err(|_| membership_failed())?;
+    transaction
+        .execute(
+            MEMBER_UPSERT,
+            params![
+                &change.project,
+                &change.session,
+                revision,
+                i64::from(change.active)
+            ],
+        )
+        .map_err(|_| membership_failed())?;
     transaction.commit().map_err(|_| membership_failed())?;
     Ok(ProjectMember {
         project: change.project,
@@ -265,12 +292,14 @@ pub fn set_membership(
     provide(phenix_advanced_contracts::ProjectMembership, slot = "Membership")
 )]
 mod plugin {
-    use super::{error, invalid, membership_denied, membership_failed, membership_invalid,
-        membership_read, open, select, set_membership, transact, valid};
+    use super::{
+        error, invalid, membership_denied, membership_failed, membership_invalid, membership_read,
+        open, select, set_membership, transact, valid,
+    };
     use phenix_advanced_contracts::{
-        ProjectRecord, ProjectRecordKey, ProjectStorage, ProjectStorageError,
-        ProjectStorageProblem, ProjectTransaction, ProjectMembership, ProjectMemberKey,
-        ProjectMemberChange, ProjectMember, ProjectMembershipError,
+        ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembership,
+        ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
+        ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -298,7 +327,8 @@ mod plugin {
         change: ProjectMemberChange,
     ) -> CallResult<ProjectMember, ProjectMembershipError> {
         if !valid(&change.project, &change.session)
-            || host.resource()?.as_deref() != Some(format!("phenix.project.{}", change.project).as_str())
+            || host.resource()?.as_deref()
+                != Some(format!("phenix.project.{}", change.project).as_str())
         {
             return Err(CallError::Domain(membership_denied()));
         }
@@ -317,7 +347,9 @@ mod plugin {
         if host.resource()?.as_deref() != Some(format!("phenix.session.{}", key.session).as_str()) {
             return Err(CallError::Domain(membership_denied()));
         }
-        let conn = open().map_err(|_| membership_failed()).map_err(CallError::Domain)?;
+        let conn = open()
+            .map_err(|_| membership_failed())
+            .map_err(CallError::Domain)?;
         match membership_read(&conn, &key.project, &key.session).map_err(CallError::Domain)? {
             Some(member) if member.active => Ok(member),
             _ => Err(CallError::Domain(membership_denied())),
