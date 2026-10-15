@@ -36,6 +36,7 @@ pub enum ViewProblem {
     InvalidToolSequence,
     SplitToolCall,
     UnresolvedToolCall,
+    NonPrefixSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,19 @@ pub fn compacted_view(
     // any potentially sensitive content enters the selected view.
     let original = restore_original_events(checkpoint, journal).map_err(ViewProblem::Replay)?;
 
+    // A single summary can only replace the initial contiguous prefix.
+    // Otherwise emitting that summary once would reorder later historical
+    // content across retained or explicitly excluded events.
+    let mut left_summary_prefix = false;
+    for event in &original {
+        match visibility(checkpoint, event.sequence) {
+            Visibility::Summarized if left_summary_prefix => {
+                return Err(ViewProblem::NonPrefixSummary);
+            }
+            Visibility::Summarized => {}
+            Visibility::Retained | Visibility::Excluded => left_summary_prefix = true,
+        }
+    }
     let mut active: BTreeMap<&str, Visibility> = BTreeMap::new();
     for event in &original {
         match &event.kind {
@@ -96,9 +110,7 @@ pub fn compacted_view(
                 let Some(start_visibility) = active.remove(event.call_id.as_str()) else {
                     return Err(ViewProblem::InvalidToolSequence);
                 };
-                if (start_visibility == Visibility::Retained)
-                    != (visibility(checkpoint, event.sequence) == Visibility::Retained)
-                {
+                if start_visibility != visibility(checkpoint, event.sequence) {
                     return Err(ViewProblem::SplitToolCall);
                 }
             }
