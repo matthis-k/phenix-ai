@@ -50,13 +50,16 @@ recalled = run(evidence, "project-recall")
 assert recalled["reader"] == "s2"
 assert recalled["statement"] == "The project color is blue"
 assert recalled["unapproved_session_denied"] is True
+assert recalled["unapproved_write_denied"] is True
 assert recalled["cross_project_denied"] is True
+assert recalled["cross_project_write_denied"] is True
 assert run(project, "source-changed")["stale_revision_changed"] is True
 stale = run(evidence, "project-stale")
 assert stale["source_changed"] is True
 assert run(project, "member-revoke")["revoked"] is True
 revoked = run(evidence, "project-revoked")
 assert revoked["revoked_session_denied"] is True
+assert revoked["revoked_write_denied"] is True
 assert revoked["retained_session_source_changed"] is True
 
 (out / "p2-project-evidence-product.json").write_text(json.dumps({
@@ -70,6 +73,8 @@ assert revoked["retained_session_source_changed"] is True
         "stale-revision-denial",
         "revocation-denies-active-projection",
         "foreign-and-nonmember-denial",
+        "foreign-and-nonmember-write-denial",
+        "revoked-member-write-denial",
         "existing-session-journals-not-exposed",
     ],
 }, indent=2))
