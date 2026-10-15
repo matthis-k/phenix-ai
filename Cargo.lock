@@ -1073,6 +1073,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-evidence-journal"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "sha2",
+]
+
+[[package]]
 name = "phenix-plugin-event-journal"
 version = "0.1.0"
 dependencies = [
