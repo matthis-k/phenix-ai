@@ -132,9 +132,6 @@ pub fn select_records(
     }
     let mut selected = BTreeMap::<&str, &EvidenceRecord>::new();
     for entry in history {
-        if entry.freshness == EvidenceFreshness::Withdrawn {
-            continue;
-        }
         if as_of.is_some_and(|when| !entry.valid_at(when)) {
             continue;
         }
@@ -148,7 +145,10 @@ pub fn select_records(
     let query = text.to_lowercase();
     let matching = selected
         .values()
-        .filter(|entry| entry.statement.to_lowercase().contains(&query))
+        .filter(|entry| {
+            entry.freshness != EvidenceFreshness::Withdrawn
+                && entry.statement.to_lowercase().contains(&query)
+        })
         .copied()
         .collect::<Vec<_>>();
     // The v1 request has no incoming cursor. Never silently truncate results.
