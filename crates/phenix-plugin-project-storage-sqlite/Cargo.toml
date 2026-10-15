@@ -11,3 +11,5 @@ crate-type = ["cdylib", "rlib"]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-advanced-contracts = { path = "../phenix-advanced-contracts" }
 rusqlite = "0.37.0"
+
+sha2 = "0.10"

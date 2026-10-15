@@ -9,3 +9,5 @@ phenix-contract.workspace = true
 phenix-kernel = { path = "../phenix-kernel" }
 phenix-advanced-contracts = { path = "../phenix-advanced-contracts" }
 serde_json.workspace = true
+
+sha2 = "0.10"

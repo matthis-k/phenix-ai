@@ -5,6 +5,7 @@ use phenix_advanced_contracts::{
     ProjectEdit, ProjectRecord, ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, env, time::Duration};
 
 const TABLE: &str = "CREATE TABLE IF NOT EXISTS project_records (project TEXT NOT NULL, name TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0), data BLOB NOT NULL, PRIMARY KEY (project, name)) WITHOUT ROWID";
@@ -285,23 +286,104 @@ pub fn set_membership(
     })
 }
 
+const PROJECT_OWNER: &str = "phenix.advanced.project-storage-sqlite";
+
+fn source_error(
+    problem: phenix_advanced_contracts::EvidenceProblem,
+    message: &str,
+) -> phenix_advanced_contracts::EvidenceError {
+    phenix_advanced_contracts::EvidenceError {
+        problem,
+        message: message.into(),
+    }
+}
+
+/// Create a source reference to one exact project-record revision. The
+/// source provider returns the live revision and digest on each observation.
+pub fn project_record_reference(
+    project: &str,
+    key: &str,
+    record: &phenix_advanced_contracts::ProjectRecord,
+) -> Result<phenix_advanced_contracts::SourceRef, phenix_advanced_contracts::EvidenceError> {
+    use phenix_advanced_contracts::{EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceRef};
+    if !valid(project, key) || key.contains('@') || record.revision == 0 {
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "invalid project source identity",
+        ));
+    }
+    let digest = Sha256::digest(&record.data.0);
+    Ok(SourceRef {
+        owner: PROJECT_OWNER.into(),
+        resource: format!("phenix.project.{project}"),
+        revision: format!("{key}@{}", record.revision),
+        digest_sha256: format!("{digest:x}"),
+        range_start: 0,
+        range_end: 0,
+        scope: EvidenceScope {
+            kind: EvidenceScopeKind::Project,
+            id: project.into(),
+        },
+    })
+}
+
+fn parse_project_source(
+    reference: &phenix_advanced_contracts::SourceRef,
+) -> Result<&str, phenix_advanced_contracts::EvidenceError> {
+    use phenix_advanced_contracts::{validate_reference, EvidenceProblem, EvidenceScopeKind};
+    validate_reference(reference).map_err(|p| source_error(p, "invalid source reference"))?;
+    if reference.owner != PROJECT_OWNER
+        || reference.scope.kind != EvidenceScopeKind::Project
+        || !phenix_sdk::identifier(&reference.scope.id)
+        || reference.resource != format!("phenix.project.{}", reference.scope.id)
+        || reference.range_start != 0
+        || reference.range_end != 0
+    {
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "source is not a project record",
+        ));
+    }
+    let (key, revision) = reference.revision.rsplit_once('@').ok_or_else(|| {
+        source_error(EvidenceProblem::InvalidIdentity, "invalid project revision")
+    })?;
+    let parsed = revision
+        .parse::<u64>()
+        .map_err(|_| source_error(EvidenceProblem::InvalidIdentity, "invalid source revision"))?;
+    if !phenix_sdk::identifier(key)
+        || key.contains('@')
+        || parsed == 0
+        || parsed.to_string() != revision
+    {
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "invalid project record revision",
+        ));
+    }
+    Ok(key)
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.advanced.project-storage-sqlite",
     version = "1.0.0",
     provide(phenix_advanced_contracts::ProjectStorage, slot = "ProjectStorage"),
-    provide(phenix_advanced_contracts::ProjectMembership, slot = "Membership")
+    provide(phenix_advanced_contracts::ProjectMembership, slot = "Membership"),
+    provide(phenix_advanced_contracts::SourceEvidence, slot = "ProjectSource")
 )]
 mod plugin {
     use super::{
         error, invalid, membership_denied, membership_failed, membership_invalid, membership_read,
-        open, select, set_membership, transact, valid,
+        open, parse_project_source, project_record_reference, select, set_membership, source_error,
+        transact, valid,
     };
     use phenix_advanced_contracts::{
-        ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembership,
-        ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
-        ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
+        EvidenceError, EvidenceProblem, ProjectMember, ProjectMemberChange, ProjectMemberKey,
+        ProjectMembership, ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
+        ProjectStorageError, ProjectStorageProblem, ProjectTransaction, SourceEvidence,
+        SourceObservation, SourceRef,
     };
     use phenix_sdk::{CallError, CallResult, Host};
+    use rusqlite::TransactionBehavior;
 
     #[derive(Default)]
     pub struct State;
@@ -318,6 +400,36 @@ mod plugin {
             )));
         }
         Ok(())
+    }
+
+    fn authorized_project_read(
+        conn: &rusqlite::Connection,
+        host: &Host<'_>,
+        project: &str,
+    ) -> CallResult<(), ProjectStorageError> {
+        let resource = host.resource()?.unwrap_or_default();
+        if resource == format!("phenix.project.{project}") {
+            return Ok(());
+        }
+        let membership = match resource.strip_prefix("phenix.session.") {
+            Some(session) if phenix_sdk::identifier(session) => {
+                membership_read(conn, project, session).map_err(|_| {
+                    CallError::Domain(error(
+                        ProjectStorageProblem::StorageFailed,
+                        "project membership lookup failed",
+                    ))
+                })?
+            }
+            _ => None,
+        };
+        if membership.is_some_and(|record| record.active) {
+            Ok(())
+        } else {
+            Err(CallError::Domain(error(
+                ProjectStorageProblem::Denied,
+                "project read requires active membership",
+            )))
+        }
     }
 
     #[provide(ProjectMembership::set)]
@@ -356,6 +468,63 @@ mod plugin {
         }
     }
 
+    #[provide(SourceEvidence::observe)]
+    fn observe(
+        _: &mut State,
+        host: &Host<'_>,
+        reference: SourceRef,
+    ) -> CallResult<SourceObservation, EvidenceError> {
+        let key = parse_project_source(&reference).map_err(CallError::Domain)?;
+        let mut conn = open().map_err(|_| {
+            CallError::Domain(source_error(
+                EvidenceProblem::StorageFailed,
+                "project source storage failed",
+            ))
+        })?;
+        // The membership check and source read share one SQLite snapshot.
+        // A concurrent revocation cannot commit between those two reads.
+        let txn = conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::StorageFailed,
+                    "project source read transaction failed",
+                ))
+            })?;
+        authorized_project_read(&txn, host, &reference.scope.id).map_err(|error| match error {
+            CallError::Kernel(failure) => CallError::Kernel(failure),
+            CallError::Domain(inner) => CallError::Domain(source_error(
+                if inner.problem == ProjectStorageProblem::Denied {
+                    EvidenceProblem::ScopeDenied
+                } else {
+                    EvidenceProblem::StorageFailed
+                },
+                "project source access denied or unavailable",
+            )),
+        })?;
+        let actual = select(&txn, &reference.scope.id, key)
+            .map_err(|_| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::StorageFailed,
+                    "invalid project source storage",
+                ))
+            })?
+            .ok_or_else(|| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::NotFound,
+                    "project source not found",
+                ))
+            })?;
+        let current = project_record_reference(&reference.scope.id, key, &actual)
+            .map_err(CallError::Domain)?;
+        Ok(SourceObservation {
+            owner: current.owner,
+            resource: current.resource,
+            revision: current.revision,
+            digest_sha256: current.digest_sha256,
+        })
+    }
+
     #[provide(ProjectStorage::read)]
     fn read(
         _: &mut State,
@@ -365,30 +534,18 @@ mod plugin {
         if !valid(&key.project, &key.key) {
             return Err(CallError::Domain(invalid()));
         }
-        let conn = open().map_err(CallError::Domain)?;
-        let resource = host.resource()?.unwrap_or_default();
-        if resource != format!("phenix.project.{}", key.project) {
-            let member = if let Some(session) = resource
-                .strip_prefix("phenix.session.")
-                .filter(|session| phenix_sdk::identifier(session))
-            {
-                membership_read(&conn, &key.project, session).map_err(|_| {
-                    CallError::Domain(error(
-                        ProjectStorageProblem::StorageFailed,
-                        "project membership lookup failed",
-                    ))
-                })?
-            } else {
-                None
-            };
-            if !member.is_some_and(|record| record.active) {
-                return Err(CallError::Domain(error(
-                    ProjectStorageProblem::Denied,
-                    "project record read requires active project membership",
-                )));
-            }
-        }
-        select(&conn, &key.project, &key.key)
+        let mut conn = open().map_err(CallError::Domain)?;
+        // Freeze authorization and record data in the same snapshot.
+        let txn = conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| {
+                CallError::Domain(error(
+                    ProjectStorageProblem::StorageFailed,
+                    "project read transaction failed",
+                ))
+            })?;
+        authorized_project_read(&txn, host, &key.project)?;
+        select(&txn, &key.project, &key.key)
             .and_then(|record| {
                 record
                     .ok_or_else(|| error(ProjectStorageProblem::NotFound, "project record missing"))
@@ -410,6 +567,65 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_source_read_keeps_membership_and_data_in_one_snapshot() {
+        // WAL allows a revocation to commit while a read is in flight.
+        // The reader must observe one consistent membership and record revision.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "phenix-project-snapshot-{}-{nonce}.sqlite",
+            std::process::id()
+        ));
+        let seeded = Connection::open(&path).unwrap();
+        seeded.execute_batch("PRAGMA journal_mode=WAL").unwrap();
+        seeded.execute_batch(TABLE).unwrap();
+        seeded.execute_batch(MEMBERSHIP_TABLE).unwrap();
+        seeded
+            .execute(MEMBER_UPSERT, params!["alpha", "s1", 1_i64, 1_i64])
+            .unwrap();
+        seeded
+            .execute(UPSERT, params!["alpha", "theme", 1_i64, &b"blue"[..]])
+            .unwrap();
+
+        let mut reader = Connection::open(&path).unwrap();
+        let snapshot = reader
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .unwrap();
+        assert!(
+            membership_read(&snapshot, "alpha", "s1")
+                .unwrap()
+                .unwrap()
+                .active
+        );
+        let writer = Connection::open(&path).unwrap();
+        writer
+            .execute(MEMBER_UPSERT, params!["alpha", "s1", 2_i64, 0_i64])
+            .unwrap();
+
+        assert!(
+            membership_read(&snapshot, "alpha", "s1")
+                .unwrap()
+                .unwrap()
+                .active
+        );
+        let record = select(&snapshot, "alpha", "theme").unwrap().unwrap();
+        assert_eq!(record.revision, 1);
+        assert_eq!(record.data.0, b"blue");
+        drop(snapshot);
+        let revoked = membership_read(&reader, "alpha", "s1").unwrap().unwrap();
+        assert_eq!(revoked.revision, 2);
+        assert!(!revoked.active);
+        drop(reader);
+        drop(writer);
+        drop(seeded);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 
     #[test]
     fn duplicate_and_invalid_edits_fail_before_opening_a_database() {
