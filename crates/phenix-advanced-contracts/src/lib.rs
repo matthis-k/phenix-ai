@@ -314,6 +314,56 @@ pub trait ProjectMembership {
     fn get(&self, key: ProjectMemberKey) -> Result<ProjectMember, ProjectMembershipError>;
 }
 
+/// Checkpoints are session-scoped derived views, never the Basic journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum CompactionStoreProblem {
+    InvalidCheckpoint,
+    InvalidLineage,
+    Conflict,
+    ScopeDenied,
+    SourceChanged,
+    NotFound,
+    StorageFailed,
+    CapacityExceeded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct CompactionStoreError {
+    pub problem: CompactionStoreProblem,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct CompactionCheckpointCommit {
+    pub checkpoint: CompactionCheckpoint,
+    /// The previous authoritative Storage revision (zero if no record).
+    pub expected: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct CompactionCheckpointKey {
+    pub session: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct StoredCompactionCheckpoint {
+    pub checkpoint: CompactionCheckpoint,
+    pub storage_revision: u64,
+}
+
+#[contract(id = "phenix.advanced.compaction-store@1")]
+pub trait CompactionStore {
+    fn commit(
+        &self,
+        request: CompactionCheckpointCommit,
+    ) -> Result<StoredCompactionCheckpoint, CompactionStoreError>;
+    fn get(
+        &self,
+        request: CompactionCheckpointKey,
+    ) -> Result<StoredCompactionCheckpoint, CompactionStoreError>;
+}
+
 #[contract(id = "phenix.advanced.project-storage@1")]
 pub trait ProjectStorage {
     fn read(&self, key: ProjectRecordKey) -> Result<ProjectRecord, ProjectStorageError>;
@@ -348,6 +398,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(EvidenceStore),
     define(ProjectStorage),
     define(ProjectMembership),
+    define(CompactionStore),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -362,7 +413,7 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 4);
+        assert_eq!(metadata.definitions.len(), 5);
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());
