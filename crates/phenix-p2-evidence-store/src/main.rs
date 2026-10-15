@@ -18,9 +18,6 @@ const RESOURCE: &str = "phenix.session.s1";
 const FIRST: &str = "mock:echo:The project color was violet";
 const SECOND: &str = "mock:echo:The project color is blue";
 
-fn key(interface: &str, operation: &str) -> String {
-    format!("{interface}/{operation}")
-}
 fn grant(caller: &str, interface: &str, operation: &str) -> ScopedGrant {
     ScopedGrant {
         caller: caller.into(),
