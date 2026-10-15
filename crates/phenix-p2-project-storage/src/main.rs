@@ -458,12 +458,7 @@ fn member_live_revoke(fixture: &Fixture) -> serde_json::Value {
     };
     assert_eq!(ProjectRecord::from_value(value).unwrap().data.0, b"blue");
 
-    let policy = fixture.composition(
-        "phenix.session.s1".into(),
-        INTERFACE,
-        &["read"],
-        "read",
-    );
+    let policy = fixture.composition("phenix.session.s1".into(), INTERFACE, &["read"], "read");
     let kernel = Prepared::prepare(policy).unwrap().load().unwrap();
     let admitted = kernel.admit_default_root().unwrap();
     let revoked = fixture.member_ok(
