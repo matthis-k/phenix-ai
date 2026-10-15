@@ -611,6 +611,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn project_source_read_keeps_membership_and_data_in_one_snapshot() {
+        // WAL allows a revocation to commit while a read is in flight.
+        // The reader must observe one consistent membership and record revision.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "phenix-project-snapshot-{}-{nonce}.sqlite",
+            std::process::id()
+        ));
+        let seeded = Connection::open(&path).unwrap();
+        seeded.execute_batch("PRAGMA journal_mode=WAL").unwrap();
+        seeded.execute_batch(TABLE).unwrap();
+        seeded.execute_batch(MEMBERSHIP_TABLE).unwrap();
+        seeded.execute(MEMBER_UPSERT, params!["alpha", "s1", 1_i64, 1_i64]).unwrap();
+        seeded.execute(UPSERT, params!["alpha", "theme", 1_i64, b"blue"]).unwrap();
+
+        let mut reader = Connection::open(&path).unwrap();
+        let snapshot = reader
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .unwrap();
+        assert!(membership_read(&snapshot, "alpha", "s1").unwrap().unwrap().active);
+        let writer = Connection::open(&path).unwrap();
+        writer.execute(MEMBER_UPSERT, params!["alpha", "s1", 2_i64, 0_i64]).unwrap();
+
+        assert!(membership_read(&snapshot, "alpha", "s1").unwrap().unwrap().active);
+        let record = select(&snapshot, "alpha", "theme").unwrap().unwrap();
+        assert_eq!(record.revision, 1);
+        assert_eq!(record.data.0, b"blue");
+        drop(snapshot);
+        let revoked = membership_read(&reader, "alpha", "s1").unwrap().unwrap();
+        assert_eq!(revoked.revision, 2);
+        assert!(!revoked.active);
+        drop(reader);
+        drop(writer);
+        drop(seeded);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn duplicate_and_invalid_edits_fail_before_opening_a_database() {
         let invalid = ProjectTransaction {
             project: "alpha".into(),
