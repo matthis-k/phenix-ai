@@ -626,18 +626,34 @@ mod tests {
         seeded.execute_batch("PRAGMA journal_mode=WAL").unwrap();
         seeded.execute_batch(TABLE).unwrap();
         seeded.execute_batch(MEMBERSHIP_TABLE).unwrap();
-        seeded.execute(MEMBER_UPSERT, params!["alpha", "s1", 1_i64, 1_i64]).unwrap();
-        seeded.execute(UPSERT, params!["alpha", "theme", 1_i64, &b"blue"[..]]).unwrap();
+        seeded
+            .execute(MEMBER_UPSERT, params!["alpha", "s1", 1_i64, 1_i64])
+            .unwrap();
+        seeded
+            .execute(UPSERT, params!["alpha", "theme", 1_i64, &b"blue"[..]])
+            .unwrap();
 
         let mut reader = Connection::open(&path).unwrap();
         let snapshot = reader
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .unwrap();
-        assert!(membership_read(&snapshot, "alpha", "s1").unwrap().unwrap().active);
+        assert!(
+            membership_read(&snapshot, "alpha", "s1")
+                .unwrap()
+                .unwrap()
+                .active
+        );
         let writer = Connection::open(&path).unwrap();
-        writer.execute(MEMBER_UPSERT, params!["alpha", "s1", 2_i64, 0_i64]).unwrap();
+        writer
+            .execute(MEMBER_UPSERT, params!["alpha", "s1", 2_i64, 0_i64])
+            .unwrap();
 
-        assert!(membership_read(&snapshot, "alpha", "s1").unwrap().unwrap().active);
+        assert!(
+            membership_read(&snapshot, "alpha", "s1")
+                .unwrap()
+                .unwrap()
+                .active
+        );
         let record = select(&snapshot, "alpha", "theme").unwrap().unwrap();
         assert_eq!(record.revision, 1);
         assert_eq!(record.data.0, b"blue");
