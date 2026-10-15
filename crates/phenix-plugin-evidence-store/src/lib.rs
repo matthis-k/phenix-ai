@@ -25,7 +25,7 @@ pub fn append_version(
     proposed: &EvidenceRecord,
 ) -> Result<Vec<EvidenceRecord>, EvidenceError> {
     validate_record(proposed).map_err(|p| issue(p, "invalid evidence record"))?;
-    if proposed.scope.kind != EvidenceScopeKind::Session
+    if !matches!(proposed.scope.kind, EvidenceScopeKind::Session | EvidenceScopeKind::Project)
         || !phenix_sdk::identifier(&proposed.scope.id)
         || !phenix_sdk::identifier(&proposed.id)
         || proposed.statement.len() > MAX_STATEMENT
@@ -169,14 +169,20 @@ pub fn select_records(
     define(phenix_basic_contracts::EventJournal),
     provide(phenix_advanced_contracts::EvidenceStore, slot = "Store"),
     require(phenix_advanced_contracts::SourceEvidence, slot = "Source"),
-    require(phenix_basic_contracts::Storage, slot = "Storage")
+    require(phenix_basic_contracts::Storage, slot = "Storage"),
+    require(phenix_advanced_contracts::ProjectStorage, slot = "ProjectStorage"),
+    require(phenix_advanced_contracts::ProjectMembership, slot = "Membership"),
+    require(phenix_advanced_contracts::SourceEvidence, slot = "ProjectSource")
 )]
 mod plugin {
     use super::{append_version, issue, latest, select_records, validate_ledger, RECORD_KEY};
     use phenix_advanced_contracts::{
         compare_source, decode, encode, EvidenceError, EvidenceFreshness, EvidenceKey,
         EvidencePage, EvidenceProblem, EvidenceRecord, EvidenceScope, EvidenceScopeKind,
-        EvidenceSearch, EvidenceStore, SourceEvidence, SourceMatch, SourceRef,
+        EvidenceSearch, EvidenceStore, ProjectEdit, ProjectMemberKey,
+        ProjectMembership, ProjectMembershipError, ProjectMembershipProblem,
+        ProjectRecord, ProjectRecordKey, ProjectStorage, ProjectStorageError,
+        ProjectStorageProblem, ProjectTransaction, SourceEvidence, SourceMatch, SourceRef,
     };
     use phenix_basic_contracts::{
         BasicError, ErrorCode, RecordKey, Storage, StorageEdit, StorageTransaction, StoredRecord,
@@ -187,19 +193,52 @@ mod plugin {
     pub struct State;
 
     fn authorize(host: &Host<'_>, scope: &EvidenceScope) -> CallResult<(), EvidenceError> {
-        if scope.kind != EvidenceScopeKind::Session || !phenix_sdk::identifier(&scope.id) {
+        if !phenix_sdk::identifier(&scope.id) {
             return Err(CallError::Domain(issue(
-                EvidenceProblem::ScopeDenied,
-                "only authenticated session scopes are supported",
+                EvidenceProblem::InvalidIdentity,
+                "invalid evidence scope",
             )));
         }
-        phenix_basic_contracts::check_session(host, &scope.id).map_err(|err| match err {
-            CallError::Kernel(failure) => CallError::Kernel(failure),
-            CallError::Domain(_) => CallError::Domain(issue(
-                EvidenceProblem::ScopeDenied,
-                "evidence scope is not authorized",
-            )),
-        })
+        match scope.kind {
+            EvidenceScopeKind::Session => {
+                phenix_basic_contracts::check_session(host, &scope.id).map_err(|err| match err {
+                    CallError::Kernel(failure) => CallError::Kernel(failure),
+                    CallError::Domain(_) => CallError::Domain(issue(
+                        EvidenceProblem::ScopeDenied, "session evidence is not authorized"
+                    )),
+                })
+            }
+            EvidenceScopeKind::Project => {
+                let resource = host.resource()?.unwrap_or_default();
+                let Some(session) = resource.strip_prefix("phenix.session.") else {
+                    return Err(CallError::Domain(issue(
+                        EvidenceProblem::ScopeDenied, "project evidence requires session authority"
+                    )));
+                };
+                if !phenix_sdk::identifier(session) {
+                    return Err(CallError::Domain(issue(
+                        EvidenceProblem::ScopeDenied, "invalid session authority"
+                    )));
+                }
+                let member = host.invoke::<ProjectMembership::get>(
+                    "Membership",
+                    &ProjectMemberKey { project: scope.id.clone(), session: session.into() },
+                ).map_err(|err| match err {
+                    CallError::Kernel(failure) => CallError::Kernel(failure),
+                    CallError::Domain(_) => CallError::Domain(issue(
+                        EvidenceProblem::ScopeDenied, "project membership denied"
+                    )),
+                })?;
+                if member.active { Ok(()) } else {
+                    Err(CallError::Domain(issue(
+                        EvidenceProblem::ScopeDenied, "project membership revoked"
+                    )))
+                }
+            }
+            _ => Err(CallError::Domain(issue(
+                EvidenceProblem::ScopeDenied, "unsupported evidence scope"
+            ))),
+        }
     }
 
     fn storage_failure(error: CallError<BasicError>) -> CallError<EvidenceError> {
@@ -217,28 +256,53 @@ mod plugin {
         }
     }
 
+    fn project_failure(error: CallError<ProjectStorageError>) -> CallError<EvidenceError> {
+        match error {
+            CallError::Kernel(failure) => CallError::Kernel(failure),
+            CallError::Domain(error) => CallError::Domain(issue(
+                match error.problem {
+                    ProjectStorageProblem::NotFound => EvidenceProblem::NotFound,
+                    ProjectStorageProblem::Conflict => EvidenceProblem::Conflict,
+                    ProjectStorageProblem::Denied => EvidenceProblem::ScopeDenied,
+                    _ => EvidenceProblem::StorageFailed,
+                },
+                "project evidence storage failed",
+            )),
+        }
+    }
+
     fn load(
         host: &Host<'_>,
         scope: &EvidenceScope,
     ) -> CallResult<(u64, Vec<EvidenceRecord>), EvidenceError> {
         authorize(host, scope)?;
-        let key = RecordKey {
-            session: scope.id.clone(),
-            key: RECORD_KEY.into(),
-        };
-        let result = host.invoke::<Storage::read>("Storage", &key);
-        let (revision, history) = match result {
-            Ok(StoredRecord { revision, data }) => {
-                let records = decode::<Vec<EvidenceRecord>>(&data).map_err(|_| {
-                    CallError::Domain(issue(
-                        EvidenceProblem::StorageFailed,
-                        "invalid persisted ledger bytes",
-                    ))
-                })?;
-                (revision, records)
+        let stored = match scope.kind {
+            EvidenceScopeKind::Session => {
+                let key = RecordKey { session: scope.id.clone(), key: RECORD_KEY.into() };
+                match host.invoke::<Storage::read>("Storage", &key) {
+                    Ok(StoredRecord { revision, data }) => Some((revision, data)),
+                    Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => None,
+                    Err(error) => return Err(storage_failure(error)),
+                }
             }
-            Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => (0, vec![]),
-            Err(error) => return Err(storage_failure(error)),
+            EvidenceScopeKind::Project => {
+                let key = ProjectRecordKey { project: scope.id.clone(), key: RECORD_KEY.into() };
+                match host.invoke::<ProjectStorage::read>("ProjectStorage", &key) {
+                    Ok(ProjectRecord { revision, data }) => Some((revision, data)),
+                    Err(CallError::Domain(err)) if err.problem == ProjectStorageProblem::NotFound => None,
+                    Err(error) => return Err(project_failure(error)),
+                }
+            }
+            _ => return Err(CallError::Domain(issue(EvidenceProblem::ScopeDenied, "unsupported scope"))),
+        };
+        let (revision, history) = match stored {
+            Some((revision, bytes)) => (
+                revision,
+                decode::<Vec<EvidenceRecord>>(&bytes).map_err(|_| CallError::Domain(issue(
+                    EvidenceProblem::StorageFailed, "invalid persisted ledger bytes"
+                )))?,
+            ),
+            None => (0, vec![]),
         };
         validate_ledger(&history, scope).map_err(CallError::Domain)?;
         Ok((revision, history))
@@ -256,7 +320,12 @@ mod plugin {
                     "evidence source is out of scope",
                 )));
             }
-            let actual = host.invoke::<SourceEvidence::observe>("Source", source)?;
+            let slot = if scope.kind == EvidenceScopeKind::Project {
+                "ProjectSource"
+            } else {
+                "Source"
+            };
+            let actual = host.invoke::<SourceEvidence::observe>(slot, source)?;
             if compare_source(source, &actual) != SourceMatch::Current {
                 return Err(CallError::Domain(issue(
                     EvidenceProblem::SourceChanged,
@@ -281,23 +350,46 @@ mod plugin {
         let updated = append_version(&history, &record).map_err(CallError::Domain)?;
         verify_sources(host, &record.scope, &record.sources)?;
         let data = encode(&updated).map_err(CallError::Kernel)?;
-        let records = host
-            .invoke::<Storage::transact>(
-                "Storage",
-                &StorageTransaction {
-                    session: record.scope.id.clone(),
-                    edits: vec![StorageEdit {
-                        key: RECORD_KEY.into(),
-                        expected: revision,
-                        data: data.clone(),
-                    }],
-                },
-            )
-            .map_err(storage_failure)?;
-        if records.len() != 1 || records[0].revision != revision + 1 || records[0].data != data {
+        let (actual_revision, actual_data) = match record.scope.kind {
+            EvidenceScopeKind::Session => {
+                let records = host.invoke::<Storage::transact>(
+                    "Storage",
+                    &StorageTransaction {
+                        session: record.scope.id.clone(),
+                        edits: vec![StorageEdit {
+                            key: RECORD_KEY.into(), expected: revision, data: data.clone()
+                        }],
+                    },
+                ).map_err(storage_failure)?;
+                if records.len() != 1 {
+                    return Err(CallError::Kernel(Failure::new(
+                        Code::PluginFailed, "invalid session evidence CAS reply"
+                    )));
+                }
+                (records[0].revision, records[0].data.clone())
+            }
+            EvidenceScopeKind::Project => {
+                let records = host.invoke::<ProjectStorage::transact>(
+                    "ProjectStorage",
+                    &ProjectTransaction {
+                        project: record.scope.id.clone(),
+                        edits: vec![ProjectEdit {
+                            key: RECORD_KEY.into(), expected: revision, data: data.clone()
+                        }],
+                    },
+                ).map_err(project_failure)?;
+                if records.len() != 1 {
+                    return Err(CallError::Kernel(Failure::new(
+                        Code::PluginFailed, "invalid project evidence CAS reply"
+                    )));
+                }
+                (records[0].revision, records[0].data.clone())
+            }
+            _ => return Err(CallError::Domain(issue(EvidenceProblem::ScopeDenied, "unsupported scope"))),
+        };
+        if actual_revision != revision + 1 || actual_data != data {
             return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed,
-                "storage returned invalid evidence CAS acknowledgment",
+                Code::PluginFailed, "storage returned invalid evidence CAS acknowledgment"
             )));
         }
         Ok(record)
