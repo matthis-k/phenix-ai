@@ -82,7 +82,9 @@ impl Fixture {
             resource: Some(RESOURCE.into()),
         };
         let kernel = Prepared::prepare(composition).unwrap().load().unwrap();
-        kernel.admit_default_root().unwrap().invoke(&input).unwrap()
+        let root = kernel.admit_default_root().unwrap();
+        let result = root.invoke(&input).unwrap();
+        result
     }
 
     fn journal(&self) -> EventPage {
