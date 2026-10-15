@@ -30,10 +30,16 @@ pub fn append_version(
         || !phenix_sdk::identifier(&proposed.id)
         || proposed.statement.len() > MAX_STATEMENT
     {
-        return Err(issue(EvidenceProblem::InvalidIdentity, "invalid evidence identity or size"));
+        return Err(issue(
+            EvidenceProblem::InvalidIdentity,
+            "invalid evidence identity or size",
+        ));
     }
     if history.len() >= MAX_HISTORY {
-        return Err(issue(EvidenceProblem::CapacityExceeded, "evidence history is full"));
+        return Err(issue(
+            EvidenceProblem::CapacityExceeded,
+            "evidence history is full",
+        ));
     }
     validate_ledger(history, &proposed.scope)?;
     if let Some(previous) = latest(history, &proposed.id) {
@@ -45,16 +51,27 @@ pub fn append_version(
             return Err(issue(EvidenceProblem::Conflict, "stale evidence revision"));
         }
         if proposed.valid_from < previous.valid_from
-            || previous.valid_until.is_some_and(|end| proposed.valid_from < end)
+            || previous
+                .valid_until
+                .is_some_and(|end| proposed.valid_from < end)
         {
-            return Err(issue(EvidenceProblem::InvalidValidity, "overlapping evidence validity"));
+            return Err(issue(
+                EvidenceProblem::InvalidValidity,
+                "overlapping evidence validity",
+            ));
         }
     } else if proposed.revision != 1 {
-        return Err(issue(EvidenceProblem::Conflict, "new evidence must begin at revision one"));
+        return Err(issue(
+            EvidenceProblem::Conflict,
+            "new evidence must begin at revision one",
+        ));
     }
     for source in &proposed.sources {
         if source.scope != proposed.scope {
-            return Err(issue(EvidenceProblem::ScopeDenied, "source scope differs from evidence scope"));
+            return Err(issue(
+                EvidenceProblem::ScopeDenied,
+                "source scope differs from evidence scope",
+            ));
         }
     }
     let mut next = history.to_vec();
@@ -74,18 +91,27 @@ pub fn validate_ledger(
     scope: &EvidenceScope,
 ) -> Result<(), EvidenceError> {
     if history.len() > MAX_HISTORY {
-        return Err(issue(EvidenceProblem::StorageFailed, "ledger record limit exceeded"));
+        return Err(issue(
+            EvidenceProblem::StorageFailed,
+            "ledger record limit exceeded",
+        ));
     }
     let mut revisions: BTreeMap<&str, u64> = BTreeMap::new();
     for entry in history {
         validate_record(entry)
             .map_err(|_| issue(EvidenceProblem::StorageFailed, "invalid persisted evidence"))?;
         if entry.scope != *scope {
-            return Err(issue(EvidenceProblem::StorageFailed, "persisted scope mismatch"));
+            return Err(issue(
+                EvidenceProblem::StorageFailed,
+                "persisted scope mismatch",
+            ));
         }
         let last = revisions.get(entry.id.as_str()).copied().unwrap_or(0);
         if last.checked_add(1) != Some(entry.revision) {
-            return Err(issue(EvidenceProblem::StorageFailed, "missing or repeated evidence revision"));
+            return Err(issue(
+                EvidenceProblem::StorageFailed,
+                "missing or repeated evidence revision",
+            ));
         }
         revisions.insert(&entry.id, entry.revision);
     }
@@ -99,7 +125,10 @@ pub fn select_records(
     limit: u64,
 ) -> Result<Vec<EvidenceRecord>, EvidenceError> {
     if !(1..=128).contains(&limit) {
-        return Err(issue(EvidenceProblem::InvalidRange, "search limit out of range"));
+        return Err(issue(
+            EvidenceProblem::InvalidRange,
+            "search limit out of range",
+        ));
     }
     let mut selected = BTreeMap::<&str, &EvidenceRecord>::new();
     for entry in history {
@@ -124,7 +153,10 @@ pub fn select_records(
         .collect::<Vec<_>>();
     // The v1 request has no incoming cursor. Never silently truncate results.
     if matching.len() > limit as usize {
-        return Err(issue(EvidenceProblem::CapacityExceeded, "result exceeds bounded search limit"));
+        return Err(issue(
+            EvidenceProblem::CapacityExceeded,
+            "result exceeds bounded search limit",
+        ));
     }
     Ok(matching.into_iter().cloned().collect())
 }
@@ -155,17 +187,17 @@ mod plugin {
     pub struct State;
 
     fn authorize(host: &Host<'_>, scope: &EvidenceScope) -> CallResult<(), EvidenceError> {
-        if scope.kind != EvidenceScopeKind::Session
-            || !phenix_sdk::identifier(&scope.id)
-        {
+        if scope.kind != EvidenceScopeKind::Session || !phenix_sdk::identifier(&scope.id) {
             return Err(CallError::Domain(issue(
-                EvidenceProblem::ScopeDenied, "only authenticated session scopes are supported",
+                EvidenceProblem::ScopeDenied,
+                "only authenticated session scopes are supported",
             )));
         }
         phenix_basic_contracts::check_session(host, &scope.id).map_err(|err| match err {
             CallError::Kernel(failure) => CallError::Kernel(failure),
             CallError::Domain(_) => CallError::Domain(issue(
-                EvidenceProblem::ScopeDenied, "evidence scope is not authorized",
+                EvidenceProblem::ScopeDenied,
+                "evidence scope is not authorized",
             )),
         })
     }
@@ -185,9 +217,10 @@ mod plugin {
         }
     }
 
-    fn load(host: &Host<'_>, scope: &EvidenceScope)
-        -> CallResult<(u64, Vec<EvidenceRecord>), EvidenceError>
-    {
+    fn load(
+        host: &Host<'_>,
+        scope: &EvidenceScope,
+    ) -> CallResult<(u64, Vec<EvidenceRecord>), EvidenceError> {
         authorize(host, scope)?;
         let key = RecordKey {
             session: scope.id.clone(),
@@ -196,10 +229,12 @@ mod plugin {
         let result = host.invoke::<Storage::read>("Storage", &key);
         let (revision, history) = match result {
             Ok(StoredRecord { revision, data }) => {
-                let records = decode::<Vec<EvidenceRecord>>(&data)
-                    .map_err(|_| CallError::Domain(issue(
-                        EvidenceProblem::StorageFailed, "invalid persisted ledger bytes",
-                    )))?;
+                let records = decode::<Vec<EvidenceRecord>>(&data).map_err(|_| {
+                    CallError::Domain(issue(
+                        EvidenceProblem::StorageFailed,
+                        "invalid persisted ledger bytes",
+                    ))
+                })?;
                 (revision, records)
             }
             Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => (0, vec![]),
@@ -217,13 +252,15 @@ mod plugin {
         for source in sources {
             if source.scope != *scope {
                 return Err(CallError::Domain(issue(
-                    EvidenceProblem::ScopeDenied, "evidence source is out of scope",
+                    EvidenceProblem::ScopeDenied,
+                    "evidence source is out of scope",
                 )));
             }
             let actual = host.invoke::<SourceEvidence::observe>("Source", source)?;
             if compare_source(source, &actual) != SourceMatch::Current {
                 return Err(CallError::Domain(issue(
-                    EvidenceProblem::SourceChanged, "evidence source was changed",
+                    EvidenceProblem::SourceChanged,
+                    "evidence source was changed",
                 )));
             }
         }
@@ -231,9 +268,11 @@ mod plugin {
     }
 
     #[provide(EvidenceStore::put)]
-    fn put(_: &mut State, host: &Host<'_>, record: EvidenceRecord)
-        -> CallResult<EvidenceRecord, EvidenceError>
-    {
+    fn put(
+        _: &mut State,
+        host: &Host<'_>,
+        record: EvidenceRecord,
+    ) -> CallResult<EvidenceRecord, EvidenceError> {
         authorize(host, &record.scope)?;
         // Reject invalid records before any imported effect.
         phenix_advanced_contracts::validate_record(&record)
@@ -242,54 +281,65 @@ mod plugin {
         let updated = append_version(&history, &record).map_err(CallError::Domain)?;
         verify_sources(host, &record.scope, &record.sources)?;
         let data = encode(&updated).map_err(CallError::Kernel)?;
-        let records = host.invoke::<Storage::transact>(
-            "Storage",
-            &StorageTransaction {
-                session: record.scope.id.clone(),
-                edits: vec![StorageEdit {
-                    key: RECORD_KEY.into(),
-                    expected: revision,
-                    data: data.clone(),
-                }],
-            },
-        ).map_err(storage_failure)?;
-        if records.len() != 1
-            || records[0].revision != revision + 1
-            || records[0].data != data
-        {
+        let records = host
+            .invoke::<Storage::transact>(
+                "Storage",
+                &StorageTransaction {
+                    session: record.scope.id.clone(),
+                    edits: vec![StorageEdit {
+                        key: RECORD_KEY.into(),
+                        expected: revision,
+                        data: data.clone(),
+                    }],
+                },
+            )
+            .map_err(storage_failure)?;
+        if records.len() != 1 || records[0].revision != revision + 1 || records[0].data != data {
             return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed, "storage returned invalid evidence CAS acknowledgment",
+                Code::PluginFailed,
+                "storage returned invalid evidence CAS acknowledgment",
             )));
         }
         Ok(record)
     }
 
     #[provide(EvidenceStore::get)]
-    fn get(_: &mut State, host: &Host<'_>, key: EvidenceKey)
-        -> CallResult<EvidenceRecord, EvidenceError>
-    {
+    fn get(
+        _: &mut State,
+        host: &Host<'_>,
+        key: EvidenceKey,
+    ) -> CallResult<EvidenceRecord, EvidenceError> {
         authorize(host, &key.scope)?;
         if !phenix_sdk::identifier(&key.id) {
-            return Err(CallError::Domain(issue(EvidenceProblem::InvalidIdentity, "invalid record ID")));
+            return Err(CallError::Domain(issue(
+                EvidenceProblem::InvalidIdentity,
+                "invalid record ID",
+            )));
         }
         let (_, history) = load(host, &key.scope)?;
-        let selected = latest(&history, &key.id).ok_or_else(|| CallError::Domain(issue(
-            EvidenceProblem::NotFound, "evidence record missing",
-        )))?;
+        let selected = latest(&history, &key.id).ok_or_else(|| {
+            CallError::Domain(issue(EvidenceProblem::NotFound, "evidence record missing"))
+        })?;
         if selected.freshness == EvidenceFreshness::Withdrawn {
-            return Err(CallError::Domain(issue(EvidenceProblem::NotFound, "evidence was withdrawn")));
+            return Err(CallError::Domain(issue(
+                EvidenceProblem::NotFound,
+                "evidence was withdrawn",
+            )));
         }
         verify_sources(host, &key.scope, &selected.sources)?;
         Ok(selected.clone())
     }
 
     #[provide(EvidenceStore::search)]
-    fn search(_: &mut State, host: &Host<'_>, request: EvidenceSearch)
-        -> CallResult<EvidencePage, EvidenceError>
-    {
+    fn search(
+        _: &mut State,
+        host: &Host<'_>,
+        request: EvidenceSearch,
+    ) -> CallResult<EvidencePage, EvidenceError> {
         if request.scopes.len() != 1 {
             return Err(CallError::Domain(issue(
-                EvidenceProblem::ScopeDenied, "search requires one authorized session scope",
+                EvidenceProblem::ScopeDenied,
+                "search requires one authorized session scope",
             )));
         }
         let scope = &request.scopes[0];
@@ -299,7 +349,10 @@ mod plugin {
         for record in &records {
             verify_sources(host, scope, &record.sources)?;
         }
-        Ok(EvidencePage { records, next: None })
+        Ok(EvidencePage {
+            records,
+            next: None,
+        })
     }
 }
 
@@ -309,7 +362,10 @@ mod tests {
     use phenix_advanced_contracts::{EvidenceKind, SourceRef};
 
     fn scope() -> EvidenceScope {
-        EvidenceScope { kind: EvidenceScopeKind::Session, id: "s1".into() }
+        EvidenceScope {
+            kind: EvidenceScopeKind::Session,
+            id: "s1".into(),
+        }
     }
     fn record(revision: u64) -> EvidenceRecord {
         EvidenceRecord {
@@ -342,20 +398,38 @@ mod tests {
         let updated = append_version(&first, &record(2)).unwrap();
         assert_eq!(updated.len(), 2);
         assert_eq!(latest(&updated, "fact-color").unwrap().revision, 2);
-        assert_eq!(append_version(&updated, &record(2)).unwrap_err().problem, EvidenceProblem::Conflict);
-        assert_eq!(select_records(&updated, Some(50), "", 10).unwrap()[0].statement, "violet");
-        assert_eq!(select_records(&updated, None, "", 10).unwrap()[0].statement, "blue");
+        assert_eq!(
+            append_version(&updated, &record(2)).unwrap_err().problem,
+            EvidenceProblem::Conflict
+        );
+        assert_eq!(
+            select_records(&updated, Some(50), "", 10).unwrap()[0].statement,
+            "violet"
+        );
+        assert_eq!(
+            select_records(&updated, None, "", 10).unwrap()[0].statement,
+            "blue"
+        );
     }
     #[test]
     fn invalid_history_and_sources_do_not_become_records() {
         let mut bad = record(1);
         bad.sources[0].scope.id = "s2".into();
-        assert_eq!(append_version(&[], &bad).unwrap_err().problem, EvidenceProblem::ScopeDenied);
+        assert_eq!(
+            append_version(&[], &bad).unwrap_err().problem,
+            EvidenceProblem::ScopeDenied
+        );
         bad = record(1);
         bad.sources.clear();
-        assert_eq!(append_version(&[], &bad).unwrap_err().problem, EvidenceProblem::MissingSource);
+        assert_eq!(
+            append_version(&[], &bad).unwrap_err().problem,
+            EvidenceProblem::MissingSource
+        );
         let mut corrupted = vec![record(1)];
         corrupted.push(record(1));
-        assert_eq!(validate_ledger(&corrupted, &scope()).unwrap_err().problem, EvidenceProblem::StorageFailed);
+        assert_eq!(
+            validate_ledger(&corrupted, &scope()).unwrap_err().problem,
+            EvidenceProblem::StorageFailed
+        );
     }
 }
