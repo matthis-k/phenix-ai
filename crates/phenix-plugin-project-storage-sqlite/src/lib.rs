@@ -585,7 +585,7 @@ mod tests {
         seeded.execute_batch(TABLE).unwrap();
         seeded.execute_batch(MEMBERSHIP_TABLE).unwrap();
         seeded.execute(MEMBER_UPSERT, params!["alpha", "s1", 1_i64, 1_i64]).unwrap();
-        seeded.execute(UPSERT, params!["alpha", "theme", 1_i64, b"blue"]).unwrap();
+        seeded.execute(UPSERT, params!["alpha", "theme", 1_i64, &b"blue"[..]]).unwrap();
 
         let mut reader = Connection::open(&path).unwrap();
         let snapshot = reader
