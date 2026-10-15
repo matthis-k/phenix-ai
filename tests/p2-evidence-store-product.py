@@ -22,19 +22,18 @@ env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(database))
 
 seed = subprocess.run(
     [basic, "jsonl"],
-    input=json.dumps({
-        "type": "prompt", "session": "s1",
-        "text": "echo:evidence-store-restart-proof",
-    }) + "\n",
+    input="".join(
+        json.dumps({"type": "prompt", "session": "s1", "text": "echo:" + fact}) + "\\n"
+        for fact in ("The project color was violet", "The project color is blue")
+    ),
     capture_output=True, text=True, env=env, timeout=60,
 )
 assert seed.returncode == 0, (seed.stdout, seed.stderr)
 events = [json.loads(line) for line in seed.stdout.splitlines()]
-assert any(
-    item.get("kind") == "Answer"
-    and item.get("text") == "mock:echo:evidence-store-restart-proof"
-    for item in events
-), events
+assert {item.get("text") for item in events if item.get("kind") == "Answer"} >= {
+    "mock:echo:The project color was violet",
+    "mock:echo:The project color is blue",
+}, events
 assert database.is_file()
 
 def basic_records():
