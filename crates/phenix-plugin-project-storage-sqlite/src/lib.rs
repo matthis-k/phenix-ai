@@ -2,7 +2,7 @@
 //! Reuses rusqlite and the Basic database file, but does not expose Basic
 //! session records or modify its storage contract or schema version.
 use phenix_advanced_contracts::{
-    ProjectEdit, ProjectRecord, ProjectRecordKey, ProjectStorageError, ProjectStorageProblem,
+    ProjectEdit, ProjectRecord, ProjectStorageError, ProjectStorageProblem,
     ProjectTransaction,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
@@ -160,7 +160,7 @@ pub fn transact(request: ProjectTransaction)
     provide(phenix_advanced_contracts::ProjectStorage, slot = "ProjectStorage")
 )]
 mod plugin {
-    use super::{error, failed, invalid, open, select, transact, valid};
+    use super::{error, invalid, open, select, transact, valid};
     use phenix_advanced_contracts::{
         ProjectRecord, ProjectRecordKey, ProjectStorage, ProjectStorageError,
         ProjectStorageProblem, ProjectTransaction,
