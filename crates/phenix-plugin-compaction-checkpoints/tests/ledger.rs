@@ -66,20 +66,29 @@ fn corrupt_history_rejects_without_silent_repair() {
     let one = append_checkpoint(&[], &checkpoint("cp1", 1, None), "s1").unwrap();
     let mut bad = one.clone();
     bad[0].input.digest_sha256 = "corrupt".into();
-    assert_eq!(validate_ledger(&bad, "s1"), Err(CheckpointStoreProblem::StorageFailed));
+    assert_eq!(
+        validate_ledger(&bad, "s1"),
+        Err(CheckpointStoreProblem::StorageFailed)
+    );
     assert_eq!(
         append_checkpoint(&bad, &checkpoint("cp2", 2, Some("cp1")), "s1"),
         Err(CheckpointStoreProblem::StorageFailed),
     );
     let mut bad = one.clone();
     bad[0].revision = 10;
-    assert_eq!(validate_ledger(&bad, "s1"), Err(CheckpointStoreProblem::StorageFailed));
+    assert_eq!(
+        validate_ledger(&bad, "s1"),
+        Err(CheckpointStoreProblem::StorageFailed)
+    );
 }
 
 #[test]
 fn cross_session_read_and_append_reject() {
     let one = append_checkpoint(&[], &checkpoint("cp1", 1, None), "s1").unwrap();
-    assert_eq!(validate_ledger(&one, "s2"), Err(CheckpointStoreProblem::StorageFailed));
+    assert_eq!(
+        validate_ledger(&one, "s2"),
+        Err(CheckpointStoreProblem::StorageFailed)
+    );
     assert_eq!(
         append_checkpoint(&one, &checkpoint("cp2", 2, Some("cp1")), "s2"),
         Err(CheckpointStoreProblem::StorageFailed),
@@ -88,7 +97,10 @@ fn cross_session_read_and_append_reject() {
         append_checkpoint(&[], &checkpoint("cp1", 1, None), "s2"),
         Err(CheckpointStoreProblem::ScopeDenied),
     );
-    assert_eq!(find_checkpoint(&one, "missing"), Err(CheckpointStoreProblem::NotFound));
+    assert_eq!(
+        find_checkpoint(&one, "missing"),
+        Err(CheckpointStoreProblem::NotFound)
+    );
 }
 
 #[test]
@@ -97,5 +109,8 @@ fn metadata_only_does_not_contain_original_event_bytes() {
     let cp = checkpoint("cp1", 1, None);
     let ledger = append_checkpoint(&[], &cp, "s1").unwrap();
     let encoded = phenix_basic_contracts::encode(&ledger).unwrap();
-    assert!(!encoded.0.windows(original.len()).any(|data| data == original));
+    assert!(!encoded
+        .0
+        .windows(original.len())
+        .any(|data| data == original));
 }
