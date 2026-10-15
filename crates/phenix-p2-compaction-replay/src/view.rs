@@ -83,7 +83,7 @@ pub fn compacted_view(
 
     let mut active: BTreeMap<&str, Visibility> = BTreeMap::new();
     for event in &original {
-        match event.kind {
+        match &event.kind {
             EventKind::ToolStarted => {
                 if event.call_id.is_empty()
                     || active
@@ -113,7 +113,7 @@ pub fn compacted_view(
     let mut bytes = 0u64;
     let mut parts = Vec::new();
     let mut summary_emitted = false;
-    for event in original {
+    for event in &original {
         match visibility(checkpoint, event.sequence) {
             Visibility::Summarized => {
                 if !summary_emitted {
@@ -137,7 +137,7 @@ pub fn compacted_view(
                     .and_then(|n| u64::try_from(n).ok())
                     .ok_or(ViewProblem::OverBudget)?;
                 bytes = bytes.checked_add(size).ok_or(ViewProblem::OverBudget)?;
-                parts.push(ContextPart::Original(event));
+                parts.push(ContextPart::Original(event.clone()));
             }
             Visibility::Excluded => {}
         }
