@@ -76,6 +76,17 @@ impl Fixture {
         )
     }
 
+    fn session_project_read(&self, session: &str, project: &str, name: &str) -> Outcome {
+        self.invoke_selected(
+            format!("phenix.session.{session}"),
+            INTERFACE,
+            &["read"],
+            "read",
+            key(project, name),
+        )
+        .unwrap()
+    }
+
     fn member_call(&self, resource: &str, operation: &str, input: Value) -> Outcome {
         self.invoke_selected(
             resource.into(),
@@ -324,6 +335,8 @@ fn member_grant(fixture: &Fixture) -> serde_json::Value {
         member_change("alpha", "s1", 0, true),
         ProjectMembershipProblem::Conflict,
     );
+    let records = fixture.edit("alpha", "alpha", vec![edit("theme", 0, b"blue")]);
+    assert_eq!(records[0].revision, 1);
     serde_json::json!({"membership_created": true, "grant_revision": 1, "forged_admin_denied": true, "stale_cas": "conflict"})
 }
 fn member_check(fixture: &Fixture) -> serde_json::Value {
@@ -335,7 +348,16 @@ fn member_check(fixture: &Fixture) -> serde_json::Value {
         );
         assert!(member.active);
         assert_eq!(member.revision, 1);
+        let result = fixture.session_project_read(session, "alpha", "theme");
+        let Outcome::Success(value) = result else {
+            panic!("authorized session must read shared project record: {result:?}");
+        };
+        assert_eq!(ProjectRecord::from_value(value).unwrap().data.0, b"blue");
     }
+    let denied = fixture.session_project_read("s3", "alpha", "theme");
+    assert!(matches!(denied, Outcome::Domain(_)), "nonmember read: {denied:?}");
+    let denied = fixture.session_project_read("s1", "beta", "theme");
+    assert!(matches!(denied, Outcome::Domain(_)), "foreign project read: {denied:?}");
     fixture.member_deny(
         "phenix.session.s3",
         "get",
@@ -375,6 +397,9 @@ fn member_revoke(fixture: &Fixture) -> serde_json::Value {
 fn member_after_revoke(fixture: &Fixture) -> serde_json::Value {
     let retained = fixture.member_ok("phenix.session.s1", "get", member_key("alpha", "s1"));
     assert_eq!(retained.revision, 1);
+    assert!(matches!(fixture.session_project_read("s1", "alpha", "theme"), Outcome::Success(_)));
+    let denied = fixture.session_project_read("s2", "alpha", "theme");
+    assert!(matches!(denied, Outcome::Domain(_)), "revoked member read: {denied:?}");
     fixture.member_deny(
         "phenix.session.s2",
         "get",
