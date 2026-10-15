@@ -11,7 +11,12 @@ fn event(sequence: u64, kind: EventKind, text: &str, bytes: &[u8]) -> Event {
         session: "s1".into(),
         run: "r1".into(),
         kind,
-        call_id: if sequence == 2 || sequence == 3 { "call-1" } else { "" }.into(),
+        call_id: if sequence == 2 || sequence == 3 {
+            "call-1"
+        } else {
+            ""
+        }
+        .into(),
         text: text.into(),
         data: Blob(bytes.to_vec()),
     }
