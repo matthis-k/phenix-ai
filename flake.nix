@@ -295,6 +295,28 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
+      evidenceStore = rust.buildRustPackage {
+        pname = "phenix-plugin-evidence-store";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-evidence-store
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-evidence-store" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-evidence-store" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_evidence_store.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       # Keep independent source closures for feature-variant and system-linked
       # plugins. Compatible, default-feature plugins compile in small cohesive
       # Cargo groups, so changes do not invalidate the entire Rust workspace.
@@ -685,10 +707,14 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
-        addArtifacts = [ "${evidenceJournal}" ];
+        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" ];
         replaceSlots = [
           (basicBinding "phenix.advanced.evidence-journal" "Journal"
             "phenix.basic.event-journal" "Journal")
+          (basicBinding "phenix.advanced.evidence-store" "Storage"
+            "phenix.basic.storage-sqlite" "Storage")
+          (basicBinding "phenix.advanced.evidence-store" "Source"
+            "phenix.advanced.evidence-journal" "Evidence")
         ];
         addGrants = [
           { caller = "phenix.advanced.evidence-journal";
@@ -701,8 +727,44 @@
             operation = "observe";
             resources = [ "phenix.session.s1" ];
           }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.basic.storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.basic.storage@1";
+            operation = "transact";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.advanced.source@1";
+            operation = "observe";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.evidence@1";
+            operation = "put";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.evidence@1";
+            operation = "get";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.evidence@1";
+            operation = "search";
+            resources = [ "phenix.session.s1" ];
+          }
         ];
-        addOperations = [ "phenix.basic.journal@1/read" "phenix.advanced.source@1/observe" ];
+        addOperations = [
+          "phenix.basic.journal@1/read"
+          "phenix.advanced.source@1/observe"
+          "phenix.advanced.evidence@1/put"
+          "phenix.advanced.evidence@1/get"
+          "phenix.advanced.evidence@1/search"
+        ];
       };
       advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
         (builtins.toJSON advancedCompositionSpec);
@@ -800,6 +862,24 @@
           ${evidenceJournal} ${eventJournal} ${storageSqlite} \
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-source-evidence-product.json"
+      '';
+      p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-evidence-store
+      ]));
+      p2EvidenceStoreProductCheck = pkgs.runCommand "phenix-p2-evidence-store-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-evidence-store-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2EvidenceStoreRunner}/bin/phenix-p2-evidence-store \
+          ${evidenceStore} ${evidenceJournal} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-evidence-store-product.json"
       '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -1283,6 +1363,7 @@
         phenix-advanced = advancedBinary;
         phenix-advanced-contracts = advancedDefinitions;
         phenix-plugin-evidence-journal = evidenceJournal;
+        phenix-plugin-evidence-store = evidenceStore;
         phenix-advanced-composition = advancedComposition;
         phenix-advanced-verification = advancedVerificationBinary;
         phenix-advanced-verification-composition = advancedVerificationComposition;
@@ -1340,6 +1421,7 @@
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
+        p2-evidence-store-product = p2EvidenceStoreProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
