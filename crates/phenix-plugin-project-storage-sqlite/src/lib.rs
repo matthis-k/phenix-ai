@@ -5,6 +5,7 @@ use phenix_advanced_contracts::{
     ProjectEdit, ProjectRecord, ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, env, time::Duration};
 
 const TABLE: &str = "CREATE TABLE IF NOT EXISTS project_records (project TEXT NOT NULL, name TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0), data BLOB NOT NULL, PRIMARY KEY (project, name)) WITHOUT ROWID";
@@ -285,21 +286,81 @@ pub fn set_membership(
     })
 }
 
+const PROJECT_OWNER: &str = "phenix.advanced.project-storage-sqlite";
+
+fn source_error(
+    problem: phenix_advanced_contracts::EvidenceProblem,
+    message: &str,
+) -> phenix_advanced_contracts::EvidenceError {
+    phenix_advanced_contracts::EvidenceError { problem, message: message.into() }
+}
+
+/// Create a source reference to one exact project-record revision. The
+/// source provider returns the live revision and digest on each observation.
+pub fn project_record_reference(
+    project: &str,
+    key: &str,
+    record: &phenix_advanced_contracts::ProjectRecord,
+) -> Result<phenix_advanced_contracts::SourceRef, phenix_advanced_contracts::EvidenceError> {
+    use phenix_advanced_contracts::{EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceRef};
+    if !valid(project, key) || key.contains('@') || record.revision == 0 {
+        return Err(source_error(EvidenceProblem::InvalidIdentity, "invalid project source identity"));
+    }
+    let digest = Sha256::digest(&record.data.0);
+    Ok(SourceRef {
+        owner: PROJECT_OWNER.into(),
+        resource: format!("phenix.project.{project}"),
+        revision: format!("{key}@{}", record.revision),
+        digest_sha256: format!("{digest:x}"),
+        range_start: 0,
+        range_end: 0,
+        scope: EvidenceScope { kind: EvidenceScopeKind::Project, id: project.into() },
+    })
+}
+
+fn parse_project_source(
+    reference: &phenix_advanced_contracts::SourceRef,
+) -> Result<&str, phenix_advanced_contracts::EvidenceError> {
+    use phenix_advanced_contracts::{validate_reference, EvidenceProblem, EvidenceScopeKind};
+    validate_reference(reference)
+        .map_err(|p| source_error(p, "invalid source reference"))?;
+    if reference.owner != PROJECT_OWNER
+        || reference.scope.kind != EvidenceScopeKind::Project
+        || !phenix_sdk::identifier(&reference.scope.id)
+        || reference.resource != format!("phenix.project.{}", reference.scope.id)
+        || reference.range_start != 0
+        || reference.range_end != 0
+    {
+        return Err(source_error(EvidenceProblem::InvalidIdentity, "source is not a project record"));
+    }
+    let (key, revision) = reference.revision.rsplit_once('@')
+        .ok_or_else(|| source_error(EvidenceProblem::InvalidIdentity, "invalid project revision"))?;
+    let parsed = revision.parse::<u64>()
+        .map_err(|_| source_error(EvidenceProblem::InvalidIdentity, "invalid source revision"))?;
+    if !phenix_sdk::identifier(key) || key.contains('@') || parsed == 0 || parsed.to_string() != revision {
+        return Err(source_error(EvidenceProblem::InvalidIdentity, "invalid project record revision"));
+    }
+    Ok(key)
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.advanced.project-storage-sqlite",
     version = "1.0.0",
     provide(phenix_advanced_contracts::ProjectStorage, slot = "ProjectStorage"),
-    provide(phenix_advanced_contracts::ProjectMembership, slot = "Membership")
+    provide(phenix_advanced_contracts::ProjectMembership, slot = "Membership"),
+    provide(phenix_advanced_contracts::SourceEvidence, slot = "ProjectSource")
 )]
 mod plugin {
     use super::{
         error, invalid, membership_denied, membership_failed, membership_invalid, membership_read,
-        open, select, set_membership, transact, valid,
+        open, parse_project_source, project_record_reference, select, set_membership,
+        source_error, transact, valid,
     };
     use phenix_advanced_contracts::{
         ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembership,
         ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
-        ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
+        ProjectStorageError, ProjectStorageProblem, ProjectTransaction, SourceEvidence,
+        SourceObservation, SourceRef, EvidenceProblem, EvidenceError,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -318,6 +379,36 @@ mod plugin {
             )));
         }
         Ok(())
+    }
+
+    fn authorized_project_read(
+        conn: &rusqlite::Connection,
+        host: &Host<'_>,
+        project: &str,
+    ) -> CallResult<(), ProjectStorageError> {
+        let resource = host.resource()?.unwrap_or_default();
+        if resource == format!("phenix.project.{project}") {
+            return Ok(());
+        }
+        let membership = match resource.strip_prefix("phenix.session.") {
+            Some(session) if phenix_sdk::identifier(session) => {
+                membership_read(conn, project, session).map_err(|_| {
+                    CallError::Domain(error(
+                        ProjectStorageProblem::StorageFailed,
+                        "project membership lookup failed",
+                    ))
+                })?
+            }
+            _ => None,
+        };
+        if membership.is_some_and(|record| record.active) {
+            Ok(())
+        } else {
+            Err(CallError::Domain(error(
+                ProjectStorageProblem::Denied,
+                "project read requires active membership",
+            )))
+        }
     }
 
     #[provide(ProjectMembership::set)]
@@ -356,6 +447,38 @@ mod plugin {
         }
     }
 
+    #[provide(SourceEvidence::observe)]
+    fn observe(
+        _: &mut State,
+        host: &Host<'_>,
+        reference: SourceRef,
+    ) -> CallResult<SourceObservation, EvidenceError> {
+        let key = parse_project_source(&reference).map_err(CallError::Domain)?;
+        let conn = open().map_err(|_| CallError::Domain(source_error(
+            EvidenceProblem::StorageFailed, "project source storage failed"
+        )))?;
+        authorized_project_read(&conn, host, &reference.scope.id)
+            .map_err(|error| match error {
+                CallError::Kernel(failure) => CallError::Kernel(failure),
+                CallError::Domain(inner) => CallError::Domain(source_error(
+                    if inner.problem == ProjectStorageProblem::Denied { EvidenceProblem::ScopeDenied }
+                    else { EvidenceProblem::StorageFailed },
+                    "project source access denied or unavailable",
+                )),
+            })?;
+        let actual = select(&conn, &reference.scope.id, key)
+            .map_err(|_| CallError::Domain(source_error(EvidenceProblem::StorageFailed, "invalid project source storage")))?
+            .ok_or_else(|| CallError::Domain(source_error(EvidenceProblem::NotFound, "project source not found")))?;
+        let current = project_record_reference(&reference.scope.id, key, &actual)
+            .map_err(CallError::Domain)?;
+        Ok(SourceObservation {
+            owner: current.owner,
+            resource: current.resource,
+            revision: current.revision,
+            digest_sha256: current.digest_sha256,
+        })
+    }
+
     #[provide(ProjectStorage::read)]
     fn read(
         _: &mut State,
@@ -366,28 +489,7 @@ mod plugin {
             return Err(CallError::Domain(invalid()));
         }
         let conn = open().map_err(CallError::Domain)?;
-        let resource = host.resource()?.unwrap_or_default();
-        if resource != format!("phenix.project.{}", key.project) {
-            let member = if let Some(session) = resource
-                .strip_prefix("phenix.session.")
-                .filter(|session| phenix_sdk::identifier(session))
-            {
-                membership_read(&conn, &key.project, session).map_err(|_| {
-                    CallError::Domain(error(
-                        ProjectStorageProblem::StorageFailed,
-                        "project membership lookup failed",
-                    ))
-                })?
-            } else {
-                None
-            };
-            if !member.is_some_and(|record| record.active) {
-                return Err(CallError::Domain(error(
-                    ProjectStorageProblem::Denied,
-                    "project record read requires active project membership",
-                )));
-            }
-        }
+        authorized_project_read(&conn, host, &key.project)?;
         select(&conn, &key.project, &key.key)
             .and_then(|record| {
                 record
