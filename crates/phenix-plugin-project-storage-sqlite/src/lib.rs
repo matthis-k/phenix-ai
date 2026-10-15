@@ -292,7 +292,10 @@ fn source_error(
     problem: phenix_advanced_contracts::EvidenceProblem,
     message: &str,
 ) -> phenix_advanced_contracts::EvidenceError {
-    phenix_advanced_contracts::EvidenceError { problem, message: message.into() }
+    phenix_advanced_contracts::EvidenceError {
+        problem,
+        message: message.into(),
+    }
 }
 
 /// Create a source reference to one exact project-record revision. The
@@ -304,7 +307,10 @@ pub fn project_record_reference(
 ) -> Result<phenix_advanced_contracts::SourceRef, phenix_advanced_contracts::EvidenceError> {
     use phenix_advanced_contracts::{EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceRef};
     if !valid(project, key) || key.contains('@') || record.revision == 0 {
-        return Err(source_error(EvidenceProblem::InvalidIdentity, "invalid project source identity"));
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "invalid project source identity",
+        ));
     }
     let digest = Sha256::digest(&record.data.0);
     Ok(SourceRef {
@@ -314,7 +320,10 @@ pub fn project_record_reference(
         digest_sha256: format!("{digest:x}"),
         range_start: 0,
         range_end: 0,
-        scope: EvidenceScope { kind: EvidenceScopeKind::Project, id: project.into() },
+        scope: EvidenceScope {
+            kind: EvidenceScopeKind::Project,
+            id: project.into(),
+        },
     })
 }
 
@@ -322,8 +331,7 @@ fn parse_project_source(
     reference: &phenix_advanced_contracts::SourceRef,
 ) -> Result<&str, phenix_advanced_contracts::EvidenceError> {
     use phenix_advanced_contracts::{validate_reference, EvidenceProblem, EvidenceScopeKind};
-    validate_reference(reference)
-        .map_err(|p| source_error(p, "invalid source reference"))?;
+    validate_reference(reference).map_err(|p| source_error(p, "invalid source reference"))?;
     if reference.owner != PROJECT_OWNER
         || reference.scope.kind != EvidenceScopeKind::Project
         || !phenix_sdk::identifier(&reference.scope.id)
@@ -331,14 +339,26 @@ fn parse_project_source(
         || reference.range_start != 0
         || reference.range_end != 0
     {
-        return Err(source_error(EvidenceProblem::InvalidIdentity, "source is not a project record"));
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "source is not a project record",
+        ));
     }
-    let (key, revision) = reference.revision.rsplit_once('@')
-        .ok_or_else(|| source_error(EvidenceProblem::InvalidIdentity, "invalid project revision"))?;
-    let parsed = revision.parse::<u64>()
+    let (key, revision) = reference.revision.rsplit_once('@').ok_or_else(|| {
+        source_error(EvidenceProblem::InvalidIdentity, "invalid project revision")
+    })?;
+    let parsed = revision
+        .parse::<u64>()
         .map_err(|_| source_error(EvidenceProblem::InvalidIdentity, "invalid source revision"))?;
-    if !phenix_sdk::identifier(key) || key.contains('@') || parsed == 0 || parsed.to_string() != revision {
-        return Err(source_error(EvidenceProblem::InvalidIdentity, "invalid project record revision"));
+    if !phenix_sdk::identifier(key)
+        || key.contains('@')
+        || parsed == 0
+        || parsed.to_string() != revision
+    {
+        return Err(source_error(
+            EvidenceProblem::InvalidIdentity,
+            "invalid project record revision",
+        ));
     }
     Ok(key)
 }
@@ -353,14 +373,14 @@ fn parse_project_source(
 mod plugin {
     use super::{
         error, invalid, membership_denied, membership_failed, membership_invalid, membership_read,
-        open, parse_project_source, project_record_reference, select, set_membership,
-        source_error, transact, valid,
+        open, parse_project_source, project_record_reference, select, set_membership, source_error,
+        transact, valid,
     };
     use phenix_advanced_contracts::{
-        ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembership,
-        ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
+        EvidenceError, EvidenceProblem, ProjectMember, ProjectMemberChange, ProjectMemberKey,
+        ProjectMembership, ProjectMembershipError, ProjectRecord, ProjectRecordKey, ProjectStorage,
         ProjectStorageError, ProjectStorageProblem, ProjectTransaction, SourceEvidence,
-        SourceObservation, SourceRef, EvidenceProblem, EvidenceError,
+        SourceObservation, SourceRef,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -454,21 +474,36 @@ mod plugin {
         reference: SourceRef,
     ) -> CallResult<SourceObservation, EvidenceError> {
         let key = parse_project_source(&reference).map_err(CallError::Domain)?;
-        let conn = open().map_err(|_| CallError::Domain(source_error(
-            EvidenceProblem::StorageFailed, "project source storage failed"
-        )))?;
-        authorized_project_read(&conn, host, &reference.scope.id)
-            .map_err(|error| match error {
-                CallError::Kernel(failure) => CallError::Kernel(failure),
-                CallError::Domain(inner) => CallError::Domain(source_error(
-                    if inner.problem == ProjectStorageProblem::Denied { EvidenceProblem::ScopeDenied }
-                    else { EvidenceProblem::StorageFailed },
-                    "project source access denied or unavailable",
-                )),
-            })?;
+        let conn = open().map_err(|_| {
+            CallError::Domain(source_error(
+                EvidenceProblem::StorageFailed,
+                "project source storage failed",
+            ))
+        })?;
+        authorized_project_read(&conn, host, &reference.scope.id).map_err(|error| match error {
+            CallError::Kernel(failure) => CallError::Kernel(failure),
+            CallError::Domain(inner) => CallError::Domain(source_error(
+                if inner.problem == ProjectStorageProblem::Denied {
+                    EvidenceProblem::ScopeDenied
+                } else {
+                    EvidenceProblem::StorageFailed
+                },
+                "project source access denied or unavailable",
+            )),
+        })?;
         let actual = select(&conn, &reference.scope.id, key)
-            .map_err(|_| CallError::Domain(source_error(EvidenceProblem::StorageFailed, "invalid project source storage")))?
-            .ok_or_else(|| CallError::Domain(source_error(EvidenceProblem::NotFound, "project source not found")))?;
+            .map_err(|_| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::StorageFailed,
+                    "invalid project source storage",
+                ))
+            })?
+            .ok_or_else(|| {
+                CallError::Domain(source_error(
+                    EvidenceProblem::NotFound,
+                    "project source not found",
+                ))
+            })?;
         let current = project_record_reference(&reference.scope.id, key, &actual)
             .map_err(CallError::Domain)?;
         Ok(SourceObservation {
