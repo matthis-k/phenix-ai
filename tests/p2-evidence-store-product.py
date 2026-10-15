@@ -23,7 +23,7 @@ env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(database))
 seed = subprocess.run(
     [basic, "jsonl"],
     input="".join(
-        json.dumps({"type": "prompt", "session": "s1", "text": "echo:" + fact}) + "\\n"
+        json.dumps({"type": "prompt", "session": "s1", "text": "echo:" + fact}) + "\n"
         for fact in ("The project color was violet", "The project color is blue")
     ),
     capture_output=True, text=True, env=env, timeout=60,
