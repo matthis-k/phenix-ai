@@ -50,6 +50,15 @@ source-evidence work do not constitute acceptance of the Advanced product.
 The older `oldmain` Advanced implementation is a behavioral reference.
 Post-P1 multi-client projection and I/O remain a separate roadmap track.
 
+P2-6A adds architecture decisions backed by project-scoped cross-session
+memory. Its acceptance cases AV-35 through AV-41 cover deterministic,
+source-backed design decisions, supersession and recovery across sessions.
+The Architecture plugin can invoke existing Skills, Context, Git and Workspace
+facilities for optional grilling, glossary/ADR capture and vertical ticket
+slicing. This is not a second architecture CI gate: the compiled contracts
+and runtime remain authoritative; functional and denial tests own acceptance.
+Model-based design-quality benchmarks remain optional, outside CI.
+
 ## Consolidation intervention
 
 The 12 October decision makes M1 the sole supported product after consolidation.
