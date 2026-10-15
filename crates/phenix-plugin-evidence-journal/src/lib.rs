@@ -2,10 +2,10 @@
 //! The provider does not give read authority merely because a caller knows
 //! a reference. The selected Journal and the kernel authorize actual reads.
 use phenix_advanced_contracts::{
-    EvidenceError, EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceMatch,
-    SourceObservation, SourceRef, compare_source, validate_reference,
+    compare_source, validate_reference, EvidenceError, EvidenceProblem, EvidenceScope,
+    EvidenceScopeKind, SourceMatch, SourceObservation, SourceRef,
 };
-use phenix_basic_contracts::{Event, encode};
+use phenix_basic_contracts::{encode, Event};
 use sha2::{Digest, Sha256};
 
 const JOURNAL_OWNER: &str = "phenix.basic.event-journal";
@@ -19,10 +19,7 @@ fn problem(problem: EvidenceProblem, message: &str) -> EvidenceError {
 }
 
 fn validate_event(event: &Event) -> Result<(), EvidenceError> {
-    if event.sequence == 0
-        || !phenix_sdk::identifier(&event.session)
-        || event.run.is_empty()
-    {
+    if event.sequence == 0 || !phenix_sdk::identifier(&event.session) || event.run.is_empty() {
         return Err(problem(
             EvidenceProblem::InvalidIdentity,
             "invalid journal event identity",
@@ -34,10 +31,16 @@ fn validate_event(event: &Event) -> Result<(), EvidenceError> {
 pub fn journal_reference(event: &Event) -> Result<SourceRef, EvidenceError> {
     validate_event(event)?;
     let raw = encode(event).map_err(|_| {
-        problem(EvidenceProblem::InvalidIdentity, "cannot encode source event")
+        problem(
+            EvidenceProblem::InvalidIdentity,
+            "cannot encode source event",
+        )
     })?;
     if raw.0.len() > MAX_EVENT_BYTES {
-        return Err(problem(EvidenceProblem::InvalidRange, "journal event too large"));
+        return Err(problem(
+            EvidenceProblem::InvalidRange,
+            "journal event too large",
+        ));
     }
     let digest = Sha256::digest(&raw.0);
     Ok(SourceRef {
@@ -57,7 +60,10 @@ pub fn journal_reference(event: &Event) -> Result<SourceRef, EvidenceError> {
 pub fn validate_journal_reference(reference: &SourceRef) -> Result<u64, EvidenceError> {
     validate_reference(reference).map_err(|p| problem(p, "malformed source reference"))?;
     let revision = reference.revision.parse::<u64>().map_err(|_| {
-        problem(EvidenceProblem::InvalidIdentity, "non-numeric journal revision")
+        problem(
+            EvidenceProblem::InvalidIdentity,
+            "non-numeric journal revision",
+        )
     })?;
     if revision == 0
         || reference.revision != revision.to_string()
