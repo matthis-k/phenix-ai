@@ -1,7 +1,7 @@
 //! Independent native P2 EvidenceStore acceptance over packaged providers.
 //! The production Basic binary seeds the journal in a separate process.
 use phenix_advanced_contracts::{
-    EvidenceError, EvidenceFreshness, EvidenceKind, EvidenceKey, EvidencePage, EvidenceProblem,
+    EvidenceError, EvidenceFreshness, EvidenceKey, EvidenceKind, EvidencePage, EvidenceProblem,
     EvidenceRecord, EvidenceScope, EvidenceScopeKind, EvidenceSearch, SourceRef,
 };
 use phenix_basic_contracts::{encode, Event, EventKind, EventPage, JournalQuery};
@@ -31,15 +31,25 @@ fn grant(caller: &str, interface: &str, operation: &str) -> ScopedGrant {
 }
 fn slot(caller: &str, name: &str, provider: &str, export: &str) -> SlotBinding {
     SlotBinding {
-        caller: caller.into(), slot: name.into(), index: 0,
-        provider: provider.into(), export: export.into(),
+        caller: caller.into(),
+        slot: name.into(),
+        index: 0,
+        provider: provider.into(),
+        export: export.into(),
     }
 }
 fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
-    Selection { interface: interface.into(), operation: operation.into(), provider: provider.into() }
+    Selection {
+        interface: interface.into(),
+        operation: operation.into(),
+        provider: provider.into(),
+    }
 }
 fn scope() -> EvidenceScope {
-    EvidenceScope { kind: EvidenceScopeKind::Session, id: SESSION.into() }
+    EvidenceScope {
+        kind: EvidenceScopeKind::Session,
+        id: SESSION.into(),
+    }
 }
 
 struct Packages {
@@ -47,19 +57,43 @@ struct Packages {
     definitions: Vec<String>,
 }
 impl Packages {
-    fn invoke(&self, interface: &str, operation: &str, provider: &str, input: Value)
-        -> Result<Outcome, phenix_contract::Failure>
-    {
+    fn invoke(
+        &self,
+        interface: &str,
+        operation: &str,
+        provider: &str,
+        input: Value,
+    ) -> Result<Outcome, phenix_contract::Failure> {
         let grants = vec![
             grant("root", "phenix.basic.journal@1", "read"),
             grant("root", "phenix.advanced.evidence@1", "put"),
             grant("root", "phenix.advanced.evidence@1", "get"),
             grant("root", "phenix.advanced.evidence@1", "search"),
-            grant("phenix.advanced.evidence-store", "phenix.basic.storage@1", "read"),
-            grant("phenix.advanced.evidence-store", "phenix.basic.storage@1", "transact"),
-            grant("phenix.advanced.evidence-store", "phenix.advanced.source@1", "observe"),
-            grant("phenix.advanced.evidence-journal", "phenix.basic.journal@1", "read"),
-            grant("phenix.basic.event-journal", "phenix.basic.storage@1", "read"),
+            grant(
+                "phenix.advanced.evidence-store",
+                "phenix.basic.storage@1",
+                "read",
+            ),
+            grant(
+                "phenix.advanced.evidence-store",
+                "phenix.basic.storage@1",
+                "transact",
+            ),
+            grant(
+                "phenix.advanced.evidence-store",
+                "phenix.advanced.source@1",
+                "observe",
+            ),
+            grant(
+                "phenix.advanced.evidence-journal",
+                "phenix.basic.journal@1",
+                "read",
+            ),
+            grant(
+                "phenix.basic.event-journal",
+                "phenix.basic.storage@1",
+                "read",
+            ),
         ];
         let composition = Composition {
             format: "phenix.composition.v2".into(),
@@ -67,10 +101,30 @@ impl Packages {
             definitions: self.definitions.clone(),
             entry: selection(interface, operation, provider),
             slots: vec![
-                slot("phenix.advanced.evidence-store", "Storage", "phenix.basic.storage-sqlite", "Storage"),
-                slot("phenix.advanced.evidence-store", "Source", "phenix.advanced.evidence-journal", "Evidence"),
-                slot("phenix.advanced.evidence-journal", "Journal", "phenix.basic.event-journal", "Journal"),
-                slot("phenix.basic.event-journal", "Storage", "phenix.basic.storage-sqlite", "Storage"),
+                slot(
+                    "phenix.advanced.evidence-store",
+                    "Storage",
+                    "phenix.basic.storage-sqlite",
+                    "Storage",
+                ),
+                slot(
+                    "phenix.advanced.evidence-store",
+                    "Source",
+                    "phenix.advanced.evidence-journal",
+                    "Evidence",
+                ),
+                slot(
+                    "phenix.advanced.evidence-journal",
+                    "Journal",
+                    "phenix.basic.event-journal",
+                    "Journal",
+                ),
+                slot(
+                    "phenix.basic.event-journal",
+                    "Storage",
+                    "phenix.basic.storage-sqlite",
+                    "Storage",
+                ),
             ],
             authority: Authority {
                 operations: grants.iter().map(ScopedGrant::key).collect(),
@@ -87,17 +141,32 @@ impl Packages {
     }
 
     fn journal(&self) -> EventPage {
-        match self.invoke(
-            "phenix.basic.journal@1", "read", "phenix.basic.event-journal",
-            JournalQuery { session: SESSION.into(), after: 0, limit: 128 }.to_value(),
-        ).unwrap() {
+        match self
+            .invoke(
+                "phenix.basic.journal@1",
+                "read",
+                "phenix.basic.event-journal",
+                JournalQuery {
+                    session: SESSION.into(),
+                    after: 0,
+                    limit: 128,
+                }
+                .to_value(),
+            )
+            .unwrap()
+        {
             Outcome::Success(value) => EventPage::from_value(value).unwrap(),
             other => panic!("native journal must return real source events: {other:?}"),
         }
     }
 
     fn evidence(&self, op: &str, request: Value) -> Result<Outcome, phenix_contract::Failure> {
-        self.invoke("phenix.advanced.evidence@1", op, "phenix.advanced.evidence-store", request)
+        self.invoke(
+            "phenix.advanced.evidence@1",
+            op,
+            "phenix.advanced.evidence-store",
+            request,
+        )
     }
     fn success<T: Portable>(&self, op: &str, request: Value) -> T {
         let outcome = self.evidence(op, request).unwrap();
@@ -112,7 +181,10 @@ impl Packages {
             panic!("expected typed denial for {op}, got {actual:?}");
         };
         let actual = EvidenceError::from_value(value).unwrap();
-        assert_eq!(actual.problem, expected, "unexpected EvidenceStore {op} denial");
+        assert_eq!(
+            actual.problem, expected,
+            "unexpected EvidenceStore {op} denial"
+        );
     }
 }
 
@@ -134,7 +206,13 @@ fn answer<'a>(page: &'a EventPage, text: &str) -> &'a Event {
         .find(|e| e.kind == EventKind::Answer && e.text == text)
         .unwrap_or_else(|| panic!("missing authoritative Answer {text}"))
 }
-fn fact(statement: &str, source: SourceRef, revision: u64, from: u64, until: Option<u64>) -> EvidenceRecord {
+fn fact(
+    statement: &str,
+    source: SourceRef,
+    revision: u64,
+    from: u64,
+    until: Option<u64>,
+) -> EvidenceRecord {
     EvidenceRecord {
         id: "fact-project-color".into(),
         scope: scope(),
@@ -152,7 +230,13 @@ fn fact(statement: &str, source: SourceRef, revision: u64, from: u64, until: Opt
 }
 
 fn write(packages: &Packages, first: SourceRef, second: SourceRef) -> serde_json::Value {
-    let initial = fact("The project color was violet", first.clone(), 1, 10, Some(100));
+    let initial = fact(
+        "The project color was violet",
+        first.clone(),
+        1,
+        10,
+        Some(100),
+    );
     let revision = packages.success::<EvidenceRecord>("put", initial.to_value());
     assert_eq!(revision.revision, 1);
     let mut unbacked = initial.clone();
@@ -178,9 +262,14 @@ fn write(packages: &Packages, first: SourceRef, second: SourceRef) -> serde_json
     let accepted = packages.success::<EvidenceRecord>("put", corrected.to_value());
     assert_eq!(accepted.revision, 2);
     packages.denied("put", initial.to_value(), EvidenceProblem::Conflict);
-    let saved = packages.success::<EvidenceRecord>("get", EvidenceKey {
-        id: "fact-project-color".into(), scope: scope(),
-    }.to_value());
+    let saved = packages.success::<EvidenceRecord>(
+        "get",
+        EvidenceKey {
+            id: "fact-project-color".into(),
+            scope: scope(),
+        }
+        .to_value(),
+    );
     assert_eq!(saved, corrected);
     serde_json::json!({
         "accepted": true,
@@ -197,27 +286,42 @@ fn write(packages: &Packages, first: SourceRef, second: SourceRef) -> serde_json
 }
 
 fn restart(packages: &Packages, first: SourceRef) -> serde_json::Value {
-    let current = packages.success::<EvidenceRecord>("get", EvidenceKey {
-        id: "fact-project-color".into(), scope: scope(),
-    }.to_value());
+    let current = packages.success::<EvidenceRecord>(
+        "get",
+        EvidenceKey {
+            id: "fact-project-color".into(),
+            scope: scope(),
+        }
+        .to_value(),
+    );
     assert_eq!(current.revision, 2);
-    let query = |as_of| EvidenceSearch {
-        scopes: vec![scope()],
-        query: "The project color".into(),
-        as_of,
-        limit: 4,
-    }.to_value();
+    let query = |as_of| {
+        EvidenceSearch {
+            scopes: vec![scope()],
+            query: "The project color".into(),
+            as_of,
+            limit: 4,
+        }
+        .to_value()
+    };
     let active = packages.success::<EvidencePage>("search", query(None));
     assert_eq!(active.records.len(), 1);
     assert_eq!(active.records[0], current);
     let historical = packages.success::<EvidencePage>("search", query(Some(50)));
     assert_eq!(historical.records.len(), 1);
-    assert_eq!(historical.records[0].statement, "The project color was violet");
+    assert_eq!(
+        historical.records[0].statement,
+        "The project color was violet"
+    );
     let mut foreign = scope();
     foreign.id = "s2".into();
     packages.denied(
         "get",
-        EvidenceKey { id: "fact-project-color".into(), scope: foreign }.to_value(),
+        EvidenceKey {
+            id: "fact-project-color".into(),
+            scope: foreign,
+        }
+        .to_value(),
         EvidenceProblem::ScopeDenied,
     );
     serde_json::json!({
@@ -250,5 +354,6 @@ fn main() {
     fs::write(
         output.join("evidence-store.json"),
         serde_json::to_vec_pretty(&report).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 }
