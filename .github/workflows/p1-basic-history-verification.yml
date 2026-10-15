@@ -70,6 +70,7 @@ jobs:
               "acp-invalid-content-rejected",
               "acp-recovery-after-invalid-input",
               "acp-session-load-process-restart",
+              "acp-composition-model-options-after-restart",
               "acp-tool-history-reloaded",
               "acp-multiple-session-loads",
           ], acp
