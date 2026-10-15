@@ -36,6 +36,20 @@ current integrated P1 and CI acceptance statements above supersede their
 pre-integration projections.
 
 
+## P2 advanced agent
+
+[The P2 advanced agent roadmap](p2-advanced-agent-roadmap.md) owns the detailed
+P2-0 through P2-10 stage order and acceptance tests. The Advanced product
+extends the accepted P1 kernel and Basic composition with memory, reversible
+compaction, deterministic code-entity lineage, plugin-contributed graph
+updates, workspaces, durable jobs, session-tree sub-agents and inspection.
+
+P1 and the C4 CI cutover are accepted. P2 implementation now proceeds as
+separate tests-first, packaged native plugin slices. Early composition and
+source-evidence work do not constitute acceptance of the Advanced product.
+The older `oldmain` Advanced implementation is a behavioral reference.
+Post-P1 multi-client projection and I/O remain a separate roadmap track.
+
 ## Consolidation intervention
 
 The 12 October decision makes M1 the sole supported product after consolidation.

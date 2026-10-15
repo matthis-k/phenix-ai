@@ -1,0 +1,263 @@
+# P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
+
+Status: PLANNED. No P2 implementation or test acceptance is claimed.
+Updated: 2026-10-15
+Parent: [M1 roadmap](m1-roadmap.md)
+Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
+P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [post-P1 CI cutover PR #879](https://github.com/matthis-k/phenix-ai/pull/879).
+
+## Goal and release boundary
+
+P2 is the Advanced agent product. Its kernel is the same M1 kernel as P1. Advanced features live in independently replaceable plugins; the kernel retains authenticated dispatch, generation identity, pending tickets, graph scheduling, authority and cancellation. A product composition selects plugins and their declared bindings. It never becomes a second agent executor.
+
+The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
+
+**Sequence:** finish the accepted P1 baseline and the single-authority CI cutover before P2 implementation. Specifications and test vectors may be prepared now. Tests are written RED before implementation for every feature slice. Each implementation PR is ready for review when executable code exists. An exact-head full CI pass is required for release acceptance.
+
+## Five immutable package compositions
+
+Build one kernel and compose increasingly capable products. A preset is a packaged, versioned artifact list with selected contract bindings, launch entry and declared grants. It is not another runtime implementation. An installed user-facing preset must start without a separate composition file.
+
+| Flake package / executable | Derives from | Plugins and purpose | Release exposure |
+| --- | --- | --- | --- |
+| phenix-kernel | M1 kernel | Kernel-only CLI, offline contract/package inspection, no agent graph or model | Public |
+| phenix-basic | Kernel + P1 composition | Model, tools, Skills/Context, Session/Journal/Storage, Basic graph, Terminal/JSONL/ACP | Public, already packaged |
+| phenix-basic-verification | Basic composition + test provider override | Deterministic history-aware Model and existing acceptance fixtures | CI only, already packaged; retain |
+| phenix-advanced | Basic composition + P2 plugins | Advanced memory, compaction, code intelligence, workspace tools, jobs, sub-agents/session trees, inspection and efficiency evaluation, hot reload | Public after P2 |
+| phenix-advanced-verification | Advanced composition + isolated test providers | Typed scenario Model, sandboxed workspace/process/child-agent fixtures, controllable failures, clock/revision and reload fixtures | CI only |
+
+Do not silently replace the default Basic Model, weaken Basic grants or add verification-only providers to either user-facing closure. The scripted P1 model may remain the offline reference default; production Model bindings stay replaceable (HTTP or another provider). The verification binary must exercise the real kernel, real session/journal/storage, real graph and real plugin entry points. Only the model, clock and external environment inputs are controlled.
+
+Use the P1 flake's basicCompositionSpec, historyVerificationComposition and basicPreset pattern. Prefer a shared composition function that adds artifacts and replaces explicit bindings, without copying serialized JSON by hand. Produce manifests/digests for all five presets. The verification product must have exactly the same Advanced bindings except for named fixture providers. Check no fixture artifact or test-only capability is reachable from phenix-advanced's Nix runtime closure.
+
+## Scope and implementation order
+
+| Stage | Dependency | Owned change | RED test / completion gate |
+| --- | --- | --- | --- |
+| P2-0: composition and parity | P1 + CI authority | Freeze oldmain versus P1/P2 behavior inventory, five preset derivations, contracts, separate fixture package | Launch/inspect all presets; prove Basic binary/behavior unchanged; verification plugins excluded from public closure |
+| P2-1: evidence model | P2-0 | Typed references, memory scopes, temporal/freshness metadata and durable evidence links | Stable references survive restart; stale/forged/out-of-scope references reject |
+| P2-2: memory | P2-1 | Write, extract, reconcile, retrieve, rank and update hybrid memory through plugin contracts | Multi-session, temporal, update, abstention and provenance fixtures; benchmark baseline |
+| P2-3: reversible compaction | P2-1; may build alongside P2-2 | Policy, summaries, snapshot lineage, deterministic expansion and source hydration | Tight-window continuation, exact replay/rehydration, crash safety, no duplicated tool effects |
+| P2-4: deterministic code intelligence | P2-1; integrate with P2-6 workspace edits | Revisioned code-entity graph, lineage, edit validation, provider evidence, incremental reconciliation and memory links | Rename/move/split/delete, provider disagreement, failed edit, external change and crash/rebuild integrity |
+| P2-5: graph contributions and hot reload | P2-0; P2-1 for persistent plugin state | Recompose immutable candidate graph from versioned plugin node/edge/trigger contributions on replacement or authorized runtime selection | Updated plugin inserts workflow steps; new roots use new topology, old roots finish old graph; invalid candidates roll back |
+| P2-6: workspace | P2-0, P2-4 for code integration | Scoped file operations, shell/process execution, Git integration and revision-checked atomic writes through plugins | Real workspace editing, denied traversal, shell streaming/cancellation, conflicts, rollback and tool-visible results |
+| P2-7: durable jobs | P2-6 | Persistent job identity, lifecycle, owner grants, log cursors, recovery and bounded detached work | Parent disconnect, process restart, attach, cancellation, duplicate admission, lease cleanup and fault recovery |
+| P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
+| P2-9: inspection and efficiency | P2-0; instrument P2-2 through P2-8 | Separate logging, introspection/debug and efficiency-evaluation plugins consuming permitted kernel events and projections | Durable/replayable traces, redacted inspection, cost/latency/usage metrics and repeatable comparisons |
+| P2-10: advanced verification and release | P2-2 through P2-9 | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
+
+Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
+
+## Advanced graph topology and contract ownership
+
+Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composition. It contributes typed graph nodes and event handlers around the selected Basic agent; it does not fork the Basic model/tool loop or implement a second scheduler.
+
+- On prompt admission: resolve authorized memory/context anchors, check code/source revisions, retrieve budgeted evidence and choose a checkpoint/current-view policy before the Model request is prepared.
+- On committed conversation/tool events: enqueue idempotent extraction, association updates and optional memory maintenance. Effects carry session, source event and generation identity. A failed background maintenance step cannot duplicate or reorder the active Model/tool turn.
+- On context threshold: commit compaction checkpoint and publish the selected compacted view through typed Context state before the next Model call. Refresh only impacted projections through generated on-change hooks.
+- On code revision or source removal: invalidate dependent memory references, index entries and derived context. The next lookup checks freshness before using the entry.
+- On plugin replacement or authorized contribution selection: compose the updated plugin's declarations with other contributions, validate a candidate graph and atomically promote a new generation. Existing roots remain pinned to their original graph and provider bindings.
+
+Define any needed Memory, ContextView, Compaction, CodeIndex and ReloadControl contracts in a standalone public contract crate. A production implementation remains a selectable provider. Model-facing answers expose the source reference IDs used by retrieval and expansion, so tests and users can inspect evidence. The Basic topology, plugins and binary remain byte-for-byte independent of this additive composition.
+
+## Reference-aware memory
+
+Retain the capabilities evident in oldmain's phenix-plugin-memory: canonical source references, scoped records, context anchors and associations, ranked retrieval, freshness/dependency revalidation, supersession, consolidation, compaction and expansion. Do not copy its old runtime API. The new memory plugin uses M1 public contracts and the selected Storage provider.
+
+### Evidence and identity
+
+Define typed records with: stable memory ID; kind (fact, event, preference, task or derived observation); authorized scope (session, project, user or explicit shared scope); subject/predicate/object or typed payload; source references; source revision and byte/line/span or event offsets when known; observation and validity times; confidence; evidence-versus-inference flag; supersedes links; status (current, historical, uncertain or needs validation); version; and durable creation/update cause. Every answerable factual memory must link to material that can be fetched and checked. References must resolve through authorized providers, not by exposing raw paths or assuming the reference grants access.
+
+Store an immutable source/event record and mutable versioned projections separately. Make source deletion, redaction and consent limits invalidate derived facts and indexes. Avoid cross-session contamination and inferred facts masquerading as user statements. Preserve history when a fact is corrected: current queries select the latest valid supported version; as-of queries retrieve the historical version. Duplicate event ingestion must be idempotent.
+
+### Hybrid retrieval: default candidate
+
+Start with three complementary methods:
+
+1. Exact/structured lookup for references, IDs, scopes, time bounds and key/value relations. SQLite tables/indexes and FTS5 are candidates using the existing rusqlite provider.
+2. Lexical retrieval with source-term expansion for code identifiers, names, paths and exact wording.
+3. A bounded relation/temporal graph walk over entities, associations, supersession and evidence edges. Embeddings and semantic rerankers are optional selected providers, not required for offline correctness.
+
+Deduplicate results by source identity and current validity. Rank with explicit relevance, freshness, confidence, scope and source coverage. Apply retrieval token budgets and expose the scored evidence list plus rejected/stale reasons for debugging. A compact entity profile may help query expansion but cannot replace source evidence. The agent should abstain when evidence is missing or contradictory.
+
+Do not turn on every retrieval backend by default. Measure lexical-only, structured+lexical, structured+graph and optional dense/hybrid profiles against the same tests and token budget. Keep the simplest configuration that demonstrably improves recall, answer accuracy or cost. All modes implement one Memory contract and can be replaced independently.
+
+### Research to reproduce, not performance claims
+
+- [LongMemEval](https://arxiv.org/abs/2410.10813) tests extraction, multi-session reasoning, time, updates and abstention. Its official repository also published a [2026 v2 update](https://github.com/xiaowu0162/LongMemEval).
+- [Mem0](https://arxiv.org/abs/2504.19413) motivates selective fact extraction and optional relational memory; compare graph benefit against its cost.
+- [Zep/Graphiti](https://arxiv.org/abs/2501.13956) motivates temporal entity/relationship revisions and hybrid graph+text retrieval.
+- [Hindsight](https://arxiv.org/abs/2512.12818) separates facts, experiences, entity summaries and evolving beliefs; adopt that distinction where traceable.
+- [Redis's 2026 hybrid memory evaluation](https://redis.github.io/redis-ai-research-public/longmemeval-agent-memory/) compares raw retrieval, extracted memories and a hybrid on the same question set. Use this as evidence that retaining raw references alongside extracted facts merits testing.
+
+Published model-dependent scores cannot certify Phenix. Record dataset/version, ingestion budget, context tokens, retrieval precision/recall, final answer correctness, abstention, latency and cost. The offline scripted Model is the gating oracle; external model benchmarks are secondary non-gating reports unless a reproducible model/version is pinned.
+
+## Reversible compaction
+
+A compacted prompt is a derived view, never the sole durable record. The Session/EventJournal append-only ordered messages, complete tool requests/results and source references remain authoritative. A compaction checkpoint records its input event range and hashes, parent checkpoint, selection policy/version, model/version if a summarizer was used, generated summary, retained recent messages, excluded ranges and hydration references.
+
+At a configurable context threshold, preserve system/tool/authority context, unresolved tool calls, important recent exchanges and budgeted recalled evidence. Summarize older completed spans; store the summary with cited immutable ranges. Permit nested checkpoints and repeated compaction without losing the oldest evidence. Expansion can restore an original range byte-for-byte by replaying the journal, or selectively hydrate cited source ranges into a new prompt. Do not claim that a summary can recreate exact wording without the original records.
+
+**Required properties:** transactional checkpoint commit, restart recovery, stable message IDs, deduplication of injected evidence, bounded token count, source visibility, optional human inspection, undo/switch-back to an earlier checkpoint view, and explicit retention policy for intentionally deleted data. Compaction never executes a tool, marks a tool as completed, changes the authoritative session timeline or grants access to hidden sources. If original bytes were intentionally erased, report that expansion is unavailable rather than silently inventing text.
+
+Keep compaction, memory retrieval and journal persistence separate contracts. The advanced graph chooses when to compact, what to retrieve and which selected Context view the Model receives. The kernel does not know about token windows or summaries.
+
+## Code intelligence
+
+P2 requires a **deterministically maintained code-entity graph**. Restore oldmain's logical code entities, provider epochs, facet revisions, provenance, relation facts, lineage, identity-continuity states, rebuild checkpoints and edit-validation evidence. This code graph is distinct from the kernel's executable workflow DAG.
+
+### Entity identity and lineage
+
+- Identify entities by repository/worktree, logical ID, language and provider, source revision and supporting symbol facts. Track source file hashes, byte/UTF positions, provider epoch and exact definition/reference spans. Names and line numbers alone are insufficient identity.
+- Record rename, move, changed signature/body, insertion, deletion, split and merge as versioned lineage edges, with supporting evidence and explicit confidence/continuity state. Prefer versioned workspace/Git changes, parser AST identity and fingerprints, scoped reference/definition results and validated provider facts. Similarity heuristics alone cannot certify an identity.
+- Handle ambiguous successors, reused names, provider disagreement and missing evidence as **unresolved or unknown**. Never silently merge two entities, redirect a stale reference or present an unconfirmed relationship as fact.
+- Attach every node/relation and reverse dependency to the exact source/provider revision that supports it. Revise or invalidate affected relations, cache entries, compaction references and memory facts when source or provider epochs change.
+
+### Deterministic validation and reconciliation
+
+- Use maintained Tree-sitter parsers for incremental structure and LSP providers for language-specific semantics, references, rename and diagnostics. These standard providers deliver observations; Phenix's code-intelligence plugin enforces revision, evidence and identity semantics.
+- For an edit, verify grants, expected file and entity revisions, range consistency, overlapping writes, parser results and applicable semantic facts. The workspace plugin performs revision-checked writes. After the real filesystem commit, re-read bytes and reconcile parser/LSP observations against the committed revision before publishing a new valid code-graph projection.
+- Filesystem writes and index writes do not share an automatic transaction. On indexing failure after a successful file write, mark affected entities and relations **rebuilding/needs-validation**. Queries requiring current facts must fail closed until repair. Offer inverse edits only as separately verified revision-checked operations; never claim an unverified filesystem rollback.
+- Handle workspace writes, external editor updates, Git checkouts, missed watcher events, language-server restarts, provider-epoch shifts and process crashes. Persist rebuild checkpoints and an observation trail. Verify source hashes when serving current claims, then reindex the affected neighborhood or rebuild as needed.
+- Return source/provenance IDs, exact revision, relation coverage and freshness with every result. When support cannot be verified, return partial/stale/unknown explicitly. The memory plugin and Model-facing Context accept only validated current code references for current factual claims.
+- Keep symbol identity, lineage validation, graph repair and edit safety **model-independent**. A model may propose edits or interpretations, but cannot invent confirmed lineage, suppress failed diagnostics or mark an index current without deterministic evidence.
+
+Public tools cover file/symbol search, outline, definitions/references, diagnostics, changed-neighborhood queries, lineage/history, source-backed graph relations and edit preview/validation. Rust is the first acceptance language. Language-provider adapters stay replaceable.
+
+Accept only with direct fixture checks of code-graph integrity independent of the scripted Model, plus product tests that prove the Advanced agent receives verified results or explicit unknown/stale outcomes. Include rename/move/split/merge ambiguity, same-name different-entity, edit conflicts, failed post-write validation, external file changes, provider epoch changes and crash/restart repair.
+
+## Plugin-authored runtime graph evolution and safe hot reload
+
+The active workflow graph is an immutable composition of **plugin-owned** node, edge and trigger contributions. P2 must support changes to that composition **while Phenix runs**. When a process plugin is replaced by a richer version, its new contribution may add a validation step, replace an executor node or insert verification before completion. This is a plugin contract change, not an agent rewriting the kernel graph.
+
+### Runtime contribution changes
+
+- The SDK/macros publish inspectable typed contribution descriptors with stable node/action IDs, triggers, predecessor edges, join/failure policies, resource grants and read/write effects. Updated plugin artifacts may publish different contributions. Authorized configuration can also select among published contribution sets from installed providers.
+- All executable node/action implementations and maximum grants must be declared in validated package metadata. If runtime proposals are needed, they only reference already declared callable IDs, typed operations and bounded resources. No unvalidated plugin code, new permissions or arbitrary mutable graph patching.
+- On install, replace, remove or authorized contribution selection, the kernel resolves a **complete candidate graph** from selected plugin declarations. Validate package identity, imports, schema and resource grants, ownership, anchors, trigger contracts, cycles, write conflicts, fan-out, effects and dependency order using the existing M1 compiler and resolver before activation.
+- Record the candidate graph digest, contribution owners and structural diff. Stage required plugin state migration separately, then atomically promote the new immutable generation. **New roots use the new graph. In-flight roots stay pinned to the old graph and provider leases** until completion/cancellation and physical drain. Do not splice new nodes into running executions.
+- If work must continue under a new topology, submit an explicitly authorized new root with correlation and idempotency data. Failed compilation, denied grants, missing callbacks or migration failure keep the last active generation untouched.
+- Provide typed control/inspection operations to stage, diff, validate, promote, roll back and inspect graph generations. The kernel remains the single graph authority. Logging and introspection consume its generic lifecycle events.
+
+Example: plugin version A contributes `start -> execute -> complete`. Its replacement B contributes `start -> validate -> execute -> verify -> complete`. Upon authorized reload, Phenix validates B's declared effects and promotes generation B. A new run follows all five steps; an existing run completes using A's three steps. An invalid version C cannot change either run.
+
+### Native lifecycle and state
+
+Plugin reload is a generic kernel generation transition requested through an authorized control plugin or host. Validate ABI, descriptor, package hash, contracts and maximum authority before candidate execution where offline checks suffice. Stateful plugins declare snapshot/export/import migrations or an explicit restart-required policy. Migration and generation publication must be rollback-safe; a graph change does not imply a state migration.
+
+Support native plugin add/replace/remove with content-addressed loaded artifacts and deferred retirement. No library unload while an old callback, observer, ticket or leased state can still use it. Recover the last committed generation after a staging crash and never execute constructors of denied candidates. Reuse kernel resolver, graph compiler, dispatcher, generation manager, leases and cancellation; do not add a second scheduler or mutable graph registry.
+
+## Workspace management (P2-6)
+
+Restore the useful behaviors of oldmain's `phenix.workspace` and local environment plugins. Define a Workspace contract for root-scoped file listing, read, search, create, move, delete, versioned writes and Git status/diff operations. Keep filesystem and process I/O in selected workspace/environment plugins backed by maintained libraries. The kernel owns only generic effect admission and authority. P2's Basic user-facing product must not acquire these grants.
+
+- Use an explicit workspace root and per-operation grants: read, write, execute, git. Enforce canonical filesystem containment at the actual OS operation, including symlink and race protections.
+- Implement revision-checked edits and atomic multi-file batches where the filesystem permits. Return receipts with before/after revision hashes and conflict/error states. Never silently overwrite changed content.
+- Expose a typed terminal/process tool that streams bounded stdout/stderr, reports exit/interrupt state, supports cancellation and does not block kernel dispatch. Capture process IDs and recovery handles only when supported.
+- Git status, diff and permitted repository operations should use established Git libraries or Git subprocesses with explicit argument arrays and policy checks. Do not invent a new Git protocol or shell escape grammar.
+- Integrate code intelligence invalidation with actual workspace revision events. A file write triggers reindexing only for affected documents.
+
+Acceptance: an independent scripted Model calls read, edit, diff and command tools through the composed Advanced executable; the fixture asserts actual bytes, command output, revision rejection, traversal denial and correct cancellation. Inspect grants for zero denied effects. Use a temporary isolated repository, not the host's working tree.
+
+## Durable jobs (P2-7)
+
+Add a selectable Jobs plugin for work that outlives a single tool call or frontend attachment. A job is a persistent, authorized record and state machine linked to its owning session or project. Record job ID, operation identity, parent/root, granted resources, selected provider/generation, status, progress cursor, output refs, started/updated times and recovery policy. Reuse Session/Journal/Storage for durable writes and observable changes.
+
+Support create, list/get, attach/detach, progress/log retrieval, cancel, complete, error and garbage collection. Job creation and transitions must use idempotency keys and compare-and-swap; repeated requests or journal replay cannot run a side effect twice. A job may be promoted to project lifetime only under explicit grants and a recorded lease change.
+
+**Durable record is not a promise of OS process survival.** After a host restart, a resumable task with a reliable checkpoint can continue; an unmanaged physical process must be reconciled or marked interrupted/unknown. Never report success or rerun a non-idempotent external command without verified outcome. Keep long-running execution in dedicated environment/process plugins, not inside the kernel or a duplicate scheduler.
+
+Acceptance: submit, detach, reconnect, inspect partial output, cancel and restart a real packaged job. Simulate a crash at enqueue, after effect admission and during cleanup. Assert one job identity, monotonic cursor, correct owner authorization, no double execution and no leaked leases.
+
+## Sub-agents and session trees (P2-8)
+
+A sub-agent is a child session with an independently recorded message/journal history. The parent delegates a task through typed agent/Session operations, not by calling the Basic run loop directly or creating a second executor. Each child has a stable parent ID, task/goal, selected composition/profile, inherited-or-reduced tool/model grants, explicit memory visibility, budget limits and cancellation scope. Support multiple concurrent children through the kernel's ordinary graph scheduling and pending tickets.
+
+The SessionTree plugin maintains parent/child links, cycle and depth validation, status, ordered child results, durable references and a parent-visible summary of the child's work. Children retain their own conversation and checkpoints. Parent history includes delegation and result references; do not flatten child messages into the parent transcript. Parent cancellation has an explicit policy for active children, and deliberate detachment requires a separately authorized durable job. Delegation cannot elevate parent capabilities, model budgets, token limits, workspace roots or memory scopes.
+
+Provide an API for spawn, inspect, list, communicate, await, cancel and resume child sessions. The parent may delegate to multiple children, combine their results and revisit cited child evidence. Restart recovers links and unresolved requests. Child failures are explicit outcomes, not missing completion events.
+
+Acceptance: the deterministic Model directs one parent to delegate two different subtasks. The real graph creates distinct child sessions and model turns, returns evidence-bearing results and resumes correctly after restart. Test delegated grant denial, recursion depth, total budget, one-child failure, independent cancellation and a stale child-generation/provider binding. A canned response that bypasses child sessions fails verification.
+
+## Inspection, debugging and efficiency evaluation (P2-9)
+
+Preserve the agreed separation: **kernel emits generic events**, a logging plugin consumes and persists authorized events, an introspection/debug plugin exposes a typed inspect/query interface, and an efficiency-evaluation plugin computes reports from events plus Model/Tool usage records. This is not an agent-specific kernel debug API or a second runtime controller.
+
+The inspect interface must report selected graph and generation IDs, plugins/providers, contract bindings, in-flight roots, pending tickets, state revisions, session trees, job states, journal cursors, memory retrieval provenance, compaction checkpoints, tool errors and recent lifecycle transitions. Expose safe filtered snapshots; only authorized callers may inspect other sessions or private tool arguments. Bound expensive traversals, pagination and snapshot size. Sensitive model/tool data must be redacted by default and never leaked to lower-authority observers.
+
+The efficiency plugin measures model calls and tokens, cost when a provider supplies valid pricing, wall and model/tool latency, tool success/failure, compaction savings versus rehydration cost, memory retrieval hit/quality, child/job fan-out, and trace-level resource use. Separate actual measured usage from estimates. Use stable correlation IDs across root/child/job/model/tool events and version all event/replay schemas. Prefer OpenTelemetry-compatible tracing/metrics libraries if their dependency cost fits; avoid implementing a custom observability transport.
+
+Provide inspect-by-session and inspect-by-root paths, replayable event offsets and exportable benchmark reports. A failed observer must not block a live root. Inspection cannot mutate runtime state; any control action requires its own authorized contract.
+
+Acceptance: on a scripted multi-agent, multi-job session, inspect exact graph/provider bindings and correlate all child/model/tool transitions with one root. Verify replay across process restart, redaction, denied cross-session reads, stalled observer backpressure and metrics recomputed consistently from the same recorded events.
+
+## Code intelligence and hook scope
+
+**Code intelligence in P2:** entity lineage, edit validation, provider-epoch tracking, revision-grounded relations, deterministic rebuild and fail-closed stale-source handling are required. They work without a Model. Deep optional query syntaxes may remain deferred, but correctness of the code graph and source references is not optional.
+
+**Hooks in P2:** generated typed `on_change`/`on_event` triggers remain the plugin-authoring mechanism. **Runtime graph evolution is required** through new or selected plugin-owned contributions, recomposed and published as new validated immutable generations. The old general-purpose user-written hook-rule language remains deferred. It is not needed to replace a running process plugin with one that contributes extra steps.
+
+## Deferred after P2
+
+Full objective/plan/exploration management, repository-worker task scheduling, generic artifact catalogs beyond the existing source/output references, user-configurable runtime hook rules, a broad options/preferences service, command-toolbelt discovery and rich interactive UI. Keep existing P1 functionality and permitted public plugin extensions. These deferred items do not block P2 acceptance.
+
+## Advanced verification plugins and acceptance
+
+Create a dedicated phenix-plugin-advanced-test-model (or similarly named fixture crate), packaged only with phenix-advanced-verification. It implements the same real typed Model contract. For each scenario it consumes the complete Model request, including actual ordered messages, tool-call IDs/results, contextual evidence and selected revisions. Its deterministic state machine refuses a golden answer when required evidence is absent or stale. It must not read the test answer directly from test harness state, fixture filesystem or private Storage records. Provide a second controllable fixture for source revisions, clock, provider failures and hot-reload lifecycle as needed.
+
+Every test runs the packaged executable, not a function that bypasses the graph. The suite records rendered output, actual model inputs, tool effects, journal offsets, state revisions, artifacts and provenance. Use an isolated SQLite database and real restart between phases. At least one independent ACP client and one Terminal or JSONL frontend drive the same scenarios.
+
+| ID | Independent scenario | Required result / negative control |
+| --- | --- | --- |
+| AV-01 | P1 Basic multi-turn, tools, streaming, cancellation and replay on Advanced preset | Identical observable P1 semantics; no hidden fixture provider |
+| AV-02 | Two sessions; fact introduced in A and asked in B with authorized shared scope | Correct recall with source citation; denied scope cannot retrieve it |
+| AV-03 | Later correction to earlier fact; current and as-of questions | New answer for current query, old answer for historical query, both with provenance |
+| AV-04 | Multi-hop association, partial evidence, contradictory evidence and no supporting fact | Only supported answer; abstain when evidence insufficient; no fabricated citation |
+| AV-05 | Source revision changes or memory explicitly retracted | Invalidate stale fact and related code references; no stale answer |
+| AV-06 | Real input exceeds configured context threshold; run compaction | Model receives bounded compacted view; old facts stay retrievable through references |
+| AV-07 | Ask verbatim question about old compacted text; expand by journal range | Original text byte-for-byte; no summary hallucination; undo selects old view |
+| AV-08 | Crash during summary checkpoint, during tool call and after committed checkpoint | Restart restores consistent state; no duplicated side effects or orphaned tool-call completion |
+| AV-09 | Parse Rust repository with symbol relations, references, diagnostics and provider epochs | Exact revision-bound source evidence; no invented or stale current relation |
+| AV-10 | Rename, move or edit an entity between requests | Proven lineage with source revisions; dependent references and memory invalidated as required |
+| AV-11 | Replace plugin whose new contribution inserts validation and verification steps | New roots use expanded graph; old roots finish old graph with leases safely drained |
+| AV-12 | Reload stateful memory provider with schema migration | State survives across generation and process restart; invalid migration rolls back |
+| AV-13 | Denied grants, forged package, incompatible ABI and corrupt graph on reload | Candidate rejected before effects; active generation unchanged |
+| AV-14 | Remove/re-add plugin with pending roots, cancellation and multiple graph generations | No use-after-unload, leaked tickets, doubled observer delivery or partial graph mutation |
+| AV-15 | Build all five presets and inspect closures and contract bindings | Fixture plugins only in verification products; Basic unchanged |
+| AV-16 | Compare lexical, hybrid and optional dense memory using frozen corpus | Report answer quality, retrieval completeness, p95 latency, token use and DB size; no ungrounded benchmark claim |
+| AV-17 | Read, edit and diff an isolated Git worktree through Advanced tools | Real file bytes and Git diff match expectation; symlink escape and unauthorized write have zero effects |
+| AV-18 | Concurrent workspace edit and running shell command | Revision conflict rejects overwrite; bounded stdout/stderr and cancelled process report correct terminal state |
+| AV-19 | Launch, detach and reattach a durable job across a frontend disconnect | Stable ID, monotonic journal/log cursor, no duplicate execution and authorized job ownership |
+| AV-20 | Crash during job admission, effect and finalization; restart | Resume checkpointed work or report indeterminate state; no silent command rerun or leaked lease |
+| AV-21 | Parent session delegates to two separate scripted-model child sessions | Independent child journals, actual model requests/tool results and parent aggregation with referenced evidence |
+| AV-22 | Delegate with narrower grants, limit or depth; cancel one child | Cannot escalate permissions/budgets; failure/cancel propagation and unaffected sibling behavior match policy |
+| AV-23 | Restart with an incomplete child and detached job | Parent-child lineage and job ownership survive, and reconciliation is explicit rather than a fabricated success |
+| AV-24 | Inspect a running graph, generation, session tree, job, memory and compaction state | Typed inspect snapshots match verified events and references, including pending/terminal transitions |
+| AV-25 | Request debug data across sessions; replay after restart with slow observer | Sensitive fields redacted, denied data inaccessible, independent observer cursors and bounded backpressure |
+| AV-26 | Measure scripted multi-tool and child-agent scenario under two memory/compaction policies | Counts, usage, latency and source citations are reproducible; estimates distinguished from measured costs |
+| AV-27 | Disable generated on-change hook or deny a job/child import | Required state refresh or delegation test fails deterministically; no alternate private control path |
+| AV-28 | Rename/move symbols with duplicates or ambiguous split/merge lineage | Deterministic evidence only; ambiguous candidates remain unresolved instead of falsely unified |
+| AV-29 | Propose code edit with stale revision, conflicting spans, invalid syntax or changed references | No incorrect valid code-graph publish; failed post-write validation explicitly marks affected entities stale |
+| AV-30 | External edit, missed watcher event and provider epoch change | Source digest revalidation and targeted rebuild eliminate stale current relations without Model intervention |
+| AV-31 | Crash between durable filesystem edit and code-index publish | Persistent rebuild state; no false current claim before verified reindex and restart reconciliation |
+| AV-32 | Hot-replace a process with a plugin contributing additional graph nodes/edges | Candidate graph diff validated, new root executes extra steps, old root remains on old topology |
+| AV-33 | Switch selected published plugin contributions during runtime | Authorized candidate generation publishes atomically; invalid import/anchor/cycle keeps existing generation |
+| AV-34 | Submit undeclared callable, forbidden graph write or incompatible schema in candidate | Reject before effects or constructor; no scope escalation, graph corruption or lost session |
+
+For each test include a relevant counterfactual: remove or corrupt retrieved source, change only the revision, disable the expected graph edge, reorder independent events, deny access, or revoke a child/job grant. The test must then fail or abstain. Assert a known exact answer only after proving the model actually consumed the cited evidence. Validate that the fixture model can also perform a tool-call/continuation sequence, instead of acting as a static canned-answer lookup.
+
+Add independent contract/ABI vectors, compiled external plugin fixtures, malicious negative cases, native sanitizer or equivalent lifetime tests where feasible, and repeated process restarts. Run Rust unit/integration and Nix package checks first, then the full canonical flake CI release inventory. Require exact-head artifacts and a green result again on the integrated main SHA.
+
+## Compatibility inventory from oldmain
+
+The original archived advanced profile included memory, planning, language, repository workers, jobs, session trees, workspace, hooks, debugging, command toolbelt, options, execution and environment adapters. Before P2-0 closes, classify each as implemented by P1, a required P2 replacement, or deferred. **P2 deliberately targets selected advanced capabilities, not full oldmain feature parity.** Record user-observable scenarios rather than simply restoring crate names. Planning, stand-alone artifact catalogs, generic repository workers, dynamic user-configurable hooks, broad configuration and interactive UI are deferred. The selected P2 features must meet their oldmain behavioral baseline where applicable.
+
+Retain oldmain's tested memory-specific semantics where they remain useful: immutable records, scope, freshness, canonical code references, source validation, embeddings/reranking as optional providers, source supersession and confirmation of contextual associations. Port contracts and acceptance, not oldmain's implementation-bound service calls.
+
+## Naming and adjacent post-P1 work
+
+PR #852 used P2a–P2d for multi-client state projection and I/O routing before the Advanced release label was assigned. Keep its work and dependency, but name its track P2-IO1 through P2-IO4 when integrating its roadmap. Advanced P2-0 through P2-10 is the product track. The multi-client I/O track can proceed in parallel after the CI gate; P2 does not depend on synchronized multiple frontends unless a verification scenario explicitly requires them.
+
+## Release decision
+
+P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
