@@ -265,7 +265,7 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 3, report
+        assert len(report["definitions"]) == 4, report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -731,7 +731,7 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
-        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" ];
+        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" ];
         replaceSlots = [
           (basicBinding "phenix.advanced.evidence-journal" "Journal"
             "phenix.basic.event-journal" "Journal")
@@ -741,6 +741,16 @@
             "phenix.advanced.evidence-journal" "Evidence")
         ];
         addGrants = [
+          { caller = "root";
+            interface = "phenix.advanced.project-membership@1";
+            operation = "get";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.project-storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "phenix.advanced.evidence-journal";
             interface = "phenix.basic.journal@1";
             operation = "read";
@@ -783,6 +793,8 @@
           }
         ];
         addOperations = [
+          "phenix.advanced.project-membership@1/get"
+          "phenix.advanced.project-storage@1/read"
           "phenix.basic.journal@1/read"
           "phenix.advanced.source@1/observe"
           "phenix.advanced.evidence@1/put"
@@ -942,6 +954,16 @@
           ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
           ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-project-storage-product.json"
+      '';
+      p2ProjectMembershipProductCheck = pkgs.runCommand "phenix-p2-project-membership-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-project-membership-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
+          ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-project-membership-product.json"
       '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -1519,6 +1541,7 @@
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
+        p2-project-membership-product = p2ProjectMembershipProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
