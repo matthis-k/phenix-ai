@@ -1,8 +1,8 @@
 //! P2-1 semantic acceptance, written before the evidence contract implementation.
 use phenix_advanced_contracts::{
-    validate_record, validate_reference, EvidenceFreshness, EvidenceKind, EvidenceProblem,
-    EvidenceRecord, EvidenceScope, EvidenceScopeKind, SourceMatch, SourceObservation, SourceRef,
-    compare_source, decode, encode,
+    compare_source, decode, encode, validate_record, validate_reference, EvidenceFreshness,
+    EvidenceKind, EvidenceProblem, EvidenceRecord, EvidenceScope, EvidenceScopeKind, SourceMatch,
+    SourceObservation, SourceRef,
 };
 
 fn scope() -> EvidenceScope {
@@ -43,45 +43,78 @@ fn record() -> EvidenceRecord {
 fn portable_reference_round_trip_preserves_identity_and_authorization_scope() {
     let original = reference();
     validate_reference(&original).unwrap();
-    assert_eq!(decode::<SourceRef>(&encode(&original).unwrap()).unwrap(), original);
+    assert_eq!(
+        decode::<SourceRef>(&encode(&original).unwrap()).unwrap(),
+        original
+    );
     let original = record();
     validate_record(&original).unwrap();
-    assert_eq!(decode::<EvidenceRecord>(&encode(&original).unwrap()).unwrap(), original);
+    assert_eq!(
+        decode::<EvidenceRecord>(&encode(&original).unwrap()).unwrap(),
+        original
+    );
 }
 
 #[test]
 fn rejects_unverifiable_and_malformed_source_identity() {
     let mut candidate = reference();
     candidate.digest_sha256 = "not-a-source-hash".into();
-    assert_eq!(validate_reference(&candidate), Err(EvidenceProblem::InvalidDigest));
+    assert_eq!(
+        validate_reference(&candidate),
+        Err(EvidenceProblem::InvalidDigest)
+    );
     candidate = reference();
     candidate.digest_sha256 = "A".repeat(64);
-    assert_eq!(validate_reference(&candidate), Err(EvidenceProblem::InvalidDigest));
+    assert_eq!(
+        validate_reference(&candidate),
+        Err(EvidenceProblem::InvalidDigest)
+    );
     candidate = reference();
     candidate.range_start = 17;
-    assert_eq!(validate_reference(&candidate), Err(EvidenceProblem::InvalidRange));
+    assert_eq!(
+        validate_reference(&candidate),
+        Err(EvidenceProblem::InvalidRange)
+    );
     candidate = reference();
     candidate.scope.id.clear();
-    assert_eq!(validate_reference(&candidate), Err(EvidenceProblem::InvalidIdentity));
+    assert_eq!(
+        validate_reference(&candidate),
+        Err(EvidenceProblem::InvalidIdentity)
+    );
 }
 
 #[test]
 fn rejects_unbacked_claims_bad_confidence_and_inconsistent_lineage() {
     let mut candidate = record();
     candidate.sources.clear();
-    assert_eq!(validate_record(&candidate), Err(EvidenceProblem::MissingSource));
+    assert_eq!(
+        validate_record(&candidate),
+        Err(EvidenceProblem::MissingSource)
+    );
     candidate = record();
     candidate.confidence_basis_points = 10_001;
-    assert_eq!(validate_record(&candidate), Err(EvidenceProblem::InvalidConfidence));
+    assert_eq!(
+        validate_record(&candidate),
+        Err(EvidenceProblem::InvalidConfidence)
+    );
     candidate = record();
     candidate.valid_until = Some(80);
-    assert_eq!(validate_record(&candidate), Err(EvidenceProblem::InvalidValidity));
+    assert_eq!(
+        validate_record(&candidate),
+        Err(EvidenceProblem::InvalidValidity)
+    );
     candidate = record();
     candidate.supersedes.push("fact-1".into());
-    assert_eq!(validate_record(&candidate), Err(EvidenceProblem::SelfSupersession));
+    assert_eq!(
+        validate_record(&candidate),
+        Err(EvidenceProblem::SelfSupersession)
+    );
     candidate = record();
     candidate.sources.push(reference());
-    assert_eq!(validate_record(&candidate), Err(EvidenceProblem::DuplicateSource));
+    assert_eq!(
+        validate_record(&candidate),
+        Err(EvidenceProblem::DuplicateSource)
+    );
 }
 
 #[test]
