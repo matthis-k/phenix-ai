@@ -84,7 +84,9 @@ fn cross_session_or_malformed_checkpoint_reject_without_new_revision() {
     malformed.retained[0].last_sequence = 4;
     assert_eq!(
         append_checkpoint(&history, 1, &malformed),
-        Err(LedgerProblem::InvalidCheckpoint(CompactionProblem::OutsideInput)),
+        Err(LedgerProblem::InvalidCheckpoint(
+            CompactionProblem::OutsideInput
+        )),
     );
 }
 
@@ -92,8 +94,14 @@ fn cross_session_or_malformed_checkpoint_reject_without_new_revision() {
 fn ledger_detects_corrupted_or_truncated_revisions_after_restart() {
     let first = checkpoint("a", 1, None);
     let second = checkpoint("b", 2, Some("a"));
-    assert_eq!(validate_ledger(&[second.clone()]), Err(LedgerProblem::InvalidLineage));
+    assert_eq!(
+        validate_ledger(&[second.clone()]),
+        Err(LedgerProblem::InvalidLineage)
+    );
     let mut broken = second;
     broken.parent_checkpoint = None;
-    assert_eq!(validate_ledger(&[first, broken]), Err(LedgerProblem::InvalidLineage));
+    assert_eq!(
+        validate_ledger(&[first, broken]),
+        Err(LedgerProblem::InvalidLineage)
+    );
 }
