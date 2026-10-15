@@ -245,8 +245,11 @@ impl Controller {
         self.composition
             .slots
             .iter()
-            .filter(|binding| binding.caller == "phenix.basic.agent"
-                && binding.slot == "Model" && binding.index == 0)
+            .filter(|binding| {
+                binding.caller == "phenix.basic.agent"
+                    && binding.slot == "Model"
+                    && binding.index == 0
+            })
             .map(|binding| {
                 SessionConfigOption::select(
                     "model",
