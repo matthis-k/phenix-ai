@@ -113,6 +113,15 @@ fn select(
 /// SQLite BEGIN IMMEDIATE serializes revisions across independent processes.
 /// Reject the whole change set before commit if any precondition fails.
 pub fn transact(request: ProjectTransaction) -> Result<Vec<ProjectRecord>, ProjectStorageError> {
+    transact_scoped(request, None)
+}
+
+/// Membership and data edits use one IMMEDIATE transaction. Revocation
+/// cannot interleave between authorization and the committed change.
+fn transact_scoped(
+    request: ProjectTransaction,
+    session: Option<&str>,
+) -> Result<Vec<ProjectRecord>, ProjectStorageError> {
     if !phenix_sdk::identifier(&request.project) || request.edits.len() > MAX_EDITS {
         return Err(invalid());
     }
@@ -135,6 +144,21 @@ pub fn transact(request: ProjectTransaction) -> Result<Vec<ProjectRecord>, Proje
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| failed())?;
     let changes = (|| {
+        if let Some(session) = session {
+            let membership =
+                membership_read(&transaction, &request.project, session).map_err(|_| {
+                    error(
+                        ProjectStorageProblem::StorageFailed,
+                        "membership lookup failed",
+                    )
+                })?;
+            if !membership.is_some_and(|member| member.active) {
+                return Err(error(
+                    ProjectStorageProblem::Denied,
+                    "project write requires active membership",
+                ));
+            }
+        }
         let mut output = Vec::new();
         for ProjectEdit {
             key,
@@ -374,7 +398,7 @@ mod plugin {
     use super::{
         error, invalid, membership_denied, membership_failed, membership_invalid, membership_read,
         open, parse_project_source, project_record_reference, select, set_membership, source_error,
-        transact, valid,
+        transact, transact_scoped, valid,
     };
     use phenix_advanced_contracts::{
         EvidenceError, EvidenceProblem, ProjectMember, ProjectMemberChange, ProjectMemberKey,
@@ -387,20 +411,6 @@ mod plugin {
 
     #[derive(Default)]
     pub struct State;
-
-    fn authorized(host: &Host<'_>, project: &str) -> CallResult<(), ProjectStorageError> {
-        if !phenix_sdk::identifier(project) {
-            return Err(CallError::Domain(invalid()));
-        }
-        let resource = format!("phenix.project.{project}");
-        if host.resource()?.as_deref() != Some(resource.as_str()) {
-            return Err(CallError::Domain(error(
-                ProjectStorageProblem::Denied,
-                "project resource is not authorized",
-            )));
-        }
-        Ok(())
-    }
 
     fn authorized_project_read(
         conn: &rusqlite::Connection,
@@ -559,8 +569,26 @@ mod plugin {
         host: &Host<'_>,
         edit: ProjectTransaction,
     ) -> CallResult<Vec<ProjectRecord>, ProjectStorageError> {
-        authorized(host, &edit.project)?;
-        transact(edit).map_err(CallError::Domain)
+        if !phenix_sdk::identifier(&edit.project) {
+            return Err(CallError::Domain(invalid()));
+        }
+        let current = host.resource()?.unwrap_or_default();
+        if current == format!("phenix.project.{}", edit.project) {
+            transact(edit).map_err(CallError::Domain)
+        } else if let Some(session) = current.strip_prefix("phenix.session.") {
+            if !phenix_sdk::identifier(session) {
+                return Err(CallError::Domain(error(
+                    ProjectStorageProblem::Denied,
+                    "invalid session resource",
+                )));
+            }
+            transact_scoped(edit, Some(session)).map_err(CallError::Domain)
+        } else {
+            Err(CallError::Domain(error(
+                ProjectStorageProblem::Denied,
+                "project write is not authorized",
+            )))
+        }
     }
 }
 

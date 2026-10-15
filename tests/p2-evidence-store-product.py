@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 (
-    basic, runner, store, source, journal, sqlite, basic_defs, advanced_defs,
+    basic, runner, store, source, journal, sqlite, basic_defs, advanced_defs, project_storage,
     destination,
 ) = sys.argv[1:]
 out = Path(destination)
@@ -51,7 +51,7 @@ def inspect(action):
     target.mkdir()
     args = [
         runner, store, source, journal, sqlite, basic_defs, advanced_defs,
-        action, str(target),
+        project_storage, action, str(target),
     ]
     process = subprocess.run(
         args, capture_output=True, text=True, env=env, timeout=90,
