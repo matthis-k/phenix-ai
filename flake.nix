@@ -596,6 +596,72 @@
             else binding
           ) basicCompositionSpec.slots;
         }));
+      # P2-0: extend immutable package specifications without copying Basic's
+      # agent implementation or modifying its selected providers. Later P2
+      # plugins fill the additional artifacts/definitions/slots/grants.
+      extendComposition =
+        base:
+        {
+          addArtifacts ? [],
+          addDefinitions ? [],
+          replaceSlots ? [],
+          addGrants ? [],
+          addOperations ? [],
+          addResources ? [],
+        }:
+        base // {
+          artifacts = base.artifacts ++ addArtifacts;
+          definitions = base.definitions ++ addDefinitions;
+          slots =
+            builtins.filter
+              (existing:
+                !(builtins.any
+                  (replacement:
+                    replacement.caller == existing.caller
+                    && replacement.slot == existing.slot
+                    && replacement.index == existing.index)
+                  replaceSlots))
+              base.slots
+            ++ replaceSlots;
+          grants = base.grants ++ addGrants;
+          authority = base.authority // {
+            operations = pkgs.lib.unique (base.authority.operations ++ addOperations);
+            resources = pkgs.lib.unique (base.authority.resources ++ addResources);
+          };
+        };
+      # These are deliberately P2-0 scaffolds. No Advanced implementation
+      # exists yet; Basic parity is the only behavior claimed in this slice.
+      advancedCompositionSpec = extendComposition basicCompositionSpec { };
+      advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
+        (builtins.toJSON advancedCompositionSpec);
+      advancedVerificationComposition = pkgs.writeText
+        "phenix-advanced-verification-composition.json"
+        (builtins.toJSON (extendComposition advancedCompositionSpec {
+          addArtifacts = [ "${historyTestModel}" ];
+          replaceSlots = [
+            (basicBinding "phenix.basic.agent" "Model" "phenix.model.history-test" "Model")
+          ];
+        }));
+      p2CompositionFoundationManifest = pkgs.writeText
+        "phenix-p2-composition-foundation.json"
+        (builtins.toJSON {
+          format = "phenix.p2.composition-foundation.v1";
+          status = "scaffold";
+          p2_accepted = false;
+          selected_model = "phenix.model.scripted";
+          verification_model = "phenix.model.history-test";
+          unimplemented = [
+            "advanced-agent-graph"
+            "reference-memory"
+            "reversible-compaction"
+            "code-entity-lineage"
+            "runtime-graph-evolution"
+            "workspace"
+            "durable-jobs"
+            "subagents"
+            "inspection"
+          ];
+        });
       # A complete immutable composition, rather than a runtime that asks
       # users to supply the composition JSON on every invocation.
       basicPreset = name: composition: pkgs.writeShellApplication {
@@ -621,6 +687,9 @@
       basicBinary = basicPreset "phenix-basic" basicComposition;
       historyVerificationBinary = basicPreset
         "phenix-basic-verification" historyVerificationComposition;
+      advancedBinary = basicPreset "phenix-advanced" advancedComposition;
+      advancedVerificationBinary = basicPreset
+        "phenix-advanced-verification" advancedVerificationComposition;
       basicBinaryClosure = pkgs.closureInfo {
         rootPaths = [ basicBinary ];
       };
@@ -635,6 +704,34 @@
         # User-facing Basic must not close over the test-only model package.
         ! grep -Fq "${historyTestModel}" ${basicBinaryClosure}/store-paths
         test -x ${basicBinary}/bin/phenix-basic
+      '';
+      advancedBinaryClosure = pkgs.closureInfo {
+        rootPaths = [ advancedBinary ];
+      };
+      kernelBinaryClosure = pkgs.closureInfo {
+        rootPaths = [ kernel ];
+      };
+      p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-composition-foundation.py} \
+          ${kernel}/bin/phenix-kernel \
+          ${basicBinary}/bin/phenix-basic \
+          ${historyVerificationBinary}/bin/phenix-basic-verification \
+          ${advancedBinary}/bin/phenix-advanced \
+          ${advancedVerificationBinary}/bin/phenix-advanced-verification \
+          ${basicComposition} ${historyVerificationComposition} \
+          ${advancedComposition} ${advancedVerificationComposition} \
+          ${p2CompositionFoundationManifest} "$out"
+        test -s "$out/p2-composition-foundation.json"
+        # Test model and Basic agent never enter public kernel / Advanced closures.
+        ! grep -Fq "${historyTestModel}" ${basicBinaryClosure}/store-paths
+        ! grep -Fq "${historyTestModel}" ${advancedBinaryClosure}/store-paths
+        ! grep -Fq "${basicAgent}" ${kernelBinaryClosure}/store-paths
+        grep -Fq "${historyTestModel}" ${(pkgs.closureInfo {
+          rootPaths = [ advancedVerificationBinary ];
+        })}/store-paths
       '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
@@ -1092,6 +1189,12 @@
         phenix-basic-verification-composition = historyVerificationComposition;
         # Explicit opt-in test binary: Basic runtime plus a history-only Model.
         phenix-basic-verification = historyVerificationBinary;
+        # P2-0 scaffold executables; release acceptance remains false.
+        phenix-advanced = advancedBinary;
+        phenix-advanced-composition = advancedComposition;
+        phenix-advanced-verification = advancedVerificationBinary;
+        phenix-advanced-verification-composition = advancedVerificationComposition;
+        phenix-p2-composition-foundation-manifest = p2CompositionFoundationManifest;
         phenix-basic-terminal = pkgs.writeShellApplication {
           name = "phenix-basic-terminal";
           text = "exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition}";
@@ -1142,6 +1245,7 @@
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
+        p2-composition-foundation = p2CompositionFoundationCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
