@@ -1,11 +1,14 @@
 //! Independent native P2-1 source verifier: real Basic journal, real kernel,
 //! real native provider and authenticated imports. No test-only Journal plugin.
 use phenix_advanced_contracts::{
-    EvidenceScope, EvidenceScopeKind, SourceMatch, SourceObservation, SourceRef, compare_source,
+    compare_source, EvidenceScope, EvidenceScopeKind, SourceMatch, SourceObservation, SourceRef,
 };
-use phenix_basic_contracts::{Event, EventKind, EventPage, JournalQuery, encode};
+use phenix_basic_contracts::{encode, Event, EventKind, EventPage, JournalQuery};
 use phenix_contract::{Authority, Portable, Value};
-use phenix_kernel::{resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding}, Outcome};
+use phenix_kernel::{
+    resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
+    Outcome,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
@@ -41,8 +44,16 @@ fn composition(
 ) -> Composition {
     let grants = vec![
         grant("root", entry_interface, entry_operation),
-        grant("phenix.basic.event-journal", "phenix.basic.storage@1", "read"),
-        grant("phenix.advanced.evidence-journal", "phenix.basic.journal@1", "read"),
+        grant(
+            "phenix.basic.event-journal",
+            "phenix.basic.storage@1",
+            "read",
+        ),
+        grant(
+            "phenix.advanced.evidence-journal",
+            "phenix.basic.journal@1",
+            "read",
+        ),
     ];
     Composition {
         format: "phenix.composition.v2".into(),
@@ -162,14 +173,24 @@ fn main() {
     foreign.resource = "phenix.session.s2".into();
     let denied = invoke(observe.clone(), foreign.to_value());
     assert!(
-        matches!(&denied, Ok(Outcome::Domain(_)) | Err(phenix_contract::Failure { code: phenix_contract::Code::Denied, .. })),
+        matches!(
+            &denied,
+            Ok(Outcome::Domain(_))
+                | Err(phenix_contract::Failure {
+                    code: phenix_contract::Code::Denied,
+                    ..
+                })
+        ),
         "cross-session source unexpectedly accepted: {denied:?}"
     );
 
     let mut missing = source.clone();
     missing.revision = (page.events.last().unwrap().sequence + 100).to_string();
     let absent = invoke(observe, missing.to_value());
-    assert!(matches!(&absent, Ok(Outcome::Domain(_))), "missing event was accepted: {absent:?}");
+    assert!(
+        matches!(&absent, Ok(Outcome::Domain(_))),
+        "missing event was accepted: {absent:?}"
+    );
 
     let unchanged = match invoke(read, query.to_value()).unwrap() {
         Outcome::Success(value) => EventPage::from_value(value).unwrap().events == page.events,
