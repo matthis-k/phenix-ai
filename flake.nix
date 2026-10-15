@@ -320,6 +320,8 @@
       projectStorageSqlite = rust.buildRustPackage {
         pname = "phenix-plugin-project-storage-sqlite";
         version = "0.1.0";
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.sqlite ];
         src = subset (publicPaths ++ [
           ./crates/phenix-advanced-contracts
           ./crates/phenix-plugin-project-storage-sqlite
