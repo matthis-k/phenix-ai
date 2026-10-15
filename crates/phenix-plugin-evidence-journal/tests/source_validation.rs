@@ -1,6 +1,6 @@
 //! Tests-first acceptance for source evidence rooted in the Basic journal.
 use phenix_advanced_contracts::{
-    EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceMatch, SourceRef, compare_source,
+    compare_source, EvidenceProblem, EvidenceScope, EvidenceScopeKind, SourceMatch, SourceRef,
 };
 use phenix_basic_contracts::{Event, EventKind};
 use phenix_plugin_evidence_journal::{
@@ -113,11 +113,20 @@ fn replay_with_wrong_sequence_or_session_cannot_be_used_as_evidence() {
 fn invalid_or_unbounded_journal_events_fail_without_effects() {
     let mut bad = event();
     bad.sequence = 0;
-    assert_eq!(journal_reference(&bad).unwrap_err().problem, EvidenceProblem::InvalidIdentity);
+    assert_eq!(
+        journal_reference(&bad).unwrap_err().problem,
+        EvidenceProblem::InvalidIdentity
+    );
     bad = event();
     bad.session = "../escape".into();
-    assert_eq!(journal_reference(&bad).unwrap_err().problem, EvidenceProblem::InvalidIdentity);
+    assert_eq!(
+        journal_reference(&bad).unwrap_err().problem,
+        EvidenceProblem::InvalidIdentity
+    );
     bad = event();
     bad.text = "x".repeat(1_048_577);
-    assert_eq!(journal_reference(&bad).unwrap_err().problem, EvidenceProblem::InvalidRange);
+    assert_eq!(
+        journal_reference(&bad).unwrap_err().problem,
+        EvidenceProblem::InvalidRange
+    );
 }
