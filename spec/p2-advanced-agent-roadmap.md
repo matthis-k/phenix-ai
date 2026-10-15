@@ -10,7 +10,7 @@ P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [
 
 P2 is the Advanced agent product. Its kernel is the same M1 kernel as P1. Advanced features live in independently replaceable plugins; the kernel retains authenticated dispatch, generation identity, pending tickets, graph scheduling, authority and cancellation. A product composition selects plugins and their declared bindings. It never becomes a second agent executor.
 
-The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
+The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, architecture decision review and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
 
 **Sequence:** finish the accepted P1 baseline and the single-authority CI cutover before P2 implementation. Specifications and test vectors may be prepared now. Tests are written RED before implementation for every feature slice. Each implementation PR is ready for review when executable code exists. An exact-head full CI pass is required for release acceptance.
 
@@ -36,15 +36,15 @@ Use the P1 flake's basicCompositionSpec, historyVerificationComposition and basi
 | --- | --- | --- | --- |
 | P2-0: composition and parity | P1 + CI authority | Freeze oldmain versus P1/P2 behavior inventory, five preset derivations, contracts, separate fixture package | Launch/inspect all presets; prove Basic binary/behavior unchanged; verification plugins excluded from public closure |
 | P2-1: evidence model | P2-0 | Typed references, memory scopes, temporal/freshness metadata and durable evidence links | Stable references survive restart; stale/forged/out-of-scope references reject |
-| P2-2: memory | P2-1 | Write, extract, reconcile, retrieve, rank and update hybrid memory through plugin contracts | Multi-session, temporal, update, abstention and provenance fixtures; benchmark baseline |
+| P2-2: shared memory | P2-1 | Authenticated project/session scopes; durable evidence projections, retrieval, supersession and optional curation; retain the existing EvidenceStore contract | Cross-session project recall, CAS, restart, scope denial, temporal correction and no invented provenance |
 | P2-3: reversible compaction | P2-1; may build alongside P2-2 | Policy, summaries, snapshot lineage, deterministic expansion and source hydration | Tight-window continuation, exact replay/rehydration, crash safety, no duplicated tool effects |
 | P2-4: deterministic code intelligence | P2-1; integrate with P2-6 workspace edits | Revisioned code-entity graph, lineage, edit validation, provider evidence, incremental reconciliation and memory links | Rename/move/split/delete, provider disagreement, failed edit, external change and crash/rebuild integrity |
 | P2-5: graph contributions and hot reload | P2-0; P2-1 for persistent plugin state | Recompose immutable candidate graph from versioned plugin node/edge/trigger contributions on replacement or authorized runtime selection | Updated plugin inserts workflow steps; new roots use new topology, old roots finish old graph; invalid candidates roll back |
 | P2-6: workspace | P2-0, P2-4 for code integration | Scoped file operations, shell/process execution, Git integration and revision-checked atomic writes through plugins | Real workspace editing, denied traversal, shell streaming/cancellation, conflicts, rollback and tool-visible results |
-| P2-7: durable jobs | P2-6 | Persistent job identity, lifecycle, owner grants, log cursors, recovery and bounded detached work | Parent disconnect, process restart, attach, cancellation, duplicate admission, lease cleanup and fault recovery |
+| P2-6A: architecture and cross-plugin memory | P2-2 + P2-4 + P2-6 | Architecture plugin, Git-backed accepted decisions, typed rules, code-linked validity, CI/debug findings and justified review nodes | Decision survives sessions; stale assumptions flagged; conflicting design rejected; ordinary fixes skip costly review |\n| P2-7: durable jobs | P2-6 | Persistent job identity, lifecycle, owner grants, log cursors, recovery and bounded detached work | Parent disconnect, process restart, attach, cancellation, duplicate admission, lease cleanup and fault recovery |
 | P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
 | P2-9: inspection and efficiency | P2-0; instrument P2-2 through P2-8 | Separate logging, introspection/debug and efficiency-evaluation plugins consuming permitted kernel events and projections | Durable/replayable traces, redacted inspection, cost/latency/usage metrics and repeatable comparisons |
-| P2-10: advanced verification and release | P2-2 through P2-9 | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
+| P2-10: advanced verification and release | P2-2 through P2-9, including P2-6A | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
@@ -91,6 +91,77 @@ Do not turn on every retrieval backend by default. Measure lexical-only, structu
 - [Redis's 2026 hybrid memory evaluation](https://redis.github.io/redis-ai-research-public/longmemeval-agent-memory/) compares raw retrieval, extracted memories and a hybrid on the same question set. Use this as evidence that retaining raw references alongside extracted facts merits testing.
 
 Published model-dependent scores cannot certify Phenix. Record dataset/version, ingestion budget, context tokens, retrieval precision/recall, final answer correctness, abstention, latency and cost. The offline scripted Model is the gating oracle; external model benchmarks are secondary non-gating reports unless a reproducible model/version is pinned.
+
+## Cross-plugin memory and architecture decisions (P2-2 and P2-6A)
+
+Memory is a shared service, not an agent implementation. It stores evidence-backed knowledge across sessions; consumers decide what that knowledge means. P2-1's `EvidenceRecord`, `SourceRef`, `SourceEvidence` and `EvidenceStore` are canonical. Extend those contracts deliberately instead of adding a second evidence store or a competing `Memory::put/get` API. The P2-1 source-evidence PR stack #896-#898 is prerequisite work, not completed long-term memory.
+
+### Ownership and package boundaries
+
+| Package / owner | Owns | Imports / boundary |
+| --- | --- | --- |
+| `phenix-advanced-contracts` | Typed evidence, source, scope and future memory/decision contracts | Definition-only package; no execution or database |
+| `phenix-plugin-memory` (P2-2) | EvidenceStore persistence, scope-filtered current/as-of retrieval, relationships, supersession and retrieval budgets | Uses one authorized storage provider; no Model, scheduler or domain-specific approval |
+| Optional memory curation provider (P2-2 follow-up) | Proposed extraction, deduplication, consolidation and contradiction reports | Reads cited evidence; model outputs remain proposals until validated |
+| `phenix-plugin-architecture` (P2-6A) | Alternatives, decision policy, applicable invariants, design and post-edit review | Consumes Memory, CodeIndex, Workspace/Git, CI evidence and optional Model; contributes nodes to the existing Advanced graph |
+| Code intelligence (P2-4) | Current code-entity identity, lineage, source revisions, dependents and freshness | Deterministic Tree-sitter/LSP observations; emits impacted reference IDs, not memory writes by fiat |
+| Workspace/Git (P2-6) | Authorized project/worktree identity, commit history and accepted ADR file changes | Git-backed accepted decisions are authoritative; index points to exact file/commit |
+| Basic Session/Journal and SQLite Storage | Conversation history, journal events, transactions and persistence mechanics | Do not copy entire chats into architecture memory or turn a session ID into a project identity |
+
+P2-2 must define **authorized project scope** separately from `phenix.session.<id>`. The existing Basic Storage interface checks session resource identity. It must remain unchanged for P1. Extend the selected SQLite storage provider with a separate typed, resource-authorized project-record contract or select an equivalent storage provider. Runtime grants, authenticated workspace identity and provider checks decide who may read/write a project; a user-supplied project ID or `SourceRef` grants nothing. Shared/user scopes require separately declared grants and must fail closed where unsupported.
+
+Start with revision-checked records and the existing SQLite transaction implementation, structured filters, lexical FTS5 and bounded relation traversal. Keep source/evidence revisions and immutable observations separate from mutable current projections. An embedding/reranker provider is optional and must outperform the simpler profile on frozen retrieval tests before becoming a default dependency.
+
+### Durable knowledge model and validity
+
+Keep distinct record kinds: verified fact, task/working note, observed failure, verified debugging result, suggested procedure and architecture decision. Store typed payloads or links to source-backed evidence rather than creating unrelated free-text schemas for each producer. Common metadata: stable ID, kind, scope, creator/cause, source IDs, revision, observed and valid times, status, supersedes/dependency edges, affected code entities and exact source/provider revisions.
+
+A decision has `Proposed`, `Accepted` or `Superseded` lifecycle states; `NeedsReview` is a separate validity finding. Accepted project-wide architecture decisions live in reviewed, versioned Git ADR files. Memory indexes those files with their exact commit/digest and may retain proposals, evaluations and rejected alternatives. A model, web page, failed test or subordinate agent cannot promote a proposal to accepted policy. Conflicts produce review findings, never silent overwrite.
+
+Code lineage and change events trigger targeted validation of affected decision references. A moved symbol may keep a verified identity; deleted or ambiguous entities make dependent conclusions `NeedsReview`. The recorded basis commit proves what was inspected, not that a decision remains current. For current claims, re-check source digests and relevant assumptions before Model injection. Historical/as-of queries retain superseded decisions with provenance. Deletion or redaction invalidates derived projections and retrieval indexes according to retention policy.
+
+### Cross-plugin interactions and review points
+
+| Integration | Input / trigger | Result | Release gate |
+| --- | --- | --- | --- |
+| Memory + Context/Compaction | Prompt admitted or compacted context requested | Retrieve only authorized, budgeted, current evidence; compaction stores references, never replaces original Journal bytes | P2-2/P2-3 |
+| Memory + CodeIndex | Committed workspace edit, external edit, provider epoch change | Revalidate affected code refs, set dependent memories to `NeedsReview` until verified | P2-4/P2-6A |
+| Memory + Workspace/Git | Project selection, branch switch, accepted ADR change | Scope decisions to repository/worktree/branch where applicable; reindex exact ADR revision | P2-6A |
+| Architecture + code/research | Contract, owner, public API or cross-crate change proposed | Discover existing mechanisms/crates, compare reuse, extension and replacement before implementation | P2-6A |
+| Architecture + CI/tests | Diff completed, architecture check or acceptance test finished | Check mechanical invariants and separately review design choices; report unsupported claims | P2-6A |
+| Debugging + CI + Memory | Failure reproduced, fix independently verified | Store source-linked root cause and passing regression evidence; hypothesis stays provisional | P2-6A/P2-9 |
+| Subagents + Memory | Child delegated with bounded parent grants | Child reads permitted project/task evidence, publishes provisional findings; no scope or policy promotion escalation | P2-8 |
+| Skills + Memory | Repeated independently verified procedure identified | Propose a versioned skill with examples/evidence for approval; no automatic skill overwrite | Optional after P2 |
+| Evaluation + Routing | Repeatable memory/review benchmarks | Compare retrieval quality, architecture regressions, tokens and time; routing changes need measured benefit | P2-9 / later |
+
+Broader planning and generalized skill discovery remain deferred. P2-6A may use a short design proposal for architecture-sensitive edits without implementing a full planner.
+
+### Graph integration and adaptation
+
+The Architecture plugin contributes ordinary typed operations and graph nodes before architecture-sensitive implementation and after a relevant diff or CI result. Graph preparation validates its declared imports, triggers, predecessors and grants. It uses the existing M1 scheduler, cancellation, generation selection and pending tickets. No additional agent loop, hidden workflow engine, model-driven graph rewriting or kernel-specific architecture branch.
+
+Classify edits using observable impact. A local implementation-only fix gets lightweight checks. A public contract, new authoritative state owner, scheduler, resource authority or cross-crate dependency change gets alternatives analysis and post-edit review. Unnecessary abstractions and large diffs are review findings, not automatic failures. Broken dependency rules, unauthorized writes and duplicate declared authoritative owners may be mechanically enforced where their contracts make those facts decidable. Review results cite concrete source and rule IDs.
+
+The curation plugin may propose memories after committed, uniquely identified journal/test/Git events. Ingestion is idempotent across replay and process restart, revision conflicts reject, and failed background curation cannot alter a running user turn. Curation does not accept architectural decisions or mutate durable job/Session state. Introspection may expose which references and decisions influenced an answer, with authorized redaction.
+
+### Ordered test-first implementation slices
+
+| Slice | Implementation after RED tests | Exit evidence |
+| --- | --- | --- |
+| P2-2a: project-scoped evidence | Authorized scope identity and CAS provider on existing SQLite mechanics | Independent project/session isolation, forged scope denial, concurrent writes, restart and immutable Basic behavior |
+| P2-2b: retrieve/reconcile | EvidenceStore projections, lexical retrieval, relationships and historical/as-of selection | Source revision change, correction, supersession, contradiction, exact citation and abstention |
+| P2-2c: optional curator | Source-linked extraction proposals and idempotent event ingestion | Replay/crash repeats do not duplicate records; unsupported model claims cannot be promoted |
+| P2-4 integration | Deterministic code reference and dependency invalidation | Rename/move/delete, provider epoch, stale cache and changed worktree tested without Model |
+| P2-6A-a: durable architecture decisions | Typed decision records, reviewed Git ADR authority and project/branch applicability | Separate-session recall, exact Git commit provenance, unauthorized acceptance rejection |
+| P2-6A-b: architectural design graph | Alternatives, bounded review depth, invariants and revision-grounded post-edit audit | Reject duplicate scheduler/state owners; permit justified new mechanism; compare subsequent change cost |
+| P2-8/9 integration | Delegated scopes, provisional child contributions, retrieval/quality inspection | Parent/child denial, concurrent proposal collision, redacted retrieval trace and restart |
+| P2-10 | Assemble the Advanced verification preset and rerun all cross-plugin cases | Exact-head full Nix matrix, P1 parity and benchmark report on integrated SHA |
+
+Each slice owns a focused implementation PR with tests authored first. The Advanced user-facing package must exclude verification-only models and intentionally unaccepted curator behaviors. Do not label P2-2 or P2-6A accepted from unit tests alone; run the independent packaged product and negative authorization gates.
+
+### Architectural quality measures
+
+Compare Basic coding, Advanced without design review and Advanced with the Architecture plugin on the same initial repository and requirements. Include a follow-up change after each implementation. Record behavior correctness, architectural invariant violations, duplicate mechanisms, change amplification, accepted-source accuracy, latency/tokens and reviewer false positives. A fixed rule that merely favors fewer lines is not a quality metric. Require counterexamples in which a new abstraction is justified, and cases in which the correct change removes existing code.
 
 ## Reversible compaction
 
@@ -243,6 +314,16 @@ Every test runs the packaged executable, not a function that bypasses the graph.
 | AV-32 | Hot-replace a process with a plugin contributing additional graph nodes/edges | Candidate graph diff validated, new root executes extra steps, old root remains on old topology |
 | AV-33 | Switch selected published plugin contributions during runtime | Authorized candidate generation publishes atomically; invalid import/anchor/cycle keeps existing generation |
 | AV-34 | Submit undeclared callable, forbidden graph write or incompatible schema in candidate | Reject before effects or constructor; no scope escalation, graph corruption or lost session |
+| AV-35 | Write project decision in session A, restart, retrieve in B | Same accepted decision and exact Git source, with no chat replay required |
+| AV-36 | Denied project or sibling worktree attempts read/write using a known memory ID | No data disclosure or write; untrusted ID/reference grants no authority |
+| AV-37 | Competing memory writers and journal replay repeat a proposal | CAS conflict or idempotent no-op; no lost update or duplicate item |
+| AV-38 | Proposed decision contradicts accepted ADR; model tries to approve it | Accepted policy unchanged, conflict reported with both source IDs |
+| AV-39 | Rename, delete or change source supporting an accepted design | Deterministic lineage preserves proven links or marks decision NeedsReview; no false-current claim |
+| AV-40 | Agent asked for small fix versus new scheduler / cross-crate owner | Lightweight path for local fix; design alternatives and invariants reviewed for architectural change |
+| AV-41 | Extend existing scheduler versus add duplicate scheduler | Duplicate mechanism rejected with explicit owner evidence; correct extension passes behavioral and architecture tests |
+| AV-42 | Introduce a genuinely necessary separate mechanism | Reviewer accepts documented difference in ownership/semantics, avoiding blind minimalism |
+| AV-43 | Two child agents contribute findings; one lacks project grant | Authorized proposals visible with provenance, denied child cannot read or promote policy |
+| AV-44 | Verified regression fix generates memory; source is later retracted | Debugging insight retrieved with test evidence, then withheld as current when source withdrawn |
 
 For each test include a relevant counterfactual: remove or corrupt retrieved source, change only the revision, disable the expected graph edge, reorder independent events, deny access, or revoke a child/job grant. The test must then fail or abstain. Assert a known exact answer only after proving the model actually consumed the cited evidence. Validate that the fixture model can also perform a tool-call/continuation sequence, instead of acting as a static canned-answer lookup.
 
@@ -260,4 +341,4 @@ PR #852 used P2a–P2d for multi-client state projection and I/O routing before 
 
 ## Release decision
 
-P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
+P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, including P2-6A and AV-35 through AV-44, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
