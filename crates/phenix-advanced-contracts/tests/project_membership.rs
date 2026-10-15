@@ -2,7 +2,7 @@
 use phenix_advanced_contracts::{
     ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembershipProblem,
 };
-use phenix_contract::Portable;
+use phenix_sdk::Portable;
 
 #[test]
 fn membership_revision_and_stable_project_identity_round_trip() {
