@@ -182,9 +182,8 @@ mod plugin {
         compare_source, decode, encode, EvidenceError, EvidenceFreshness, EvidenceKey,
         EvidencePage, EvidenceProblem, EvidenceRecord, EvidenceScope, EvidenceScopeKind,
         EvidenceSearch, EvidenceStore, ProjectEdit, ProjectMemberKey, ProjectMembership,
-        ProjectRecord, ProjectRecordKey,
-        ProjectStorage, ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
-        SourceEvidence, SourceMatch, SourceRef,
+        ProjectRecord, ProjectRecordKey, ProjectStorage, ProjectStorageError,
+        ProjectStorageProblem, ProjectTransaction, SourceEvidence, SourceMatch, SourceRef,
     };
     use phenix_basic_contracts::{
         BasicError, ErrorCode, RecordKey, Storage, StorageEdit, StorageTransaction, StoredRecord,
