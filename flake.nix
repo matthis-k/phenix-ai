@@ -243,6 +243,36 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      advancedContractsSource = subset (publicPaths ++ [ ./crates/phenix-advanced-contracts ]);
+      advancedContractsBinary = rust.buildRustPackage {
+        pname = "phenix-advanced-contracts";
+        version = "0.1.0";
+        src = advancedContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-advanced-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-advanced-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      advancedDefinitions = definitionPackage "phenix-advanced-contracts"
+        "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
+      advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python - "${advancedDefinitions}/inspection.json" "$out" <<'PY'
+        import json, sys
+        from pathlib import Path
+        report = json.load(open(sys.argv[1]))
+        assert report["plugin"] == "phenix.advanced-contracts"
+        assert len(report["definitions"]) == 2, report
+        (Path(sys.argv[2]) / "evidence.json").write_text(
+            json.dumps({"format": "phenix.p2.evidence-contracts.v1",
+                        "definitions": report["definitions"],
+                        "metadata_only": True}, sort_keys=True, indent=2)
+        )
+        PY
+      '';
       # Keep independent source closures for feature-variant and system-linked
       # plugins. Compatible, default-feature plugins compile in small cohesive
       # Cargo groups, so changes do not invalidate the entire Rust workspace.
@@ -631,7 +661,9 @@
         };
       # These are deliberately P2-0 scaffolds. No Advanced implementation
       # exists yet; Basic parity is the only behavior claimed in this slice.
-      advancedCompositionSpec = extendComposition basicCompositionSpec { };
+      advancedCompositionSpec = extendComposition basicCompositionSpec {
+        addDefinitions = [ "${advancedDefinitions}" ];
+      };
       advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
         (builtins.toJSON advancedCompositionSpec);
       advancedVerificationComposition = pkgs.writeText
@@ -1191,6 +1223,7 @@
         phenix-basic-verification = historyVerificationBinary;
         # P2-0 scaffold executables; release acceptance remains false.
         phenix-advanced = advancedBinary;
+        phenix-advanced-contracts = advancedDefinitions;
         phenix-advanced-composition = advancedComposition;
         phenix-advanced-verification = advancedVerificationBinary;
         phenix-advanced-verification-composition = advancedVerificationComposition;
@@ -1246,6 +1279,7 @@
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
+        p2-evidence-contracts = advancedContractsCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
