@@ -71,7 +71,7 @@ with sqlite3.connect(db) as conn:
     ).fetchall()
 live = run("member-live-revoke")
 assert live["pre_revocation_read"] is True
-assert live["reused_root_denied"] is True
+assert live["admitted_root_denied"] is True
 assert live["new_membership_revision"] == 2
 with sqlite3.connect(db) as conn:
     after_live = conn.execute(
@@ -95,7 +95,7 @@ assert rows == [("alpha", "s1", 2, 0), ("alpha", "s2", 2, 0)], rows
         "revocation-denies-project-record-retrieval",
         "cross-project-denial",
         "persistent-revocation-across-processes",
-        "same-admitted-root-revalidates-membership-after-revocation",
+        "already-admitted-root-revalidates-membership-after-revocation",
         "denied-live-root-has-zero-project-storage-effects",
         "membership-cas-conflict",
         "unchanged-basic-storage",
