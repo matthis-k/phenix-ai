@@ -273,6 +273,28 @@
         )
         PY
       '';
+      evidenceJournal = rust.buildRustPackage {
+        pname = "phenix-plugin-evidence-journal";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-evidence-journal
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-evidence-journal" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-evidence-journal" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_evidence_journal.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       # Keep independent source closures for feature-variant and system-linked
       # plugins. Compatible, default-feature plugins compile in small cohesive
       # Cargo groups, so changes do not invalidate the entire Rust workspace.
@@ -663,6 +685,24 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
+        addArtifacts = [ "${evidenceJournal}" ];
+        replaceSlots = [
+          (basicBinding "phenix.advanced.evidence-journal" "Journal"
+            "phenix.basic.event-journal" "Journal")
+        ];
+        addGrants = [
+          { caller = "phenix.advanced.evidence-journal";
+            interface = "phenix.basic.journal@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.source@1";
+            operation = "observe";
+            resources = [ "phenix.session.s1" ];
+          }
+        ];
+        addOperations = [ "phenix.basic.journal@1/read" "phenix.advanced.source@1/observe" ];
       };
       advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
         (builtins.toJSON advancedCompositionSpec);
@@ -1224,6 +1264,7 @@
         # P2-0 scaffold executables; release acceptance remains false.
         phenix-advanced = advancedBinary;
         phenix-advanced-contracts = advancedDefinitions;
+        phenix-plugin-evidence-journal = evidenceJournal;
         phenix-advanced-composition = advancedComposition;
         phenix-advanced-verification = advancedVerificationBinary;
         phenix-advanced-verification-composition = advancedVerificationComposition;
