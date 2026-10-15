@@ -390,6 +390,14 @@ protocol adapters, replay cursors and delivery queues. They synchronize
 their authorized view of state and events, not raw sockets, pipes or frames.
 ACP v1, ACP v2, ACP extensions and WebUI may coexist in one process.
 
+**Runtime configuration and credentials.** [Runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891) owns provider-supplied model/routing catalogs, authorized mutations and persisted revisions. Effective setting precedence is session override, project override, runtime default. Return both the effective value and its source; new sessions inherit the current applicable defaults. Changes apply to later turns, while the admitted turn retains its model, routing policy and plugin generation. A documented routing policy may make a fallback selection during that turn. A resumed session with an unavailable selected provider reports incompatibility rather than silently substituting another. A different authorized composition may resume a session only when its storage and data contracts are compatible. Credential provider plugins resolve secrets at runtime outside world-readable Nix store paths and diagnostic output; the client never supplies the authoritative provider catalog.
+
+**Durable input and approval.** A session runs at most one agent turn at once. Accepted follow-ups have durable IDs, author, sequence and cancellation state in the existing Session/Journal/Storage providers. Admission is ordered and idempotent across replay; uncertain external effects require reconciliation before the next dependent turn. Ordinary input queues behind the active turn. An explicit interrupt-and-submit cancels and drains active work before admitting its replacement. Multiple authorized clients may observe, submit or cancel through the shared controller; their view is not an additional session store.
+
+Permission policy is provided through typed plugins; kernel grants remain the maximum authority. A permission request has a durable ID, scope, expiry and revision. The first authorized compare-and-swap response settles it; subsequent responses fail as stale and observers see the committed result. Pending requests survive client disconnect and restart, expire to denial, and become invalid when their operation is cancelled. Without an authorized approver, required approval denies under the declared headless policy. One-time operation approvals are the default. Optional standing rules require explicit authorization, bounded operation/resource/session/project scope and expiry; project-wide rule management requires project-level authority separate from the ability to approve one operation. A standing rule cannot widen kernel grants.
+
+**Recovery and verification.** Reuse the existing session journal, CAS transactions, fenced owner markers, pending tickets and cancellation. An acknowledged queued turn or approval must not disappear on restart. Admission is exactly once by durable identity; external effects can remain indeterminate after a crash and must never be blindly replayed. Independent fixtures must cover two concurrent client responses, approval deadline/restart/denial, client disconnect, persistent follow-up ordering, interrupt-and-submit, changed configuration during a running turn, explicit model incompatibility, unauthorized cross-project/session access, and replay without duplicate tool effects. These are observable product tests, not a second architecture CI model.
+
 **P2a: execution driver.** Extract duplicated ACP, Terminal and JSONL graph
 polling, cancellation and draining into one host-side controller. Expose
 scoped handles with proposed `session.submit(...)`, `session.cancel(...)`
@@ -1330,7 +1338,7 @@ streaming/cancellation remain B5/P1 requirements. Kernel and SDK code are unchan
 
 ## 9. Kernel operations and independent plugins
 
-These stages add kernel management and observation without turning the kernel
+The product boundary and preset rationale are recorded in [the agent product decision](agent-product-decision.md). These stages add kernel management and observation without turning the kernel
 into a logger, inspection contract provider, storage backend or agent runtime.
 Their only acceptance checklist is the stage table above.
 
@@ -1348,6 +1356,8 @@ the active prepared generation. Preview without effects. Apply through the same
 resolver, graph compiler, authority checks and generation lifecycle. Retain
 already admitted roots and physical leases during replacement. No separate
 plugin registry, resolver, reconciliation executor or task manager.
+
+**Live authority revocation.** A pinned generation preserves code, bindings and its configured grant ceiling, not a permanent entitlement to use that ceiling. Kernel-mediated effects must check currently valid authenticated resource grants at the effect boundary. Revoking session/project access denies subsequent effects and requests cancellation of affected roots across all resident generations. A revoked callback cannot regain authority by using an old generation or ticket. Existing cancellation and physical leases retain native code until it drains; a noncooperative trusted native plugin may remain active and must be reported, not forcibly unloaded. Test revocation after admission but before an effect, during a pending callback, across old/new generations, and under reconnect. Do not add a separate policy evaluator or grant registry.
 
 **K3: diagnostic events and raw inspection.** The kernel emits versioned
 structured facts about dispatch, lifecycle, state, scheduling, authorization
