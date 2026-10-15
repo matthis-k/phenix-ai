@@ -39,6 +39,7 @@ pub fn span_for_events(events: &[Event]) -> Result<JournalSpan, ReplayProblem> {
         return Err(ReplayProblem::InvalidSequence);
     }
     let mut previous = first;
+    let mut has_gap = false;
     let mut hasher = Sha256::new();
     hasher.update(HASH_DOMAIN);
     for (index, event) in events.iter().enumerate() {
@@ -50,7 +51,9 @@ pub fn span_for_events(events: &[Event]) -> Result<JournalSpan, ReplayProblem> {
                 return Err(ReplayProblem::InvalidSequence);
             }
             if previous.checked_add(1) != Some(event.sequence) {
-                return Err(ReplayProblem::IncompleteJournal);
+                // Scan the complete ordered stream before reporting gaps:
+                // an out-of-order event may follow the first apparent gap.
+                has_gap = true;
             }
         }
         previous = event.sequence;
@@ -63,6 +66,9 @@ pub fn span_for_events(events: &[Event]) -> Result<JournalSpan, ReplayProblem> {
         }
         hasher.update((bytes.len() as u64).to_be_bytes());
         hasher.update(bytes);
+    }
+    if has_gap {
+        return Err(ReplayProblem::IncompleteJournal);
     }
     Ok(JournalSpan {
         first_sequence: first,
