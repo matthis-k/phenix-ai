@@ -1,0 +1,25 @@
+# Fully customizable coding agent decision
+
+Status: Accepted, 2026-10-15
+Scope: Product identity and composition boundaries
+Implementation owners: [M1 roadmap](m1-roadmap.md) and [P2 Advanced roadmap](p2-advanced-agent-roadmap.md)
+
+## Context
+
+The clean-start M1 kernel is deliberately generic, but Phenix's product goal is a fully customizable coding agent. Optimizing the kernel as an independent general-purpose platform would create requirements that do not help the agent. Hardcoding the agent into the kernel would prevent users from replacing its behavior.
+
+## Decision
+
+- **Plugins define what Phenix does.** Model and tool orchestration, agent workflows, memory, context, workspace behavior, permissions policy, routing, frontends and diagnostics are independently selectable plugin contributions.
+- **The kernel defines how they execute.** It owns typed contract verification, composition resolution, authority enforcement, graph scheduling, cancellation, generation identity and resource lifecycle. It contains no privileged Basic or Advanced agent implementation.
+- **Basic and Advanced are both examples and real products.** Basic is a usable minimal preset. Advanced is a full coding agent with its own acceptance requirements. Users may extend either preset or compose a different agent loop from scratch without modifying the kernel.
+- **Nix is the current distribution path.** Presets expose conventional Nix package `.override` behavior through overridable functions and reuse the same plugin artifacts. Changing a preset produces a new package and composition rather than editing the shipped preset. Installed providers and declared graph contributions may be selected at runtime through authorized, validated generation changes.
+- **Version boundaries are explicit.** The repository maintains its current contracts, not a library of compatibility implementations. Contract identity/revision and native ABI checks reject incompatible compositions before execution. Consumers may package older contracts separately; this does not imply backward compatibility between repository revisions.
+- **Packaging does not grant authority.** The runtime checks selected bindings and explicit grants. Native plugins run as trusted process code under the current in-process profile, so cooperative grants alone are not an OS isolation boundary.
+- **Non-Nix packaging is planned, not a P2 gate.** Keep the artifact format, composition semantics and SDK independent of Nix. A later distributor must provide equivalent verification and trusted artifact handling without requiring another kernel or resolver.
+
+## Consequences
+
+Judge changes by whether they improve correct, customizable coding-agent behavior. A generic abstraction belongs in the kernel only when required to execute independent plugin contributions. Preserve one implementation of resolution, scheduling, authority and generations.
+
+The [M1 roadmap](m1-roadmap.md) owns runtime behavior and client management. The [P2 roadmap](p2-advanced-agent-roadmap.md) owns preset composition, advanced capabilities, storage semantics and acceptance. This decision records the product boundary and its rationale; it does not duplicate either implementation specification.
