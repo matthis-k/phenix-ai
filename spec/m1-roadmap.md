@@ -6,6 +6,12 @@ Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
 
+## P2 advanced agent (planned post-P1)
+
+[P2 advanced agent roadmap](p2-advanced-agent-roadmap.md) is the single source of truth for P2's five composed packages, scoped reference-aware hybrid memory, reversible compaction, code intelligence, safe plugin hot reload and the deterministic advanced verification suite. P2 is **PLANNED**, not implemented or accepted. Freeze implementation until the post-P1 CI-authority cutover in PR #879 is accepted. The original archived oldmain Advanced profile is a parity input, not a kernel implementation to restore.
+
+P2-0 through P2-6 are the Advanced product gates. The previously proposed post-P1 multi-client work from PR #852 retains its scope under P2-IO1 through P2-IO4 to avoid colliding with the Advanced milestone names. The two tracks may run separately after the CI gate.
+
 ## Consolidation intervention
 
 The 12 October decision makes M1 the sole supported product after consolidation.
