@@ -174,6 +174,12 @@ done = request(first, 3, "session/prompt", {
 assert done["stopReason"] == "end_turn"
 assert any(
     entry["params"]["sessionId"] == session
+    and entry["params"]["update"].get("sessionUpdate") == "user_message_chunk"
+    and entry["params"]["update"].get("content", {}).get("text") == "first"
+    for entry in updates
+), "ACP must project accepted user input from the durable journal"
+assert any(
+    entry["params"]["sessionId"] == session
     and entry["params"]["update"].get("content", {}).get("text") == "mock:first"
     for entry in updates
 )
@@ -325,6 +331,7 @@ assert "stdin frame exceeds 1 MiB" in stderr, stderr
         "cases": [
             "initialize", "session-new", "prompt", "stream-notifications",
             "composition-model-catalog-advertised-on-new-and-load",
+            "accepted-user-prompts-replay-as-acp-user-message-chunks",
             "process-restart-load", "session-continuation",
             "two-session-isolation",
             "malformed-frame-recovers", "invalid-jsonrpc-rejected",
