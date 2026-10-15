@@ -423,14 +423,21 @@ fn project_recall(packages: &Packages) -> serde_json::Value {
         ..packages.clone()
     };
     stranger.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
-    stranger.denied("put", project_fact().to_value(), EvidenceProblem::ScopeDenied);
+    stranger.denied(
+        "put",
+        project_fact().to_value(),
+        EvidenceProblem::ScopeDenied,
+    );
     let mut foreign = key;
     foreign.scope.id = "beta".into();
     packages.denied("get", foreign.to_value(), EvidenceProblem::ScopeDenied);
     let mut foreign_fact = project_fact();
     foreign_fact.scope.id = "beta".into();
     packages.denied("put", foreign_fact.to_value(), EvidenceProblem::ScopeDenied);
-    assert_eq!(packages.success::<EvidenceRecord>("get", key.to_value()), record);
+    assert_eq!(
+        packages.success::<EvidenceRecord>("get", key.to_value()),
+        record
+    );
     serde_json::json!({"reader": "s2", "statement": record.statement,
         "unapproved_session_denied": true, "unapproved_write_denied": true,
         "cross_project_denied": true, "cross_project_write_denied": true})
@@ -449,7 +456,11 @@ fn project_revoked(packages: &Packages) -> serde_json::Value {
         scope: project_scope(),
     };
     packages.denied("get", key.to_value(), EvidenceProblem::ScopeDenied);
-    packages.denied("put", project_fact().to_value(), EvidenceProblem::ScopeDenied);
+    packages.denied(
+        "put",
+        project_fact().to_value(),
+        EvidenceProblem::ScopeDenied,
+    );
     let retained = Packages {
         resource: RESOURCE.into(),
         ..packages.clone()
