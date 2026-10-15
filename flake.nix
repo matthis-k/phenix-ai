@@ -265,7 +265,7 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 2, report
+        assert len(report["definitions"]) == 3, report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -311,6 +311,27 @@
         installPhase = ''
           mkdir -p "$out/lib"
           cp target/*/release/libphenix_plugin_evidence_store.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      projectStorageSqlite = rust.buildRustPackage {
+        pname = "phenix-plugin-project-storage-sqlite";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-project-storage-sqlite
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-project-storage-sqlite" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-project-storage-sqlite" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_project_storage_sqlite.so "$out/lib/plugin.so"
         '';
         postFixup = ''
           ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
@@ -881,6 +902,23 @@
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-evidence-store-product.json"
       '';
+      p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-project-storage
+      ]));
+      p2ProjectStorageProductCheck = pkgs.runCommand "phenix-p2-project-storage-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-project-storage-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
+          ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-project-storage-product.json"
+      '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1364,6 +1402,7 @@
         phenix-advanced-contracts = advancedDefinitions;
         phenix-plugin-evidence-journal = evidenceJournal;
         phenix-plugin-evidence-store = evidenceStore;
+        phenix-plugin-project-storage-sqlite = projectStorageSqlite;
         phenix-advanced-composition = advancedComposition;
         phenix-advanced-verification = advancedVerificationBinary;
         phenix-advanced-verification-composition = advancedVerificationComposition;
@@ -1422,6 +1461,7 @@
         p2-evidence-contracts = advancedContractsCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
+        p2-project-storage-product = p2ProjectStorageProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
