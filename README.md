@@ -1,6 +1,8 @@
-# Phenix M1 kernel
+# Phenix AI
 
-Phenix provides a small native plugin kernel with typed contracts, explicit provider selection and inherited authority. M1 is its only supported contract, value wire format and runtime profile. Native plugins use ABI 3. Definition-only packages carry the same canonical contract metadata without executable code.
+Phenix is a fully customizable coding agent built from plugins. Plugins define what the agent does; the M1 kernel defines how contributions execute. The generic runtime follows from that separation rather than being a separate product goal. [The product decision](spec/agent-product-decision.md) records the rationale, while the [M1 roadmap](spec/m1-roadmap.md) and [Advanced roadmap](spec/p2-advanced-agent-roadmap.md) own implementation requirements.
+
+The native kernel has typed contracts, explicit provider selection and inherited authority. M1 is its only supported contract, value wire format and runtime profile. Native plugins use ABI 3. Definition-only packages carry the same canonical contract metadata without executable code.
 
 The kernel verifies packages offline, prepares one immutable composition and dispatches selected native or cell operations through one authority boundary. Pending imports use the existing parent/root ticket tree. Cancellation revokes effects before cleanup, and physical leases retain executable images until work drains. Roots remain pinned to their admitted generation during promotion, rollback and retirement.
 
@@ -32,4 +34,4 @@ have M1 tests. The transition passed exact-head CI at `367420e33b`.
 [PR #781](https://github.com/matthis-k/phenix-ai/pull/781) completes S3b at
 `75a255b9`, with full CI and verified release evidence.
 
-Reactive G1-G4 development follows consolidation and S3b acceptance. The synchronous A0 agent remains an ordinary plugin fixture, exercised by `nix run .#phenix-a0-demo`. The final Basic agent will compose triggered graph nodes through the kernel's existing execution machinery.
+P1 Basic is an accepted composed agent product. The Advanced agent remains under development through independently replaceable P2 plugins; neither agent is embedded in the kernel. The M1 and P2 roadmaps own current status and acceptance evidence.
