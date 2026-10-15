@@ -22,8 +22,9 @@ merged the opt-in deterministic Basic session-history product at `b96182d5`
 after its full PR matrix, DAG, official ACP SDK and dedicated verification
 passed. The latest production run on the resulting main commit is separate
 release evidence. [#892](https://github.com/matthis-k/phenix-ai/pull/892)
-implements composition-derived ACP model selection display and replay of
-accepted user prompts; it is not accepted until exact-head checks pass.
+merged at `d674b366` after exact-head CI. It publishes the composition-derived
+ACP model binding and replays accepted user prompts through standard ACP
+notifications. Model selection mutation remains separate.
 Follow [runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891)
 and [multi-client projection #852](https://github.com/matthis-k/phenix-ai/pull/852),
 then the existing S5/F3 reactive, K1-K3 operations, L1/I1 observability
