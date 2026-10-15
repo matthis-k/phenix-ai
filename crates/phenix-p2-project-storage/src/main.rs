@@ -1,7 +1,7 @@
 //! P2-2a packaged project isolation and revision test using real native SQLite.
 use phenix_advanced_contracts::{
-    ProjectEdit, ProjectRecord, ProjectRecordKey, ProjectStorageError,
-    ProjectStorageProblem, ProjectTransaction,
+    ProjectEdit, ProjectRecord, ProjectRecordKey, ProjectStorageError, ProjectStorageProblem,
+    ProjectTransaction,
 };
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
@@ -18,9 +18,12 @@ struct Fixture {
     definitions: Vec<String>,
 }
 impl Fixture {
-    fn invoke(&self, project: &str, operation: &str, input: Value)
-        -> Result<Outcome, phenix_contract::Failure>
-    {
+    fn invoke(
+        &self,
+        project: &str,
+        operation: &str,
+        input: Value,
+    ) -> Result<Outcome, phenix_contract::Failure> {
         let resource = format!("phenix.project.{project}");
         let grants = ["read", "transact"]
             .iter()
@@ -62,7 +65,13 @@ impl Fixture {
         T::from_value(value).unwrap()
     }
 
-    fn expect(&self, root_project: &str, operation: &str, request: Value, code: ProjectStorageProblem) {
+    fn expect(
+        &self,
+        root_project: &str,
+        operation: &str,
+        request: Value,
+        code: ProjectStorageProblem,
+    ) {
         let result = self.invoke(root_project, operation, request).unwrap();
         let Outcome::Domain(value) = result else {
             panic!("expected {operation} domain denial, got {result:?}");
@@ -83,9 +92,12 @@ impl Fixture {
         )
     }
 
-    fn edit(&self, root_project: &str, request_project: &str, updates: Vec<ProjectEdit>)
-        -> Vec<ProjectRecord>
-    {
+    fn edit(
+        &self,
+        root_project: &str,
+        request_project: &str,
+        updates: Vec<ProjectEdit>,
+    ) -> Vec<ProjectRecord> {
         self.ok(
             root_project,
             "transact",
@@ -120,7 +132,12 @@ fn txn(project: &str, updates: Vec<ProjectEdit>) -> Value {
     .to_value()
 }
 fn write(fixture: &Fixture) -> serde_json::Value {
-    fixture.expect("alpha", "read", key("alpha", "theme"), ProjectStorageProblem::NotFound);
+    fixture.expect(
+        "alpha",
+        "read",
+        key("alpha", "theme"),
+        ProjectStorageProblem::NotFound,
+    );
 
     let created = fixture.edit("alpha", "alpha", vec![edit("theme", 0, b"violet")]);
     assert_eq!(created.len(), 1);
@@ -134,21 +151,37 @@ fn write(fixture: &Fixture) -> serde_json::Value {
     fixture.expect(
         "alpha",
         "transact",
-        txn("alpha", vec![edit("scratch", 0, b"leak"), edit("theme", 0, b"stale")]),
+        txn(
+            "alpha",
+            vec![edit("scratch", 0, b"leak"), edit("theme", 0, b"stale")],
+        ),
         ProjectStorageProblem::Conflict,
     );
     fixture.expect(
-        "alpha", "read", key("alpha", "scratch"), ProjectStorageProblem::NotFound
+        "alpha",
+        "read",
+        key("alpha", "scratch"),
+        ProjectStorageProblem::NotFound,
     );
 
-    fixture.expect("alpha", "read", key("beta", "theme"), ProjectStorageProblem::Denied);
+    fixture.expect(
+        "alpha",
+        "read",
+        key("beta", "theme"),
+        ProjectStorageProblem::Denied,
+    );
     fixture.expect(
         "alpha",
         "transact",
         txn("beta", vec![edit("theme", 0, b"forged")]),
         ProjectStorageProblem::Denied,
     );
-    fixture.expect("alpha", "read", key("alpha", "../escape"), ProjectStorageProblem::InvalidInput);
+    fixture.expect(
+        "alpha",
+        "read",
+        key("alpha", "../escape"),
+        ProjectStorageProblem::InvalidInput,
+    );
 
     let changed = fixture.edit("alpha", "alpha", vec![edit("theme", 1, b"blue")]);
     assert_eq!(changed.len(), 1);
@@ -171,8 +204,18 @@ fn restart(fixture: &Fixture) -> serde_json::Value {
     let shared = fixture.read("alpha", "alpha", "theme");
     assert_eq!(shared.revision, 2);
     assert_eq!(shared.data.0, b"blue");
-    fixture.expect("beta", "read", key("beta", "theme"), ProjectStorageProblem::NotFound);
-    fixture.expect("alpha", "read", key("beta", "theme"), ProjectStorageProblem::Denied);
+    fixture.expect(
+        "beta",
+        "read",
+        key("beta", "theme"),
+        ProjectStorageProblem::NotFound,
+    );
+    fixture.expect(
+        "alpha",
+        "read",
+        key("beta", "theme"),
+        ProjectStorageProblem::Denied,
+    );
     serde_json::json!({
         "accepted": true,
         "shared_project_revision": shared.revision,
@@ -184,7 +227,11 @@ fn restart(fixture: &Fixture) -> serde_json::Value {
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
-    assert_eq!(args.len(), 6, "usage: phenix-p2-project-storage PLUGIN BASIC-DEFS ADV-DEFS ACTION OUTPUT");
+    assert_eq!(
+        args.len(),
+        6,
+        "usage: phenix-p2-project-storage PLUGIN BASIC-DEFS ADV-DEFS ACTION OUTPUT"
+    );
     let fixture = Fixture {
         package: args[1].clone(),
         definitions: vec![args[2].clone(), args[3].clone()],
@@ -196,5 +243,9 @@ fn main() {
     };
     let out = Path::new(&args[5]);
     fs::create_dir_all(out).unwrap();
-    fs::write(out.join("project-storage.json"), serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+    fs::write(
+        out.join("project-storage.json"),
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
 }
