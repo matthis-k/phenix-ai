@@ -276,6 +276,8 @@
         pname = "phenix-plugin-compaction-store";
         version = "0.1.0";
         src = subset (publicPaths ++ [
+          ./crates/phenix-artifact
+          ./crates/phenix-kernel
           ./crates/phenix-basic-contracts
           ./crates/phenix-advanced-contracts
           ./crates/phenix-p2-compaction-replay
@@ -286,9 +288,29 @@
         cargoTestFlags = [ "-p" "phenix-plugin-compaction-store" ];
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib" "$out/bin"
+          cp target/*/release/libphenix_plugin_compaction_store.so "$out/lib/plugin.so"
+          cp target/*/release/phenix-p2-compaction-product "$out/bin/"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
       };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
         "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
+      p2CompactionStoreProductCheck = pkgs.runCommand "phenix-p2-compaction-store-product" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.sqlite ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-compaction-store-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2CompactionStoreCheck}/bin/phenix-p2-compaction-product \
+          ${p2CompactionStoreCheck} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-compaction-store-product.json"
+      '';
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1617,6 +1639,7 @@
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-compaction-store = p2CompactionStoreCheck;
+        p2-compaction-store-product = p2CompactionStoreProductCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
