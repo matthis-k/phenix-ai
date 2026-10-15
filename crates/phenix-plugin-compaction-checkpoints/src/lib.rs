@@ -38,7 +38,9 @@ pub fn validate_ledger(
             || checkpoint.session != session
             || checkpoint.revision != expected
             || checkpoint.parent_checkpoint.as_deref() != parent
-            || history[..index].iter().any(|older| older.id == checkpoint.id)
+            || history[..index]
+                .iter()
+                .any(|older| older.id == checkpoint.id)
         {
             return Err(CheckpointStoreProblem::StorageFailed);
         }
@@ -244,10 +246,7 @@ mod plugin {
                 },
             )
             .map_err(map_storage)?;
-        if result.len() != 1
-            || result[0].revision != revision + 1
-            || result[0].data != data
-        {
+        if result.len() != 1 || result[0].revision != revision + 1 || result[0].data != data {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
                 "invalid checkpoint storage CAS acknowledgment",
