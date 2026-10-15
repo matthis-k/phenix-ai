@@ -75,6 +75,8 @@ assert rows == [("alpha", "s1", 1, 1), ("alpha", "s2", 2, 0)], rows
         "project-root-only-membership-administration",
         "session-root-identity-check",
         "two-sessions-one-stable-project",
+        "two-session-project-record-retrieval",
+        "revocation-denies-project-record-retrieval",
         "cross-project-denial",
         "persistent-revocation-across-processes",
         "membership-cas-conflict",
