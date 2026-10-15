@@ -921,6 +921,16 @@
           ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-project-storage-product.json"
       '';
+      p2ProjectMembershipProductCheck = pkgs.runCommand "phenix-p2-project-membership-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-project-membership-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
+          ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-project-membership-product.json"
+      '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1464,6 +1474,7 @@
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
+        p2-project-membership-product = p2ProjectMembershipProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
