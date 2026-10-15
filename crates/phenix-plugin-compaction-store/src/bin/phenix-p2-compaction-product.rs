@@ -219,7 +219,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(
         args.len(),
-        9,
+        8,
         "usage: phenix-p2-compaction-product PLUGIN JOURNAL STORAGE BASIC-DEFS ADV-DEFS MODE OUT"
     );
     let fixture = Packages {
