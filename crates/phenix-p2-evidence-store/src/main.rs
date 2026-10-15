@@ -439,7 +439,7 @@ fn project_recall(packages: &Packages) -> serde_json::Value {
         project_fact().to_value(),
         EvidenceProblem::ScopeDenied,
     );
-    let mut foreign = key;
+    let mut foreign = key.clone();
     foreign.scope.id = "beta".into();
     packages.denied("get", foreign.to_value(), EvidenceProblem::ScopeDenied);
     packages.denied(
