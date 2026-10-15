@@ -38,8 +38,8 @@ Use the P1 flake's basicCompositionSpec, historyVerificationComposition and basi
 | P2-1: evidence model | P2-0 | Typed references, memory scopes, temporal/freshness metadata and durable evidence links | Stable references survive restart; stale/forged/out-of-scope references reject |
 | P2-2: memory | P2-1 | Write, extract, reconcile, retrieve, rank and update hybrid memory through plugin contracts | Multi-session, temporal, update, abstention and provenance fixtures; benchmark baseline |
 | P2-3: reversible compaction | P2-1; may build alongside P2-2 | Policy, summaries, snapshot lineage, deterministic expansion and source hydration | Tight-window continuation, exact replay/rehydration, crash safety, no duplicated tool effects |
-| P2-4: code intelligence | P2-1, P2-2 as needed | Index/symbol graph, diagnostics, revision-aware semantic lookups and memory links | Code rename, file edit, stale symbol, diagnostics and authorization fixtures |
-| P2-5: generation-safe hot reload | P2-0; P2-1 for persistent plugin state | Stage, inspect, quiesce, migrate, activate or roll back a new plugin generation | Repeated native reload under active roots, pending tool calls, invalid ABI/grants and restart |
+| P2-4: deterministic code intelligence | P2-1; integrate with P2-6 workspace edits | Revisioned code-entity graph, lineage, edit validation, provider evidence, incremental reconciliation and memory links | Rename/move/split/delete, provider disagreement, failed edit, external change and crash/rebuild integrity |
+| P2-5: graph contributions and hot reload | P2-0; P2-1 for persistent plugin state | Recompose immutable candidate graph from versioned plugin node/edge/trigger contributions on replacement or authorized runtime selection | Updated plugin inserts workflow steps; new roots use new topology, old roots finish old graph; invalid candidates roll back |
 | P2-6: workspace | P2-0, P2-4 for code integration | Scoped file operations, shell/process execution, Git integration and revision-checked atomic writes through plugins | Real workspace editing, denied traversal, shell streaming/cancellation, conflicts, rollback and tool-visible results |
 | P2-7: durable jobs | P2-6 | Persistent job identity, lifecycle, owner grants, log cursors, recovery and bounded detached work | Parent disconnect, process restart, attach, cancellation, duplicate admission, lease cleanup and fault recovery |
 | P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
@@ -56,7 +56,7 @@ Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composi
 - On committed conversation/tool events: enqueue idempotent extraction, association updates and optional memory maintenance. Effects carry session, source event and generation identity. A failed background maintenance step cannot duplicate or reorder the active Model/tool turn.
 - On context threshold: commit compaction checkpoint and publish the selected compacted view through typed Context state before the next Model call. Refresh only impacted projections through generated on-change hooks.
 - On code revision or source removal: invalidate dependent memory references, index entries and derived context. The next lookup checks freshness before using the entry.
-- On reload: let the kernel's generation transition determine which version handles each root. Advanced handlers receive the selected generation and its authorized providers.
+- On plugin replacement or authorized contribution selection: compose the updated plugin's declarations with other contributions, validate a candidate graph and atomically promote a new generation. Existing roots remain pinned to their original graph and provider bindings.
 
 Define any needed Memory, ContextView, Compaction, CodeIndex and ReloadControl contracts in a standalone public contract crate. A production implementation remains a selectable provider. Model-facing answers expose the source reference IDs used by retrieval and expansion, so tests and users can inspect evidence. The Basic topology, plugins and binary remain byte-for-byte independent of this additive composition.
 
@@ -104,23 +104,48 @@ Keep compaction, memory retrieval and journal persistence separate contracts. Th
 
 ## Code intelligence
 
-Restore the useful oldmain phenix-plugin-language concepts: logical code entities, revisions, source provenance, relations, diagnostics, edited-symbol lineage and stale-reference detection. Do this as code intelligence plugins, not as a kernel service.
+P2 requires a **deterministically maintained code-entity graph**. Restore oldmain's logical code entities, provider epochs, facet revisions, provenance, relation facts, lineage, identity-continuity states, rebuild checkpoints and edit-validation evidence. This code graph is distinct from the kernel's executable workflow DAG.
 
-Use maintained Tree-sitter parsers for syntactic symbols and incremental indexes. Prefer an existing language server and its LSP transport for semantic definition/references/rename/diagnostics when available; use the language server's native capabilities rather than reconstructing semantic analysis with ad-hoc regular expressions. Support at least Rust in P2 acceptance, with language adapters replaceable. Maintain repository/worktree identity, document hash, symbol identity and revision-bound spans; update only affected files. Record the difference between exact LSP identity and best-effort syntactic matching.
+### Entity identity and lineage
 
-Tools expose file/symbol search, outline, definition, references, diagnostics and changed-neighborhood queries with bounded results and explicit evidence. If editing is included, route edits through existing authorized workspace tools and validate pre-edit revision plus post-edit diagnostics. Memory references to code must become needs-validation when a file or symbol changes. A stale reference cannot quietly resolve to a similarly named but different function.
+- Identify entities by repository/worktree, logical ID, language and provider, source revision and supporting symbol facts. Track source file hashes, byte/UTF positions, provider epoch and exact definition/reference spans. Names and line numbers alone are insufficient identity.
+- Record rename, move, changed signature/body, insertion, deletion, split and merge as versioned lineage edges, with supporting evidence and explicit confidence/continuity state. Prefer versioned workspace/Git changes, parser AST identity and fingerprints, scoped reference/definition results and validated provider facts. Similarity heuristics alone cannot certify an identity.
+- Handle ambiguous successors, reused names, provider disagreement and missing evidence as **unresolved or unknown**. Never silently merge two entities, redirect a stale reference or present an unconfirmed relationship as fact.
+- Attach every node/relation and reverse dependency to the exact source/provider revision that supports it. Revise or invalidate affected relations, cache entries, compaction references and memory facts when source or provider epochs change.
 
-## Safe plugin hot reload
+### Deterministic validation and reconciliation
 
-Plugin reload is a **kernel generation lifecycle operation**, requested through a separately authorized control plugin or host command. The manager validates artifact metadata, ABI, contracts, requirements, maximum grants and graph compatibility before loading or executing new plugin code. Prepare a new complete generation, then atomically publish its bindings and graph after all necessary state migration and validation succeed.
+- Use maintained Tree-sitter parsers for incremental structure and LSP providers for language-specific semantics, references, rename and diagnostics. These standard providers deliver observations; Phenix's code-intelligence plugin enforces revision, evidence and identity semantics.
+- For an edit, verify grants, expected file and entity revisions, range consistency, overlapping writes, parser results and applicable semantic facts. The workspace plugin performs revision-checked writes. After the real filesystem commit, re-read bytes and reconcile parser/LSP observations against the committed revision before publishing a new valid code-graph projection.
+- Filesystem writes and index writes do not share an automatic transaction. On indexing failure after a successful file write, mark affected entities and relations **rebuilding/needs-validation**. Queries requiring current facts must fail closed until repair. Offer inverse edits only as separately verified revision-checked operations; never claim an unverified filesystem rollback.
+- Handle workspace writes, external editor updates, Git checkouts, missed watcher events, language-server restarts, provider-epoch shifts and process crashes. Persist rebuild checkpoints and an observation trail. Verify source hashes when serving current claims, then reindex the affected neighborhood or rebuild as needed.
+- Return source/provenance IDs, exact revision, relation coverage and freshness with every result. When support cannot be verified, return partial/stale/unknown explicitly. The memory plugin and Model-facing Context accept only validated current code references for current factual claims.
+- Keep symbol identity, lineage validation, graph repair and edit safety **model-independent**. A model may propose edits or interpretations, but cannot invent confirmed lineage, suppress failed diagnostics or mark an index current without deterministic evidence.
 
-- Existing roots retain their original generation and provider leases until they finish or are cancelled. No old shared library is unloaded while any callback, pending ticket, observer or borrowed state depends on it.
-- New roots bind the new generation. Stateful plugins must declare versioned snapshot/export/import hooks or an explicit restart-required policy. Migrations use rollback-capable transaction boundaries and cannot widen grants.
-- Reject missing imports, schema changes without migration, denied authority, invalid package digests and failed initialization without altering the active generation. Expose stage/apply/rollback/status, exact package digests and diagnostic events through introspection/logging plugins.
-- Support replace, add, remove and update for independently packaged native plugins. Audit whether dynamically loaded native libraries can be safely unloaded on each target; use content-addressed copied library paths and deferred retirement where required. Never assume that a Rust shared library or foreign callback is safe to unload merely because a file changed.
-- A crash during staging or migration must recover the last committed generation and durable session state. A denied reload must not run candidate constructors or effects.
+Public tools cover file/symbol search, outline, definitions/references, diagnostics, changed-neighborhood queries, lineage/history, source-backed graph relations and edit preview/validation. Rust is the first acceptance language. Language-provider adapters stay replaceable.
 
-Use the existing kernel resolver, generation ID, lease retirement, tickets and cancellation logic. A new second scheduler or duplicate contract registry fails review. New code is limited to generic generation transition and narrowly scoped SDK hooks.
+Accept only with direct fixture checks of code-graph integrity independent of the scripted Model, plus product tests that prove the Advanced agent receives verified results or explicit unknown/stale outcomes. Include rename/move/split/merge ambiguity, same-name different-entity, edit conflicts, failed post-write validation, external file changes, provider epoch changes and crash/restart repair.
+
+## Plugin-authored runtime graph evolution and safe hot reload
+
+The active workflow graph is an immutable composition of **plugin-owned** node, edge and trigger contributions. P2 must support changes to that composition **while Phenix runs**. When a process plugin is replaced by a richer version, its new contribution may add a validation step, replace an executor node or insert verification before completion. This is a plugin contract change, not an agent rewriting the kernel graph.
+
+### Runtime contribution changes
+
+- The SDK/macros publish inspectable typed contribution descriptors with stable node/action IDs, triggers, predecessor edges, join/failure policies, resource grants and read/write effects. Updated plugin artifacts may publish different contributions. Authorized configuration can also select among published contribution sets from installed providers.
+- All executable node/action implementations and maximum grants must be declared in validated package metadata. If runtime proposals are needed, they only reference already declared callable IDs, typed operations and bounded resources. No unvalidated plugin code, new permissions or arbitrary mutable graph patching.
+- On install, replace, remove or authorized contribution selection, the kernel resolves a **complete candidate graph** from selected plugin declarations. Validate package identity, imports, schema and resource grants, ownership, anchors, trigger contracts, cycles, write conflicts, fan-out, effects and dependency order using the existing M1 compiler and resolver before activation.
+- Record the candidate graph digest, contribution owners and structural diff. Stage required plugin state migration separately, then atomically promote the new immutable generation. **New roots use the new graph. In-flight roots stay pinned to the old graph and provider leases** until completion/cancellation and physical drain. Do not splice new nodes into running executions.
+- If work must continue under a new topology, submit an explicitly authorized new root with correlation and idempotency data. Failed compilation, denied grants, missing callbacks or migration failure keep the last active generation untouched.
+- Provide typed control/inspection operations to stage, diff, validate, promote, roll back and inspect graph generations. The kernel remains the single graph authority. Logging and introspection consume its generic lifecycle events.
+
+Example: plugin version A contributes `start -> execute -> complete`. Its replacement B contributes `start -> validate -> execute -> verify -> complete`. Upon authorized reload, Phenix validates B's declared effects and promotes generation B. A new run follows all five steps; an existing run completes using A's three steps. An invalid version C cannot change either run.
+
+### Native lifecycle and state
+
+Plugin reload is a generic kernel generation transition requested through an authorized control plugin or host. Validate ABI, descriptor, package hash, contracts and maximum authority before candidate execution where offline checks suffice. Stateful plugins declare snapshot/export/import migrations or an explicit restart-required policy. Migration and generation publication must be rollback-safe; a graph change does not imply a state migration.
+
+Support native plugin add/replace/remove with content-addressed loaded artifacts and deferred retirement. No library unload while an old callback, observer, ticket or leased state can still use it. Recover the last committed generation after a staging crash and never execute constructors of denied candidates. Reuse kernel resolver, graph compiler, dispatcher, generation manager, leases and cancellation; do not add a second scheduler or mutable graph registry.
 
 ## Workspace management (P2-6)
 
@@ -168,9 +193,9 @@ Acceptance: on a scripted multi-agent, multi-job session, inspect exact graph/pr
 
 ## Code intelligence and hook scope
 
-**Code intelligence in P2:** symbol/file search, outline, definitions, references, diagnostics, revision-aware indexing, changed-neighborhood lookup, stable code-reference provenance and stale-source invalidation. Use maintained Tree-sitter/LSP integrations where appropriate. The former oldmain language plugin's entire query projection grammar, provider epochs, edit-validation evidence and every lineage edge are not release prerequisites unless needed for these tests. This is a deliberate functional subset, not a claim that the planned core intelligence is incomplete.
+**Code intelligence in P2:** entity lineage, edit validation, provider-epoch tracking, revision-grounded relations, deterministic rebuild and fail-closed stale-source handling are required. They work without a Model. Deep optional query syntaxes may remain deferred, but correctness of the code graph and source references is not optional.
 
-**Hooks in P2:** generated typed graph triggers and `on_change`/`on_event` declarations are the supported plugin-authoring mechanism. Plugins for memory, jobs, sub-agent lifecycle and inspection use those hooks instead of manual polling. The old runtime-editable hook-rule store, with user-defined actions and failure policies, is deferred. It is separate from generic plugin hot reloading: replacing a graph contribution safely does not require implementing a dynamic hook scripting system.
+**Hooks in P2:** generated typed `on_change`/`on_event` triggers remain the plugin-authoring mechanism. **Runtime graph evolution is required** through new or selected plugin-owned contributions, recomposed and published as new validated immutable generations. The old general-purpose user-written hook-rule language remains deferred. It is not needed to replace a running process plugin with one that contributes extra steps.
 
 ## Deferred after P2
 
@@ -192,12 +217,12 @@ Every test runs the packaged executable, not a function that bypasses the graph.
 | AV-06 | Real input exceeds configured context threshold; run compaction | Model receives bounded compacted view; old facts stay retrievable through references |
 | AV-07 | Ask verbatim question about old compacted text; expand by journal range | Original text byte-for-byte; no summary hallucination; undo selects old view |
 | AV-08 | Crash during summary checkpoint, during tool call and after committed checkpoint | Restart restores consistent state; no duplicated side effects or orphaned tool-call completion |
-| AV-09 | Parse Rust repository; find symbol, relations, references and diagnostics | Correct revision-bound spans and typed results; no regex-only false positives |
-| AV-10 | Rename/move/edit symbol between requests | Incremental reindex and revalidation; stale ID rejected or resolved through explicit lineage |
-| AV-11 | Reload stateless model/provider while a different root is active | New root sees new provider; in-flight root finishes on old provider; old lease drains |
+| AV-09 | Parse Rust repository with symbol relations, references, diagnostics and provider epochs | Exact revision-bound source evidence; no invented or stale current relation |
+| AV-10 | Rename, move or edit an entity between requests | Proven lineage with source revisions; dependent references and memory invalidated as required |
+| AV-11 | Replace plugin whose new contribution inserts validation and verification steps | New roots use expanded graph; old roots finish old graph with leases safely drained |
 | AV-12 | Reload stateful memory provider with schema migration | State survives across generation and process restart; invalid migration rolls back |
 | AV-13 | Denied grants, forged package, incompatible ABI and corrupt graph on reload | Candidate rejected before effects; active generation unchanged |
-| AV-14 | Remove and re-add plugin with pending calls, cancellation and repeated reload cycles | No use-after-unload, leaked tickets or doubled observer delivery |
+| AV-14 | Remove/re-add plugin with pending roots, cancellation and multiple graph generations | No use-after-unload, leaked tickets, doubled observer delivery or partial graph mutation |
 | AV-15 | Build all five presets and inspect closures and contract bindings | Fixture plugins only in verification products; Basic unchanged |
 | AV-16 | Compare lexical, hybrid and optional dense memory using frozen corpus | Report answer quality, retrieval completeness, p95 latency, token use and DB size; no ungrounded benchmark claim |
 | AV-17 | Read, edit and diff an isolated Git worktree through Advanced tools | Real file bytes and Git diff match expectation; symlink escape and unauthorized write have zero effects |
@@ -211,6 +236,13 @@ Every test runs the packaged executable, not a function that bypasses the graph.
 | AV-25 | Request debug data across sessions; replay after restart with slow observer | Sensitive fields redacted, denied data inaccessible, independent observer cursors and bounded backpressure |
 | AV-26 | Measure scripted multi-tool and child-agent scenario under two memory/compaction policies | Counts, usage, latency and source citations are reproducible; estimates distinguished from measured costs |
 | AV-27 | Disable generated on-change hook or deny a job/child import | Required state refresh or delegation test fails deterministically; no alternate private control path |
+| AV-28 | Rename/move symbols with duplicates or ambiguous split/merge lineage | Deterministic evidence only; ambiguous candidates remain unresolved instead of falsely unified |
+| AV-29 | Propose code edit with stale revision, conflicting spans, invalid syntax or changed references | No incorrect valid code-graph publish; failed post-write validation explicitly marks affected entities stale |
+| AV-30 | External edit, missed watcher event and provider epoch change | Source digest revalidation and targeted rebuild eliminate stale current relations without Model intervention |
+| AV-31 | Crash between durable filesystem edit and code-index publish | Persistent rebuild state; no false current claim before verified reindex and restart reconciliation |
+| AV-32 | Hot-replace a process with a plugin contributing additional graph nodes/edges | Candidate graph diff validated, new root executes extra steps, old root remains on old topology |
+| AV-33 | Switch selected published plugin contributions during runtime | Authorized candidate generation publishes atomically; invalid import/anchor/cycle keeps existing generation |
+| AV-34 | Submit undeclared callable, forbidden graph write or incompatible schema in candidate | Reject before effects or constructor; no scope escalation, graph corruption or lost session |
 
 For each test include a relevant counterfactual: remove or corrupt retrieved source, change only the revision, disable the expected graph edge, reorder independent events, deny access, or revoke a child/job grant. The test must then fail or abstain. Assert a known exact answer only after proving the model actually consumed the cited evidence. Validate that the fixture model can also perform a tool-call/continuation sequence, instead of acting as a static canned-answer lookup.
 
