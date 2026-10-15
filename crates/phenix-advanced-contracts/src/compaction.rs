@@ -123,7 +123,8 @@ pub fn validate_checkpoint(checkpoint: &CompactionCheckpoint) -> Result<(), Comp
         return Err(CompactionProblem::IncompleteCoverage);
     }
     for source in &checkpoint.hydration_sources {
-        if source.scope.kind != EvidenceScopeKind::Session || source.scope.id != checkpoint.session {
+        if source.scope.kind != EvidenceScopeKind::Session || source.scope.id != checkpoint.session
+        {
             return Err(CompactionProblem::ScopeDenied);
         }
         validate_reference(source).map_err(|error| match error {
