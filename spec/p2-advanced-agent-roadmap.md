@@ -1,4 +1,4 @@
-# P2 advanced agent: composition, memory, compaction, code intelligence and reload
+# P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
 Status: PLANNED. No P2 implementation or test acceptance is claimed.
 Updated: 2026-10-15
@@ -10,7 +10,7 @@ P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [
 
 P2 is the Advanced agent product. Its kernel is the same M1 kernel as P1. Advanced features live in independently replaceable plugins; the kernel retains authenticated dispatch, generation identity, pending tickets, graph scheduling, authority and cancellation. A product composition selects plugins and their declared bindings. It never becomes a second agent executor.
 
-The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence and safe plugin hot reload. Restore any useful oldmain behavior through the new contracts and graph, not by importing the old kernel or its embedded application framework. Planning, jobs, session trees and workspace execution from oldmain require a parity audit but are not automatic release dependencies unless their absence breaks the specified P2 workflows.
+The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
 
 **Sequence:** finish the accepted P1 baseline and the single-authority CI cutover before P2 implementation. Specifications and test vectors may be prepared now. Tests are written RED before implementation for every feature slice. Each implementation PR is ready for review when executable code exists. An exact-head full CI pass is required for release acceptance.
 
@@ -23,8 +23,8 @@ Build one kernel and compose increasingly capable products. A preset is a packag
 | phenix-kernel | M1 kernel | Kernel-only CLI, offline contract/package inspection, no agent graph or model | Public |
 | phenix-basic | Kernel + P1 composition | Model, tools, Skills/Context, Session/Journal/Storage, Basic graph, Terminal/JSONL/ACP | Public, already packaged |
 | phenix-basic-verification | Basic composition + test provider override | Deterministic history-aware Model and existing acceptance fixtures | CI only, already packaged; retain |
-| phenix-advanced | Basic composition + P2 plugins | Advanced memory, context planning/compaction, code intelligence, authorized reload integration | Public after P2 |
-| phenix-advanced-verification | Advanced composition + isolated test providers | Typed scenario Model, controllable failures, fake code workspace, clock/revision and reload fixtures | CI only |
+| phenix-advanced | Basic composition + P2 plugins | Advanced memory, compaction, code intelligence, workspace tools, jobs, sub-agents/session trees, inspection and efficiency evaluation, hot reload | Public after P2 |
+| phenix-advanced-verification | Advanced composition + isolated test providers | Typed scenario Model, sandboxed workspace/process/child-agent fixtures, controllable failures, clock/revision and reload fixtures | CI only |
 
 Do not silently replace the default Basic Model, weaken Basic grants or add verification-only providers to either user-facing closure. The scripted P1 model may remain the offline reference default; production Model bindings stay replaceable (HTTP or another provider). The verification binary must exercise the real kernel, real session/journal/storage, real graph and real plugin entry points. Only the model, clock and external environment inputs are controlled.
 
@@ -40,7 +40,11 @@ Use the P1 flake's basicCompositionSpec, historyVerificationComposition and basi
 | P2-3: reversible compaction | P2-1; may build alongside P2-2 | Policy, summaries, snapshot lineage, deterministic expansion and source hydration | Tight-window continuation, exact replay/rehydration, crash safety, no duplicated tool effects |
 | P2-4: code intelligence | P2-1, P2-2 as needed | Index/symbol graph, diagnostics, revision-aware semantic lookups and memory links | Code rename, file edit, stale symbol, diagnostics and authorization fixtures |
 | P2-5: generation-safe hot reload | P2-0; P2-1 for persistent plugin state | Stage, inspect, quiesce, migrate, activate or roll back a new plugin generation | Repeated native reload under active roots, pending tool calls, invalid ABI/grants and restart |
-| P2-6: advanced verification and release | P2-2 through P2-5 | Composition fixtures, production transport parity, benchmark/regression report | Full reproducible exact-head CI, P1 regression and final-main check |
+| P2-6: workspace | P2-0, P2-4 for code integration | Scoped file operations, shell/process execution, Git integration and revision-checked atomic writes through plugins | Real workspace editing, denied traversal, shell streaming/cancellation, conflicts, rollback and tool-visible results |
+| P2-7: durable jobs | P2-6 | Persistent job identity, lifecycle, owner grants, log cursors, recovery and bounded detached work | Parent disconnect, process restart, attach, cancellation, duplicate admission, lease cleanup and fault recovery |
+| P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
+| P2-9: inspection and efficiency | P2-0; instrument P2-2 through P2-8 | Separate logging, introspection/debug and efficiency-evaluation plugins consuming permitted kernel events and projections | Durable/replayable traces, redacted inspection, cost/latency/usage metrics and repeatable comparisons |
+| P2-10: advanced verification and release | P2-2 through P2-9 | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
@@ -118,6 +122,60 @@ Plugin reload is a **kernel generation lifecycle operation**, requested through 
 
 Use the existing kernel resolver, generation ID, lease retirement, tickets and cancellation logic. A new second scheduler or duplicate contract registry fails review. New code is limited to generic generation transition and narrowly scoped SDK hooks.
 
+## Workspace management (P2-6)
+
+Restore the useful behaviors of oldmain's `phenix.workspace` and local environment plugins. Define a Workspace contract for root-scoped file listing, read, search, create, move, delete, versioned writes and Git status/diff operations. Keep filesystem and process I/O in selected workspace/environment plugins backed by maintained libraries. The kernel owns only generic effect admission and authority. P2's Basic user-facing product must not acquire these grants.
+
+- Use an explicit workspace root and per-operation grants: read, write, execute, git. Enforce canonical filesystem containment at the actual OS operation, including symlink and race protections.
+- Implement revision-checked edits and atomic multi-file batches where the filesystem permits. Return receipts with before/after revision hashes and conflict/error states. Never silently overwrite changed content.
+- Expose a typed terminal/process tool that streams bounded stdout/stderr, reports exit/interrupt state, supports cancellation and does not block kernel dispatch. Capture process IDs and recovery handles only when supported.
+- Git status, diff and permitted repository operations should use established Git libraries or Git subprocesses with explicit argument arrays and policy checks. Do not invent a new Git protocol or shell escape grammar.
+- Integrate code intelligence invalidation with actual workspace revision events. A file write triggers reindexing only for affected documents.
+
+Acceptance: an independent scripted Model calls read, edit, diff and command tools through the composed Advanced executable; the fixture asserts actual bytes, command output, revision rejection, traversal denial and correct cancellation. Inspect grants for zero denied effects. Use a temporary isolated repository, not the host's working tree.
+
+## Durable jobs (P2-7)
+
+Add a selectable Jobs plugin for work that outlives a single tool call or frontend attachment. A job is a persistent, authorized record and state machine linked to its owning session or project. Record job ID, operation identity, parent/root, granted resources, selected provider/generation, status, progress cursor, output refs, started/updated times and recovery policy. Reuse Session/Journal/Storage for durable writes and observable changes.
+
+Support create, list/get, attach/detach, progress/log retrieval, cancel, complete, error and garbage collection. Job creation and transitions must use idempotency keys and compare-and-swap; repeated requests or journal replay cannot run a side effect twice. A job may be promoted to project lifetime only under explicit grants and a recorded lease change.
+
+**Durable record is not a promise of OS process survival.** After a host restart, a resumable task with a reliable checkpoint can continue; an unmanaged physical process must be reconciled or marked interrupted/unknown. Never report success or rerun a non-idempotent external command without verified outcome. Keep long-running execution in dedicated environment/process plugins, not inside the kernel or a duplicate scheduler.
+
+Acceptance: submit, detach, reconnect, inspect partial output, cancel and restart a real packaged job. Simulate a crash at enqueue, after effect admission and during cleanup. Assert one job identity, monotonic cursor, correct owner authorization, no double execution and no leaked leases.
+
+## Sub-agents and session trees (P2-8)
+
+A sub-agent is a child session with an independently recorded message/journal history. The parent delegates a task through typed agent/Session operations, not by calling the Basic run loop directly or creating a second executor. Each child has a stable parent ID, task/goal, selected composition/profile, inherited-or-reduced tool/model grants, explicit memory visibility, budget limits and cancellation scope. Support multiple concurrent children through the kernel's ordinary graph scheduling and pending tickets.
+
+The SessionTree plugin maintains parent/child links, cycle and depth validation, status, ordered child results, durable references and a parent-visible summary of the child's work. Children retain their own conversation and checkpoints. Parent history includes delegation and result references; do not flatten child messages into the parent transcript. Parent cancellation has an explicit policy for active children, and deliberate detachment requires a separately authorized durable job. Delegation cannot elevate parent capabilities, model budgets, token limits, workspace roots or memory scopes.
+
+Provide an API for spawn, inspect, list, communicate, await, cancel and resume child sessions. The parent may delegate to multiple children, combine their results and revisit cited child evidence. Restart recovers links and unresolved requests. Child failures are explicit outcomes, not missing completion events.
+
+Acceptance: the deterministic Model directs one parent to delegate two different subtasks. The real graph creates distinct child sessions and model turns, returns evidence-bearing results and resumes correctly after restart. Test delegated grant denial, recursion depth, total budget, one-child failure, independent cancellation and a stale child-generation/provider binding. A canned response that bypasses child sessions fails verification.
+
+## Inspection, debugging and efficiency evaluation (P2-9)
+
+Preserve the agreed separation: **kernel emits generic events**, a logging plugin consumes and persists authorized events, an introspection/debug plugin exposes a typed inspect/query interface, and an efficiency-evaluation plugin computes reports from events plus Model/Tool usage records. This is not an agent-specific kernel debug API or a second runtime controller.
+
+The inspect interface must report selected graph and generation IDs, plugins/providers, contract bindings, in-flight roots, pending tickets, state revisions, session trees, job states, journal cursors, memory retrieval provenance, compaction checkpoints, tool errors and recent lifecycle transitions. Expose safe filtered snapshots; only authorized callers may inspect other sessions or private tool arguments. Bound expensive traversals, pagination and snapshot size. Sensitive model/tool data must be redacted by default and never leaked to lower-authority observers.
+
+The efficiency plugin measures model calls and tokens, cost when a provider supplies valid pricing, wall and model/tool latency, tool success/failure, compaction savings versus rehydration cost, memory retrieval hit/quality, child/job fan-out, and trace-level resource use. Separate actual measured usage from estimates. Use stable correlation IDs across root/child/job/model/tool events and version all event/replay schemas. Prefer OpenTelemetry-compatible tracing/metrics libraries if their dependency cost fits; avoid implementing a custom observability transport.
+
+Provide inspect-by-session and inspect-by-root paths, replayable event offsets and exportable benchmark reports. A failed observer must not block a live root. Inspection cannot mutate runtime state; any control action requires its own authorized contract.
+
+Acceptance: on a scripted multi-agent, multi-job session, inspect exact graph/provider bindings and correlate all child/model/tool transitions with one root. Verify replay across process restart, redaction, denied cross-session reads, stalled observer backpressure and metrics recomputed consistently from the same recorded events.
+
+## Code intelligence and hook scope
+
+**Code intelligence in P2:** symbol/file search, outline, definitions, references, diagnostics, revision-aware indexing, changed-neighborhood lookup, stable code-reference provenance and stale-source invalidation. Use maintained Tree-sitter/LSP integrations where appropriate. The former oldmain language plugin's entire query projection grammar, provider epochs, edit-validation evidence and every lineage edge are not release prerequisites unless needed for these tests. This is a deliberate functional subset, not a claim that the planned core intelligence is incomplete.
+
+**Hooks in P2:** generated typed graph triggers and `on_change`/`on_event` declarations are the supported plugin-authoring mechanism. Plugins for memory, jobs, sub-agent lifecycle and inspection use those hooks instead of manual polling. The old runtime-editable hook-rule store, with user-defined actions and failure policies, is deferred. It is separate from generic plugin hot reloading: replacing a graph contribution safely does not require implementing a dynamic hook scripting system.
+
+## Deferred after P2
+
+Full objective/plan/exploration management, repository-worker task scheduling, generic artifact catalogs beyond the existing source/output references, user-configurable runtime hook rules, a broad options/preferences service, command-toolbelt discovery and rich interactive UI. Keep existing P1 functionality and permitted public plugin extensions. These deferred items do not block P2 acceptance.
+
 ## Advanced verification plugins and acceptance
 
 Create a dedicated phenix-plugin-advanced-test-model (or similarly named fixture crate), packaged only with phenix-advanced-verification. It implements the same real typed Model contract. For each scenario it consumes the complete Model request, including actual ordered messages, tool-call IDs/results, contextual evidence and selected revisions. Its deterministic state machine refuses a golden answer when required evidence is absent or stale. It must not read the test answer directly from test harness state, fixture filesystem or private Storage records. Provide a second controllable fixture for source revisions, clock, provider failures and hot-reload lifecycle as needed.
@@ -142,21 +200,32 @@ Every test runs the packaged executable, not a function that bypasses the graph.
 | AV-14 | Remove and re-add plugin with pending calls, cancellation and repeated reload cycles | No use-after-unload, leaked tickets or doubled observer delivery |
 | AV-15 | Build all five presets and inspect closures and contract bindings | Fixture plugins only in verification products; Basic unchanged |
 | AV-16 | Compare lexical, hybrid and optional dense memory using frozen corpus | Report answer quality, retrieval completeness, p95 latency, token use and DB size; no ungrounded benchmark claim |
+| AV-17 | Read, edit and diff an isolated Git worktree through Advanced tools | Real file bytes and Git diff match expectation; symlink escape and unauthorized write have zero effects |
+| AV-18 | Concurrent workspace edit and running shell command | Revision conflict rejects overwrite; bounded stdout/stderr and cancelled process report correct terminal state |
+| AV-19 | Launch, detach and reattach a durable job across a frontend disconnect | Stable ID, monotonic journal/log cursor, no duplicate execution and authorized job ownership |
+| AV-20 | Crash during job admission, effect and finalization; restart | Resume checkpointed work or report indeterminate state; no silent command rerun or leaked lease |
+| AV-21 | Parent session delegates to two separate scripted-model child sessions | Independent child journals, actual model requests/tool results and parent aggregation with referenced evidence |
+| AV-22 | Delegate with narrower grants, limit or depth; cancel one child | Cannot escalate permissions/budgets; failure/cancel propagation and unaffected sibling behavior match policy |
+| AV-23 | Restart with an incomplete child and detached job | Parent-child lineage and job ownership survive, and reconciliation is explicit rather than a fabricated success |
+| AV-24 | Inspect a running graph, generation, session tree, job, memory and compaction state | Typed inspect snapshots match verified events and references, including pending/terminal transitions |
+| AV-25 | Request debug data across sessions; replay after restart with slow observer | Sensitive fields redacted, denied data inaccessible, independent observer cursors and bounded backpressure |
+| AV-26 | Measure scripted multi-tool and child-agent scenario under two memory/compaction policies | Counts, usage, latency and source citations are reproducible; estimates distinguished from measured costs |
+| AV-27 | Disable generated on-change hook or deny a job/child import | Required state refresh or delegation test fails deterministically; no alternate private control path |
 
-For each test include the counterfactual: remove or corrupt retrieved source, change only the revision, disable the expected graph edge, reorder independent events or deny access. The test must then fail or abstain. Assert a known exact answer only after proving the model actually consumed the cited evidence. Validate that the fixture model can also perform a tool-call/continuation sequence, instead of acting as a static canned-answer lookup.
+For each test include a relevant counterfactual: remove or corrupt retrieved source, change only the revision, disable the expected graph edge, reorder independent events, deny access, or revoke a child/job grant. The test must then fail or abstain. Assert a known exact answer only after proving the model actually consumed the cited evidence. Validate that the fixture model can also perform a tool-call/continuation sequence, instead of acting as a static canned-answer lookup.
 
 Add independent contract/ABI vectors, compiled external plugin fixtures, malicious negative cases, native sanitizer or equivalent lifetime tests where feasible, and repeated process restarts. Run Rust unit/integration and Nix package checks first, then the full canonical flake CI release inventory. Require exact-head artifacts and a green result again on the integrated main SHA.
 
 ## Compatibility inventory from oldmain
 
-The original archived advanced profile included memory, planning, language, repository workers, jobs, session trees, workspace, hooks, debugging, command toolbelt, options, execution and environment adapters. Before P2-0 closes, classify each as implemented by P1, required P2 replacement, optional composition plugin or deferred work. Record user-observable scenarios rather than simply restoring crate names. Do not claim oldmain parity from the four headline features alone.
+The original archived advanced profile included memory, planning, language, repository workers, jobs, session trees, workspace, hooks, debugging, command toolbelt, options, execution and environment adapters. Before P2-0 closes, classify each as implemented by P1, a required P2 replacement, or deferred. **P2 deliberately targets selected advanced capabilities, not full oldmain feature parity.** Record user-observable scenarios rather than simply restoring crate names. Planning, stand-alone artifact catalogs, generic repository workers, dynamic user-configurable hooks, broad configuration and interactive UI are deferred. The selected P2 features must meet their oldmain behavioral baseline where applicable.
 
 Retain oldmain's tested memory-specific semantics where they remain useful: immutable records, scope, freshness, canonical code references, source validation, embeddings/reranking as optional providers, source supersession and confirmation of contextual associations. Port contracts and acceptance, not oldmain's implementation-bound service calls.
 
 ## Naming and adjacent post-P1 work
 
-PR #852 used P2a–P2d for multi-client state projection and I/O routing before the Advanced release label was assigned. Keep its work and dependency, but name its track P2-IO1 through P2-IO4 when integrating its roadmap. Advanced P2-0 through P2-6 is the product track. The multi-client I/O track can proceed in parallel after the CI gate; P2 does not depend on synchronized multiple frontends unless a verification scenario explicitly requires them.
+PR #852 used P2a–P2d for multi-client state projection and I/O routing before the Advanced release label was assigned. Keep its work and dependency, but name its track P2-IO1 through P2-IO4 when integrating its roadmap. Advanced P2-0 through P2-10 is the product track. The multi-client I/O track can proceed in parallel after the CI gate; P2 does not depend on synchronized multiple frontends unless a verification scenario explicitly requires them.
 
 ## Release decision
 
-P2 is ACCEPTED only when all P2-0 through P2-6 gates pass together, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
+P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
