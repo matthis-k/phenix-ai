@@ -359,7 +359,10 @@ pub struct CheckpointStoreError {
 /// Basic journal; the journal stays authoritative and no Model view is changed.
 #[contract(id = "phenix.advanced.compaction-checkpoints@1")]
 pub trait CompactionStore {
-    fn put(&self, checkpoint: CompactionCheckpoint) -> Result<CompactionCheckpoint, CheckpointStoreError>;
+    fn put(
+        &self,
+        checkpoint: CompactionCheckpoint,
+    ) -> Result<CompactionCheckpoint, CheckpointStoreError>;
     fn get(&self, key: CheckpointKey) -> Result<CompactionCheckpoint, CheckpointStoreError>;
 }
 
