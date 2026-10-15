@@ -179,9 +179,9 @@ fn tool_start_and_finish_must_share_the_same_visibility_class() {
     let mut cp = checkpoint(&originals, 3, 6);
     // Preserve chronological coverage, but split the pair between excluded
     // and retained. Neither may be silently hidden by the other.
-    cp.summarized = vec![span_for_events(&originals[..3]).unwrap()];
-    cp.excluded = vec![span_for_events(&originals[3..4]).unwrap()];
-    cp.retained = vec![span_for_events(&originals[4..]).unwrap()];
+    cp.summarized = vec![span_for_events(&originals[..4]).unwrap()];
+    cp.excluded = vec![span_for_events(&originals[4..5]).unwrap()];
+    cp.retained = vec![span_for_events(&originals[5..]).unwrap()];
     assert_eq!(
         compacted_view(&cp, &originals, 512),
         Err(ViewProblem::SplitToolCall),
