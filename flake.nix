@@ -738,6 +738,12 @@
             "phenix.basic.storage-sqlite" "Storage")
           (basicBinding "phenix.advanced.evidence-store" "Source"
             "phenix.advanced.evidence-journal" "Evidence")
+          (basicBinding "phenix.advanced.evidence-store" "ProjectStorage"
+            "phenix.advanced.project-storage-sqlite" "ProjectStorage")
+          (basicBinding "phenix.advanced.evidence-store" "Membership"
+            "phenix.advanced.project-storage-sqlite" "Membership")
+          (basicBinding "phenix.advanced.evidence-store" "ProjectSource"
+            "phenix.advanced.project-storage-sqlite" "ProjectSource")
         ];
         addGrants = [
           { caller = "root";
@@ -758,6 +764,21 @@
           { caller = "root";
             interface = "phenix.advanced.source@1";
             operation = "observe";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.advanced.project-membership@1";
+            operation = "get";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.advanced.project-storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.evidence-store";
+            interface = "phenix.advanced.project-storage@1";
+            operation = "transact";
             resources = [ "phenix.session.s1" ];
           }
           { caller = "phenix.advanced.evidence-store";
@@ -794,6 +815,7 @@
         addOperations = [
           "phenix.advanced.project-membership@1/get"
           "phenix.advanced.project-storage@1/read"
+          "phenix.advanced.project-storage@1/transact"
           "phenix.basic.journal@1/read"
           "phenix.advanced.source@1/observe"
           "phenix.advanced.evidence@1/put"
@@ -952,6 +974,18 @@
           ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
           ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-project-source-product.json"
+      '';
+      p2ProjectEvidenceProductCheck = pkgs.runCommand "phenix-p2-project-evidence-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-project-evidence-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2ProjectStorageRunner}/bin/phenix-p2-project-storage \
+          ${p2EvidenceStoreRunner}/bin/phenix-p2-evidence-store \
+          ${evidenceStore} ${evidenceJournal} ${eventJournal} ${storageSqlite} \
+          ${projectStorageSqlite} ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-project-evidence-product.json"
       '';
       p2CompositionFoundationCheck = pkgs.runCommand "phenix-p2-composition-foundation" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -1498,6 +1532,7 @@
         p2-project-storage-product = p2ProjectStorageProductCheck;
         p2-project-membership-product = p2ProjectMembershipProductCheck;
         p2-project-source-product = p2ProjectSourceProductCheck;
+        p2-project-evidence-product = p2ProjectEvidenceProductCheck;
         basic-pending-http-product = basicPendingHttpProductCheck;
         p1-release-preflight = p1ReleasePreflight;
         m1-value-sdk = valueSdkCheck;
