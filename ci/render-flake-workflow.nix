@@ -6,11 +6,11 @@ in
 flakeCi.mkFlakeCiWorkflow {
   ci = import ./flake-backend.nix;
   configPath = "ci/flake-check-config.nix";
-  libraryRef = "25da62028d5d72d2e5ae3aca9d1571c425eb0d09";
+  libraryRef = "1a733ae1daae2cb99989b735b171bc5dedd80d63";
   name = "Phenix generated Nix CI (4 remote builders)";
   events = {
     pullRequest = false;
-    pushBranches = [ "ci/m1-generated-backend-consumer" ];
+    pushBranches = [ "main" ];
     workflowDispatch = true;
   };
 }

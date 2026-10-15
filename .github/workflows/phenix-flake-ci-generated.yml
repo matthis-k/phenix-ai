@@ -2,7 +2,7 @@ name: "Phenix generated Nix CI (4 remote builders)"
 on:
   push:
     branches:
-      - "ci/m1-generated-backend-consumer"
+      - "main"
   workflow_dispatch:
 
 permissions:
@@ -11,10 +11,10 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@25da62028d5d72d2e5ae3aca9d1571c425eb0d09
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "25da62028d5d72d2e5ae3aca9d1571c425eb0d09"
+      library_ref: "1a733ae1daae2cb99989b735b171bc5dedd80d63"
       worker_count: 4
       slots_per_worker: 2
     secrets:

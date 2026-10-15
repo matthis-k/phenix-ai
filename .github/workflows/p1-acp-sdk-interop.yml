@@ -5,13 +5,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - "crates/phenix-basic-runtime/**"
-      - "crates/phenix-plugin-basic-frontends/**"
-      - "tests/acp-sdk-client/**"
-      - "tests/acp-sdk-frame-bounds.py"
-      - "flake.nix"
-      - ".github/workflows/p1-acp-sdk-interop.yml"
   workflow_dispatch:
 
 permissions:

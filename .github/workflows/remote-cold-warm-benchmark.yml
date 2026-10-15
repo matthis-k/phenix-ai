@@ -1,0 +1,103 @@
+# Full P1 release benchmark: one source SHA, isolated cold cache, warm reuse.
+name: P1 remote four-builder cold-warm
+on:
+  push:
+    branches: [ci/m1-p1-remote-cold-warm]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: p1-remote-cold-warm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold:
+    name: cold
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 1a733ae1daae2cb99989b735b171bc5dedd80d63
+      worker_count: 4
+      slots_per_worker: 2
+      cache_namespace: ${{ format('bench-{0}-{1}', github.run_id, github.run_attempt) }}
+      artifact_namespace: cold
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
+
+  warm:
+    name: warm
+    needs: cold
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 1a733ae1daae2cb99989b735b171bc5dedd80d63
+      worker_count: 4
+      slots_per_worker: 2
+      cache_namespace: ${{ format('bench-{0}-{1}', github.run_id, github.run_attempt) }}
+      artifact_namespace: warm
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
+
+  compare:
+    name: Verify cache proof, outputs and benchmark timings
+    needs: [cold, warm]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require both complete remote release checks
+        env:
+          COLD: ${{ needs.cold.result }}
+          WARM: ${{ needs.warm.result }}
+        run: |
+          test "$COLD" = success
+          test "$WARM" = success
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: remote-nix-evidence-4-cold
+          path: comparison/cold
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: remote-nix-evidence-4-warm
+          path: comparison/warm
+      - name: Collect exact GitHub job log evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > comparison/jobs.json
+          for phase in cold warm; do
+            job_id="$(jq -er --arg phase "$phase" \
+              '[.jobs[] | select(.name | startswith($phase + " / ") and endswith("Nix DAG scheduler / 4 builders")) | .id] | if length == 1 then .[0] else error("missing coordinator") end' \
+              comparison/jobs.json)"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}/logs" > "comparison/$phase.log"
+          done
+      - name: Verify full output parity, cache miss/hit and runner costs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/ci-remote-cache-comparison.py --self-test
+          python3 tests/ci-remote-cache-comparison.py --policy
+          python3 tests/ci-remote-cache-comparison.py --compare \
+            comparison/cold comparison/warm \
+            comparison/cold.log comparison/warm.log \
+            comparison/jobs.json comparison/report.md
+          cat comparison/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: remote-same-head-cold-warm-report
+          path: |
+            comparison/report.md
+            comparison/jobs.json
+          if-no-files-found: warn

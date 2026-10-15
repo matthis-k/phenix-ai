@@ -6,5 +6,7 @@
   remote = {
     transport = "tailscale";
     credentials = "oidc";
+    workers = 4;
+    slotsPerWorker = 2;
   };
 }
