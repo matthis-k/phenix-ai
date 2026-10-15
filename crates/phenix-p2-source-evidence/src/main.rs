@@ -4,8 +4,8 @@ use phenix_advanced_contracts::{
     EvidenceScope, EvidenceScopeKind, SourceMatch, SourceObservation, SourceRef, compare_source,
 };
 use phenix_basic_contracts::{Event, EventKind, EventPage, JournalQuery, encode};
-use phenix_contract::{Authority, Outcome, Portable, Value};
-use phenix_kernel::resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding};
+use phenix_contract::{Authority, Portable, Value};
+use phenix_kernel::{resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding}, Outcome};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
@@ -87,7 +87,7 @@ fn invoke(composition: Composition, payload: Value) -> Result<Outcome, phenix_co
 fn actual_event(events: &[Event]) -> &Event {
     events
         .iter()
-        .find(|e| e.kind == EventKind::Answer && e.text == "echo:journal-reference-proof")
+        .find(|e| e.kind == EventKind::Answer && e.text == "mock:echo:journal-reference-proof")
         .expect("Basic must have durably recorded the answer")
 }
 
@@ -162,14 +162,14 @@ fn main() {
     foreign.resource = "phenix.session.s2".into();
     let denied = invoke(observe.clone(), foreign.to_value());
     assert!(
-        matches!(denied, Ok(Outcome::Domain(_)) | Err(phenix_contract::Failure { code: phenix_contract::Code::Denied, .. })),
+        matches!(&denied, Ok(Outcome::Domain(_)) | Err(phenix_contract::Failure { code: phenix_contract::Code::Denied, .. })),
         "cross-session source unexpectedly accepted: {denied:?}"
     );
 
     let mut missing = source.clone();
     missing.revision = (page.events.last().unwrap().sequence + 100).to_string();
     let absent = invoke(observe, missing.to_value());
-    assert!(matches!(absent, Ok(Outcome::Domain(_))), "missing event was accepted: {absent:?}");
+    assert!(matches!(&absent, Ok(Outcome::Domain(_))), "missing event was accepted: {absent:?}");
 
     let unchanged = match invoke(read, query.to_value()).unwrap() {
         Outcome::Success(value) => EventPage::from_value(value).unwrap().events == page.events,
