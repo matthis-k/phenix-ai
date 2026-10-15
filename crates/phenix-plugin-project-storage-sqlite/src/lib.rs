@@ -362,11 +362,23 @@ mod plugin {
         host: &Host<'_>,
         key: ProjectRecordKey,
     ) -> CallResult<ProjectRecord, ProjectStorageError> {
-        authorized(host, &key.project)?;
         if !valid(&key.project, &key.key) {
             return Err(CallError::Domain(invalid()));
         }
         let conn = open().map_err(CallError::Domain)?;
+        let resource = host.resource()?.unwrap_or_default();
+        if resource != format!("phenix.project.{}", key.project) {
+            let member = resource
+                .strip_prefix("phenix.session.")
+                .filter(|session| phenix_sdk::identifier(session))
+                .and_then(|session| membership_read(&conn, &key.project, session).ok().flatten());
+            if !member.is_some_and(|record| record.active) {
+                return Err(CallError::Domain(error(
+                    ProjectStorageProblem::Denied,
+                    "project record read requires active project membership",
+                )));
+            }
+        }
         select(&conn, &key.project, &key.key)
             .and_then(|record| {
                 record
