@@ -1012,6 +1012,25 @@
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-source-evidence-product.json"
       '';
+      p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-compaction-replay
+        ./crates/phenix-p2-compaction-product
+      ]));
+      p2CompactionProductCheck = pkgs.runCommand "phenix-p2-compaction-checkpoints-product" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.sqlite ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-compaction-checkpoints-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2CompactionProductRunner}/bin/phenix-p2-compaction-product \
+          ${compactionCheckpointStore} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-compaction-checkpoints-product.json"
+      '';
       p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
@@ -1654,6 +1673,7 @@
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
+        p2-compaction-checkpoints-product = p2CompactionProductCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
