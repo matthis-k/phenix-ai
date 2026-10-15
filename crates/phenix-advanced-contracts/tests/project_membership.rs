@@ -20,9 +20,18 @@ fn membership_revision_and_stable_project_identity_round_trip() {
         revision: 1,
         active: true,
     };
-    assert_eq!(ProjectMember::from_value(member.to_value()).unwrap(), member);
+    assert_eq!(
+        ProjectMember::from_value(member.to_value()).unwrap(),
+        member
+    );
     assert_ne!(change.project, change.session);
-    let key = ProjectMemberKey { project: change.project, session: "s2".into() };
+    let key = ProjectMemberKey {
+        project: change.project,
+        session: "s2".into(),
+    };
     assert_eq!(ProjectMemberKey::from_value(key.to_value()).unwrap(), key);
-    assert_ne!(ProjectMembershipProblem::Conflict, ProjectMembershipProblem::Denied);
+    assert_ne!(
+        ProjectMembershipProblem::Conflict,
+        ProjectMembershipProblem::Denied
+    );
 }
