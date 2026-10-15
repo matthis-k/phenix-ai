@@ -27,7 +27,7 @@ seed = subprocess.run([basic, "jsonl"], input=prompt, env=env,
                       text=True, capture_output=True, timeout=60)
 assert seed.returncode == 0, (seed.stdout, seed.stderr)
 events = [json.loads(line) for line in seed.stdout.splitlines()]
-assert any(x["kind"] == "Answer" and x["text"] == "echo:journal-reference-proof"
+assert any(x["kind"] == "Answer" and x["text"] == "mock:echo:journal-reference-proof"
            for x in events), events
 assert db.is_file(), "Basic did not persist the real event journal"
 
