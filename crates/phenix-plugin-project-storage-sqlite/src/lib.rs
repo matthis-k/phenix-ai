@@ -368,10 +368,19 @@ mod plugin {
         let conn = open().map_err(CallError::Domain)?;
         let resource = host.resource()?.unwrap_or_default();
         if resource != format!("phenix.project.{}", key.project) {
-            let member = resource
+            let member = if let Some(session) = resource
                 .strip_prefix("phenix.session.")
                 .filter(|session| phenix_sdk::identifier(session))
-                .and_then(|session| membership_read(&conn, &key.project, session).ok().flatten());
+            {
+                membership_read(&conn, &key.project, session).map_err(|_| {
+                    CallError::Domain(error(
+                        ProjectStorageProblem::StorageFailed,
+                        "project membership lookup failed",
+                    ))
+                })?
+            } else {
+                None
+            };
             if !member.is_some_and(|record| record.active) {
                 return Err(CallError::Domain(error(
                     ProjectStorageProblem::Denied,
