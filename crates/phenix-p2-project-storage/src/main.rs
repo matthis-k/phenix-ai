@@ -2,13 +2,16 @@
 use phenix_advanced_contracts::{
     ProjectEdit, ProjectMember, ProjectMemberChange, ProjectMemberKey, ProjectMembershipError,
     ProjectMembershipProblem, ProjectRecord, ProjectRecordKey, ProjectStorageError,
-    ProjectStorageProblem, ProjectTransaction,
+    ProjectStorageProblem, ProjectTransaction, SourceRef,
+    SourceObservation, EvidenceScope, EvidenceScopeKind, EvidenceProblem, EvidenceError,
+    SourceMatch, compare_source,
 };
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection},
     Outcome,
 };
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const INTERFACE: &str = "phenix.advanced.project-storage@1";
@@ -83,6 +86,17 @@ impl Fixture {
             &["read"],
             "read",
             key(project, name),
+        )
+        .unwrap()
+    }
+
+    fn source_call(&self, session: &str, reference: SourceRef) -> Outcome {
+        self.invoke_selected(
+            format!("phenix.session.{session}"),
+            "phenix.advanced.source@1",
+            &["observe"],
+            "observe",
+            reference.to_value(),
         )
         .unwrap()
     }
@@ -426,6 +440,69 @@ fn member_after_revoke(fixture: &Fixture) -> serde_json::Value {
     );
     serde_json::json!({"retained_member": "s1", "revoked_member_denied": "s2"})
 }
+fn project_source(revision: u64, bytes: &[u8]) -> SourceRef {
+    let digest = Sha256::digest(bytes);
+    SourceRef {
+        owner: "phenix.advanced.project-storage-sqlite".into(),
+        resource: "phenix.project.alpha".into(),
+        revision: format!("theme@{revision}"),
+        digest_sha256: format!("{digest:x}"),
+        range_start: 0,
+        range_end: 0,
+        scope: EvidenceScope { kind: EvidenceScopeKind::Project, id: "alpha".into() },
+    }
+}
+
+fn source_observed(fixture: &Fixture, session: &str, reference: SourceRef) -> SourceObservation {
+    let result = fixture.source_call(session, reference);
+    let Outcome::Success(value) = result else {
+        panic!("expected source observation success, got {result:?}");
+    };
+    SourceObservation::from_value(value).unwrap()
+}
+fn source_denied(fixture: &Fixture, session: &str, reference: SourceRef, problem: EvidenceProblem) {
+    let result = fixture.source_call(session, reference);
+    let Outcome::Domain(value) = result else {
+        panic!("expected source observation denial, got {result:?}");
+    };
+    assert_eq!(EvidenceError::from_value(value).unwrap().problem, problem);
+}
+fn source_current(fixture: &Fixture) -> serde_json::Value {
+    let original = project_source(1, b"blue");
+    for session in ["s1", "s2"] {
+        let observed = source_observed(fixture, session, original.clone());
+        assert_eq!(compare_source(&original, &observed), SourceMatch::Current);
+    }
+    source_denied(fixture, "s3", original.clone(), EvidenceProblem::ScopeDenied);
+    let mut malformed = original.clone();
+    malformed.scope.kind = EvidenceScopeKind::Session;
+    source_denied(fixture, "s1", malformed, EvidenceProblem::InvalidIdentity);
+    let mut forged = original.clone();
+    forged.digest_sha256 = "f".repeat(64);
+    assert_eq!(compare_source(&forged, &source_observed(fixture, "s1", forged.clone())), SourceMatch::Changed);
+    serde_json::json!({
+        "both_members_current": true,
+        "unapproved_session_denied": true,
+        "malformed_source_denied": true,
+        "forged_digest_changed": true
+    })
+}
+fn source_changed(fixture: &Fixture) -> serde_json::Value {
+    let before = project_source(1, b"blue");
+    let updated = fixture.edit("alpha", "alpha", vec![edit("theme", 1, b"green")]);
+    assert_eq!(updated[0].revision, 2);
+    assert_eq!(compare_source(&before, &source_observed(fixture, "s2", before.clone())), SourceMatch::Changed);
+    let current = project_source(2, b"green");
+    assert_eq!(compare_source(&current, &source_observed(fixture, "s1", current.clone())), SourceMatch::Current);
+    serde_json::json!({"stale_revision_changed": true, "new_revision_current": true})
+}
+fn source_after_revoke(fixture: &Fixture) -> serde_json::Value {
+    let current = project_source(2, b"green");
+    source_denied(fixture, "s2", current.clone(), EvidenceProblem::ScopeDenied);
+    assert_eq!(compare_source(&current, &source_observed(fixture, "s1", current.clone())), SourceMatch::Current);
+    serde_json::json!({"revoked_source_denied": true, "remaining_member_current": true})
+}
+
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     assert_eq!(
@@ -444,6 +521,9 @@ fn main() {
         "member-check" => member_check(&fixture),
         "member-revoke" => member_revoke(&fixture),
         "member-after-revoke" => member_after_revoke(&fixture),
+        "source-current" => source_current(&fixture),
+        "source-changed" => source_changed(&fixture),
+        "source-after-revoke" => source_after_revoke(&fixture),
         other => panic!("unknown action: {other}"),
     };
     let out = Path::new(&args[5]);
