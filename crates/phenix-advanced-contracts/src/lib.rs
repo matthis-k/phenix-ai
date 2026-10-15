@@ -264,6 +264,53 @@ pub struct ProjectTransaction {
     pub edits: Vec<ProjectEdit>,
 }
 
+/// Stable project membership is stored by a provider. A session ID or
+/// project ID passed by a caller never grants membership on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum ProjectMembershipProblem {
+    Conflict,
+    Denied,
+    InvalidInput,
+    StorageFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectMembershipError {
+    pub problem: ProjectMembershipProblem,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectMemberKey {
+    pub project: String,
+    pub session: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectMemberChange {
+    pub project: String,
+    pub session: String,
+    pub expected: u64,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProjectMember {
+    pub project: String,
+    pub session: String,
+    pub revision: u64,
+    pub active: bool,
+}
+
+#[contract(id = "phenix.advanced.project-membership@1")]
+pub trait ProjectMembership {
+    /// Only a host-authorized project root may grant or revoke a session.
+    fn set(&self, change: ProjectMemberChange) -> Result<ProjectMember, ProjectMembershipError>;
+    /// Only the authenticated session root may inspect its own membership.
+    /// A missing or revoked membership is denied.
+    fn get(&self, key: ProjectMemberKey) -> Result<ProjectMember, ProjectMembershipError>;
+}
+
 #[contract(id = "phenix.advanced.project-storage@1")]
 pub trait ProjectStorage {
     fn read(&self, key: ProjectRecordKey) -> Result<ProjectRecord, ProjectStorageError>;
@@ -297,6 +344,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(SourceEvidence),
     define(EvidenceStore),
     define(ProjectStorage),
+    define(ProjectMembership),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -311,7 +359,7 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 3);
+        assert_eq!(metadata.definitions.len(), 4);
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());
