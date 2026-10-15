@@ -355,9 +355,15 @@ fn member_check(fixture: &Fixture) -> serde_json::Value {
         assert_eq!(ProjectRecord::from_value(value).unwrap().data.0, b"blue");
     }
     let denied = fixture.session_project_read("s3", "alpha", "theme");
-    assert!(matches!(denied, Outcome::Domain(_)), "nonmember read: {denied:?}");
+    assert!(
+        matches!(denied, Outcome::Domain(_)),
+        "nonmember read: {denied:?}"
+    );
     let denied = fixture.session_project_read("s1", "beta", "theme");
-    assert!(matches!(denied, Outcome::Domain(_)), "foreign project read: {denied:?}");
+    assert!(
+        matches!(denied, Outcome::Domain(_)),
+        "foreign project read: {denied:?}"
+    );
     fixture.member_deny(
         "phenix.session.s3",
         "get",
@@ -397,9 +403,15 @@ fn member_revoke(fixture: &Fixture) -> serde_json::Value {
 fn member_after_revoke(fixture: &Fixture) -> serde_json::Value {
     let retained = fixture.member_ok("phenix.session.s1", "get", member_key("alpha", "s1"));
     assert_eq!(retained.revision, 1);
-    assert!(matches!(fixture.session_project_read("s1", "alpha", "theme"), Outcome::Success(_)));
+    assert!(matches!(
+        fixture.session_project_read("s1", "alpha", "theme"),
+        Outcome::Success(_)
+    ));
     let denied = fixture.session_project_read("s2", "alpha", "theme");
-    assert!(matches!(denied, Outcome::Domain(_)), "revoked member read: {denied:?}");
+    assert!(
+        matches!(denied, Outcome::Domain(_)),
+        "revoked member read: {denied:?}"
+    );
     fixture.member_deny(
         "phenix.session.s2",
         "get",
