@@ -412,20 +412,6 @@ mod plugin {
     #[derive(Default)]
     pub struct State;
 
-    fn authorized(host: &Host<'_>, project: &str) -> CallResult<(), ProjectStorageError> {
-        if !phenix_sdk::identifier(project) {
-            return Err(CallError::Domain(invalid()));
-        }
-        let resource = format!("phenix.project.{project}");
-        if host.resource()?.as_deref() != Some(resource.as_str()) {
-            return Err(CallError::Domain(error(
-                ProjectStorageProblem::Denied,
-                "project resource is not authorized",
-            )));
-        }
-        Ok(())
-    }
-
     fn authorized_project_read(
         conn: &rusqlite::Connection,
         host: &Host<'_>,
