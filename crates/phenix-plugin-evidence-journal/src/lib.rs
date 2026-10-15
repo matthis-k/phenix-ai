@@ -30,6 +30,14 @@ fn validate_event(event: &Event) -> Result<(), EvidenceError> {
 
 pub fn journal_reference(event: &Event) -> Result<SourceRef, EvidenceError> {
     validate_event(event)?;
+    // Reject clearly oversized payloads before attempting the bounded wire
+    // encoder, so size failures are distinguishable from malformed evidence.
+    if event.text.len() > MAX_EVENT_BYTES || event.data.0.len() > MAX_EVENT_BYTES {
+        return Err(problem(
+            EvidenceProblem::InvalidRange,
+            "journal event too large",
+        ));
+    }
     let raw = encode(event).map_err(|_| {
         problem(
             EvidenceProblem::InvalidIdentity,
