@@ -9,6 +9,9 @@ use phenix_basic_contracts::Event;
 use phenix_sdk::Portable;
 use sha2::{Digest, Sha256};
 
+pub mod view;
+pub use view::{compacted_view, ContextPart, ContextProjection, ViewProblem};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayProblem {
     InvalidCheckpoint,
