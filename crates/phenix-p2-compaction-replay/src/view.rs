@@ -78,8 +78,7 @@ pub fn compacted_view(
     }
     // Source digest, partition digests, order and session are checked *before*
     // any potentially sensitive content enters the selected view.
-    let original =
-        restore_original_events(checkpoint, journal).map_err(ViewProblem::Replay)?;
+    let original = restore_original_events(checkpoint, journal).map_err(ViewProblem::Replay)?;
 
     let mut active: BTreeMap<&str, Visibility> = BTreeMap::new();
     for event in &original {
