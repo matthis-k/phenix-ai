@@ -1122,8 +1122,11 @@ version = "0.1.0"
 dependencies = [
  "phenix-advanced-contracts",
  "phenix-basic-contracts",
+ "phenix-contract",
+ "phenix-kernel",
  "phenix-p2-compaction-replay",
  "phenix-sdk",
+ "serde_json",
 ]
 
 [[package]]
