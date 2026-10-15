@@ -1,8 +1,6 @@
 //! P2-3c session-scoped checkpoint CAS using selected Basic Storage and Journal.
 //! The Basic EventJournal is authoritative. Compaction stores only derived views.
-use phenix_advanced_contracts::{
-    validate_checkpoint, CompactionCheckpoint, CompactionProblem,
-};
+use phenix_advanced_contracts::{validate_checkpoint, CompactionCheckpoint, CompactionProblem};
 use std::collections::BTreeSet;
 
 const RECORD_KEY: &str = "compaction-ledger.v1";
@@ -27,7 +25,8 @@ pub fn validate_ledger(history: &[CompactionCheckpoint]) -> Result<(), LedgerPro
     for (i, current) in history.iter().enumerate() {
         validate_checkpoint(current).map_err(LedgerProblem::InvalidCheckpoint)?;
         if !ids.insert(current.id.as_str())
-            || current.revision != u64::try_from(i + 1).map_err(|_| LedgerProblem::CapacityExceeded)?
+            || current.revision
+                != u64::try_from(i + 1).map_err(|_| LedgerProblem::CapacityExceeded)?
             || current.parent_checkpoint.as_deref() != previous.map(|item| item.id.as_str())
         {
             return Err(LedgerProblem::InvalidLineage);
@@ -52,7 +51,10 @@ pub fn append_checkpoint(
     if expected != history.len() as u64 {
         return Err(LedgerProblem::Conflict);
     }
-    if history.first().is_some_and(|previous| previous.session != checkpoint.session) {
+    if history
+        .first()
+        .is_some_and(|previous| previous.session != checkpoint.session)
+    {
         return Err(LedgerProblem::ScopeDenied);
     }
     validate_checkpoint(checkpoint).map_err(LedgerProblem::InvalidCheckpoint)?;
@@ -188,10 +190,12 @@ mod plugin {
             .last_sequence
             .checked_sub(input.first_sequence)
             .and_then(|delta| delta.checked_add(1))
-            .ok_or_else(|| CallError::Domain(error(
-                CompactionStoreProblem::InvalidCheckpoint,
-                "invalid checkpoint input range",
-            )))?;
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    CompactionStoreProblem::InvalidCheckpoint,
+                    "invalid checkpoint input range",
+                ))
+            })?;
         if count > MAX_EVENTS_PER_CHECKPOINT {
             return Err(CallError::Domain(error(
                 CompactionStoreProblem::CapacityExceeded,
@@ -249,14 +253,15 @@ mod plugin {
         let checkpoint = request.checkpoint;
         session(host, &checkpoint.session)?;
         // Run schema validation before invoking any imported capability.
-        phenix_advanced_contracts::validate_checkpoint(&checkpoint)
-            .map_err(|_| CallError::Domain(error(
+        phenix_advanced_contracts::validate_checkpoint(&checkpoint).map_err(|_| {
+            CallError::Domain(error(
                 CompactionStoreProblem::InvalidCheckpoint,
                 "invalid proposed checkpoint",
-            )))?;
+            ))
+        })?;
         let (revision, previous) = load(host, &checkpoint.session)?;
-        let updated = append_checkpoint(&previous, request.expected, &checkpoint)
-            .map_err(ledger_error)?;
+        let updated =
+            append_checkpoint(&previous, request.expected, &checkpoint).map_err(ledger_error)?;
         if revision != request.expected {
             return Err(CallError::Domain(error(
                 CompactionStoreProblem::Conflict,
@@ -265,20 +270,20 @@ mod plugin {
         }
         verify_journal(host, &checkpoint)?;
         let data = encode(&updated).map_err(CallError::Kernel)?;
-        let records = host.invoke::<Storage::transact>(
-            "Storage",
-            &StorageTransaction {
-                session: checkpoint.session.clone(),
-                edits: vec![StorageEdit {
-                    key: RECORD_KEY.into(),
-                    expected: revision,
-                    data: data.clone(),
-                }],
-            },
-        ).map_err(failure)?;
-        if records.len() != 1 || records[0].revision != revision + 1
-            || records[0].data != data
-        {
+        let records = host
+            .invoke::<Storage::transact>(
+                "Storage",
+                &StorageTransaction {
+                    session: checkpoint.session.clone(),
+                    edits: vec![StorageEdit {
+                        key: RECORD_KEY.into(),
+                        expected: revision,
+                        data: data.clone(),
+                    }],
+                },
+            )
+            .map_err(failure)?;
+        if records.len() != 1 || records[0].revision != revision + 1 || records[0].data != data {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
                 "invalid checkpoint storage CAS acknowledgement",
@@ -304,9 +309,15 @@ mod plugin {
             )));
         }
         let (revision, history) = load(host, &key.session)?;
-        let checkpoint = history.iter().find(|entry| entry.id == key.id).ok_or_else(|| {
-            CallError::Domain(error(CompactionStoreProblem::NotFound, "checkpoint not found"))
-        })?;
+        let checkpoint = history
+            .iter()
+            .find(|entry| entry.id == key.id)
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    CompactionStoreProblem::NotFound,
+                    "checkpoint not found",
+                ))
+            })?;
         verify_journal(host, checkpoint)?;
         Ok(StoredCompactionCheckpoint {
             checkpoint: checkpoint.clone(),
