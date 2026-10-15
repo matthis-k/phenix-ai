@@ -4,7 +4,7 @@ Status: PLANNED. No P2 implementation or test acceptance is claimed.
 Updated: 2026-10-15
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
-P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [post-P1 CI cutover](ci-post-p1-cutover.md), introduced by PR #879.
+P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [post-P1 CI cutover PR #879](https://github.com/matthis-k/phenix-ai/pull/879).
 
 ## Goal and release boundary
 
@@ -43,6 +43,18 @@ Use the P1 flake's basicCompositionSpec, historyVerificationComposition and basi
 | P2-6: advanced verification and release | P2-2 through P2-5 | Composition fixtures, production transport parity, benchmark/regression report | Full reproducible exact-head CI, P1 regression and final-main check |
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
+
+## Advanced graph topology and contract ownership
+
+Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composition. It contributes typed graph nodes and event handlers around the selected Basic agent; it does not fork the Basic model/tool loop or implement a second scheduler.
+
+- On prompt admission: resolve authorized memory/context anchors, check code/source revisions, retrieve budgeted evidence and choose a checkpoint/current-view policy before the Model request is prepared.
+- On committed conversation/tool events: enqueue idempotent extraction, association updates and optional memory maintenance. Effects carry session, source event and generation identity. A failed background maintenance step cannot duplicate or reorder the active Model/tool turn.
+- On context threshold: commit compaction checkpoint and publish the selected compacted view through typed Context state before the next Model call. Refresh only impacted projections through generated on-change hooks.
+- On code revision or source removal: invalidate dependent memory references, index entries and derived context. The next lookup checks freshness before using the entry.
+- On reload: let the kernel's generation transition determine which version handles each root. Advanced handlers receive the selected generation and its authorized providers.
+
+Define any needed Memory, ContextView, Compaction, CodeIndex and ReloadControl contracts in a standalone public contract crate. A production implementation remains a selectable provider. Model-facing answers expose the source reference IDs used by retrieval and expansion, so tests and users can inspect evidence. The Basic topology, plugins and binary remain byte-for-byte independent of this additive composition.
 
 ## Reference-aware memory
 
