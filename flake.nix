@@ -935,7 +935,7 @@
           ${basicBinary}/bin/phenix-basic \
           ${p2EvidenceStoreRunner}/bin/phenix-p2-evidence-store \
           ${evidenceStore} ${evidenceJournal} ${eventJournal} ${storageSqlite} \
-          ${basicDefinitions} ${advancedDefinitions} "$out"
+          ${basicDefinitions} ${advancedDefinitions} ${projectStorageSqlite} "$out"
         test -s "$out/p2-evidence-store-product.json"
       '';
       p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
