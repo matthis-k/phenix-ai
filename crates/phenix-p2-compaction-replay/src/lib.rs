@@ -49,7 +49,7 @@ pub fn span_for_events(events: &[Event]) -> Result<JournalSpan, ReplayProblem> {
             if event.sequence <= previous {
                 return Err(ReplayProblem::InvalidSequence);
             }
-            if event.sequence != previous + 1 {
+            if previous.checked_add(1) != Some(event.sequence) {
                 return Err(ReplayProblem::IncompleteJournal);
             }
         }
@@ -80,7 +80,10 @@ pub fn restore_original_events(
 ) -> Result<Vec<Event>, ReplayProblem> {
     validate_checkpoint(checkpoint).map_err(|_| ReplayProblem::InvalidCheckpoint)?;
     let entire = span_for_events(events)?;
-    if events.iter().any(|event| event.session != checkpoint.session) {
+    if events
+        .iter()
+        .any(|event| event.session != checkpoint.session)
+    {
         return Err(ReplayProblem::WrongSession);
     }
     if entire.first_sequence != checkpoint.input.first_sequence
