@@ -182,7 +182,7 @@ mod plugin {
         compare_source, decode, encode, EvidenceError, EvidenceFreshness, EvidenceKey,
         EvidencePage, EvidenceProblem, EvidenceRecord, EvidenceScope, EvidenceScopeKind,
         EvidenceSearch, EvidenceStore, ProjectEdit, ProjectMemberKey, ProjectMembership,
-        ProjectMembershipError, ProjectMembershipProblem, ProjectRecord, ProjectRecordKey,
+        ProjectRecord, ProjectRecordKey,
         ProjectStorage, ProjectStorageError, ProjectStorageProblem, ProjectTransaction,
         SourceEvidence, SourceMatch, SourceRef,
     };
