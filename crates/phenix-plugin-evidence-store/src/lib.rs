@@ -412,6 +412,21 @@ mod tests {
         );
     }
     #[test]
+    fn a_withdrawn_revision_cannot_resurface_in_current_search() {
+        let first = append_version(&[], &record(1)).unwrap();
+        let second = append_version(&first, &record(2)).unwrap();
+        let mut withdrawn = record(3);
+        withdrawn.freshness = EvidenceFreshness::Withdrawn;
+        withdrawn.valid_from = 200;
+        let history = append_version(&second, &withdrawn).unwrap();
+        assert!(select_records(&history, None, "", 10).unwrap().is_empty());
+        assert_eq!(
+            select_records(&history, Some(50), "", 10).unwrap()[0].statement,
+            "violet"
+        );
+    }
+
+    #[test]
     fn invalid_history_and_sources_do_not_become_records() {
         let mut bad = record(1);
         bad.sources[0].scope.id = "s2".into();
