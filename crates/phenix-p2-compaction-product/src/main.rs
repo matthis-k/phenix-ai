@@ -47,7 +47,11 @@ impl Fixture {
             grant(STORE, "phenix.basic.storage@1", "read"),
             grant(STORE, "phenix.basic.storage@1", "transact"),
             grant(STORE, "phenix.basic.journal@1", "read"),
-            grant("phenix.basic.event-journal", "phenix.basic.storage@1", "read"),
+            grant(
+                "phenix.basic.event-journal",
+                "phenix.basic.storage@1",
+                "read",
+            ),
         ];
         let composition = Composition {
             format: "phenix.composition.v2".into(),
@@ -116,11 +120,19 @@ impl Fixture {
         let Outcome::Domain(value) = actual else {
             panic!("expected checkpoint {operation} denial, got {actual:?}");
         };
-        assert_eq!(CheckpointStoreError::from_value(value).unwrap().problem, code);
+        assert_eq!(
+            CheckpointStoreError::from_value(value).unwrap().problem,
+            code
+        );
     }
 }
 
-fn make_checkpoint(page: &EventPage, id: &str, revision: u64, parent: Option<&str>) -> CompactionCheckpoint {
+fn make_checkpoint(
+    page: &EventPage,
+    id: &str,
+    revision: u64,
+    parent: Option<&str>,
+) -> CompactionCheckpoint {
     assert!(page.events.len() >= 4 && page.events.len() < 128);
     let original = &page.events;
     CompactionCheckpoint {
@@ -165,10 +177,18 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     fixture.deny("put", stale.to_value(), CheckpointStoreProblem::Conflict);
     stale.revision = 3;
     stale.input.digest_sha256 = "f".repeat(64);
-    fixture.deny("put", stale.to_value(), CheckpointStoreProblem::SourceChanged);
+    fixture.deny(
+        "put",
+        stale.to_value(),
+        CheckpointStoreProblem::SourceChanged,
+    );
     let mut foreign = first.clone();
     foreign.session = "s2".into();
-    fixture.deny("put", foreign.to_value(), CheckpointStoreProblem::ScopeDenied);
+    fixture.deny(
+        "put",
+        foreign.to_value(),
+        CheckpointStoreProblem::ScopeDenied,
+    );
     fixture.deny(
         "get",
         CheckpointKey {
@@ -189,17 +209,29 @@ fn action_restart(fixture: &Fixture) -> serde_json::Value {
     assert_eq!(first.revision, 1);
     assert_eq!(second.revision, 2);
     assert_eq!(second.parent_checkpoint.as_deref(), Some("cp1"));
-    fixture.deny("get", key("missing").to_value(), CheckpointStoreProblem::NotFound);
+    fixture.deny(
+        "get",
+        key("missing").to_value(),
+        CheckpointStoreProblem::NotFound,
+    );
     serde_json::json!({"restored": true, "revisions": [first.revision, second.revision]})
 }
 fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
-    fixture.deny("get", key("cp2").to_value(), CheckpointStoreProblem::SourceChanged);
+    fixture.deny(
+        "get",
+        key("cp2").to_value(),
+        CheckpointStoreProblem::SourceChanged,
+    );
     serde_json::json!({"stale_checkpoint_denied": true})
 }
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 8, "STORE JOURNAL SQLITE BASIC-DEFS ADV-DEFS ACTION OUTPUT");
+    assert_eq!(
+        args.len(),
+        8,
+        "STORE JOURNAL SQLITE BASIC-DEFS ADV-DEFS ACTION OUTPUT"
+    );
     let fixture = Fixture {
         artifacts: args[1..=3].to_vec(),
         definitions: args[4..=5].to_vec(),
