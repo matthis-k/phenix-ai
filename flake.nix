@@ -254,6 +254,22 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      # P2-3 source bytes stay in the authorized Basic journal; this package
+      # checks canonical spans and exact expansion without duplicating storage.
+      p2CompactionReplayCheck = rust.buildRustPackage {
+        pname = "phenix-p2-compaction-replay";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-p2-compaction-replay
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-p2-compaction-replay" ];
+        cargoTestFlags = [ "-p" "phenix-p2-compaction-replay" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
         "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
@@ -1582,6 +1598,7 @@
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
+        p2-compaction-replay = p2CompactionReplayCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
