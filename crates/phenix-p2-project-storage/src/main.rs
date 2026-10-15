@@ -1,7 +1,8 @@
 //! P2-2a packaged project isolation and revision test using real native SQLite.
 use phenix_advanced_contracts::{
     ProjectEdit, ProjectRecord, ProjectRecordKey, ProjectStorageError, ProjectStorageProblem,
-    ProjectTransaction,
+    ProjectTransaction, ProjectMember, ProjectMemberChange, ProjectMemberKey,
+    ProjectMembershipError, ProjectMembershipProblem,
 };
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
@@ -11,6 +12,7 @@ use phenix_kernel::{
 use std::{collections::BTreeSet, fs, path::Path};
 
 const INTERFACE: &str = "phenix.advanced.project-storage@1";
+const MEMBER_INTERFACE: &str = "phenix.advanced.project-membership@1";
 const PROVIDER: &str = "phenix.advanced.project-storage-sqlite";
 
 struct Fixture {
@@ -18,18 +20,19 @@ struct Fixture {
     definitions: Vec<String>,
 }
 impl Fixture {
-    fn invoke(
+    fn invoke_selected(
         &self,
-        project: &str,
+        resource: String,
+        interface: &str,
+        allowed: &[&str],
         operation: &str,
         input: Value,
     ) -> Result<Outcome, phenix_contract::Failure> {
-        let resource = format!("phenix.project.{project}");
-        let grants = ["read", "transact"]
+        let grants = allowed
             .iter()
             .map(|operation| ScopedGrant {
                 caller: "root".into(),
-                interface: INTERFACE.into(),
+                interface: interface.into(),
                 operation: (*operation).into(),
                 resources: BTreeSet::from([resource.clone()]),
             })
@@ -39,7 +42,7 @@ impl Fixture {
             artifacts: vec![self.package.clone()],
             definitions: self.definitions.clone(),
             entry: Selection {
-                interface: INTERFACE.into(),
+                interface: interface.into(),
                 operation: operation.into(),
                 provider: PROVIDER.into(),
             },
@@ -56,6 +59,35 @@ impl Fixture {
         let kernel = Prepared::prepare(policy)?.load()?;
         let root = kernel.admit_default_root()?;
         root.invoke(&input)
+    }
+
+    fn invoke(
+        &self,
+        project: &str,
+        operation: &str,
+        input: Value,
+    ) -> Result<Outcome, phenix_contract::Failure> {
+        self.invoke_selected(format!("phenix.project.{project}"), INTERFACE, &["read", "transact"], operation, input)
+    }
+
+    fn member_call(&self, resource: &str, operation: &str, input: Value) -> Outcome {
+        self.invoke_selected(resource.into(), MEMBER_INTERFACE, &["set", "get"], operation, input).unwrap()
+    }
+
+    fn member_ok(&self, resource: &str, operation: &str, input: Value) -> ProjectMember {
+        let result = self.member_call(resource, operation, input);
+        let Outcome::Success(value) = result else {
+            panic!("expected membership success, got {result:?}");
+        };
+        ProjectMember::from_value(value).unwrap()
+    }
+
+    fn member_deny(&self, resource: &str, operation: &str, input: Value, reason: ProjectMembershipProblem) {
+        let result = self.member_call(resource, operation, input);
+        let Outcome::Domain(value) = result else {
+            panic!("expected membership domain denial, got {result:?}");
+        };
+        assert_eq!(ProjectMembershipError::from_value(value).unwrap().problem, reason);
     }
 
     fn ok<T: Portable>(&self, root_project: &str, operation: &str, request: Value) -> T {
@@ -226,6 +258,48 @@ fn restart(fixture: &Fixture) -> serde_json::Value {
     })
 }
 
+fn member_key(project: &str, session: &str) -> Value {
+    ProjectMemberKey { project: project.into(), session: session.into() }.to_value()
+}
+fn member_change(project: &str, session: &str, expected: u64, active: bool) -> Value {
+    ProjectMemberChange { project: project.into(), session: session.into(), expected, active }.to_value()
+}
+fn member_grant(fixture: &Fixture) -> serde_json::Value {
+    for session in ["s1", "s2"] {
+        let granted = fixture.member_ok("phenix.project.alpha", "set", member_change("alpha", session, 0, true));
+        assert_eq!(granted.revision, 1);
+        assert!(granted.active);
+    }
+    fixture.member_deny("phenix.session.s3", "set", member_change("alpha", "s3", 0, true), ProjectMembershipProblem::Denied);
+    fixture.member_deny("phenix.project.beta", "set", member_change("alpha", "s3", 0, true), ProjectMembershipProblem::Denied);
+    fixture.member_deny("phenix.project.alpha", "set", member_change("alpha", "s1", 0, true), ProjectMembershipProblem::Conflict);
+    serde_json::json!({"membership_created": true, "grant_revision": 1, "forged_admin_denied": true, "stale_cas": "conflict"})
+}
+fn member_check(fixture: &Fixture) -> serde_json::Value {
+    for session in ["s1", "s2"] {
+        let member = fixture.member_ok(&format!("phenix.session.{session}"), "get", member_key("alpha", session));
+        assert!(member.active);
+        assert_eq!(member.revision, 1);
+    }
+    fixture.member_deny("phenix.session.s3", "get", member_key("alpha", "s1"), ProjectMembershipProblem::Denied);
+    fixture.member_deny("phenix.session.s3", "get", member_key("alpha", "s3"), ProjectMembershipProblem::Denied);
+    fixture.member_deny("phenix.session.s1", "get", member_key("beta", "s1"), ProjectMembershipProblem::Denied);
+    serde_json::json!({"two_sessions_authorized": true, "nonmember_denied": true, "impersonation_denied": true, "foreign_project_denied": true})
+}
+fn member_revoke(fixture: &Fixture) -> serde_json::Value {
+    let revoked = fixture.member_ok("phenix.project.alpha", "set", member_change("alpha", "s2", 1, false));
+    assert_eq!(revoked.revision, 2);
+    assert!(!revoked.active);
+    fixture.member_deny("phenix.project.alpha", "set", member_change("alpha", "s2", 1, true), ProjectMembershipProblem::Conflict);
+    serde_json::json!({"revoked": true, "revision": 2, "stale_regrant_denied": true})
+}
+fn member_after_revoke(fixture: &Fixture) -> serde_json::Value {
+    let retained = fixture.member_ok("phenix.session.s1", "get", member_key("alpha", "s1"));
+    assert_eq!(retained.revision, 1);
+    fixture.member_deny("phenix.session.s2", "get", member_key("alpha", "s2"), ProjectMembershipProblem::Denied);
+    fixture.member_deny("phenix.session.s3", "get", member_key("alpha", "s2"), ProjectMembershipProblem::Denied);
+    serde_json::json!({"retained_member": "s1", "revoked_member_denied": "s2"})
+}
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     assert_eq!(
@@ -240,6 +314,10 @@ fn main() {
     let result = match args[4].as_str() {
         "write" => write(&fixture),
         "restart" => restart(&fixture),
+        "member-grant" => member_grant(&fixture),
+        "member-check" => member_check(&fixture),
+        "member-revoke" => member_revoke(&fixture),
+        "member-after-revoke" => member_after_revoke(&fixture),
         other => panic!("unknown action: {other}"),
     };
     let out = Path::new(&args[5]);
