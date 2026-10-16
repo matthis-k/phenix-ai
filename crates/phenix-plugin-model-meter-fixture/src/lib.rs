@@ -50,6 +50,13 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     if prompt == Some("inspect-original-stale") && !compacted {
         fingerprint = "0".repeat(64);
     }
+    // The original request intentionally exceeds the fixture window. The
+    // compacted request keeps the real byte-token count and must still fit.
+    let input_tokens = if prompt == Some("inspect-original-overwindow") && !compacted {
+        CONTEXT_WINDOW
+    } else {
+        input_tokens
+    };
     let tokenizer_revision =
         if prompt == Some("inspect-config-drift") && compacted {
             "portable-byte-fixture-v2"
