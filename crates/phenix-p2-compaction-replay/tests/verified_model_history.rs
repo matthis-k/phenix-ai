@@ -416,3 +416,72 @@ fn active_model_run_must_match_final_authoritative_session_run() {
         Err(TranscriptProblem::UnalignedHistory),
     );
 }
+
+fn attested_tool_source() -> Vec<Event> {
+    let mut journal = tool_source();
+    let assistant = tool_request().history[3].clone();
+    let mut receipt = event(5, EventKind::AssistantReply, &assistant.text);
+    receipt.run = "run-2".into();
+    receipt.data = phenix_basic_contracts::encode(&assistant).unwrap();
+    for item in &mut journal[4..] {
+        item.sequence += 1;
+    }
+    journal.insert(4, receipt);
+    journal
+}
+
+#[test]
+fn fully_attested_tool_turn_can_be_compacted_from_exact_journal_bytes() {
+    let journal = attested_tool_source();
+    let mut cp = checkpoint(&journal);
+    cp.summarized = vec![span_for_events(&journal[..9]).unwrap()];
+    cp.retained = vec![span_for_events(&journal[9..]).unwrap()];
+    cp.summary = "Verified prior text and tool turns".into();
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let authoritative = tool_request();
+    let request = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
+    assert_eq!(request.history, authoritative.history[6..]);
+    assert_eq!(request.context.last().unwrap().text, cp.summary);
+    assert_eq!(authoritative.history.len(), 7);
+}
+
+#[test]
+fn tool_summary_denies_missing_or_altered_model_reply_receipt() {
+    let journal = attested_tool_source();
+    let mut cp = checkpoint(&journal);
+    cp.summarized = vec![span_for_events(&journal[..9]).unwrap()];
+    cp.retained = vec![span_for_events(&journal[9..]).unwrap()];
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let mut forged = tool_request();
+    forged.history[3].calls[0].arguments = r#""different""#.into();
+    assert_eq!(
+        assemble_verified_basic_request(&forged, &journal, &cp, &view),
+        Err(TranscriptProblem::UnalignedHistory),
+    );
+
+    let no_receipt = tool_source();
+    let mut no_receipt_cp = checkpoint(&no_receipt);
+    no_receipt_cp.summarized = vec![span_for_events(&no_receipt[..8]).unwrap()];
+    no_receipt_cp.retained = vec![span_for_events(&no_receipt[8..]).unwrap()];
+    let no_receipt_view = compacted_view(&no_receipt_cp, &no_receipt, 4096).unwrap();
+    assert_eq!(
+        assemble_verified_basic_request(
+            &tool_request(),
+            &no_receipt,
+            &no_receipt_cp,
+            &no_receipt_view
+        ),
+        Err(TranscriptProblem::UnsupportedToolHistory),
+    );
+
+    let mut corrupted = journal.clone();
+    corrupted[4].data = phenix_sdk::Blob(vec![0, 1]);
+    let mut corrupted_cp = checkpoint(&corrupted);
+    corrupted_cp.summarized = vec![span_for_events(&corrupted[..9]).unwrap()];
+    corrupted_cp.retained = vec![span_for_events(&corrupted[9..]).unwrap()];
+    let view = compacted_view(&corrupted_cp, &corrupted, 4096).unwrap();
+    assert_eq!(
+        assemble_verified_basic_request(&tool_request(), &corrupted, &corrupted_cp, &view),
+        Err(TranscriptProblem::UnalignedSource),
+    );
+}
