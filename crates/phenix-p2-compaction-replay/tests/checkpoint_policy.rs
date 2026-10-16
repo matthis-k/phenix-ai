@@ -212,6 +212,22 @@ fn repeated_source_proposal_is_noop_without_spending_a_revision() {
         },
     );
     assert_eq!(repeated, Ok(None));
+    let mut changed_session = request.clone();
+    changed_session.history[0].text = "forged earlier turn".into();
+    assert!(matches!(
+        plan_verified_checkpoint(
+            &changed_session,
+            &journal,
+            Some(&first),
+            CheckpointPlan {
+                id: "cp-auto-next",
+                revision: 2,
+                parent_checkpoint: Some("cp-auto"),
+                ..policy()
+            },
+        ),
+        Err(PlanProblem::UnverifiedHistory),
+    ));
 }
 
 #[test]
