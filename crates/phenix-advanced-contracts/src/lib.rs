@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod compaction;
 pub use compaction::*;
+pub mod compaction_summary;
+pub use compaction_summary::*;
 pub mod model_tokens;
 pub use model_tokens::*;
 
@@ -391,6 +393,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(ProjectStorage),
     define(ProjectMembership),
     define(CompactionStore),
+    define(CompactionSummarizer),
     define(ModelTokenMeter),
     graph(super::GRAPH)
 )]
