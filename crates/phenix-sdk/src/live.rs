@@ -295,6 +295,19 @@ impl<'call> Host<'call> {
             _ => Err(invalid()),
         }
     }
+    /// The selection is a pinned provider identity, not a capability grant.
+    /// Only a declared, actually bound import operation can be inspected.
+    pub fn selected_provider<O: Operation>(&self, slot: &str) -> Result<String, Failure> {
+        match self.raw(
+            slot,
+            "phenix.host.slots@1/selected",
+            WireValue::String(O::KEY.into()),
+        )? {
+            (0, WireValue::String(provider)) => Ok(provider),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(invalid()),
+        }
+    }
     /// Locate a selected property after its operation and resource checks.
     pub fn locate_property<T: Portable>(
         &self,
