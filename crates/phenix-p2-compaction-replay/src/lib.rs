@@ -13,9 +13,9 @@ pub mod history;
 pub mod model;
 pub mod tail;
 pub mod view;
-pub use tail::{extend_verified_view, ExtendedProjection, TailProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
+pub use tail::{extend_verified_view, ExtendedProjection, TailProblem};
 pub use view::{compacted_view, ContextPart, ContextProjection, ViewProblem};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
