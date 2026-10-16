@@ -8,7 +8,9 @@ use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
     Outcome,
 };
-use phenix_p2_compaction_replay::span_for_events;
+use phenix_p2_compaction_replay::{
+    compacted_view, restore_original_events, span_for_events, ContextPart,
+};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const SESSION: &str = "s1";
@@ -215,7 +217,33 @@ fn action_restart(fixture: &Fixture) -> serde_json::Value {
         key("missing").to_value(),
         CheckpointStoreProblem::NotFound,
     );
-    serde_json::json!({"restored": true, "revisions": [first.revision, second.revision]})
+    // A *fresh* native kernel separately reads the authoritative Basic
+    // journal after the checkpoint has been retrieved from durable Storage.
+    // The derived view neither mutates source records nor executes any tool.
+    let source = fixture.journal();
+    let projection = compacted_view(&second, &source.events, 8192).unwrap();
+    let summary_cited = matches!(
+        projection.parts.first(),
+        Some(ContextPart::Summary { sources, text, .. })
+            if sources == &second.summarized && text == &second.summary
+    );
+    let original_tail = &source.events[2..];
+    let exact_originals = projection.parts.len() == original_tail.len() + 1
+        && projection.parts[1..]
+            .iter()
+            .zip(original_tail)
+            .all(|(part, event)| *part == ContextPart::Original(event.clone()));
+    let expanded = restore_original_events(&second, &source.events).unwrap();
+    assert_eq!(expanded, source.events);
+    assert!(summary_cited && exact_originals);
+    serde_json::json!({
+        "restored": true,
+        "revisions": [first.revision, second.revision],
+        "view_original_source_verified": expanded == source.events,
+        "view_summary_cited": summary_cited,
+        "view_uncompacted_events_exact": exact_originals,
+        "view_visible_payload_bytes": projection.visible_payload_bytes
+    })
 }
 fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     fixture.deny(
