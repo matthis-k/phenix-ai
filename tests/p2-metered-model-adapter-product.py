@@ -59,7 +59,7 @@ def prompt(text, limit=512):
         "limits": {"model_tokens": limit},
     }
 
-def run(messages, composition=path, expect_success=True):
+def run(messages, composition=path, expected_error=None):
     database = "metered.sqlite" if composition == path else "meter-denied.sqlite"
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
@@ -67,12 +67,17 @@ def run(messages, composition=path, expect_success=True):
         input="".join(json.dumps(item) + "\n" for item in messages),
         text=True, capture_output=True, env=env, timeout=90,
     )
-    if expect_success:
+    if expected_error is None:
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
     else:
+        # A denied runtime turn emits its durable Failure event and returns a
+        # nonzero process status. That is an expected rejection, not success.
         assert proc.returncode != 0, (proc.stdout, proc.stderr)
-        assert "has no effective grant" in proc.stderr, proc.stderr
-    return [json.loads(s) for s in proc.stdout.splitlines()]
+        assert expected_error in proc.stderr, (proc.stdout, proc.stderr)
+    events = [json.loads(line) for line in proc.stdout.splitlines()]
+    if expected_error is not None and "has no effective grant" not in expected_error:
+        assert any(event["kind"] == "Failure" for event in events), events
+    return events
 
 accepted = run([prompt("hello")])
 assert [e["text"] for e in accepted if e["kind"] == "Answer"] == [
@@ -93,28 +98,28 @@ ungranted["grants"] = [
 ]
 ungranted_path = out / "meter-denied-composition.json"
 ungranted_path.write_text(json.dumps(ungranted))
-no_grant = run([prompt("no-meter-grant")], composition=ungranted_path, expect_success=False)
+no_grant = run([prompt("no-meter-grant")], composition=ungranted_path, expected_error="has no effective grant")
 assert not [e for e in no_grant if e["kind"] == "Answer"], no_grant
 assert any(e["kind"] == "ModelStarted" for e in no_grant), no_grant
 
 # This token-meter fixture returns an invalid digest for the next prompt.
 # The direct Model would still return a fixture answer, so a failure proves
 # the adapter actually invoked the meter before its Model import.
-invalid = run([prompt("meter-stale")])
+invalid = run([prompt("meter-stale")], expected_error="InvalidReply")
 assert not [e for e in invalid if e["kind"] == "Answer"], invalid
 assert any(e["kind"] == "Failure" for e in invalid), invalid
 
 # Without explicit output reserve, the opted-in measured model must fail
 # rather than invent a context budget.
 missing_limit = {"type": "prompt", "session": "s1", "text": "no-limit"}
-no_reserve = run([missing_limit])
+no_reserve = run([missing_limit], expected_error="TurnLimit")
 assert not [e for e in no_reserve if e["kind"] == "Answer"], no_reserve
 assert any(e["kind"] == "Failure" for e in no_reserve), no_reserve
 
 # The exact preflight must also account for the selected Model's output
 # reservation, not only the observed input length. This call's Model would
 # otherwise generate a short valid fixture answer.
-over_budget = run([prompt("reserve-too-large", limit=65_535)])
+over_budget = run([prompt("reserve-too-large", limit=65_535)], expected_error="TurnLimit")
 assert not [e for e in over_budget if e["kind"] == "Answer"], over_budget
 assert any(e["kind"] == "Failure" for e in over_budget), over_budget
 
