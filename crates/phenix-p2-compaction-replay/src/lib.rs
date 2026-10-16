@@ -16,7 +16,9 @@ pub mod model;
 pub mod plan;
 pub mod tail;
 pub mod view;
-pub use automatic::{automatic_checkpoint, AutomaticCheckpointDecision, AutomaticCheckpointProblem};
+pub use automatic::{
+    automatic_checkpoint, AutomaticCheckpointDecision, AutomaticCheckpointProblem,
+};
 pub use budget::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
