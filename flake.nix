@@ -365,6 +365,7 @@
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.sqlite ];
         src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
           ./crates/phenix-advanced-contracts
           ./crates/phenix-plugin-project-storage-sqlite
         ]);
