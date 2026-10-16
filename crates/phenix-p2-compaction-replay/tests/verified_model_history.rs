@@ -199,7 +199,7 @@ fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit
     let cp = checkpoint(&events);
     let authoritative = original_request();
     let selected = select_model_view(
-        &[cp.clone()],
+        std::slice::from_ref(&cp),
         &events,
         4096,
         150,
