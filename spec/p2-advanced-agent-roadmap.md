@@ -77,6 +77,22 @@ Basic's journal schema nor its loop changes. This is a nonexecuting
 verification stage; actual Advanced graph compaction and independent full
 tool-message source provenance remain separate release gates.
 
+P2-3o adds an opt-in typed full Model tool-reply receipt through the
+existing `EventJournal` contract and `EventKind::AssistantReply`. Before
+returning a tool-calling Model reply to the Basic loop, the selected
+Advanced Model adapter commits the exact assistant Message, including
+arguments and call IDs, to its explicitly authorized session journal.
+This is a normal effect through a selected optional `Transcript` import;
+absence preserves the default Advanced behavior. Missing grants deny
+before tool execution. A pending Model reply preserves its original
+run identity. The source-checked assembler accepts tool-turn elision
+only when the corresponding journal receipt exactly matches the separately
+persisted SessionSnapshot and tool completion records. It still rejects
+unattested legacy tool turns, partial spans and conflicting data. The
+verification fixture checks journal append before tools, provider authority
+denial and SQLite restart. Live compaction and crash-mid-reply checkpoint
+reconciliation remain unaccepted.
+
 P2-3l [#923](https://github.com/matthis-k/phenix-ai/pull/923) introduces an optional selected-meter preflight in the existing Advanced Model adapter. An explicitly metered verification composition binds `Upstream` and `Meter` to the same model provider, reserves the caller's full remaining output-token cap, verifies the original typed request digest and rejects invalid measurements before starting Model execution. A test-only stale digest causes a real JSONL Model turn to fail; later turns still run. The public Basic and default Advanced presets remain unmetered pass-through. Model name strings are not proof of same-provider selection: this slice verifies co-binding in the packaged composition, while general user-authored composition enforcement, real HTTP provider tokenization, tool-message lineage, source-backed view admission and complete P2-3 acceptance remain open.
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
