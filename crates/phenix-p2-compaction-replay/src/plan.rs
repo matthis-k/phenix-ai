@@ -73,6 +73,7 @@ pub fn plan_verified_checkpoint(
     {
         return Err(PlanProblem::InvalidSource);
     }
+    let identical_source = previous.is_some_and(|checkpoint| checkpoint.input == source_span);
     if let Some(previous) = previous {
         if previous.session != request.session
             || previous.input.first_sequence < source_span.first_sequence
@@ -86,11 +87,6 @@ pub fn plan_verified_checkpoint(
             .map_err(|_| PlanProblem::InvalidSource)?;
         let historical = journal.get(from..to).ok_or(PlanProblem::InvalidSource)?;
         restore_original_events(previous, historical).map_err(|_| PlanProblem::InvalidSource)?;
-        if previous.input == source_span {
-            // A retry with the same attested source does not create a new
-            // revision or trigger another summarization effect.
-            return Ok(None);
-        }
     }
     // A safe split is allowed only after a terminal Answer of an entire
     // run. Never summarize a pending, failed, cancelled or partial tool turn.
@@ -123,11 +119,6 @@ pub fn plan_verified_checkpoint(
     if active_run != Some(request.run.as_str()) {
         return Err(PlanProblem::InvalidSource);
     }
-    if completed.len() <= policy.retain_completed_turns {
-        // No checkpoint is warranted. The caller still holds its original
-        // full ModelRequest, without any new storage mutation.
-        return Ok(None);
-    }
     // Dry-run a full retained projection to check alignment of the complete
     // actual Basic session before permitting elision. This catches forged
     // text, tool responses, missing receipts and mismatched history lengths.
@@ -150,6 +141,12 @@ pub fn plan_verified_checkpoint(
         .map_err(|_| PlanProblem::InvalidSource)?;
     assemble_verified_basic_request(request, journal, &candidate, &full_view)
         .map_err(|_| PlanProblem::UnverifiedHistory)?;
+
+    // Even when no checkpoint is due, validate the exact session messages
+    // first; an idempotent retry must not conceal a forged snapshot.
+    if identical_source || completed.len() <= policy.retain_completed_turns {
+        return Ok(None);
+    }
 
     let split_at = completed[completed.len() - policy.retain_completed_turns - 1];
     candidate.summarized =
