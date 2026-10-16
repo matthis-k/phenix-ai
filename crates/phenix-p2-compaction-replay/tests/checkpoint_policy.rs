@@ -1,11 +1,9 @@
 //! P2-3t RED: only source-verified complete turns may enter a proposed
 //! checkpoint. Proposal is pure and never commits the journal or runs tools.
-use phenix_basic_contracts::{
-    Event, EventKind, Limits, Message, ModelRequest, Role,
-};
+use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest, Role};
 use phenix_p2_compaction_replay::{
-    assemble_verified_basic_request, compacted_view, plan_verified_checkpoint,
-    span_for_events, CheckpointPlan, PlanProblem,
+    assemble_verified_basic_request, compacted_view, plan_verified_checkpoint, span_for_events,
+    CheckpointPlan, PlanProblem,
 };
 use phenix_sdk::Blob;
 
@@ -35,7 +33,12 @@ fn source() -> (ModelRequest, Vec<Event>) {
     for i in 1..=3 {
         let question = format!("question {i}");
         let answer = format!("answer {i}");
-        journal.push(event((i - 1) * 4 + 1, i, EventKind::PromptAccepted, &question));
+        journal.push(event(
+            (i - 1) * 4 + 1,
+            i,
+            EventKind::PromptAccepted,
+            &question,
+        ));
         journal.push(event((i - 1) * 4 + 2, i, EventKind::ModelStarted, ""));
         journal.push(event((i - 1) * 4 + 3, i, EventKind::TextDelta, &answer));
         journal.push(event((i - 1) * 4 + 4, i, EventKind::Answer, &answer));
@@ -45,15 +48,18 @@ fn source() -> (ModelRequest, Vec<Event>) {
     journal.push(event(13, 4, EventKind::PromptAccepted, "now"));
     journal.push(event(14, 4, EventKind::ModelStarted, ""));
     history.push(message(Role::User, "now"));
-    (ModelRequest {
-        session: "s1".into(),
-        run: "run-4".into(),
-        history,
-        tools: vec![],
-        skills: vec![],
-        context: vec![],
-        limits: Limits::default(),
-    }, journal)
+    (
+        ModelRequest {
+            session: "s1".into(),
+            run: "run-4".into(),
+            history,
+            tools: vec![],
+            skills: vec![],
+            context: vec![],
+            limits: Limits::default(),
+        },
+        journal,
+    )
 }
 fn policy<'a>() -> CheckpointPlan<'a> {
     CheckpointPlan {
@@ -70,9 +76,16 @@ fn proposes_complete_cited_prefix_without_modifying_authoritative_history() {
     let (request, journal) = source();
     let original = request.clone();
     let candidate = plan_verified_checkpoint(&request, &journal, None, policy())
-        .unwrap().expect("old turns ready");
-    assert_eq!(candidate.summarized, vec![span_for_events(&journal[..8]).unwrap()]);
-    assert_eq!(candidate.retained, vec![span_for_events(&journal[8..]).unwrap()]);
+        .unwrap()
+        .expect("old turns ready");
+    assert_eq!(
+        candidate.summarized,
+        vec![span_for_events(&journal[..8]).unwrap()]
+    );
+    assert_eq!(
+        candidate.retained,
+        vec![span_for_events(&journal[8..]).unwrap()]
+    );
     assert_eq!(candidate.input, span_for_events(&journal).unwrap());
     assert_eq!(candidate.parent_checkpoint, None);
     assert_eq!(candidate.model, None);
@@ -119,8 +132,13 @@ fn insufficient_completed_history_is_a_noop_and_stays_uncommitted() {
     );
     assert_eq!(
         plan_verified_checkpoint(
-            &request, &journal, None,
-            CheckpointPlan { retain_completed_turns: 3, ..policy() },
+            &request,
+            &journal,
+            None,
+            CheckpointPlan {
+                retain_completed_turns: 3,
+                ..policy()
+            },
         ),
         Ok(None),
     );
@@ -130,25 +148,48 @@ fn insufficient_completed_history_is_a_noop_and_stays_uncommitted() {
 fn rejects_forged_previous_checkpoint_and_bad_revision_or_summary() {
     let (request, journal) = source();
     let first = plan_verified_checkpoint(&request, &journal, None, policy())
-        .unwrap().unwrap();
+        .unwrap()
+        .unwrap();
     let mut bad = first.clone();
     bad.input.digest_sha256 = "f".repeat(64);
     assert!(matches!(
-        plan_verified_checkpoint(&request, &journal, Some(&bad),
+        plan_verified_checkpoint(
+            &request,
+            &journal,
+            Some(&bad),
             CheckpointPlan {
-                id: "cp-next", revision: 2,
-                parent_checkpoint: Some("cp-auto"), ..policy()
-            }),
+                id: "cp-next",
+                revision: 2,
+                parent_checkpoint: Some("cp-auto"),
+                ..policy()
+            }
+        ),
         Err(PlanProblem::InvalidSource),
     ));
     assert!(matches!(
-        plan_verified_checkpoint(&request, &journal, Some(&first),
-            CheckpointPlan { id: "cp-next", revision: 2, parent_checkpoint: None, ..policy() }),
+        plan_verified_checkpoint(
+            &request,
+            &journal,
+            Some(&first),
+            CheckpointPlan {
+                id: "cp-next",
+                revision: 2,
+                parent_checkpoint: None,
+                ..policy()
+            }
+        ),
         Err(PlanProblem::InvalidLineage),
     ));
     assert!(matches!(
-        plan_verified_checkpoint(&request, &journal, None,
-            CheckpointPlan { summary: " ", ..policy() }),
+        plan_verified_checkpoint(
+            &request,
+            &journal,
+            None,
+            CheckpointPlan {
+                summary: " ",
+                ..policy()
+            }
+        ),
         Err(PlanProblem::InvalidPolicy),
     ));
 }
@@ -165,20 +206,30 @@ fn never_summarizes_unattested_legacy_tool_turns() {
     for (index, entry) in journal.iter_mut().enumerate() {
         entry.sequence = index as u64 + 1;
     }
-    request.history.insert(3, Message {
-        role: Role::Assistant, text: String::new(),
-        calls: vec![phenix_basic_contracts::ToolCall {
-            id: "t1".into(), tool: "uppercase".into(),
-            arguments: r#""secret""#.into(),
-        }],
-        call_id: String::new(), error: None,
-    });
-    request.history.insert(4, Message {
-        role: Role::Tool, text: "HELLO".into(),
-        calls: vec![], call_id: "t1".into(), error: None,
-    });
-    let planned = plan_verified_checkpoint(
-        &request, &journal, None, policy()
+    request.history.insert(
+        3,
+        Message {
+            role: Role::Assistant,
+            text: String::new(),
+            calls: vec![phenix_basic_contracts::ToolCall {
+                id: "t1".into(),
+                tool: "uppercase".into(),
+                arguments: r#""secret""#.into(),
+            }],
+            call_id: String::new(),
+            error: None,
+        },
     );
+    request.history.insert(
+        4,
+        Message {
+            role: Role::Tool,
+            text: "HELLO".into(),
+            calls: vec![],
+            call_id: "t1".into(),
+            error: None,
+        },
+    );
+    let planned = plan_verified_checkpoint(&request, &journal, None, policy());
     assert!(matches!(planned, Err(PlanProblem::UnverifiedHistory)));
 }
