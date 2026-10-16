@@ -34,4 +34,35 @@ have M1 tests. The transition passed exact-head CI at `367420e33b`.
 [PR #781](https://github.com/matthis-k/phenix-ai/pull/781) completes S3b at
 `75a255b9`, with full CI and verified release evidence.
 
+## Opt-in P1 HTTP model
+
+`phenix-basic-http-acp` runs the accepted Basic agent with the existing
+`phenix.model.http` provider instead of the scripted model. The ordinary
+`phenix-basic` package and its deterministic checks do not change. The HTTP
+provider accepts OpenAI-compatible streaming chat-completions responses and
+uses the same Basic tools and durable SQLite journal.
+
+Configure the executable with environment variables in the shell that starts
+the frontend. Keep secrets out of flake configuration and the Nix store:
+
+```sh
+export OPENAI_API_KEY="..."  # or PHENIX_MODEL_HTTP_API_KEY
+export PHENIX_MODEL_HTTP_MODEL="gpt-4.1-mini"
+# Optional, for another compatible provider:
+# export PHENIX_MODEL_HTTP_ENDPOINT="https://provider.example/v1/chat/completions"
+nix run .#phenix-basic-http -- acp
+```
+
+`phenix-basic-http-acp` is the named ACP launcher for a Neovim client.
+It defaults to the OpenAI chat-completions endpoint, chooses the model from
+`PHENIX_MODEL_HTTP_MODEL`, and stores its P1 SQLite state under
+`$XDG_STATE_HOME/phenix/basic-http.sqlite` unless
+`PHENIX_BASIC_SQLITE_PATH` overrides it. The transport reads a credential
+only at execution. `OPENAI_API_KEY` is an alias supported by the launcher.
+
+The `basic-http-product` check drives the installed Basic HTTP composition
+against a local streaming HTTP fixture. That deterministic check has no
+external network calls or paid model dependency. Live-provider behavior and
+billing are external and must be tested explicitly.
+
 P1 Basic is an accepted composed agent product. The Advanced agent remains under development through independently replaceable P2 plugins; neither agent is embedded in the kernel. The M1 and P2 roadmaps own current status and acceptance evidence.
