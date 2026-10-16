@@ -9,7 +9,11 @@ from pathlib import Path
 import subprocess
 import sys
 
-runtime, advanced_json, meter_provider, destination = sys.argv[1:]
+(
+    runtime, advanced_json, meter_provider, checkpoint_runner,
+    checkpoint_provider, journal_provider, storage_provider,
+    basic_definitions, advanced_definitions, destination,
+) = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 source = json.loads(Path(advanced_json).read_text())
@@ -59,8 +63,9 @@ def prompt(text, limit=512):
         "limits": {"model_tokens": limit},
     }
 
-def run(messages, composition=path, expected_error=None, expected_failure_text=None):
-    database = "metered.sqlite" if composition == path else f"{composition.stem}.sqlite"
+def run(messages, composition=path, expected_error=None, expected_failure_text=None, database=None):
+    if database is None:
+        database = "metered.sqlite" if composition == path else f"{composition.stem}.sqlite"
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
         [runtime, "jsonl", str(composition)],
@@ -215,6 +220,66 @@ assert not [e for e in denied_events if e["kind"] in (
     "Answer", "AssistantReply", "ToolStarted"
 )], denied_events
 
+# RED P2-3q: a fully opted-in Advanced composition must submit a
+# source-verified, token-metered compacted ModelRequest. A distinct native
+# kernel commits a checkpoint over actual Basic journal bytes.
+live = json.loads(json.dumps(spec))
+live["slots"] += [
+    {"caller": adapter, "slot": "Transcript", "index": 0,
+     "provider": "phenix.basic.event-journal", "export": "Journal"},
+    {"caller": adapter, "slot": "Checkpoints", "index": 0,
+     "provider": "phenix.advanced.compaction-checkpoints", "export": "Checkpoints"},
+]
+live["grants"] += [
+    {"caller": adapter, "interface": "phenix.basic.journal@1",
+     "operation": "read", "resources": [scoped]},
+    {"caller": adapter, "interface": "phenix.advanced.compaction-checkpoints@1",
+     "operation": "latest", "resources": [scoped]},
+]
+live_path = out / "live-verified-compaction-composition.json"
+live_path.write_text(json.dumps(live))
+seed_events = run(
+    [prompt("seed-one"), prompt("seed-two")],
+    composition=live_path,
+)
+assert [event["text"] for event in seed_events if event["kind"] == "Answer"] == [
+    "fixture:seed-one", "fixture:seed-two",
+], seed_events
+live_db = out / f"{live_path.stem}.sqlite"
+seed_folder = out / "live-checkpoint-seed"
+seed = subprocess.run(
+    [checkpoint_runner, checkpoint_provider, journal_provider, storage_provider,
+     basic_definitions, advanced_definitions, "live-seed", str(seed_folder)],
+    capture_output=True, text=True, timeout=90,
+    env=dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(live_db)),
+)
+assert seed.returncode == 0, (seed.stdout, seed.stderr)
+assert json.loads((seed_folder / "compaction-product.json").read_text())[
+    "live_checkpoint"
+] == "cp-live"
+live_events = run([prompt("inspect-compaction")], composition=live_path)
+assert [event["text"] for event in live_events if event["kind"] == "Answer"] == [
+    "fixture:history:3:compaction:true"
+], live_events
+
+# Opt-in source reads require an explicit caller grant; discovery/selection
+# cannot grant journal access. Deny before the Model sees a compacted request.
+no_read = json.loads(json.dumps(live))
+no_read["grants"] = [g for g in no_read["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.basic.journal@1"
+    and g["operation"] == "read"
+)]
+no_read_path = out / "live-compaction-read-denied-composition.json"
+no_read_path.write_text(json.dumps(no_read))
+denied_read = run(
+    [prompt("inspect-compaction")],
+    composition=no_read_path,
+    expected_error="has no effective grant",
+    database=f"{live_path.stem}.sqlite",
+)
+assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -231,5 +296,7 @@ assert not [e for e in denied_events if e["kind"] in (
         "authorized-tool-reply-journal-receipt-before-execution",
         "journal-receipt-survives-sqlite-restart-without-duplicate",
         "missing-journal-grant-denies-before-tool-effect",
+        "live-checkpoint-and-tail-model-request-is-metered",
+        "live-checkpoint-read-requires-explicit-grant",
     ],
 }, indent=2, sort_keys=True))

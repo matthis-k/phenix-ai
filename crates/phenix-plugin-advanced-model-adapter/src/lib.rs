@@ -18,22 +18,26 @@
     // Explicitly declare the maximum downstream token-meter interface.
     // A selected Model consumer need not import this Advanced-only schema.
     define(phenix_advanced_contracts::ModelTokenMeter),
+    define(phenix_advanced_contracts::CompactionStore),
     provide(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::Model, slot = "Upstream"),
     require(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter", optional),
     // Explicit opt-in only: the public Advanced composition remains unchanged.
     // When selected, this records the complete tool-call message before any
     // Basic tool execution and never supplies its own persistence provider.
-    require(phenix_basic_contracts::EventJournal, slot = "Transcript", optional)
+    require(phenix_basic_contracts::EventJournal, slot = "Transcript", optional),
+    require(phenix_advanced_contracts::CompactionStore, slot = "Checkpoints", optional)
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, ModelTokenMeter, ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore, ModelTokenMeter,
+        ModelTokenProblem,
     };
     use phenix_basic_contracts::{
-        error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, Message,
-        Model, ModelReply, ModelRequest, Role,
+        error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
+        Message, Model, ModelReply, ModelRequest, Role, Scope,
     };
+    use phenix_p2_compaction_replay::assemble_verified_tail_request;
     use phenix_sdk::{
         CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
         PendingResult,
@@ -107,6 +111,102 @@ mod plugin {
         )
     }
 
+    /// Opt-in only. Checkpoint selection revalidates its full ancestor ledger
+    /// through the selected checkpoint provider. The selected journal supplies
+    /// exact source bytes and the suffix through the current ModelStarted.
+    /// The returned request is what the selected token meter and Model see.
+    fn prepare_request(
+        host: &Host<'_>,
+        source: &ModelRequest,
+    ) -> CallResult<ModelRequest, BasicError> {
+        if host.slot_count("Checkpoints").map_err(CallError::Kernel)? == 0 {
+            return Ok(source.clone());
+        }
+        if host.slot_count("Meter").map_err(CallError::Kernel)? == 0
+            || host.slot_count("Transcript").map_err(CallError::Kernel)? == 0
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "compaction requires a selected token meter and source journal",
+            )));
+        }
+        let checkpoint = match host.invoke::<CompactionStore::latest>(
+            "Checkpoints",
+            &Scope {
+                session: source.session.clone(),
+            },
+        ) {
+            Ok(checkpoint) => checkpoint,
+            Err(CallError::Domain(failure))
+                if failure.problem == CheckpointStoreProblem::NotFound =>
+            {
+                return Ok(source.clone());
+            }
+            Err(CallError::Domain(_)) => {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "compaction checkpoint source or lineage rejected",
+                )));
+            }
+            Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
+        };
+        const MAX_READ_EVENTS: u64 = 2048;
+        let page = host.invoke::<EventJournal::read>(
+            "Transcript",
+            &JournalQuery {
+                session: source.session.clone(),
+                after: checkpoint
+                    .input
+                    .first_sequence
+                    .checked_sub(1)
+                    .ok_or_else(|| {
+                        CallError::Domain(error(
+                            ErrorCode::InvalidReply,
+                            "invalid checkpoint start",
+                        ))
+                    })?,
+                limit: MAX_READ_EVENTS,
+            },
+        )?;
+        // The existing journal's paginated read does not certify EOF.
+        // A full page might omit newer events; reject it rather than
+        // compact from an incomplete snapshot.
+        if page.events.is_empty() || page.events.len() >= MAX_READ_EVENTS as usize {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "compaction journal read was empty or incomplete",
+            )));
+        }
+        let original_count = checkpoint
+            .input
+            .last_sequence
+            .checked_sub(checkpoint.input.first_sequence)
+            .and_then(|difference| difference.checked_add(1))
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "invalid checkpoint source count",
+                ))
+            })?;
+        let (original, appended) =
+            page.events
+                .split_at_checked(original_count)
+                .ok_or_else(|| {
+                    CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "checkpoint source events missing",
+                    ))
+                })?;
+        assemble_verified_tail_request(source, &checkpoint, original, appended, 8 * 1024 * 1024)
+            .map_err(|_| {
+                CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "compaction source history did not match the authoritative session",
+                ))
+            })
+    }
+
     fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
         // An absent optional Meter preserves the public Advanced pass-through.
         // When present, it must be exported by the *same pinned plugin
@@ -178,9 +278,12 @@ mod plugin {
                 "Advanced Model is already awaiting its selected upstream",
             ))));
         }
-        // Composition must co-select Upstream and Meter from one Model
-        // provider/configuration. The measurement's model name alone is not
-        // proof of that provider identity.
+        // The exact source-verified ModelRequest, not the original Basic
+        // history or a journal-derived approximation, is metered and sent.
+        let request = match prepare_request(host, &request) {
+            Ok(request) => request,
+            Err(failure) => return finish(Err(failure)),
+        };
         if let Err(failure) = preflight_meter(host, &request) {
             return finish(Err(failure));
         }

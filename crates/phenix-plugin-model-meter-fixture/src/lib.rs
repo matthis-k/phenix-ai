@@ -52,7 +52,22 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         .ok_or_else(|| error(ErrorCode::InvalidInput, "missing user message"))?;
     let count = measure(request)
         .map_err(|_| error(ErrorCode::ModelFailed, "fixture measurement failed"))?;
-    let text = format!("fixture:{}", prompt.text);
+    // Native acceptance probes the exact request that survived source
+    // verification and selected-provider metering. This branch exists only
+    // in the verification Model, never in production Model adapters.
+    let text = if prompt.text == "inspect-compaction" {
+        let cited = request
+            .context
+            .iter()
+            .any(|part| part.id == "compaction:cp-live");
+        format!(
+            "fixture:history:{}:compaction:{}",
+            request.history.len(),
+            cited,
+        )
+    } else {
+        format!("fixture:{}", prompt.text)
+    };
     Ok(ModelReply {
         usage: Usage {
             input_tokens: count.input_tokens,
