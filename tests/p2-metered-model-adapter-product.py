@@ -6,6 +6,7 @@ The default public Advanced composition has no Meter slot and stays unchanged.
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 
@@ -262,6 +263,12 @@ assert [event["text"] for event in live_events if event["kind"] == "Answer"] == 
     "fixture:history:3:compaction:true"
 ], live_events
 
+def fork_live_database(stem):
+    target = out / f"{stem}.sqlite"
+    with sqlite3.connect(live_db) as origin, sqlite3.connect(target) as fork:
+        origin.backup(fork)
+    return target.name
+
 # Opt-in source reads require an explicit caller grant; discovery/selection
 # cannot grant journal access. Deny before the Model sees a compacted request.
 no_read = json.loads(json.dumps(live))
@@ -276,9 +283,62 @@ denied_read = run(
     [prompt("inspect-compaction")],
     composition=no_read_path,
     expected_error="has no effective grant",
-    database=f"{live_path.stem}.sqlite",
+    database=fork_live_database("journal-read-denied"),
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
+
+# P2-3r: an already persisted checkpoint cannot become optional because
+# its provider denies the selected caller or its durable blob is corrupt.
+# Fork the same SQLite state so every failure is observed on an independent
+# native restart without perturbing a successful session.
+no_checkpoint_grant = json.loads(json.dumps(live))
+no_checkpoint_grant["grants"] = [g for g in no_checkpoint_grant["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.advanced.compaction-checkpoints@1"
+    and g["operation"] == "latest"
+)]
+no_checkpoint_grant_path = out / "live-checkpoint-grant-denied-composition.json"
+no_checkpoint_grant_path.write_text(json.dumps(no_checkpoint_grant))
+denied_checkpoint = run(
+    [prompt("inspect-compaction")], composition=no_checkpoint_grant_path,
+    database=fork_live_database("checkpoint-grant-denied"),
+    expected_error="has no effective grant",
+)
+assert not [e for e in denied_checkpoint if e["kind"] == "Answer"], denied_checkpoint
+
+no_selected_meter = json.loads(json.dumps(live))
+no_selected_meter["slots"] = [s for s in no_selected_meter["slots"] if not (
+    s["caller"] == adapter and s["slot"] == "Meter"
+)]
+no_selected_meter_path = out / "live-no-selected-meter-composition.json"
+no_selected_meter_path.write_text(json.dumps(no_selected_meter))
+denied_unmetered = run(
+    [prompt("inspect-compaction")], composition=no_selected_meter_path,
+    database=fork_live_database("no-selected-meter"),
+    expected_error="InvalidReply",
+)
+assert not [e for e in denied_unmetered if e["kind"] == "Answer"], denied_unmetered
+
+corrupted_db = out / fork_live_database("corrupt-checkpoint")
+with sqlite3.connect(corrupted_db) as connection:
+    changed = connection.execute(
+        "UPDATE basic_records SET data = ? WHERE session = ? AND name = ?",
+        (bytes([0]), "s1", "compaction-checkpoints.v1"),
+    ).rowcount
+    assert changed == 1, changed
+    connection.commit()
+denied_corrupt = run(
+    [prompt("inspect-compaction")], composition=live_path,
+    database=corrupted_db.name, expected_error="InvalidReply",
+)
+assert not [e for e in denied_corrupt if e["kind"] == "Answer"], denied_corrupt
+
+# An unrelated denied process must not mutate the original journal, checkpoint
+# or selected-model behavior after another native process restart.
+continued = run([prompt("inspect-compaction")], composition=live_path)
+assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
+    "fixture:history:5:compaction:true"
+], continued
 
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
@@ -298,5 +358,9 @@ assert not [event for event in denied_read if event["kind"] == "Answer"], denied
         "missing-journal-grant-denies-before-tool-effect",
         "live-checkpoint-and-tail-model-request-is-metered",
         "live-checkpoint-read-requires-explicit-grant",
+        "missing-checkpoint-grant-denies-after-sqlite-restart",
+        "selected-meter-removal-denies-live-compaction",
+        "corrupt-checkpoint-ledger-denies-without-model-fallback",
+        "independent-denial-does-not-change-authoritative-session",
     ],
 }, indent=2, sort_keys=True))
