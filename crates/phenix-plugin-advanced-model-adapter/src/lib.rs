@@ -170,10 +170,7 @@ mod plugin {
             .first_sequence
             .checked_sub(1)
             .ok_or_else(|| {
-                CallError::Domain(error(
-                    ErrorCode::InvalidReply,
-                    "invalid checkpoint start",
-                ))
+                CallError::Domain(error(ErrorCode::InvalidReply, "invalid checkpoint start"))
             })?;
         let mut events = Vec::<Event>::new();
         // A full journal page does not certify EOF. Read through the first
@@ -195,9 +192,8 @@ mod plugin {
                         "compaction journal ended at an invalid cursor",
                     )));
                 }
-                let (original, appended) = events
-                    .split_at_checked(original_count)
-                    .ok_or_else(|| {
+                let (original, appended) =
+                    events.split_at_checked(original_count).ok_or_else(|| {
                         CallError::Domain(error(
                             ErrorCode::InvalidReply,
                             "checkpoint source events missing",
