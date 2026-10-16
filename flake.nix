@@ -270,6 +270,29 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      compactionCheckpointStore = rust.buildRustPackage {
+        pname = "phenix-plugin-compaction-checkpoints";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-p2-compaction-replay
+          ./crates/phenix-plugin-compaction-checkpoints
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-compaction-checkpoints" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-compaction-checkpoints" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_compaction_checkpoints.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
         "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
@@ -281,7 +304,7 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 4, report
+        assert len(report["definitions"]) == 5, report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -747,9 +770,13 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
-        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" ];
+        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" "${compactionCheckpointStore}" ];
         replaceSlots = [
           (basicBinding "phenix.advanced.evidence-journal" "Journal"
+            "phenix.basic.event-journal" "Journal")
+          (basicBinding "phenix.advanced.compaction-checkpoints" "Storage"
+            "phenix.basic.storage-sqlite" "Storage")
+          (basicBinding "phenix.advanced.compaction-checkpoints" "Journal"
             "phenix.basic.event-journal" "Journal")
           (basicBinding "phenix.advanced.evidence-store" "Storage"
             "phenix.basic.storage-sqlite" "Storage")
@@ -763,6 +790,31 @@
             "phenix.advanced.project-storage-sqlite" "ProjectSource")
         ];
         addGrants = [
+          { caller = "root";
+            interface = "phenix.advanced.compaction-checkpoints@1";
+            operation = "put";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.advanced.compaction-checkpoints@1";
+            operation = "get";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.compaction-checkpoints";
+            interface = "phenix.basic.storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.compaction-checkpoints";
+            interface = "phenix.basic.storage@1";
+            operation = "transact";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "phenix.advanced.compaction-checkpoints";
+            interface = "phenix.basic.journal@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "root";
             interface = "phenix.advanced.project-membership@1";
             operation = "get";
@@ -830,6 +882,8 @@
           }
         ];
         addOperations = [
+          "phenix.advanced.compaction-checkpoints@1/put"
+          "phenix.advanced.compaction-checkpoints@1/get"
           "phenix.advanced.project-membership@1/get"
           "phenix.advanced.project-storage@1/read"
           "phenix.advanced.project-storage@1/transact"
@@ -957,6 +1011,25 @@
           ${evidenceJournal} ${eventJournal} ${storageSqlite} \
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-source-evidence-product.json"
+      '';
+      p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-compaction-replay
+        ./crates/phenix-p2-compaction-product
+      ]));
+      p2CompactionProductCheck = pkgs.runCommand "phenix-p2-compaction-checkpoints-product" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.sqlite ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-compaction-checkpoints-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${p2CompactionProductRunner}/bin/phenix-p2-compaction-product \
+          ${compactionCheckpointStore} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/p2-compaction-checkpoints-product.json"
       '';
       p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
         ./crates/phenix-artifact
@@ -1599,6 +1672,8 @@
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
+        p2-compaction-checkpoints = compactionCheckpointStore;
+        p2-compaction-checkpoints-product = p2CompactionProductCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
         p2-evidence-store-product = p2EvidenceStoreProductCheck;
         p2-project-storage-product = p2ProjectStorageProductCheck;
