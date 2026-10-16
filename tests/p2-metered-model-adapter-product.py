@@ -402,6 +402,59 @@ assert [event["text"] for event in page_continuation if event["kind"] == "Answer
     f"fixture:history:{2 * (page_turns - 1) + 1}:compaction:true"
 ], page_continuation
 
+# P2-3aa RED: the existing Basic Model graph call may use an opt-in
+# selected summarizer to create a source-backed CAS checkpoint, remeasure
+# the exact compacted request and continue through the selected Model.
+# No model/tool loop is added, and the default Advanced preset stays unchanged.
+automatic = json.loads(json.dumps(live))
+automatic["slots"].append({
+    "caller": adapter, "slot": "Summarizer", "index": 0,
+    "provider": model, "export": "Summarizer",
+})
+automatic["grants"] += [
+    {"caller": adapter, "interface": "phenix.advanced.compaction-summary@1",
+     "operation": "summarize", "resources": [scoped]},
+    {"caller": adapter, "interface": "phenix.advanced.compaction-checkpoints@1",
+     "operation": "put", "resources": [scoped]},
+]
+automatic["authority"]["operations"] += [
+    "phenix.advanced.compaction-summary@1/summarize",
+    "phenix.advanced.compaction-checkpoints@1/put",
+]
+auto_path = out / "live-automatic-compaction-composition.json"
+auto_path.write_text(json.dumps(automatic))
+auto_db = "live-automatic-compaction.sqlite"
+auto_seed = run(
+    [prompt("seed-one"), prompt("seed-two"), prompt("seed-three")],
+    composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_seed if e["kind"] == "Answer"] == [
+    "fixture:seed-one", "fixture:seed-two", "fixture:seed-three"
+], auto_seed
+auto_events = run(
+    [prompt("auto-compact")], composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_events if e["kind"] == "Answer"] == [
+    "fixture:auto:history:3:compaction:true"
+], auto_events
+with sqlite3.connect(out / auto_db) as connection:
+    checkpoint_rev = connection.execute(
+        "SELECT revision FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()
+    assert checkpoint_rev == (1,), checkpoint_rev
+auto_restart = run(
+    [prompt("auto-compact")], composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_restart if e["kind"] == "Answer"] == [
+    "fixture:auto:history:5:compaction:true"
+], auto_restart
+with sqlite3.connect(out / auto_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "restart must not create a duplicate checkpoint"
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -428,5 +481,7 @@ assert [event["text"] for event in page_continuation if event["kind"] == "Answer
         "corrupt-checkpoint-ledger-denies-without-model-fallback",
         "independent-denial-does-not-change-authoritative-session",
         "multi-page-checkpoint-source-and-live-continuation",
+        "opt-in-selected-summarizer-creates-native-checkpoint-at-pressure",
+        "automatic-cas-creates-one-revision-and-reuses-after-native-restart",
     ],
 }, indent=2, sort_keys=True))
