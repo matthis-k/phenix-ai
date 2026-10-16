@@ -84,6 +84,16 @@ pub fn append_checkpoint(
     Ok(updated)
 }
 
+/// Select only the newest durable linear revision. Never silently use an
+/// earlier checkpoint if the latest source has been deleted or altered.
+pub fn newest_checkpoint<'a>(
+    history: &'a [CompactionCheckpoint],
+    session: &str,
+) -> Result<&'a CompactionCheckpoint, CheckpointStoreProblem> {
+    validate_ledger(history, session)?;
+    history.last().ok_or(CheckpointStoreProblem::NotFound)
+}
+
 pub fn find_checkpoint<'a>(
     history: &'a [CompactionCheckpoint],
     id: &str,
@@ -104,15 +114,15 @@ pub fn find_checkpoint<'a>(
 )]
 mod plugin {
     use super::{
-        append_checkpoint, find_checkpoint, problem, validate_ledger, MAX_JOURNAL_EVENTS,
-        RECORD_KEY,
+        append_checkpoint, find_checkpoint, newest_checkpoint, problem, validate_ledger,
+        MAX_JOURNAL_EVENTS, RECORD_KEY,
     };
     use phenix_advanced_contracts::{
         validate_checkpoint, CheckpointKey, CheckpointStoreError, CheckpointStoreProblem,
         CompactionCheckpoint, CompactionStore,
     };
     use phenix_basic_contracts::{
-        decode, encode, BasicError, ErrorCode, EventJournal, JournalQuery, RecordKey, Storage,
+        decode, encode, BasicError, ErrorCode, EventJournal, JournalQuery, RecordKey, Scope, Storage,
         StorageEdit, StorageTransaction,
     };
     use phenix_p2_compaction_replay::{restore_original_events, ReplayProblem};
@@ -259,6 +269,21 @@ mod plugin {
             )));
         }
         Ok(checkpoint)
+    }
+
+    #[provide(CompactionStore::latest)]
+    fn latest(
+        _: &mut State,
+        host: &Host<'_>,
+        scope: Scope,
+    ) -> CallResult<CompactionCheckpoint, CheckpointStoreError> {
+        let (_, history) = load(host, &scope.session)?;
+        let checkpoint = newest_checkpoint(&history, &scope.session)
+            .map_err(|code| CallError::Domain(problem(code, "no valid latest checkpoint")))?;
+        // A durable metadata record must never remain usable after its source
+        // is erased, altered, or authorization is revoked.
+        verify_journal(host, checkpoint)?;
+        Ok(checkpoint.clone())
     }
 
     #[provide(CompactionStore::get)]
