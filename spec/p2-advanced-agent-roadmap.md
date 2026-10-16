@@ -97,6 +97,21 @@ P2-3l [#923](https://github.com/matthis-k/phenix-ai/pull/923) introduces an opti
 
 P2-3p [#928](https://github.com/matthis-k/phenix-ai/pull/928) joins a source-verified durable checkpoint to its contiguous, authorized Basic journal tail before assembling a typed ModelRequest. The pure verifier checks both the saved source bytes and newer events, then matches the entire result against the authoritative SessionSnapshot. It retains new tool turns exactly, permits summarizing a fully attested older tool turn, and denies missing receipts, incomplete effects, forged arguments and foreign sessions. The derived full-span checkpoint exists only in memory. This slice does not select journal or checkpoint providers, grant source reads, execute the Model, or enable Advanced compaction. Live source admission, ancestor revalidation, output-reserved selected-Model token accounting and crash-safe recovery remain release gates.
 
+P2-3q is a verification-only opt-in for the existing Advanced Model
+adapter. The `Checkpoints` binding selects the canonical `CompactionStore::latest`,
+which rechecks source lineage. The adapter reads a bounded, complete journal
+suffix through its separately granted `Transcript` import, matches the
+checkpoint and live events against the authoritative ModelRequest using
+P2-3p, then meters the exact selected request before upstream Model
+execution. An absent checkpoint forwards the original request; missing
+grants, source changes, missing meter, incomplete pages and misaligned
+history deny before Model execution. The Basic preset is unchanged. The
+existing independent JSONL verifier uses real SQLite and a native checkpoint
+writer to require the selected Model to receive the cited, compacted history.
+This does not enable automatic checkpoint creation, dynamic model policy,
+crash-atomic journal/session reconciliation or production HTTP tokenization.
+P2-3 remains unaccepted.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
