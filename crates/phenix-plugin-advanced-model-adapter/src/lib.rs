@@ -30,18 +30,18 @@
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore,
-        ModelTokenMeter, ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore, ModelTokenMeter,
+        ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
         Message, Model, ModelReply, ModelRequest, Role, Scope,
     };
+    use phenix_p2_compaction_replay::assemble_verified_tail_request;
     use phenix_sdk::{
         CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
         PendingResult,
     };
-    use phenix_p2_compaction_replay::assemble_verified_tail_request;
 
     #[derive(Default)]
     pub struct State {
@@ -115,7 +115,10 @@ mod plugin {
     /// through the selected checkpoint provider. The selected journal supplies
     /// exact source bytes and the suffix through the current ModelStarted.
     /// The returned request is what the selected token meter and Model see.
-    fn prepare_request(host: &Host<'_>, source: &ModelRequest) -> CallResult<ModelRequest, BasicError> {
+    fn prepare_request(
+        host: &Host<'_>,
+        source: &ModelRequest,
+    ) -> CallResult<ModelRequest, BasicError> {
         if host.slot_count("Checkpoints").map_err(CallError::Kernel)? == 0 {
             return Ok(source.clone());
         }
@@ -134,7 +137,9 @@ mod plugin {
             },
         ) {
             Ok(checkpoint) => checkpoint,
-            Err(CallError::Domain(failure)) if failure.problem == CheckpointStoreProblem::NotFound => {
+            Err(CallError::Domain(failure))
+                if failure.problem == CheckpointStoreProblem::NotFound =>
+            {
                 return Ok(source.clone());
             }
             Err(CallError::Domain(_)) => {
@@ -150,9 +155,16 @@ mod plugin {
             "Transcript",
             &JournalQuery {
                 session: source.session.clone(),
-                after: checkpoint.input.first_sequence.checked_sub(1).ok_or_else(|| {
-                    CallError::Domain(error(ErrorCode::InvalidReply, "invalid checkpoint start"))
-                })?,
+                after: checkpoint
+                    .input
+                    .first_sequence
+                    .checked_sub(1)
+                    .ok_or_else(|| {
+                        CallError::Domain(error(
+                            ErrorCode::InvalidReply,
+                            "invalid checkpoint start",
+                        ))
+                    })?,
                 limit: MAX_READ_EVENTS,
             },
         )?;
@@ -171,24 +183,28 @@ mod plugin {
             .checked_sub(checkpoint.input.first_sequence)
             .and_then(|difference| difference.checked_add(1))
             .and_then(|count| usize::try_from(count).ok())
-            .ok_or_else(|| CallError::Domain(error(
-                ErrorCode::InvalidReply,
-                "invalid checkpoint source count",
-            )))?;
-        let (original, appended) = page.events.split_at_checked(original_count).ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::InvalidReply, "checkpoint source events missing"))
-        })?;
-        assemble_verified_tail_request(
-            source,
-            &checkpoint,
-            original,
-            appended,
-            8 * 1024 * 1024,
-        )
-        .map_err(|_| CallError::Domain(error(
-            ErrorCode::InvalidReply,
-            "compaction source history did not match the authoritative session",
-        )))
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "invalid checkpoint source count",
+                ))
+            })?;
+        let (original, appended) =
+            page.events
+                .split_at_checked(original_count)
+                .ok_or_else(|| {
+                    CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "checkpoint source events missing",
+                    ))
+                })?;
+        assemble_verified_tail_request(source, &checkpoint, original, appended, 8 * 1024 * 1024)
+            .map_err(|_| {
+                CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "compaction source history did not match the authoritative session",
+                ))
+            })
     }
 
     fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
