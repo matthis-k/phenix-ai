@@ -1,11 +1,7 @@
 //! P2-3w RED: a checkpoint candidate is not Model admission until the exact
 //! source-rebuilt request has been metered by the same selected Model.
-use phenix_advanced_contracts::{
-    model_request_sha256, ModelTokenMeasurement, ModelTokenProblem,
-};
-use phenix_basic_contracts::{
-    ContextItem, Event, EventKind, Limits, Message, ModelRequest, Role,
-};
+use phenix_advanced_contracts::{model_request_sha256, ModelTokenMeasurement, ModelTokenProblem};
+use phenix_basic_contracts::{ContextItem, Event, EventKind, Limits, Message, ModelRequest, Role};
 use phenix_p2_compaction_replay::{
     plan_verified_checkpoint, remeasure_verified_checkpoint, CheckpointPlan,
     CompactedAdmissionProblem, PressureProblem,
@@ -284,6 +280,8 @@ fn selected_meter_failure_is_not_interpreted_as_token_capacity() {
     );
     assert_eq!(
         result,
-        Err(CompactedAdmissionProblem::Meter("selected meter unavailable"))
+        Err(CompactedAdmissionProblem::Meter(
+            "selected meter unavailable"
+        ))
     );
 }
