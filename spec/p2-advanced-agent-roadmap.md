@@ -212,6 +212,21 @@ summarizer, pressure trigger, source reads, commit and downstream Model call
 remain graph responsibilities; this reusable publication guard is not itself
 the automatic graph contribution.
 
+P2-3z composes the accepted selected-pressure decision, structurally
+verified journal checkpoint planner, source-validated CompactionStore CAS
+publication and exact compacted Model-request remeasurement into one
+graph-callable pre-Model transaction. When the original fits comfortably,
+it makes no store write or second meter call. At a threshold with no
+eligible completed prefix, it keeps the original. An over-window original
+without a safe prefix is denied. A candidate can reach Model admission
+only after a selected-store CAS/readback and exact remeasurement under
+the same pinned Model configuration. The transaction performs no Model or
+tool execution. A committed checkpoint remains durable if later metering
+fails, but no prohibited fallback to over-window original occurs.
+Deterministic tests cover all paths. The real graph contribution, selected
+summary quality, provider wiring and native live acceptance for automatic
+checkpoint creation remain open.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
