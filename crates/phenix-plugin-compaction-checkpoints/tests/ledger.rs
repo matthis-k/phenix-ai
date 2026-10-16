@@ -1,7 +1,9 @@
 //! RED P2-3c: append-only checkpoint metadata with one Storage CAS per
 //! successful revision. Journal source bytes are never replicated here.
 use phenix_advanced_contracts::{CheckpointStoreProblem, CompactionCheckpoint, JournalSpan};
-use phenix_plugin_compaction_checkpoints::{append_checkpoint, find_checkpoint, validate_ledger};
+use phenix_plugin_compaction_checkpoints::{
+    append_checkpoint, find_checkpoint, newest_checkpoint, validate_ledger,
+};
 
 fn checkpoint(id: &str, revision: u64, parent: Option<&str>) -> CompactionCheckpoint {
     let span = JournalSpan {
@@ -111,4 +113,27 @@ fn metadata_only_does_not_contain_original_event_bytes() {
         .0
         .windows(original.len())
         .any(|data| data == original));
+}
+
+#[test]
+fn latest_checkpoint_is_monotone_and_session_scoped() {
+    assert_eq!(
+        newest_checkpoint(&[], "s1"),
+        Err(CheckpointStoreProblem::NotFound),
+    );
+    let one = append_checkpoint(&[], &checkpoint("cp1", 1, None), "s1").unwrap();
+    assert_eq!(newest_checkpoint(&one, "s1").unwrap().id, "cp1");
+    let two = append_checkpoint(&one, &checkpoint("cp2", 2, Some("cp1")), "s1").unwrap();
+    assert_eq!(newest_checkpoint(&two, "s1").unwrap().id, "cp2");
+    assert_eq!(newest_checkpoint(&two, "s1").unwrap().revision, 2);
+    assert_eq!(
+        newest_checkpoint(&two, "s2"),
+        Err(CheckpointStoreProblem::StorageFailed),
+    );
+    let mut corrupt = two;
+    corrupt[1].parent_checkpoint = Some("forked".into());
+    assert_eq!(
+        newest_checkpoint(&corrupt, "s1"),
+        Err(CheckpointStoreProblem::StorageFailed),
+    );
 }
