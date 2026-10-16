@@ -10,6 +10,11 @@
 #[phenix_sdk::plugin(
     id = "phenix.advanced.model-adapter",
     version = "1.0.0",
+    // M1 intermediate providers need an explicit *ceiling* for descendant
+    // Model streaming: Journal::append delegates to Storage::transact.
+    // These definitions grant no binding or independent effect.
+    define(phenix_basic_contracts::EventJournal),
+    define(phenix_basic_contracts::Storage),
     provide(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::Model, slot = "Upstream")
 )]
