@@ -185,7 +185,7 @@ fn zero_budget_and_bytes_cap_cannot_be_treated_as_token_estimates() {
     let events = journal();
     let cp = checkpoint(&events, "cp1", 1, None, "summary");
     let zero = select_model_view(
-        &[cp.clone()],
+        std::slice::from_ref(&cp),
         &events,
         4096,
         0,
