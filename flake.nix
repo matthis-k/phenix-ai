@@ -801,6 +801,14 @@
             operation = "complete";
             resources = [ "phenix.session.s1" ];
           }
+          # Explicitly preserve the Basic agent's journal capability through
+          # the Model decorator, so a selected streaming Model provider may
+          # emit authorized TextDelta events without an independent root.
+          { caller = "phenix.advanced.model-adapter";
+            interface = "phenix.basic.journal@1";
+            operation = "append";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "root";
             interface = "phenix.advanced.compaction-checkpoints@1";
             operation = "put";
