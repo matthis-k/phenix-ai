@@ -65,6 +65,18 @@ Model execution, in addition to unchanged missing-grant/stale-digest and
 recovery coverage. This does not itself provide an HTTP tokenizer or permit
 compacted request submission. Exact-head CI and P1 parity remain mandatory.
 
+P2-3n (tool-history retention) extends the existing pure, source-verified
+ModelRequest assembler. It may summarize older text-only turns while keeping
+complete newer tool-bearing turns byte-for-byte from the authoritative
+SessionSnapshot. Journal ToolStarted/ToolFinished records must match call IDs,
+tool names, output text and failure status in order. A pending Model
+continuation after tool results remains supported. Legacy journal records
+lack tool-call arguments and the assistant's tool-call text, so any attempt
+to summarize or partly elide a tool-bearing turn fails closed. Neither
+Basic's journal schema nor its loop changes. This is a nonexecuting
+verification stage; actual Advanced graph compaction and independent full
+tool-message source provenance remain separate release gates.
+
 P2-3l [#923](https://github.com/matthis-k/phenix-ai/pull/923) introduces an optional selected-meter preflight in the existing Advanced Model adapter. An explicitly metered verification composition binds `Upstream` and `Meter` to the same model provider, reserves the caller's full remaining output-token cap, verifies the original typed request digest and rejects invalid measurements before starting Model execution. A test-only stale digest causes a real JSONL Model turn to fail; later turns still run. The public Basic and default Advanced presets remain unmetered pass-through. Model name strings are not proof of same-provider selection: this slice verifies co-binding in the packaged composition, while general user-authored composition enforcement, real HTTP provider tokenization, tool-message lineage, source-backed view admission and complete P2-3 acceptance remain open.
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.

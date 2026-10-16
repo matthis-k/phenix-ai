@@ -2,12 +2,16 @@
 //! SessionSnapshot messages to live EventJournal before eliding old turns.
 //!
 //! EventJournal is *not* a complete Model transcript: tool arguments and some
-//! assistant messages exist only in SessionSnapshot. Tool-bearing histories
-//! therefore fail closed until explicit message-to-source lineage is available.
+//! assistant messages exist only in SessionSnapshot. Tool-bearing history may be retained byte-for-byte from SessionSnapshot only
+//! after its call IDs, selected tool names and results align with EventJournal.
+//! Tool arguments and assistant tool-call text are absent from legacy journal
+//! events, so those turns must never be summarized or reconstructed.
 use crate::{compacted_view, span_for_events, ContextPart, ContextProjection};
 use phenix_advanced_contracts::CompactionCheckpoint;
-use phenix_basic_contracts::{ContextItem, Event, EventKind, Message, ModelRequest, Role};
-use std::collections::BTreeSet;
+use phenix_basic_contracts::{
+    decode, ContextItem, Event, EventKind, Message, ModelRequest, Role, ToolCompletion,
+};
+use std::collections::{BTreeSet, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptProblem {
@@ -27,7 +31,8 @@ pub enum TranscriptProblem {
 /// submit the returned request to the same selected Model adapter.
 ///
 /// Does *not* modify the Basic session or journal. Never fabricate a missing
-/// Model message from journal records. Non-text/tool histories are rejected.
+/// Model message from journal records. Tool transactions are kept intact,
+/// matched to journal call/result events, and never elided.
 pub fn assemble_verified_basic_request(
     authoritative: &ModelRequest,
     journal: &[Event],
@@ -51,17 +56,20 @@ pub fn assemble_verified_basic_request(
     if &verified != view {
         return Err(TranscriptProblem::UnalignedSource);
     }
-    if authoritative.history.iter().any(|message| {
-        message.role == Role::Tool
-            || !message.calls.is_empty()
-            || !message.call_id.is_empty()
-            || message.error.is_some()
-    }) || journal
+    let message_tools = authoritative.history.iter().any(|message| {
+        message.role == Role::Tool || !message.calls.is_empty() || !message.call_id.is_empty()
+    });
+    let journal_tools = journal
         .iter()
-        .any(|event| matches!(event.kind, EventKind::ToolStarted | EventKind::ToolFinished))
-    {
+        .any(|event| matches!(event.kind, EventKind::ToolStarted | EventKind::ToolFinished));
+    if message_tools != journal_tools {
         return Err(TranscriptProblem::UnsupportedToolHistory);
     }
+    let tool_runs: BTreeSet<&str> = journal
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::ToolStarted | EventKind::ToolFinished))
+        .map(|event| event.run.as_str())
+        .collect();
 
     let mut retained_sequences = BTreeSet::new();
     let mut summary = None;
@@ -89,52 +97,182 @@ pub fn assemble_verified_basic_request(
     let mut retained_history = Vec::<Message>::new();
     let mut matched = 0usize;
     let mut pending_prompt: Option<bool> = None;
+    let mut current_run: Option<&str> = None;
+    let mut queued_calls = VecDeque::new();
+    let mut active_tool: Option<String> = None;
+    let mut seen_ids = BTreeSet::new();
     for event in journal {
-        let role = match event.kind {
-            EventKind::PromptAccepted => Role::User,
-            EventKind::Answer => Role::Assistant,
-            _ => continue,
-        };
-        let message = authoritative
-            .history
-            .get(matched)
-            .ok_or(TranscriptProblem::UnalignedHistory)?;
-        if message.role != role || message.text != event.text {
-            return Err(TranscriptProblem::UnalignedHistory);
-        }
         let retained = retained_sequences.contains(&event.sequence);
-        match role {
-            Role::User => {
-                if pending_prompt.is_some() {
+        // Keep *every* journal event of a tool-bearing run, not merely the
+        // ToolStarted/ToolFinished pair. Otherwise a checkpoint could remove
+        // intermediate ModelStarted/TextDelta records without being noticed.
+        if tool_runs.contains(event.run.as_str()) && !retained {
+            return Err(TranscriptProblem::UnsupportedToolHistory);
+        }
+        match event.kind {
+            EventKind::PromptAccepted => {
+                if pending_prompt.is_some() || active_tool.is_some() || !queued_calls.is_empty() {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                let message = authoritative
+                    .history
+                    .get(matched)
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                if message.role != Role::User
+                    || message.text != event.text
+                    || !message.calls.is_empty()
+                    || !message.call_id.is_empty()
+                    || message.error.is_some()
+                {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
                 pending_prompt = Some(retained);
+                current_run = Some(&event.run);
+                seen_ids.clear();
+                if retained {
+                    retained_history.push(message.clone());
+                }
+                matched += 1;
             }
-            Role::Assistant => {
+            _ if pending_prompt.is_some() && current_run != Some(event.run.as_str()) => {
+                return Err(TranscriptProblem::UnalignedHistory);
+            }
+            EventKind::ToolStarted => {
+                // The old journal does not contain tool arguments or assistant
+                // text. Source-backed summarization of any such turn is unsafe.
+                if pending_prompt != Some(true) || !retained || active_tool.is_some() {
+                    return Err(TranscriptProblem::UnsupportedToolHistory);
+                }
+                if queued_calls.is_empty() {
+                    let assistant = authoritative
+                        .history
+                        .get(matched)
+                        .ok_or(TranscriptProblem::UnalignedHistory)?;
+                    if assistant.role != Role::Assistant
+                        || assistant.calls.is_empty()
+                        || !assistant.call_id.is_empty()
+                        || assistant.error.is_some()
+                        || assistant
+                            .calls
+                            .iter()
+                            .any(|call| call.id.is_empty() || !seen_ids.insert(call.id.clone()))
+                    {
+                        return Err(TranscriptProblem::UnalignedHistory);
+                    }
+                    queued_calls.extend(assistant.calls.iter().cloned());
+                    retained_history.push(assistant.clone());
+                    matched += 1;
+                }
+                let call = queued_calls
+                    .pop_front()
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                if call.id != event.call_id || call.tool != event.text {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                active_tool = Some(call.id);
+            }
+            EventKind::ToolFinished => {
+                if pending_prompt != Some(true) || !retained {
+                    return Err(TranscriptProblem::UnsupportedToolHistory);
+                }
+                let id = active_tool
+                    .take()
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                let message = authoritative
+                    .history
+                    .get(matched)
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                if message.role != Role::Tool
+                    || message.call_id != id
+                    || event.call_id != id
+                    || !message.calls.is_empty()
+                {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                let failed = if event.data.0.is_empty() {
+                    false // Pre-payload journal entries represent success.
+                } else {
+                    decode::<ToolCompletion>(&event.data)
+                        .map_err(|_| TranscriptProblem::UnalignedSource)?
+                        .failed
+                };
+                if failed {
+                    if !message.text.is_empty()
+                        || message.error.as_deref() != Some(event.text.as_str())
+                    {
+                        return Err(TranscriptProblem::UnalignedHistory);
+                    }
+                } else if message.text != event.text || message.error.is_some() {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                retained_history.push(message.clone());
+                matched += 1;
+            }
+            EventKind::Answer => {
                 let Some(user_retained) = pending_prompt.take() else {
                     return Err(TranscriptProblem::UnalignedHistory);
                 };
                 if user_retained != retained {
                     return Err(TranscriptProblem::SplitTurn);
                 }
+                if active_tool.is_some() || !queued_calls.is_empty() {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                let message = authoritative
+                    .history
+                    .get(matched)
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                if message.role != Role::Assistant
+                    || message.text != event.text
+                    || !message.calls.is_empty()
+                    || !message.call_id.is_empty()
+                    || message.error.is_some()
+                {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                if retained {
+                    retained_history.push(message.clone());
+                }
+                matched += 1;
+                current_run = None;
             }
-            Role::Tool => unreachable!("tool messages rejected above"),
+            EventKind::ModelStarted | EventKind::TextDelta => {
+                if pending_prompt.is_none() {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+            }
+            // Failed/incomplete historical turns are not valid compacted
+            // conversation history. Require complete journal+snapshot turns.
+            EventKind::Failure | EventKind::Cancelled | EventKind::AssistantReply => {
+                return Err(TranscriptProblem::UnalignedHistory);
+            }
         }
-        if retained {
-            retained_history.push(message.clone());
-        }
-        matched += 1;
     }
     if matched != authoritative.history.len() {
         return Err(TranscriptProblem::UnalignedHistory);
     }
+    if current_run != Some(authoritative.run.as_str()) {
+        return Err(TranscriptProblem::UnalignedHistory);
+    }
     if pending_prompt != Some(true)
+        || active_tool.is_some()
+        || !queued_calls.is_empty()
         || retained_history
             .last()
-            .is_none_or(|msg| msg.role != Role::User)
+            .is_none_or(|msg| msg.role != Role::User && msg.role != Role::Tool)
     {
-        // Only the in-progress current user prompt may end without an Answer.
-        // It must not disappear behind a compacted or excluded range.
+        return Err(TranscriptProblem::MissingCurrentPrompt);
+    }
+    // A Model continuation after a tool result legitimately has no final
+    // Answer yet. Its last journal record must be a new ModelStarted for the
+    // same run, and the complete tool transaction remains in the request.
+    if retained_history
+        .last()
+        .is_some_and(|msg| msg.role == Role::Tool)
+        && journal
+            .last()
+            .is_none_or(|event| event.kind != EventKind::ModelStarted)
+    {
         return Err(TranscriptProblem::MissingCurrentPrompt);
     }
     let mut request = authoritative.clone();
