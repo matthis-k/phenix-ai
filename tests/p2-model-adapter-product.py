@@ -31,8 +31,10 @@ assert bound(advanced, adapter, "Upstream") == "phenix.model.scripted"
 assert bound(verify, adapter, "Upstream") == "phenix.model.history-test"
 assert advanced["grants"] == verify["grants"]
 assert advanced["authority"] == verify["authority"]
-assert any(adapter in str(x) for x in advanced["artifacts"])
-assert not any(adapter in str(x) for x in basic["artifacts"])
+assert any("phenix-plugin-advanced-model-adapter" in str(x)
+           for x in advanced["artifacts"])
+assert not any("phenix-plugin-advanced-model-adapter" in str(x)
+               for x in basic["artifacts"])
 
 def run(binary, db, prompts):
     env = dict(os.environ)
