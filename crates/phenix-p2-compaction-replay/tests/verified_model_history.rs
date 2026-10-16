@@ -85,9 +85,10 @@ fn original_request() -> ModelRequest {
 #[test]
 fn compacts_only_verified_prefix_and_preserves_complete_model_request_fields() {
     let events = source();
-    let view = compacted_view(&checkpoint(&events), &events, 4096).unwrap();
+    let cp = checkpoint(&events);
+    let view = compacted_view(&cp, &events, 4096).unwrap();
     let full = original_request();
-    let actual = assemble_verified_basic_request(&full, &events, &view).unwrap();
+    let actual = assemble_verified_basic_request(&full, &events, &cp, &view).unwrap();
     assert_eq!(actual.history, full.history[2..]);
     assert_eq!(actual.context[0], full.context[0]);
     assert_eq!(actual.context[1].id, "compaction:cp-1");
@@ -107,23 +108,24 @@ fn compacts_only_verified_prefix_and_preserves_complete_model_request_fields() {
 #[test]
 fn mismatch_or_missing_session_message_fails_before_model_submission() {
     let events = source();
-    let view = compacted_view(&checkpoint(&events), &events, 4096).unwrap();
+    let cp = checkpoint(&events);
+    let view = compacted_view(&cp, &events, 4096).unwrap();
     let mut forged = original_request();
     forged.history[1].text = "rewritten answer".into();
     assert_eq!(
-        assemble_verified_basic_request(&forged, &events, &view),
+        assemble_verified_basic_request(&forged, &events, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
     );
     forged = original_request();
     forged.history.remove(0);
     assert_eq!(
-        assemble_verified_basic_request(&forged, &events, &view),
+        assemble_verified_basic_request(&forged, &events, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
     );
     forged = original_request();
     forged.session = "other".into();
     assert_eq!(
-        assemble_verified_basic_request(&forged, &events, &view),
+        assemble_verified_basic_request(&forged, &events, &cp, &view),
         Err(TranscriptProblem::WrongSession),
     );
 }
@@ -131,7 +133,8 @@ fn mismatch_or_missing_session_message_fails_before_model_submission() {
 #[test]
 fn tool_calls_are_not_reconstructed_from_incomplete_journal_events() {
     let events = source();
-    let view = compacted_view(&checkpoint(&events), &events, 4096).unwrap();
+    let cp = checkpoint(&events);
+    let view = compacted_view(&cp, &events, 4096).unwrap();
     let mut tools = original_request();
     tools.history[3].calls.push(ToolCall {
         id: "t1".into(),
@@ -139,13 +142,18 @@ fn tool_calls_are_not_reconstructed_from_incomplete_journal_events() {
         arguments: r#""secret argument""#.into(),
     });
     assert_eq!(
-        assemble_verified_basic_request(&tools, &events, &view),
+        assemble_verified_basic_request(&tools, &events, &cp, &view),
         Err(TranscriptProblem::UnsupportedToolHistory),
     );
     let mut recorded_tool = events.clone();
+    recorded_tool[2].kind = EventKind::ToolStarted;
+    recorded_tool[2].call_id = "t1".into();
     recorded_tool[3].kind = EventKind::ToolFinished;
+    recorded_tool[3].call_id = "t1".into();
+    let tool_cp = checkpoint(&recorded_tool);
+    let tool_view = compacted_view(&tool_cp, &recorded_tool, 4096).unwrap();
     assert_eq!(
-        assemble_verified_basic_request(&original_request(), &recorded_tool, &view),
+        assemble_verified_basic_request(&original_request(), &recorded_tool, &tool_cp, &tool_view),
         Err(TranscriptProblem::UnsupportedToolHistory),
     );
 }
@@ -158,7 +166,7 @@ fn splitting_a_completed_user_answer_turn_fails_closed() {
     cp.retained = vec![span_for_events(&events[1..]).unwrap()];
     let view = compacted_view(&cp, &events, 4096).unwrap();
     assert_eq!(
-        assemble_verified_basic_request(&original_request(), &events, &view),
+        assemble_verified_basic_request(&original_request(), &events, &cp, &view),
         Err(TranscriptProblem::SplitTurn),
     );
 }
@@ -166,20 +174,21 @@ fn splitting_a_completed_user_answer_turn_fails_closed() {
 #[test]
 fn cannot_override_existing_context_id_or_omit_current_prompt() {
     let events = source();
-    let view = compacted_view(&checkpoint(&events), &events, 4096).unwrap();
+    let cp = checkpoint(&events);
+    let view = compacted_view(&cp, &events, 4096).unwrap();
     let mut request = original_request();
     request.context.push(ContextItem {
         id: "compaction:cp-1".into(),
         text: "forged prior summary".into(),
     });
     assert_eq!(
-        assemble_verified_basic_request(&request, &events, &view),
+        assemble_verified_basic_request(&request, &events, &cp, &view),
         Err(TranscriptProblem::ContextConflict),
     );
     let mut source_only_old = original_request();
     source_only_old.history.truncate(4);
     assert_eq!(
-        assemble_verified_basic_request(&source_only_old, &events, &view),
+        assemble_verified_basic_request(&source_only_old, &events, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
     );
 }
@@ -190,8 +199,8 @@ fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit
     let cp = checkpoint(&events);
     let authoritative = original_request();
     let selected = select_model_view(
-        &[cp], &events, 4096, 150,
-        |view| assemble_verified_basic_request(&authoritative, &events, view),
+        &[cp.clone()], &events, 4096, 150,
+        |view| assemble_verified_basic_request(&authoritative, &events, &cp, view),
         |request| {
             // The provider receives the full exact request, not a journal
             // reconstruction. Tool definitions, context, and session history
@@ -206,4 +215,20 @@ fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit
     assert_eq!(selected.request.history.len(), 3);
     assert_eq!(selected.view.checkpoint_id, "cp-1");
     assert_eq!(authoritative.history.len(), 5);
+}
+
+#[test]
+fn forged_projection_cannot_inject_uncited_model_context() {
+    let events = source();
+    let cp = checkpoint(&events);
+    let mut view = compacted_view(&cp, &events, 4096).unwrap();
+    if let phenix_p2_compaction_replay::ContextPart::Summary { text, .. } = &mut view.parts[0] {
+        *text = "unsupported fabricated memory".into();
+    } else {
+        panic!("expected prefix summary");
+    }
+    assert_eq!(
+        assemble_verified_basic_request(&original_request(), &events, &cp, &view),
+        Err(TranscriptProblem::UnalignedSource),
+    );
 }
