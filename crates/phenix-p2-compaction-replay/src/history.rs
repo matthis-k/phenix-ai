@@ -5,13 +5,14 @@
 //! assistant messages exist only in SessionSnapshot. Tool-bearing history may be retained byte-for-byte from SessionSnapshot only
 //! after its call IDs, selected tool names and results align with EventJournal.
 //! Tool arguments and assistant tool-call text are absent from legacy journal
-//! events, so those turns must never be summarized or reconstructed.
+//! events. Only new typed AssistantReply receipts allow that older tool turn
+//! to be summarized; legacy tool-bearing turns must remain fully retained.
 use crate::{compacted_view, span_for_events, ContextPart, ContextProjection};
 use phenix_advanced_contracts::CompactionCheckpoint;
 use phenix_basic_contracts::{
     decode, ContextItem, Event, EventKind, Message, ModelRequest, Role, ToolCompletion,
 };
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptProblem {
@@ -31,8 +32,9 @@ pub enum TranscriptProblem {
 /// submit the returned request to the same selected Model adapter.
 ///
 /// Does *not* modify the Basic session or journal. Never fabricate a missing
-/// Model message from journal records. Tool transactions are kept intact,
-/// matched to journal call/result events, and never elided.
+/// Model message from journal records. Tool transactions may be elided only
+/// when every assistant call is independently journaled with its exact typed
+/// Message, matched to tool start/completion events and source-verified.
 pub fn assemble_verified_basic_request(
     authoritative: &ModelRequest,
     journal: &[Event],
@@ -94,6 +96,7 @@ pub fn assemble_verified_basic_request(
         }
     }
 
+    let mut tool_run_visibility: BTreeMap<&str, bool> = BTreeMap::new();
     let mut retained_history = Vec::<Message>::new();
     let mut matched = 0usize;
     let mut pending_prompt: Option<bool> = None;
@@ -103,11 +106,22 @@ pub fn assemble_verified_basic_request(
     let mut seen_ids = BTreeSet::new();
     for event in journal {
         let retained = retained_sequences.contains(&event.sequence);
-        // Keep *every* journal event of a tool-bearing run, not merely the
-        // ToolStarted/ToolFinished pair. Otherwise a checkpoint could remove
-        // intermediate ModelStarted/TextDelta records without being noticed.
-        if tool_runs.contains(event.run.as_str()) && !retained {
-            return Err(TranscriptProblem::UnsupportedToolHistory);
+        // A tool-bearing run must occupy one complete retained or summarized
+        // span. Exclusion or a mixed visibility would drop source messages.
+        // Eliding a tool run is permitted only if each Model tool-call reply
+        // has an exact, separately journaled AssistantReply receipt below.
+        if tool_runs.contains(event.run.as_str()) {
+            let summarized = checkpoint.summarized.iter().any(|span| {
+                span.first_sequence <= event.sequence && event.sequence <= span.last_sequence
+            });
+            if !retained && !summarized {
+                return Err(TranscriptProblem::UnsupportedToolHistory);
+            }
+            if let Some(previous) = tool_run_visibility.insert(event.run.as_str(), retained) {
+                if previous != retained {
+                    return Err(TranscriptProblem::SplitTurn);
+                }
+            }
         }
         match event.kind {
             EventKind::PromptAccepted => {
@@ -137,13 +151,52 @@ pub fn assemble_verified_basic_request(
             _ if pending_prompt.is_some() && current_run != Some(event.run.as_str()) => {
                 return Err(TranscriptProblem::UnalignedHistory);
             }
+            EventKind::AssistantReply => {
+                // The optional Advanced journal receipt contains the exact
+                // assistant message, including every tool name and argument.
+                // It is verified against independently persisted Session
+                // history and immutable source event bytes before elision.
+                if pending_prompt != Some(retained)
+                    || active_tool.is_some()
+                    || !queued_calls.is_empty()
+                {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                let receipt = decode::<Message>(&event.data)
+                    .map_err(|_| TranscriptProblem::UnalignedSource)?;
+                let assistant = authoritative
+                    .history
+                    .get(matched)
+                    .ok_or(TranscriptProblem::UnalignedHistory)?;
+                if receipt != *assistant
+                    || receipt.role != Role::Assistant
+                    || receipt.text != event.text
+                    || receipt.calls.is_empty()
+                    || !receipt.call_id.is_empty()
+                    || receipt.error.is_some()
+                    || receipt
+                        .calls
+                        .iter()
+                        .any(|call| call.id.is_empty() || !seen_ids.insert(call.id.clone()))
+                {
+                    return Err(TranscriptProblem::UnalignedHistory);
+                }
+                queued_calls.extend(receipt.calls);
+                if retained {
+                    retained_history.push(assistant.clone());
+                }
+                matched += 1;
+            }
             EventKind::ToolStarted => {
-                // The old journal does not contain tool arguments or assistant
-                // text. Source-backed summarization of any such turn is unsafe.
-                if pending_prompt != Some(true) || !retained || active_tool.is_some() {
+                if pending_prompt != Some(retained) || active_tool.is_some() {
                     return Err(TranscriptProblem::UnsupportedToolHistory);
                 }
                 if queued_calls.is_empty() {
+                    // Legacy journals have no arguments. Such a reply may
+                    // remain visible, but can never be placed in a summary.
+                    if !retained {
+                        return Err(TranscriptProblem::UnsupportedToolHistory);
+                    }
                     let assistant = authoritative
                         .history
                         .get(matched)
@@ -172,7 +225,7 @@ pub fn assemble_verified_basic_request(
                 active_tool = Some(call.id);
             }
             EventKind::ToolFinished => {
-                if pending_prompt != Some(true) || !retained {
+                if pending_prompt != Some(retained) {
                     return Err(TranscriptProblem::UnsupportedToolHistory);
                 }
                 let id = active_tool
@@ -205,7 +258,9 @@ pub fn assemble_verified_basic_request(
                 } else if message.text != event.text || message.error.is_some() {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
-                retained_history.push(message.clone());
+                if retained {
+                    retained_history.push(message.clone());
+                }
                 matched += 1;
             }
             EventKind::Answer => {
@@ -243,7 +298,7 @@ pub fn assemble_verified_basic_request(
             }
             // Failed/incomplete historical turns are not valid compacted
             // conversation history. Require complete journal+snapshot turns.
-            EventKind::Failure | EventKind::Cancelled | EventKind::AssistantReply => {
+            EventKind::Failure | EventKind::Cancelled => {
                 return Err(TranscriptProblem::UnalignedHistory);
             }
         }
