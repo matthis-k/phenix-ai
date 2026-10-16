@@ -143,6 +143,19 @@ graph still owns token thresholds, authorized journal reads, selected
 summarization, checkpoint-store CAS and publication. This slice neither
 performs a Model request nor creates durable checkpoints on its own.
 
+P2-3u reuses the canonical ModelTokenMeasurement verifier to classify
+context pressure using a caller-selected high-water percentage and the
+output reserve in the *exact* authoritative ModelRequest. The selected
+Model/ModelTokenMeter provider co-binding remains an authenticated host
+selection check, not a model-name claim. Valid measurements below the
+threshold take no action; approaching the window triggers graph-owned
+checkpoint policy, and a validated over-context-window request requires
+compaction or explicit denial before Model execution. Changed request
+digests, missing output reserve and mismatched selected model identities
+deny; u128 arithmetic prevents token/percentage overflow. This policy
+only classifies and does not automatically summarize, commit, grant
+journal reads or execute a Model. The Advanced graph must integrate it.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
