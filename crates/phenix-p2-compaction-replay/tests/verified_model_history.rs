@@ -199,7 +199,10 @@ fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit
     let cp = checkpoint(&events);
     let authoritative = original_request();
     let selected = select_model_view(
-        &[cp.clone()], &events, 4096, 150,
+        &[cp.clone()],
+        &events,
+        4096,
+        150,
         |view| assemble_verified_basic_request(&authoritative, &events, &cp, view),
         |request| {
             // The provider receives the full exact request, not a journal
@@ -210,7 +213,8 @@ fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit
             assert_eq!(request.context.len(), 2);
             Ok::<_, TranscriptProblem>(120)
         },
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(selected.model_input_tokens, 120);
     assert_eq!(selected.request.history.len(), 3);
     assert_eq!(selected.view.checkpoint_id, "cp-1");
