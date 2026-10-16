@@ -169,6 +169,20 @@ the summarizer, authorize journal and store access, commit with CAS and
 remeasure the rebuilt request through the same selected Model before execution.
 It cannot fall back to an over-window original after a failed compaction.
 
+P2-3w provides an exact-request admission check after a checkpoint
+candidate is selected. The pure verifier recreates the complete ModelRequest
+from the authoritative Basic SessionSnapshot and source-checked journal,
+retains the original nonhistory fields and context, then invokes the selected
+Model's meter on that exact rebuilt request. A candidate is accepted only if
+its measured input plus the original full output reserve fits the selected
+context window. Changed request digest, missing journal bytes, changed Model
+identity, tokenizer revision or context window, and provider failure reject
+before any upstream Model call. The original can be over budget only while
+proposing compaction; a derived over-budget request never reaches the Model.
+This helper neither commits a checkpoint nor authenticates provider co-binding.
+The Advanced graph still owns selected journal access, summarizer, CAS commit,
+provider generation and Model execution. P2-3 release remains unaccepted.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
