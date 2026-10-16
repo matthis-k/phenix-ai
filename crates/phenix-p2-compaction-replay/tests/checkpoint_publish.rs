@@ -1,9 +1,7 @@
 //! P2-3y RED: publish only source-backed CAS checkpoints, without a second
 //! scheduler. The caller's selected CompactionStore authenticates source bytes.
 use phenix_advanced_contracts::{CompactionCheckpoint, JournalSpan};
-use phenix_p2_compaction_replay::{
-    publish_verified_checkpoint, CheckpointPublishProblem,
-};
+use phenix_p2_compaction_replay::{publish_verified_checkpoint, CheckpointPublishProblem};
 use std::cell::{Cell, RefCell};
 
 fn span(first: u64, last: u64) -> JournalSpan {
@@ -158,7 +156,10 @@ fn invalid_candidate_and_failed_store_reads_fail_closed_without_writes() {
             Ok::<_, &'static str>(next.clone())
         },
     );
-    assert!(matches!(invalid, Err(CheckpointPublishProblem::InvalidCandidate(_))));
+    assert!(matches!(
+        invalid,
+        Err(CheckpointPublishProblem::InvalidCandidate(_))
+    ));
     assert_eq!(reads.get(), 0);
     assert_eq!(writes.get(), 0);
 
@@ -171,6 +172,11 @@ fn invalid_candidate_and_failed_store_reads_fail_closed_without_writes() {
             Ok::<_, &'static str>(valid.clone())
         },
     );
-    assert_eq!(denied, Err(CheckpointPublishProblem::Store("selected store unavailable")));
+    assert_eq!(
+        denied,
+        Err(CheckpointPublishProblem::Store(
+            "selected store unavailable"
+        ))
+    );
     assert_eq!(writes.get(), 0);
 }
