@@ -55,7 +55,9 @@ pub fn extend_verified_view(
     let mut active = BTreeSet::<&str>::new();
     let mut visible_payload_bytes = base.visible_payload_bytes;
     for event in appended_events {
-        sequence = sequence.checked_add(1).ok_or(TailProblem::InvalidSequence)?;
+        sequence = sequence
+            .checked_add(1)
+            .ok_or(TailProblem::InvalidSequence)?;
         if event.sequence != sequence {
             return Err(TailProblem::InvalidSequence);
         }
