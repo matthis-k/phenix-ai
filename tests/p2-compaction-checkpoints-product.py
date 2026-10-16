@@ -64,6 +64,7 @@ def run(mode, runtime_env=None):
 published = run("publish", publish_env)
 assert published["created"] is True, published
 assert published["revision"] == 1, published
+assert published["source_bound"] is True, published
 reused = run("publish", publish_env)
 assert reused["created"] is False, reused
 assert reused["checkpoint_id"] == published["checkpoint_id"], reused
