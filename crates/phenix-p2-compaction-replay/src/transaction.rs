@@ -32,6 +32,17 @@ pub enum CompactionAdmissionProblem<StoreError, MeterError> {
     Remeasure(CompactedAdmissionProblem<MeterError>),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CompactionAdmissionInput<'a> {
+    pub request: &'a ModelRequest,
+    pub original_measurement: &'a ModelTokenMeasurement,
+    pub selected_model: &'a str,
+    pub high_water_percent: u64,
+    pub journal: &'a [Event],
+    pub previous: Option<&'a CompactionCheckpoint>,
+    pub policy: CheckpointPlan<'a>,
+}
+
 /// Connect existing verified policy stages without any downstream Model call.
 ///
 /// The graph must obtain a faithful summary, ModelRequest and exact journal
@@ -45,17 +56,20 @@ pub enum CompactionAdmissionProblem<StoreError, MeterError> {
 /// A successful CAS followed by failed metering can leave a durable, reversible
 /// checkpoint, but never executes the Model or replays tools.
 pub fn admit_compaction<StoreError, MeterError>(
-    request: &ModelRequest,
-    original_measurement: &ModelTokenMeasurement,
-    selected_model: &str,
-    high_water_percent: u64,
-    journal: &[Event],
-    previous: Option<&CompactionCheckpoint>,
-    policy: CheckpointPlan<'_>,
+    input: CompactionAdmissionInput<'_>,
     latest: impl FnMut() -> Result<Option<CompactionCheckpoint>, StoreError>,
     put: impl FnMut(&CompactionCheckpoint) -> Result<CompactionCheckpoint, StoreError>,
     measure: impl FnOnce(&ModelRequest) -> Result<ModelTokenMeasurement, MeterError>,
 ) -> Result<CompactionAdmission, CompactionAdmissionProblem<StoreError, MeterError>> {
+    let CompactionAdmissionInput {
+        request,
+        original_measurement,
+        selected_model,
+        high_water_percent,
+        journal,
+        previous,
+        policy,
+    } = input;
     let decision = automatic_checkpoint(
         request,
         original_measurement,
