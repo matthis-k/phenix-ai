@@ -52,7 +52,11 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     }
     // The original request intentionally exceeds the fixture window. The
     // compacted request keeps the real byte-token count and must still fit.
-    let input_tokens = if prompt == Some("inspect-original-overwindow") && !compacted {
+    let input_tokens = if matches!(
+        prompt,
+        Some("inspect-original-overwindow" | "auto-compact")
+    ) && !compacted
+    {
         CONTEXT_WINDOW
     } else {
         input_tokens
@@ -83,7 +87,17 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     // Native acceptance probes the exact request that survived source
     // verification and selected-provider metering. This branch exists only
     // in the verification Model, never in production Model adapters.
-    let text = if prompt.text == "inspect-compaction" {
+    let text = if prompt.text == "auto-compact" {
+        let cited = request
+            .context
+            .iter()
+            .any(|part| part.id.starts_with("compaction:cp-auto-"));
+        format!(
+            "fixture:auto:history:{}:compaction:{}",
+            request.history.len(),
+            cited,
+        )
+    } else if prompt.text == "inspect-compaction" {
         let cited = request
             .context
             .iter()
@@ -110,10 +124,14 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     id = "phenix.model.meter-fixture",
     version = "1.0.0",
     provide(phenix_basic_contracts::Model, slot = "Model"),
-    provide(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter")
+    provide(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter"),
+    provide(phenix_advanced_contracts::CompactionSummarizer, slot = "Summarizer")
 )]
 mod plugin {
-    use phenix_advanced_contracts::{ModelTokenError, ModelTokenMeasurement, ModelTokenMeter};
+    use phenix_advanced_contracts::{
+        CompactionSummarizer, CompactionSummary, CompactionSummaryError, CompactionSummaryProblem,
+        CompactionSummaryRequest, ModelTokenError, ModelTokenMeasurement, ModelTokenMeter,
+    };
     use phenix_basic_contracts::{BasicError, Model, ModelReply, ModelRequest};
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -136,6 +154,38 @@ mod plugin {
             }
         })?;
         super::measure(&request).map_err(CallError::Domain)
+    }
+
+    #[provide(CompactionSummarizer::summarize)]
+    fn summarize(
+        _: &mut State,
+        host: &Host<'_>,
+        input: CompactionSummaryRequest,
+    ) -> CallResult<CompactionSummary, CompactionSummaryError> {
+        phenix_basic_contracts::check_session(host, &input.request.session).map_err(|failure| {
+            match failure {
+                CallError::Kernel(kernel) => CallError::Kernel(kernel),
+                CallError::Domain(_) => CallError::Domain(CompactionSummaryError {
+                    problem: CompactionSummaryProblem::ScopeDenied,
+                    message: "summary session denied".into(),
+                }),
+            }
+        })?;
+        let last = input.request.history.last();
+        if last.is_none_or(|msg| msg.text != "auto-compact")
+            || input.journal.len() < 10
+            || input.journal[0].text != "seed-one"
+            || input.journal[4].text != "seed-two"
+        {
+            return Err(CallError::Domain(CompactionSummaryError {
+                problem: CompactionSummaryProblem::InvalidSource,
+                message: "fixture summary requires known exact source turns".into(),
+            }));
+        }
+        Ok(CompactionSummary {
+            source: input.source,
+            text: "The user said seed-one and was answered fixture:seed-one; the user said seed-two and was answered fixture:seed-two. Original journal events remain available.".into(),
+        })
     }
 
     #[provide(Model::complete)]
