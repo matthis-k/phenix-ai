@@ -49,8 +49,17 @@ def model(spec):
 
 assert model(basic) == "phenix.model.scripted"
 assert model(basic_test) == "phenix.model.history-test"
-assert model(advanced) == model(basic)
-assert model(advanced_test) == model(basic_test)
+assert model(advanced) == "phenix.advanced.model-adapter"
+assert model(advanced_test) == "phenix.advanced.model-adapter"
+
+def upstream(spec):
+    xs = [b for b in spec["slots"]
+          if (b["caller"], b["slot"]) == ("phenix.advanced.model-adapter", "Upstream")]
+    assert len(xs) == 1, xs
+    return xs[0]["provider"]
+
+assert upstream(advanced) == model(basic)
+assert upstream(advanced_test) == model(basic_test)
 
 # The P2 composition extends P1; it does not secretly override the agent,
 # storage, journal, session, grants, or the public frontend contracts.
@@ -64,9 +73,11 @@ assert len(advanced_test["artifacts"]) == len(advanced["artifacts"]) + 1
 for key in ("grants", "authority", "resource", "entry", "excluded", "substitutions"):
     assert advanced_test[key] == advanced[key], key
 assert [
-    slot for slot in advanced_test["slots"] if slot["slot"] != "Model"
+    slot for slot in advanced_test["slots"]
+    if (slot["caller"], slot["slot"]) != ("phenix.advanced.model-adapter", "Upstream")
 ] == [
-    slot for slot in advanced["slots"] if slot["slot"] != "Model"
+    slot for slot in advanced["slots"]
+    if (slot["caller"], slot["slot"]) != ("phenix.advanced.model-adapter", "Upstream")
 ]
 assert advanced_test["grants"] == advanced["grants"]
 assert not any("history-test" in artifact for artifact in advanced["artifacts"])
