@@ -1,7 +1,7 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
 Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. The Advanced product and P2 release gates remain unaccepted.
-Updated: 2026-10-15
+Updated: 2026-10-16
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
 P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [post-P1 CI cutover PR #879](https://github.com/matthis-k/phenix-ai/pull/879).
@@ -94,6 +94,8 @@ denial and SQLite restart. Live compaction and crash-mid-reply checkpoint
 reconciliation remain unaccepted.
 
 P2-3l [#923](https://github.com/matthis-k/phenix-ai/pull/923) introduces an optional selected-meter preflight in the existing Advanced Model adapter. An explicitly metered verification composition binds `Upstream` and `Meter` to the same model provider, reserves the caller's full remaining output-token cap, verifies the original typed request digest and rejects invalid measurements before starting Model execution. A test-only stale digest causes a real JSONL Model turn to fail; later turns still run. The public Basic and default Advanced presets remain unmetered pass-through. Model name strings are not proof of same-provider selection: this slice verifies co-binding in the packaged composition, while general user-authored composition enforcement, real HTTP provider tokenization, tool-message lineage, source-backed view admission and complete P2-3 acceptance remain open.
+
+P2-3p [#928](https://github.com/matthis-k/phenix-ai/pull/928) joins a source-verified durable checkpoint to its contiguous, authorized Basic journal tail before assembling a typed ModelRequest. The pure verifier checks both the saved source bytes and newer events, then matches the entire result against the authoritative SessionSnapshot. It retains new tool turns exactly, permits summarizing a fully attested older tool turn, and denies missing receipts, incomplete effects, forged arguments and foreign sessions. The derived full-span checkpoint exists only in memory. This slice does not select journal or checkpoint providers, grant source reads, execute the Model, or enable Advanced compaction. Live source admission, ancestor revalidation, output-reserved selected-Model token accounting and crash-safe recovery remain release gates.
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
