@@ -819,6 +819,11 @@
             operation = "get";
             resources = [ "phenix.session.s1" ];
           }
+          { caller = "root";
+            interface = "phenix.advanced.compaction-checkpoints@1";
+            operation = "latest";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "phenix.advanced.compaction-checkpoints";
             interface = "phenix.basic.storage@1";
             operation = "read";
@@ -903,6 +908,7 @@
         addOperations = [
           "phenix.advanced.compaction-checkpoints@1/put"
           "phenix.advanced.compaction-checkpoints@1/get"
+          "phenix.advanced.compaction-checkpoints@1/latest"
           "phenix.advanced.project-membership@1/get"
           "phenix.advanced.project-storage@1/read"
           "phenix.advanced.project-storage@1/transact"
