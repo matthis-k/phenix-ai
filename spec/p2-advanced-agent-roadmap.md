@@ -198,6 +198,20 @@ fixture measurements. Public Basic and unmetered Advanced presets stay
 unchanged. This is admission of already committed checkpoints, not
 automatic graph-triggered summarization or checkpoint writes.
 
+P2-3y adds source-authenticated checkpoint publication through the existing
+CompactionStore revision CAS and selected latest-read contract. A candidate
+must be structurally valid, match the current checkpoint head and expected
+parent revision, receive an exact CAS acknowledgement and survive a fresh
+authenticated source/lineage readback before its compacted Model view can be
+considered. A restarted authorized root reuses an exactly matching durable
+checkpoint without repeating a write; an ambiguous failed write never retries
+inside the same request. A competing head, forged acknowledgement, stale
+source, or failed readback denies admission. Native SQLite acceptance includes
+independent restart reuse and the unchanged Basic journal. The selected
+summarizer, pressure trigger, source reads, commit and downstream Model call
+remain graph responsibilities; this reusable publication guard is not itself
+the automatic graph contribution.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
