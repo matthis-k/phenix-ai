@@ -1079,6 +1079,13 @@
       basicBinaryClosure = pkgs.closureInfo {
         rootPaths = [ basicBinary ];
       };
+      basicHttpProductCheck = pkgs.runCommand "phenix-basic-http-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-http-preset-product.py} ${basicHttpBinary}/bin/phenix-basic-http ${basicHttpComposition} "$out"
+        test -s "$out/passed.json"
+      '';
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1825,6 +1832,7 @@
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
+        basic-http-product = basicHttpProductCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-model-adapter-product = p2ModelAdapterProductCheck;
         p2-model-adapter-pending-http = p2ModelAdapterPendingHttpCheck;
