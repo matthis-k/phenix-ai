@@ -54,7 +54,7 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     // compacted request keeps the real byte-token count and must still fit.
     let input_tokens = if matches!(
         prompt,
-        Some("inspect-original-overwindow" | "auto-compact")
+        Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
     ) && !compacted
     {
         CONTEXT_WINDOW
@@ -172,7 +172,9 @@ mod plugin {
             }
         })?;
         let last = input.request.history.last();
-        if last.is_none_or(|msg| msg.text != "auto-compact")
+        if last.is_none_or(|msg| {
+            msg.text != "auto-compact" && msg.text != "auto-invalid-citation"
+        })
             || input.journal.len() < 10
             || input.journal[0].text != "seed-one"
             || input.journal[4].text != "seed-two"
@@ -182,8 +184,12 @@ mod plugin {
                 message: "fixture summary requires known exact source turns".into(),
             }));
         }
+        let mut source = input.source;
+        if last.is_some_and(|msg| msg.text == "auto-invalid-citation") {
+            source.digest_sha256 = "f".repeat(64);
+        }
         Ok(CompactionSummary {
-            source: input.source,
+            source,
             text: "The user said seed-one and was answered fixture:seed-one; the user said seed-two and was answered fixture:seed-two. Original journal events remain available.".into(),
         })
     }
