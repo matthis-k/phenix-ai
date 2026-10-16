@@ -363,14 +363,26 @@ fn forged_original_meter_rejects_before_source_and_store() {
             previous: None,
             policy: plan(),
         },
-        || {count.set(count.get()+1); Err::<Option<CompactionCheckpoint>,&str>("unexpected")},
-        |_cp| {count.set(count.get()+1); Err::<CompactionCheckpoint,&str>("unexpected")},
-        |_next| {count.set(count.get()+1); Err::<ModelTokenMeasurement,&str>("unexpected")},
+        || {
+            count.set(count.get() + 1);
+            Err::<Option<CompactionCheckpoint>, &str>("unexpected")
+        },
+        |_cp| {
+            count.set(count.get() + 1);
+            Err::<CompactionCheckpoint, &str>("unexpected")
+        },
+        |_next| {
+            count.set(count.get() + 1);
+            Err::<ModelTokenMeasurement, &str>("unexpected")
+        },
     );
-    assert_eq!(result,Err(CompactionAdmissionProblem::Decision(
-        AutomaticCheckpointProblem::Pressure(PressureProblem::Measurement(
-            ModelTokenProblem::RequestChanged
+    assert_eq!(
+        result,
+        Err(CompactionAdmissionProblem::Decision(
+            AutomaticCheckpointProblem::Pressure(PressureProblem::Measurement(
+                ModelTokenProblem::RequestChanged
+            ))
         ))
-    )));
-    assert_eq!(count.get(),0);
+    );
+    assert_eq!(count.get(), 0);
 }
