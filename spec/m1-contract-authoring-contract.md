@@ -57,6 +57,17 @@ that delegated schema without selecting the dependency itself. Root and every
 ancestor maximum, operation grants and resource intersections still apply.
 Definition-only packages carry no runtime authority.
 
+A selected native provider may also explicitly define downstream contract
+maxima for its implementation. Those `define` ceilings propagate to its
+ancestors **only along actual selected import bindings**, including nested
+decorators; they are not inferred from unselected artifacts or arbitrary
+contract definitions in the composition. This lets the Basic agent select an
+Advanced Model decorator without importing the decorator's private meter
+interface. The descendant must still declare its own import and receive an
+explicit caller grant; root authority, resource limits, selection checks and
+the selected provider's own ceiling remain mandatory. A `define` never
+authorizes an operation on its own.
+
 ABI 3 pending imports use exact commands phenix.host.pending.{begin,scoped,
 poll,cancel}.v2 with the selected slot supplied through the existing ABI slot
 argument. Begin carries the v2 map {operation,request:Bytes}; scoped carries the
