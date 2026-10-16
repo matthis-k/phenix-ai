@@ -47,7 +47,13 @@ fn checkpoint(events: &[Event]) -> CompactionCheckpoint {
     }
 }
 fn message(role: Role, text: &str) -> Message {
-    Message { role, text: text.into(), calls: vec![], call_id: String::new(), error: None }
+    Message {
+        role,
+        text: text.into(),
+        calls: vec![],
+        call_id: String::new(),
+        error: None,
+    }
 }
 fn original_request() -> ModelRequest {
     ModelRequest {
@@ -67,7 +73,10 @@ fn original_request() -> ModelRequest {
             idempotent: true,
         }],
         skills: vec![],
-        context: vec![ContextItem { id: "existing".into(), text: "unchanged".into() }],
+        context: vec![ContextItem {
+            id: "existing".into(),
+            text: "unchanged".into(),
+        }],
         limits: Limits::default(),
     }
 }
@@ -87,7 +96,11 @@ fn compacts_only_verified_prefix_and_preserves_complete_model_request_fields() {
     assert_eq!(actual.limits, full.limits);
     assert_eq!(actual.session, full.session);
     assert_eq!(actual.run, full.run);
-    assert_eq!(full.history.len(), 5, "must not mutate Basic source history");
+    assert_eq!(
+        full.history.len(),
+        5,
+        "must not mutate Basic source history"
+    );
 }
 
 #[test]
