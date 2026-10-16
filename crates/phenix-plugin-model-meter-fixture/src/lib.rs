@@ -57,12 +57,11 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     } else {
         input_tokens
     };
-    let tokenizer_revision =
-        if prompt == Some("inspect-config-drift") && compacted {
-            "portable-byte-fixture-v2"
-        } else {
-            "portable-byte-fixture-v1"
-        };
+    let tokenizer_revision = if prompt == Some("inspect-config-drift") && compacted {
+        "portable-byte-fixture-v2"
+    } else {
+        "portable-byte-fixture-v1"
+    };
     Ok(ModelTokenMeasurement {
         model: MODEL_ID.into(),
         tokenizer_revision: tokenizer_revision.into(),
