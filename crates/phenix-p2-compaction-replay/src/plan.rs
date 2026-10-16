@@ -86,6 +86,11 @@ pub fn plan_verified_checkpoint(
             .map_err(|_| PlanProblem::InvalidSource)?;
         let historical = journal.get(from..to).ok_or(PlanProblem::InvalidSource)?;
         restore_original_events(previous, historical).map_err(|_| PlanProblem::InvalidSource)?;
+        if previous.input == source_span {
+            // A retry with the same attested source does not create a new
+            // revision or trigger another summarization effect.
+            return Ok(None);
+        }
     }
     // A safe split is allowed only after a terminal Answer of an entire
     // run. Never summarize a pending, failed, cancelled or partial tool turn.
