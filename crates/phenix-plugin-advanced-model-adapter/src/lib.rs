@@ -128,6 +128,12 @@ mod plugin {
         source: &ModelRequest,
     ) -> CallResult<ModelRequest, BasicError> {
         if host.slot_count("Checkpoints").map_err(CallError::Kernel)? == 0 {
+            if host.slot_count("Summarizer").map_err(CallError::Kernel)? != 0 {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction requires a selected checkpoint store",
+                )));
+            }
             return Ok(source.clone());
         }
         if host.slot_count("Meter").map_err(CallError::Kernel)? == 0
