@@ -45,14 +45,27 @@ mod plugin {
     }
 
     fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
+        // An absent optional Meter preserves the public Advanced pass-through.
+        // When present, it must be exported by the *same pinned plugin
+        // instance* as the selected upstream Model, not simply claim the
+        // same model-name string in a potentially untrusted measurement.
+        if host.slot_count("Meter").map_err(CallError::Kernel)? == 0 {
+            return Ok(());
+        }
+        let upstream = host
+            .selected_provider::<Model::complete>("Upstream")
+            .map_err(CallError::Kernel)?;
+        let meter = host
+            .selected_provider::<ModelTokenMeter::measure>("Meter")
+            .map_err(CallError::Kernel)?;
+        if upstream != meter {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "token meter does not share the selected Model provider",
+            )));
+        }
         let measurement = match host.invoke::<ModelTokenMeter::measure>("Meter", request) {
             Ok(measurement) => measurement,
-            // Optional slots are absent from the standard Advanced preset.
-            // All other import failures must propagate rather than disable
-            // a configured preflight.
-            Err(CallError::Kernel(failure)) if failure.code == Code::MissingBinding => {
-                return Ok(());
-            }
             Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
             Err(CallError::Domain(_)) => {
                 return Err(CallError::Domain(error(
