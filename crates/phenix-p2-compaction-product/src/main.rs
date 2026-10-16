@@ -167,7 +167,10 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     let second = make_checkpoint(&page, "cp2", 2, Some("cp1"));
     fixture.deny(
         "latest",
-        Scope { session: SESSION.into() }.to_value(),
+        Scope {
+            session: SESSION.into(),
+        }
+        .to_value(),
         CheckpointStoreProblem::NotFound,
     );
     assert_eq!(
@@ -180,7 +183,11 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     );
     assert_eq!(
         fixture.accept::<CompactionCheckpoint>(
-            "latest", Scope { session: SESSION.into() }.to_value()
+            "latest",
+            Scope {
+                session: SESSION.into()
+            }
+            .to_value()
         ),
         second,
     );
@@ -215,7 +222,10 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     );
     fixture.deny(
         "latest",
-        Scope { session: "s2".into() }.to_value(),
+        Scope {
+            session: "s2".into(),
+        }
+        .to_value(),
         CheckpointStoreProblem::ScopeDenied,
     );
     serde_json::json!({
@@ -228,7 +238,11 @@ fn action_restart(fixture: &Fixture) -> serde_json::Value {
     let second = fixture.accept::<CompactionCheckpoint>("get", key("cp2").to_value());
     assert_eq!(
         fixture.accept::<CompactionCheckpoint>(
-            "latest", Scope { session: SESSION.into() }.to_value()
+            "latest",
+            Scope {
+                session: SESSION.into()
+            }
+            .to_value()
         ),
         second,
     );
@@ -277,7 +291,10 @@ fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     );
     fixture.deny(
         "latest",
-        Scope { session: SESSION.into() }.to_value(),
+        Scope {
+            session: SESSION.into(),
+        }
+        .to_value(),
         CheckpointStoreProblem::SourceChanged,
     );
     serde_json::json!({"stale_checkpoint_denied": true})
