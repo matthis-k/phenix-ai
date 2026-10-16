@@ -61,6 +61,10 @@ assert snapshot_original() == original, "checkpoint writes mutated Basic source 
 restarted = run("restart")
 assert restarted["restored"] is True
 assert restarted["revisions"] == [1, 2]
+assert restarted["view_original_source_verified"] is True, restarted
+assert restarted["view_summary_cited"] is True, restarted
+assert restarted["view_uncompacted_events_exact"] is True, restarted
+assert restarted["view_visible_payload_bytes"] > 0, restarted
 assert snapshot_original() == original, "checkpoint read mutated Basic source journal"
 
 with sqlite3.connect(db) as connection:
@@ -85,6 +89,7 @@ assert missing["stale_checkpoint_denied"] is True
         "checkpoint-revision-cas",
         "immutable-linear-parent-checkpoint-history",
         "read-after-independent-process-restart",
+        "reversible-source-cited-context-view-after-restart",
         "stale-write-conflict",
         "tampered-journal-hash-rejected",
         "unauthorized-cross-session-rejected",
