@@ -953,6 +953,7 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -1061,6 +1062,17 @@ dependencies = [
  "phenix-kernel",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "phenix-p2-model-meter-product"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-basic-contracts",
+ "phenix-contract",
+ "phenix-kernel",
+ "serde_json",
 ]
 
 [[package]]
@@ -1193,6 +1205,15 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-model-meter-fixture"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-basic-contracts",
+ "phenix-sdk",
 ]
 
 [[package]]
