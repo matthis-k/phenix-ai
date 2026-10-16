@@ -10,7 +10,9 @@ import sys
 import threading
 import time
 
-binary, base_composition, http_model, destination = sys.argv[1:]
+binary, base_composition, http_model, destination, *options = sys.argv[1:]
+assert not options or options == ["--advanced-adapter"], options
+advanced_adapter = options == ["--advanced-adapter"]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 
@@ -18,9 +20,13 @@ composition = json.loads(Path(base_composition).read_text())
 composition["artifacts"] = [
     item for item in composition["artifacts"] if "phenix-plugin-model-scripted" not in item
 ] + [http_model]
+target_model_caller, target_model_slot = (
+    ("phenix.advanced.model-adapter", "Upstream")
+    if advanced_adapter else ("phenix.basic.agent", "Model")
+)
 model_slots = [
     item for item in composition["slots"]
-    if item["caller"] == "phenix.basic.agent" and item["slot"] == "Model"
+    if item["caller"] == target_model_caller and item["slot"] == target_model_slot
 ]
 assert len(model_slots) == 1
 model_slots[0]["provider"] = "phenix.model.http"
