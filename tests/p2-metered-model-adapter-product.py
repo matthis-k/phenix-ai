@@ -323,7 +323,7 @@ corrupted_db = out / fork_live_database("corrupt-checkpoint")
 with sqlite3.connect(corrupted_db) as connection:
     changed = connection.execute(
         "UPDATE basic_records SET data = ? WHERE session = ? AND name = ?",
-        (b"\\x00", "s1", "compaction-checkpoints.v1"),
+        (bytes([0]), "s1", "compaction-checkpoints.v1"),
     ).rowcount
     assert changed == 1, changed
     connection.commit()
