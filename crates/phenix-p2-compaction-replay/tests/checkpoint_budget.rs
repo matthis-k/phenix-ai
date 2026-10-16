@@ -102,6 +102,13 @@ fn selected_output_reserve_and_policy_threshold_are_mandatory() {
         ),
         Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget)),
     );
+    // Even deleting all input cannot make an output reserve as large as the
+    // full context window fit. Do not trigger a futile retry loop.
+    let impossible = measurement(&req, 1, 500);
+    assert_eq!(
+        checkpoint_pressure(&req, &impossible, "fixture:selected-model", 80),
+        Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget)),
+    );
     for bad in [0, 101, u64::MAX] {
         assert_eq!(
             checkpoint_pressure(&req, &meter, "fixture:selected-model", bad),
