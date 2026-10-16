@@ -2,7 +2,7 @@
 use phenix_advanced_contracts::{
     CheckpointKey, CheckpointStoreError, CheckpointStoreProblem, CompactionCheckpoint,
 };
-use phenix_basic_contracts::{EventPage, JournalQuery};
+use phenix_basic_contracts::{EventPage, JournalQuery, Scope};
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
@@ -45,6 +45,7 @@ impl Fixture {
         let grants = vec![
             grant("root", CONTRACT, "put"),
             grant("root", CONTRACT, "get"),
+            grant("root", CONTRACT, "latest"),
             grant("root", "phenix.basic.journal@1", "read"),
             grant(STORE, "phenix.basic.storage@1", "read"),
             grant(STORE, "phenix.basic.storage@1", "transact"),
@@ -164,6 +165,11 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     let page = fixture.journal();
     let first = make_checkpoint(&page, "cp1", 1, None);
     let second = make_checkpoint(&page, "cp2", 2, Some("cp1"));
+    fixture.deny(
+        "latest",
+        Scope { session: SESSION.into() }.to_value(),
+        CheckpointStoreProblem::NotFound,
+    );
     assert_eq!(
         fixture.accept::<CompactionCheckpoint>("put", first.to_value()),
         first
@@ -171,6 +177,12 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
     assert_eq!(
         fixture.accept::<CompactionCheckpoint>("put", second.to_value()),
         second
+    );
+    assert_eq!(
+        fixture.accept::<CompactionCheckpoint>(
+            "latest", Scope { session: SESSION.into() }.to_value()
+        ),
+        second,
     );
     assert_eq!(
         fixture.accept::<CompactionCheckpoint>("get", key("cp1").to_value()),
@@ -201,6 +213,11 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
         .to_value(),
         CheckpointStoreProblem::ScopeDenied,
     );
+    fixture.deny(
+        "latest",
+        Scope { session: "s2".into() }.to_value(),
+        CheckpointStoreProblem::ScopeDenied,
+    );
     serde_json::json!({
         "written": 2, "verified_journal_events": page.events.len(),
         "stale_conflict": true, "tampered_source_denied": true, "foreign_session_denied": true
@@ -209,6 +226,12 @@ fn action_write(fixture: &Fixture) -> serde_json::Value {
 fn action_restart(fixture: &Fixture) -> serde_json::Value {
     let first = fixture.accept::<CompactionCheckpoint>("get", key("cp1").to_value());
     let second = fixture.accept::<CompactionCheckpoint>("get", key("cp2").to_value());
+    assert_eq!(
+        fixture.accept::<CompactionCheckpoint>(
+            "latest", Scope { session: SESSION.into() }.to_value()
+        ),
+        second,
+    );
     assert_eq!(first.revision, 1);
     assert_eq!(second.revision, 2);
     assert_eq!(second.parent_checkpoint.as_deref(), Some("cp1"));
@@ -249,6 +272,11 @@ fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     fixture.deny(
         "get",
         key("cp2").to_value(),
+        CheckpointStoreProblem::SourceChanged,
+    );
+    fixture.deny(
+        "latest",
+        Scope { session: SESSION.into() }.to_value(),
         CheckpointStoreProblem::SourceChanged,
     );
     serde_json::json!({"stale_checkpoint_denied": true})
