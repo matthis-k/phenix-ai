@@ -521,10 +521,16 @@
         "phenix_plugin_model_scripted"
         ./crates/phenix-plugin-model-scripted;
       # Verification remains outside the default Basic product and batches.
-      advancedModelAdapter = basicNativePlugin
+      advancedModelAdapter = (basicNativePlugin
         "phenix-plugin-advanced-model-adapter"
         "phenix_plugin_advanced_model_adapter"
-        ./crates/phenix-plugin-advanced-model-adapter;
+        ./crates/phenix-plugin-advanced-model-adapter).overrideAttrs (_: {
+          src = subset (publicPaths ++ [
+            ./crates/phenix-basic-contracts
+            ./crates/phenix-advanced-contracts
+            ./crates/phenix-plugin-advanced-model-adapter
+          ]);
+        });
       historyTestModel = basicNativePlugin
         "phenix-plugin-model-history-test"
         "phenix_plugin_model_history_test"
@@ -1197,6 +1203,17 @@
           ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} "$out" --advanced-adapter
         test -s "$out/pending-basic-http.json"
       '';
+      # Only a test composition co-binds Model and Meter to the same fixture.
+      # Production Advanced presets retain the original pass-through Model.
+      p2MeteredAdapterProductCheck = pkgs.runCommand "phenix-p2-metered-model-adapter" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-metered-model-adapter-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${advancedComposition} ${p2ModelMeterFixtureCheck} "$out"
+        test -s "$out/accepted.json"
+      '';
       p2ModelAdapterProductCheck = pkgs.runCommand "phenix-p2-model-adapter-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1764,6 +1781,7 @@
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
+        p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
         p2-compaction-checkpoints-product = p2CompactionProductCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;

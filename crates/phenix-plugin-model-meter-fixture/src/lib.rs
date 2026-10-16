@@ -24,10 +24,20 @@ fn failed() -> ModelTokenError {
 pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTokenError> {
     let encoded = request.to_value().encode().map_err(|_| failed())?;
     let input_tokens = u64::try_from(encoded.len()).map_err(|_| failed())?;
+    let mut fingerprint = model_request_sha256(request).map_err(|_| failed())?;
+    // Fault injection only in this non-production fixture. Model::complete
+    // still returns an answer, so rejection proves the adapter ran preflight.
+    if request
+        .history
+        .last()
+        .is_some_and(|message| message.text == "meter-stale")
+    {
+        fingerprint = "0".repeat(64);
+    }
     Ok(ModelTokenMeasurement {
         model: MODEL_ID.into(),
         tokenizer_revision: "portable-byte-fixture-v1".into(),
-        request_sha256: model_request_sha256(request).map_err(|_| failed())?,
+        request_sha256: fingerprint,
         input_tokens,
         context_window_tokens: CONTEXT_WINDOW,
     })

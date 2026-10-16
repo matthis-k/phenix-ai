@@ -1101,6 +1101,7 @@ dependencies = [
 name = "phenix-plugin-advanced-model-adapter"
 version = "0.1.0"
 dependencies = [
+ "phenix-advanced-contracts",
  "phenix-basic-contracts",
  "phenix-sdk",
 ]
