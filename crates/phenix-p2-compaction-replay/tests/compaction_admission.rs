@@ -3,7 +3,7 @@
 use phenix_advanced_contracts::{model_request_sha256, CompactionCheckpoint, ModelTokenMeasurement, ModelTokenProblem};
 use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest, Role};
 use phenix_p2_compaction_replay::{
-    admit_compaction, CheckpointPlan, CompactionAdmissionProblem, CheckpointPublishProblem,
+    admit_compaction, CompactionAdmissionInput, CheckpointPlan, CompactionAdmissionProblem, CheckpointPublishProblem,
     CompactedAdmissionProblem, AutomaticCheckpointProblem, PressureProblem,
 };
 use phenix_sdk::Blob;
@@ -60,7 +60,15 @@ fn enough_headroom_admits_original_without_any_store_or_remeasurement() {
     let (request, _journal)=fixture();
     let called=Cell::new(0);
     let ready=admit_compaction(
-        &request,&meter(&request,1200),"fixture:selected-model",80,&[],None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &meter(&request, 1200),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &[],
+            previous: None,
+            policy: plan(),
+        },
         || {called.set(called.get()+1); Err::<Option<CompactionCheckpoint>,&str>("unexpected store read")},
         |_cp| {called.set(called.get()+1); Err::<CompactionCheckpoint,&str>("unexpected CAS")},
         |_next| {called.set(called.get()+1); Err::<ModelTokenMeasurement,&str>("unexpected meter")},
@@ -80,7 +88,15 @@ fn selected_cas_then_exact_selected_remeasurement_admits_only_source_verified_re
     let writes=Cell::new(0);
     let metering=Cell::new(0);
     let ready=admit_compaction(
-        &request,&meter(&request,9501),"fixture:selected-model",80,&journal,None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &meter(&request, 9501),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal,
+            previous: None,
+            policy: plan(),
+        },
         || Ok::<_,&str>(durable.borrow().clone()),
         |cp| {writes.set(writes.get()+1); *durable.borrow_mut()=Some(cp.clone()); Ok::<_,&str>(cp.clone())},
         |rebuilt| {
@@ -105,7 +121,15 @@ fn threshold_without_eligible_turns_uses_original_without_store_access() {
     let shortened=ModelRequest{history:request.history[4..].to_vec(), ..request};
     let calls=Cell::new(0);
     let ready=admit_compaction(
-        &shortened,&meter(&shortened,7500),"fixture:selected-model",80,&journal[8..],None,plan(),
+        CompactionAdmissionInput {
+            request: &shortened,
+            original_measurement: &meter(&shortened, 7500),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal[8..],
+            previous: None,
+            policy: plan(),
+        },
         || {calls.set(calls.get()+1); Err::<Option<CompactionCheckpoint>,&str>("unexpected")},
         |_cp| {calls.set(calls.get()+1); Err::<CompactionCheckpoint,&str>("unexpected")},
         |_next| {calls.set(calls.get()+1); Err::<ModelTokenMeasurement,&str>("unexpected")},
@@ -121,7 +145,15 @@ fn an_overwindow_request_without_safe_checkpoint_never_reads_or_writes_store() {
     let shortened=ModelRequest{history:request.history[4..].to_vec(), ..request};
     let writes=Cell::new(0);
     let result=admit_compaction(
-        &shortened,&meter(&shortened,9501),"fixture:selected-model",80,&journal[8..],None,plan(),
+        CompactionAdmissionInput {
+            request: &shortened,
+            original_measurement: &meter(&shortened, 9501),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal[8..],
+            previous: None,
+            policy: plan(),
+        },
         || {writes.set(writes.get()+1); Ok::<_,&str>(None)},
         |_cp| {writes.set(writes.get()+1); Err::<CompactionCheckpoint,&str>("unexpected")},
         |_next| {writes.set(writes.get()+1); Err::<ModelTokenMeasurement,&str>("unexpected")},
@@ -137,7 +169,15 @@ fn conflicting_cas_and_model_config_changes_fail_closed_before_model() {
     let (request,journal)=fixture();
     let c=Cell::new(0);
     let denied=admit_compaction(
-        &request,&meter(&request,9501),"fixture:selected-model",80,&journal,None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &meter(&request, 9501),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal,
+            previous: None,
+            policy: plan(),
+        },
         || Ok::<_,&str>(Some(CompactionCheckpoint {
             id:"competing".into(), revision:1,
             ..phenix_p2_compaction_replay::plan_verified_checkpoint(
@@ -153,7 +193,15 @@ fn conflicting_cas_and_model_config_changes_fail_closed_before_model() {
 
     let durable=RefCell::new(None);
     let denied=admit_compaction(
-        &request,&meter(&request,9501),"fixture:selected-model",80,&journal,None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &meter(&request, 9501),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal,
+            previous: None,
+            policy: plan(),
+        },
         || Ok::<_,&str>(durable.borrow().clone()),
         |cp| {*durable.borrow_mut()=Some(cp.clone()); Ok::<_,&str>(cp.clone())},
         |rebuilt| {let mut changed=meter(rebuilt,2000); changed.tokenizer_revision="new-tokenizer".into(); Ok::<_,&str>(changed)},
@@ -168,7 +216,15 @@ fn verified_compaction_cannot_authorize_still_overbudget_model_request() {
     let (request,journal)=fixture();
     let durable=RefCell::new(None);
     let outcome=admit_compaction(
-        &request,&meter(&request,9501),"fixture:selected-model",80,&journal,None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &meter(&request, 9501),
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal,
+            previous: None,
+            policy: plan(),
+        },
         || Ok::<_,&str>(durable.borrow().clone()),
         |cp| {*durable.borrow_mut()=Some(cp.clone()); Ok::<_,&str>(cp.clone())},
         |rebuilt| Ok::<_,&str>(meter(rebuilt,9900)),
@@ -186,7 +242,15 @@ fn forged_original_meter_rejects_before_source_and_store() {
     forged.request_sha256="f".repeat(64);
     let count=Cell::new(0);
     let result=admit_compaction(
-        &request,&forged,"fixture:selected-model",80,&journal,None,plan(),
+        CompactionAdmissionInput {
+            request: &request,
+            original_measurement: &forged,
+            selected_model: "fixture:selected-model",
+            high_water_percent: 80,
+            journal: &journal,
+            previous: None,
+            policy: plan(),
+        },
         || {count.set(count.get()+1); Err::<Option<CompactionCheckpoint>,&str>("unexpected")},
         |_cp| {count.set(count.get()+1); Err::<CompactionCheckpoint,&str>("unexpected")},
         |_next| {count.set(count.get()+1); Err::<ModelTokenMeasurement,&str>("unexpected")},
