@@ -347,6 +347,7 @@ fn in_progress_tool_result_may_continue_same_model_turn_without_answer() {
     let view = compacted_view(&cp, &journal, 4096).unwrap();
     let mut authoritative = tool_request();
     authoritative.history.truncate(5);
+    authoritative.run = "run-2".into();
     let input = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
     assert_eq!(input.history, authoritative.history[2..]);
     assert_eq!(input.history.last().unwrap().role, Role::Tool);
