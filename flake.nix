@@ -243,7 +243,10 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
-      advancedContractsSource = subset (publicPaths ++ [ ./crates/phenix-advanced-contracts ]);
+      advancedContractsSource = subset (publicPaths ++ [
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+      ]);
       advancedContractsBinary = rust.buildRustPackage {
         pname = "phenix-advanced-contracts";
         version = "0.1.0";
