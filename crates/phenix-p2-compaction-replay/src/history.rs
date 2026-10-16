@@ -32,7 +32,10 @@ pub fn assemble_verified_basic_request(
     journal: &[Event],
     view: &ContextProjection,
 ) -> Result<ModelRequest, TranscriptProblem> {
-    if journal.iter().any(|event| event.session != authoritative.session) {
+    if journal
+        .iter()
+        .any(|event| event.session != authoritative.session)
+    {
         return Err(TranscriptProblem::WrongSession);
     }
     if span_for_events(journal).ok().as_ref() != Some(&view.source_span) {
@@ -43,9 +46,10 @@ pub fn assemble_verified_basic_request(
             || !message.calls.is_empty()
             || !message.call_id.is_empty()
             || message.error.is_some()
-    }) || journal.iter().any(|event| {
-        matches!(event.kind, EventKind::ToolStarted | EventKind::ToolFinished)
-    }) {
+    }) || journal
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::ToolStarted | EventKind::ToolFinished))
+    {
         return Err(TranscriptProblem::UnsupportedToolHistory);
     }
 
@@ -53,7 +57,11 @@ pub fn assemble_verified_basic_request(
     let mut summary = None;
     for part in &view.parts {
         match part {
-            ContextPart::Summary { checkpoint_id, text, .. } => {
+            ContextPart::Summary {
+                checkpoint_id,
+                text,
+                ..
+            } => {
                 if checkpoint_id != &view.checkpoint_id || summary.replace(text).is_some() {
                     return Err(TranscriptProblem::UnalignedSource);
                 }
@@ -111,7 +119,9 @@ pub fn assemble_verified_basic_request(
         return Err(TranscriptProblem::UnalignedHistory);
     }
     if pending_prompt != Some(true)
-        || retained_history.last().is_none_or(|msg| msg.role != Role::User)
+        || retained_history
+            .last()
+            .is_none_or(|msg| msg.role != Role::User)
     {
         // Only the in-progress current user prompt may end without an Answer.
         // It must not disappear behind a compacted or excluded range.
