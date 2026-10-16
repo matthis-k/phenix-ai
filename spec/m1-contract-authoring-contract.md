@@ -57,6 +57,17 @@ that delegated schema without selecting the dependency itself. Root and every
 ancestor maximum, operation grants and resource intersections still apply.
 Definition-only packages carry no runtime authority.
 
+Native plugins may inspect the selected provider of one of their **own**
+declared operation imports using `Host::selected_provider::<Operation>(slot)`.
+The existing M1 host-slot service authenticates the caller, requires an
+actually selected operation binding, and returns the pinned provider plugin
+identity. Undeclared slots and missing optional bindings reject. The identity
+is observational data only: it never grants permission to invoke a provider.
+Comparisons across multiple slots are only meaningful within a pinned root
+generation. This generic mechanism permits decorators to insist that a
+preflight service and its effectful provider are the same selected plugin
+without hardcoding an agent-specific policy in the kernel.
+
 A selected native provider may also explicitly define downstream contract
 maxima for its implementation. Those `define` ceilings propagate to its
 ancestors **only along actual selected import bindings**, including nested
