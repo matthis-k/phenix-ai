@@ -61,8 +61,9 @@ def upstream(spec):
 assert upstream(advanced) == model(basic)
 assert upstream(advanced_test) == model(basic_test)
 
-# The P2 composition extends P1; it does not secretly override the agent,
-# storage, journal, session, grants, or the public frontend contracts.
+# Advanced explicitly interposes its typed Model adapter through the normal
+# selected binding. It does not replace the Basic agent executor, session,
+# journal, storage, or frontend contracts; Basic remains unchanged.
 for field in ("entry", "resource"):
     assert advanced[field] == basic[field], field
 assert advanced["artifacts"][:len(basic["artifacts"])] == basic["artifacts"]
