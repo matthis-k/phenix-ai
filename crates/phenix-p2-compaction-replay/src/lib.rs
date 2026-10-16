@@ -9,6 +9,7 @@ use phenix_basic_contracts::Event;
 use phenix_sdk::Portable;
 use sha2::{Digest, Sha256};
 
+pub mod admission;
 pub mod automatic;
 pub mod budget;
 pub mod history;
@@ -18,6 +19,9 @@ pub mod tail;
 pub mod view;
 pub use automatic::{
     automatic_checkpoint, AutomaticCheckpointDecision, AutomaticCheckpointProblem,
+};
+pub use admission::{
+    remeasure_verified_checkpoint, CompactedAdmissionProblem, MeasuredCompactedRequest,
 };
 pub use budget::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
