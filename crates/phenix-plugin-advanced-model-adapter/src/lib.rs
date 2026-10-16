@@ -353,14 +353,23 @@ mod plugin {
                 "automatic compaction source digest rejected",
             ))
         })?;
-        let proposed = host.invoke::<CompactionSummarizer::summarize>(
+        let proposed = match host.invoke::<CompactionSummarizer::summarize>(
             "Summarizer",
             &CompactionSummaryRequest {
                 request: source.clone(),
                 journal: journal.clone(),
                 source: span.clone(),
             },
-        )?;
+        ) {
+            Ok(summary) => summary,
+            Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
+            Err(CallError::Domain(_)) => {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "selected summarizer refused the source",
+                )));
+            }
+        };
         if proposed.source != span
             || proposed.text.trim().is_empty()
             || proposed.text.len() > 65_536
