@@ -1,0 +1,116 @@
+//! P2-3u RED: checkpoint pressure derives from the selected Model's exact
+//! full-request measurement. It does not execute, summarize, or store effects.
+use phenix_advanced_contracts::{
+    model_request_sha256, ModelTokenMeasurement, ModelTokenProblem,
+};
+use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
+use phenix_p2_compaction_replay::{
+    checkpoint_pressure, CheckpointPressure, PressureProblem,
+};
+
+fn request() -> ModelRequest {
+    ModelRequest {
+        session: "s1".into(),
+        run: "run-1".into(),
+        history: vec![Message {
+            role: Role::User,
+            text: "What happened earlier?".into(),
+            calls: vec![],
+            call_id: String::new(),
+            error: None,
+        }],
+        tools: vec![],
+        skills: vec![],
+        context: vec![],
+        limits: Limits {
+            model_tokens: Some(500),
+            ..Limits::default()
+        },
+    }
+}
+fn measurement(request: &ModelRequest, input: u64, window: u64) -> ModelTokenMeasurement {
+    ModelTokenMeasurement {
+        model: "fixture:selected-model".into(),
+        tokenizer_revision: "fixture:tokenizer-v1".into(),
+        request_sha256: model_request_sha256(request).unwrap(),
+        input_tokens: input,
+        context_window_tokens: window,
+    }
+}
+
+#[test]
+fn measured_headroom_decides_checkpoint_before_model_admission() {
+    let req = request();
+    assert_eq!(
+        checkpoint_pressure(
+            &req,
+            &measurement(&req, 1_000, 10_000),
+            "fixture:selected-model",
+            500,
+            80,
+        ),
+        Ok(CheckpointPressure::EnoughHeadroom)
+    );
+    assert_eq!(
+        checkpoint_pressure(
+            &req,
+            &measurement(&req, 7_500, 10_000),
+            "fixture:selected-model",
+            500,
+            80,
+        ),
+        Ok(CheckpointPressure::AtThreshold)
+    );
+    assert_eq!(
+        checkpoint_pressure(
+            &req,
+            &measurement(&req, 9_501, 10_000),
+            "fixture:selected-model",
+            500,
+            80,
+        ),
+        Ok(CheckpointPressure::OverContextWindow)
+    );
+}
+
+#[test]
+fn measurement_must_identify_the_exact_request_and_selected_model() {
+    let req = request();
+    let mut meter = measurement(&req, 7_500, 10_000);
+    meter.request_sha256 = "0".repeat(64);
+    assert_eq!(
+        checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, 80),
+        Err(PressureProblem::Measurement(ModelTokenProblem::RequestChanged)),
+    );
+    let meter = measurement(&req, 9_900, 10_000);
+    assert_eq!(
+        checkpoint_pressure(&req, &meter, "different-provider", 500, 80),
+        Err(PressureProblem::Measurement(ModelTokenProblem::ModelChanged)),
+    );
+}
+
+#[test]
+fn selected_output_reserve_and_policy_threshold_are_mandatory() {
+    let req = request();
+    let meter = measurement(&req, 7_500, 10_000);
+    assert_eq!(
+        checkpoint_pressure(&req, &meter, "fixture:selected-model", 0, 80),
+        Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget)),
+    );
+    for bad in [0, 101, u64::MAX] {
+        assert_eq!(
+            checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, bad),
+            Err(PressureProblem::InvalidThreshold),
+        );
+    }
+}
+
+#[test]
+fn threshold_arithmetic_does_not_overflow_for_large_valid_measurements() {
+    let req = request();
+    let meter = measurement(&req, u64::MAX - 1000, u64::MAX);
+    assert_eq!(
+        checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, 80),
+        Ok(CheckpointPressure::AtThreshold)
+    );
+}
