@@ -1131,6 +1131,14 @@
           rootPaths = [ advancedVerificationBinary ];
         })}/store-paths
       '';
+      p2ModelAdapterPendingHttpCheck = pkgs.runCommand "phenix-p2-model-adapter-pending-http" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-pending-http-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} "$out" --advanced-adapter
+        test -s "$out/pending-basic-http.json"
+      '';
       p2ModelAdapterProductCheck = pkgs.runCommand "phenix-p2-model-adapter-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1692,6 +1700,7 @@
         basic-history-verification = historyVerificationCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-model-adapter-product = p2ModelAdapterProductCheck;
+        p2-model-adapter-pending-http = p2ModelAdapterPendingHttpCheck;
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
