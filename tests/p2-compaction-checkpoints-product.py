@@ -61,6 +61,7 @@ assert snapshot_original() == original, "checkpoint writes mutated Basic source 
 restarted = run("restart")
 assert restarted["restored"] is True
 assert restarted["revisions"] == [1, 2]
+assert restarted["latest_checkpoint_id"] == "cp2", restarted
 assert restarted["view_original_source_verified"] is True, restarted
 assert restarted["view_summary_cited"] is True, restarted
 assert restarted["view_uncompacted_events_exact"] is True, restarted
@@ -89,6 +90,8 @@ assert missing["stale_checkpoint_denied"] is True
         "checkpoint-revision-cas",
         "immutable-linear-parent-checkpoint-history",
         "read-after-independent-process-restart",
+        "latest-linear-checkpoint-after-restart",
+        "latest-checkpoint-fails-closed-after-source-erasure",
         "reversible-source-cited-context-view-after-restart",
         "stale-write-conflict",
         "tampered-journal-hash-rejected",

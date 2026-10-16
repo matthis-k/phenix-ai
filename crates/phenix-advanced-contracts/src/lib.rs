@@ -364,6 +364,13 @@ pub trait CompactionStore {
         checkpoint: CompactionCheckpoint,
     ) -> Result<CompactionCheckpoint, CheckpointStoreError>;
     fn get(&self, key: CheckpointKey) -> Result<CompactionCheckpoint, CheckpointStoreError>;
+    /// Return the highest persisted revision for a session only after
+    /// independently verifying its canonical Basic journal source bytes.
+    /// An absent ledger is NotFound; erasure is SourceChanged, not fallback.
+    fn latest(
+        &self,
+        scope: phenix_basic_contracts::Scope,
+    ) -> Result<CompactionCheckpoint, CheckpointStoreError>;
 }
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {

@@ -243,7 +243,10 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
-      advancedContractsSource = subset (publicPaths ++ [ ./crates/phenix-advanced-contracts ]);
+      advancedContractsSource = subset (publicPaths ++ [
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+      ]);
       advancedContractsBinary = rust.buildRustPackage {
         pname = "phenix-advanced-contracts";
         version = "0.1.0";
@@ -362,6 +365,7 @@
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.sqlite ];
         src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
           ./crates/phenix-advanced-contracts
           ./crates/phenix-plugin-project-storage-sqlite
         ]);
@@ -819,6 +823,11 @@
             operation = "get";
             resources = [ "phenix.session.s1" ];
           }
+          { caller = "root";
+            interface = "phenix.advanced.compaction-checkpoints@1";
+            operation = "latest";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "phenix.advanced.compaction-checkpoints";
             interface = "phenix.basic.storage@1";
             operation = "read";
@@ -903,6 +912,7 @@
         addOperations = [
           "phenix.advanced.compaction-checkpoints@1/put"
           "phenix.advanced.compaction-checkpoints@1/get"
+          "phenix.advanced.compaction-checkpoints@1/latest"
           "phenix.advanced.project-membership@1/get"
           "phenix.advanced.project-storage@1/read"
           "phenix.advanced.project-storage@1/transact"
