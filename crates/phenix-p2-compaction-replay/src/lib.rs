@@ -18,7 +18,8 @@ pub mod plan;
 pub mod tail;
 pub mod view;
 pub use admission::{
-    remeasure_verified_checkpoint, CompactedAdmissionProblem, MeasuredCompactedRequest,
+    remeasure_verified_checkpoint, validate_compacted_meter_transition,
+    CompactedAdmissionProblem, CompactedMeterProblem, MeasuredCompactedRequest,
 };
 pub use automatic::{
     automatic_checkpoint, AutomaticCheckpointDecision, AutomaticCheckpointProblem,
