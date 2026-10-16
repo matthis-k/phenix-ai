@@ -477,6 +477,10 @@
         "phenix_plugin_model_scripted"
         ./crates/phenix-plugin-model-scripted;
       # Verification remains outside the default Basic product and batches.
+      advancedModelAdapter = basicNativePlugin
+        "phenix-plugin-advanced-model-adapter"
+        "phenix_plugin_advanced_model_adapter"
+        ./crates/phenix-plugin-advanced-model-adapter;
       historyTestModel = basicNativePlugin
         "phenix-plugin-model-history-test"
         "phenix_plugin_model_history_test"
@@ -770,8 +774,10 @@
       # exists yet; Basic parity is the only behavior claimed in this slice.
       advancedCompositionSpec = extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
-        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" "${compactionCheckpointStore}" ];
+        addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" "${compactionCheckpointStore}" "${advancedModelAdapter}" ];
         replaceSlots = [
+          (basicBinding "phenix.basic.agent" "Model" "phenix.advanced.model-adapter" "Model")
+          (basicBinding "phenix.advanced.model-adapter" "Upstream" "phenix.model.scripted" "Model")
           (basicBinding "phenix.advanced.evidence-journal" "Journal"
             "phenix.basic.event-journal" "Journal")
           (basicBinding "phenix.advanced.compaction-checkpoints" "Storage"
@@ -790,6 +796,19 @@
             "phenix.advanced.project-storage-sqlite" "ProjectSource")
         ];
         addGrants = [
+          { caller = "phenix.advanced.model-adapter";
+            interface = "phenix.basic.model@1";
+            operation = "complete";
+            resources = [ "phenix.session.s1" ];
+          }
+          # Explicitly preserve the Basic agent's journal capability through
+          # the Model decorator, so a selected streaming Model provider may
+          # emit authorized TextDelta events without an independent root.
+          { caller = "phenix.advanced.model-adapter";
+            interface = "phenix.basic.journal@1";
+            operation = "append";
+            resources = [ "phenix.session.s1" ];
+          }
           { caller = "root";
             interface = "phenix.advanced.compaction-checkpoints@1";
             operation = "put";
@@ -899,7 +918,7 @@
       advancedVerificationCompositionSpec = extendComposition advancedCompositionSpec {
           addArtifacts = [ "${historyTestModel}" ];
           replaceSlots = [
-            (basicBinding "phenix.basic.agent" "Model" "phenix.model.history-test" "Model")
+            (basicBinding "phenix.advanced.model-adapter" "Upstream" "phenix.model.history-test" "Model")
           ];
         };
       advancedVerificationComposition = pkgs.writeText
@@ -1119,6 +1138,25 @@
         grep -Fq "${historyTestModel}" ${(pkgs.closureInfo {
           rootPaths = [ advancedVerificationBinary ];
         })}/store-paths
+      '';
+      p2ModelAdapterPendingHttpCheck = pkgs.runCommand "phenix-p2-model-adapter-pending-http" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-pending-http-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} "$out" --advanced-adapter
+        test -s "$out/pending-basic-http.json"
+      '';
+      p2ModelAdapterProductCheck = pkgs.runCommand "phenix-p2-model-adapter-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-model-adapter-product.py} \
+          ${basicBinary}/bin/phenix-basic \
+          ${advancedBinary}/bin/phenix-advanced \
+          ${advancedVerificationBinary}/bin/phenix-advanced-verification \
+          ${basicComposition} ${advancedComposition} ${advancedVerificationComposition} "$out"
+        test -s "$out/p2-model-adapter-product.json"
       '';
       p2PresetOverrides = import ./tests/p2-preset-overrides.nix {
         advanced = advancedBinary;
@@ -1669,6 +1707,8 @@
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
+        p2-model-adapter-product = p2ModelAdapterProductCheck;
+        p2-model-adapter-pending-http = p2ModelAdapterPendingHttpCheck;
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;

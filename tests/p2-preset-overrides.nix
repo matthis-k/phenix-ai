@@ -3,7 +3,7 @@
 { advanced, historyTestModel }:
 let
   replaceModel = provider: builtins.map (binding:
-    if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
+    if binding.caller == "phenix.advanced.model-adapter" && binding.slot == "Upstream"
     then binding // { inherit provider; }
     else binding
   );
