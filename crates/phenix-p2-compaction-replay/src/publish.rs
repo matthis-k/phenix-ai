@@ -4,9 +4,7 @@
 //! The selected CompactionStore owns revision CAS and source digest checks.
 //! This helper verifies selected-store acknowledgements; it never accesses
 //! Storage or the EventJournal independently, nor calls a Model or a tool.
-use phenix_advanced_contracts::{
-    validate_checkpoint, CompactionCheckpoint, CompactionProblem,
-};
+use phenix_advanced_contracts::{validate_checkpoint, CompactionCheckpoint, CompactionProblem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishedCheckpoint {
