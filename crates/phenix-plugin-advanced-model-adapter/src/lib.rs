@@ -30,8 +30,8 @@
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore, ModelTokenMeasurement,
-        ModelTokenMeter, ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore,
+        ModelTokenMeasurement, ModelTokenMeter, ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
@@ -333,9 +333,7 @@ mod plugin {
             100,
         )
         .map_err(|problem| {
-            let code = if problem
-                == PressureProblem::Measurement(ModelTokenProblem::OverBudget)
-            {
+            let code = if problem == PressureProblem::Measurement(ModelTokenProblem::OverBudget) {
                 ErrorCode::TurnLimit
             } else {
                 ErrorCode::InvalidReply
@@ -358,7 +356,10 @@ mod plugin {
             } else {
                 ErrorCode::InvalidReply
             };
-            CallError::Domain(error(code, "compacted Model configuration or token count rejected"))
+            CallError::Domain(error(
+                code,
+                "compacted Model configuration or token count rejected",
+            ))
         })
     }
 
