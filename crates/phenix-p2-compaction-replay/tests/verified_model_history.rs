@@ -5,7 +5,8 @@ use phenix_basic_contracts::{
     ContextItem, Event, EventKind, Limits, Message, ModelRequest, Role, ToolCall, ToolInfo,
 };
 use phenix_p2_compaction_replay::{
-    assemble_verified_basic_request, compacted_view, span_for_events, TranscriptProblem,
+    assemble_verified_basic_request, compacted_view, select_model_view, span_for_events,
+    TranscriptProblem,
 };
 use phenix_sdk::Blob;
 
@@ -181,4 +182,28 @@ fn cannot_override_existing_context_id_or_omit_current_prompt() {
         assemble_verified_basic_request(&source_only_old, &events, &view),
         Err(TranscriptProblem::UnalignedHistory),
     );
+}
+
+#[test]
+fn selected_provider_measures_the_same_provenance_checked_request_it_will_submit() {
+    let events = source();
+    let cp = checkpoint(&events);
+    let authoritative = original_request();
+    let selected = select_model_view(
+        &[cp], &events, 4096, 150,
+        |view| assemble_verified_basic_request(&authoritative, &events, view),
+        |request| {
+            // The provider receives the full exact request, not a journal
+            // reconstruction. Tool definitions, context, and session history
+            // must all participate in actual model-specific accounting.
+            assert_eq!(request.history, authoritative.history[2..]);
+            assert_eq!(request.tools, authoritative.tools);
+            assert_eq!(request.context.len(), 2);
+            Ok::<_, TranscriptProblem>(120)
+        },
+    ).unwrap();
+    assert_eq!(selected.model_input_tokens, 120);
+    assert_eq!(selected.request.history.len(), 3);
+    assert_eq!(selected.view.checkpoint_id, "cp-1");
+    assert_eq!(authoritative.history.len(), 5);
 }
