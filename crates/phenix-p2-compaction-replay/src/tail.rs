@@ -151,11 +151,11 @@ pub fn assemble_verified_tail_request(
     source.extend_from_slice(appended_events);
     let mut effective = checkpoint.clone();
     effective.input = span_for_events(&source).map_err(TailAssemblyProblem::Replay)?;
-    effective
-        .retained
-        .push(extended.trailing_span.ok_or(TailAssemblyProblem::Tail(
-            TailProblem::InvalidSequence,
-        ))?);
+    effective.retained.push(
+        extended
+            .trailing_span
+            .ok_or(TailAssemblyProblem::Tail(TailProblem::InvalidSequence))?,
+    );
     let view = compacted_view(&effective, &source, max_visible_payload_bytes)
         .map_err(TailAssemblyProblem::Projection)?;
     crate::assemble_verified_basic_request(authoritative, &source, &effective, &view)
