@@ -50,7 +50,7 @@ export OPENAI_API_KEY="..."  # or PHENIX_MODEL_HTTP_API_KEY
 export PHENIX_MODEL_HTTP_MODEL="gpt-4.1-mini"
 # Optional, for another compatible provider:
 # export PHENIX_MODEL_HTTP_ENDPOINT="https://provider.example/v1/chat/completions"
-nix run .#phenix-basic-http -- acp
+nix run .#phenix-basic-http-acp
 ```
 
 `phenix-basic-http-acp` is the named ACP launcher for a Neovim client.
