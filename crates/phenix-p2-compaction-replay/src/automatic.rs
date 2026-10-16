@@ -18,7 +18,7 @@ pub enum AutomaticCheckpointDecision {
     /// selected store, rebuild the Model request, then measure that new request.
     /// A mandatory candidate must never fall back to the over-window original.
     Candidate {
-        checkpoint: CompactionCheckpoint,
+        checkpoint: Box<CompactionCheckpoint>,
         mandatory: bool,
     },
 }
@@ -62,7 +62,7 @@ pub fn automatic_checkpoint(
             CheckpointPressure::AtThreshold | CheckpointPressure::OverContextWindow,
             Some(checkpoint),
         ) => Ok(AutomaticCheckpointDecision::Candidate {
-            checkpoint,
+            checkpoint: Box::new(checkpoint),
             mandatory: pressure == CheckpointPressure::OverContextWindow,
         }),
         (CheckpointPressure::AtThreshold, None) => Ok(AutomaticCheckpointDecision::UseOriginal),
