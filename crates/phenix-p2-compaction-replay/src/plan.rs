@@ -67,9 +67,9 @@ pub fn plan_verified_checkpoint(
     }
     let source_span = span_for_events(journal).map_err(|_| PlanProblem::InvalidSource)?;
     if request.session != journal[0].session
-        || journal.last().is_none_or(|event| {
-            event.kind != EventKind::ModelStarted || event.run != request.run
-        })
+        || journal
+            .last()
+            .is_none_or(|event| event.kind != EventKind::ModelStarted || event.run != request.run)
     {
         return Err(PlanProblem::InvalidSource);
     }
