@@ -9,8 +9,10 @@ use phenix_basic_contracts::Event;
 use phenix_sdk::Portable;
 use sha2::{Digest, Sha256};
 
+pub mod history;
 pub mod model;
 pub mod view;
+pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
 pub use view::{compacted_view, ContextPart, ContextProjection, ViewProblem};
 
