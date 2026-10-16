@@ -60,7 +60,7 @@ def prompt(text, limit=512):
     }
 
 def run(messages, composition=path, expected_error=None, expected_failure_text=None):
-    database = "metered.sqlite" if composition == path else "meter-denied.sqlite"
+    database = "metered.sqlite" if composition == path else f"{composition.stem}.sqlite"
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
         [runtime, "jsonl", str(composition)],
@@ -113,6 +113,27 @@ no_grant = run([prompt("no-meter-grant")], composition=ungranted_path, expected_
 assert not [e for e in no_grant if e["kind"] == "Answer"], no_grant
 assert any(e["kind"] == "ModelStarted" for e in no_grant), no_grant
 
+# RED P2-3m: a declared and granted meter is insufficient if the selected
+# upstream Model resolves to a different provider. The scripted Model would
+# otherwise produce a normal answer with this valid fixture measurement.
+mismatched = json.loads(json.dumps(spec))
+for binding in mismatched["slots"]:
+    if binding["caller"] == adapter and binding["slot"] == "Upstream":
+        binding["provider"] = "phenix.model.scripted"
+assert selected(mismatched, "Meter") != selected(mismatched, "Upstream")
+mismatched_path = out / "mismatched-model-meter-composition.json"
+mismatched_path.write_text(json.dumps(mismatched))
+different_provider = run(
+    [prompt("wrong-provider")],
+    composition=mismatched_path,
+    expected_error="InvalidReply",
+)
+assert not [e for e in different_provider if e["kind"] == "Answer"], different_provider
+assert any(
+    e["kind"] == "Failure" and "selected Model provider" in e["text"]
+    for e in different_provider
+), different_provider
+
 # This token-meter fixture returns an invalid digest for the next prompt.
 # The direct Model would still return a fixture answer, so a failure proves
 # the adapter actually invoked the meter before its Model import.
@@ -147,6 +168,7 @@ assert [e["text"] for e in after if e["kind"] == "Answer"] == [
         "same-provider-selected-for-meter-and-model",
         "good-preflight-before-upstream-Model",
         "no-explicit-meter-grant-denied",
+        "cross-provider-token-meter-denied-before-model",
         "changed-request-digest-denied-before-model",
         "missing-output-reserve-denied",
         "input-plus-reserved-output-over-context-denied",
