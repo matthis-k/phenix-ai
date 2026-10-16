@@ -262,6 +262,7 @@ fn action_restart(fixture: &Fixture) -> serde_json::Value {
     serde_json::json!({
         "restored": true,
         "revisions": [first.revision, second.revision],
+        "latest_checkpoint_id": second.id,
         "view_original_source_verified": expanded == source.events,
         "view_summary_cited": summary_cited,
         "view_uncompacted_events_exact": exact_originals,
