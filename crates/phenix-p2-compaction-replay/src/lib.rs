@@ -15,6 +15,7 @@ pub mod budget;
 pub mod history;
 pub mod model;
 pub mod plan;
+pub mod publish;
 pub mod tail;
 pub mod view;
 pub use admission::{
@@ -27,6 +28,7 @@ pub use automatic::{
 pub use budget::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
+pub use publish::{publish_verified_checkpoint, CheckpointPublishProblem, PublishedCheckpoint};
 pub use plan::{plan_verified_checkpoint, CheckpointPlan, PlanProblem};
 pub use tail::{
     assemble_verified_tail_request, extend_verified_view, ExtendedProjection, TailAssemblyProblem,
