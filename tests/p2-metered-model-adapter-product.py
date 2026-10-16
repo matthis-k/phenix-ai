@@ -263,6 +263,12 @@ assert [event["text"] for event in live_events if event["kind"] == "Answer"] == 
     "fixture:history:3:compaction:true"
 ], live_events
 
+def fork_live_database(stem):
+    target = out / f"{stem}.sqlite"
+    with sqlite3.connect(live_db) as origin, sqlite3.connect(target) as fork:
+        origin.backup(fork)
+    return target.name
+
 # Opt-in source reads require an explicit caller grant; discovery/selection
 # cannot grant journal access. Deny before the Model sees a compacted request.
 no_read = json.loads(json.dumps(live))
@@ -277,7 +283,7 @@ denied_read = run(
     [prompt("inspect-compaction")],
     composition=no_read_path,
     expected_error="has no effective grant",
-    database=f"{live_path.stem}.sqlite",
+    database=fork_live_database("journal-read-denied"),
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
 
@@ -285,12 +291,6 @@ assert not [event for event in denied_read if event["kind"] == "Answer"], denied
 # its provider denies the selected caller or its durable blob is corrupt.
 # Fork the same SQLite state so every failure is observed on an independent
 # native restart without perturbing a successful session.
-def fork_live_database(stem):
-    target = out / f"{stem}.sqlite"
-    with sqlite3.connect(live_db) as origin, sqlite3.connect(target) as fork:
-        origin.backup(fork)
-    return target.name
-
 no_checkpoint_grant = json.loads(json.dumps(live))
 no_checkpoint_grant["grants"] = [g for g in no_checkpoint_grant["grants"] if not (
     g["caller"] == adapter
