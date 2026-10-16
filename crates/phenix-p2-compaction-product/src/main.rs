@@ -375,20 +375,18 @@ fn action_publish(fixture: &Fixture) -> serde_json::Value {
         candidate: &CompactionCheckpoint,
     ) -> Result<CompactionCheckpoint, String> {
         match fixture.checkpoint("put", candidate.to_value()) {
-            Outcome::Success(value) => CompactionCheckpoint::from_value(value)
-                .map_err(|failure| format!("{failure:?}")),
+            Outcome::Success(value) => {
+                CompactionCheckpoint::from_value(value).map_err(|failure| format!("{failure:?}"))
+            },
             other => Err(format!("{other:?}")),
         }
     }
 
     let page = fixture.journal();
     let candidate = make_checkpoint(&page, "cp-published", 1, None);
-    let published = publish_verified_checkpoint(
-        &candidate,
-        || latest(fixture),
-        |next| put(fixture, next),
-    )
-    .expect("selected Store denied verified CAS publication or readback");
+    let published =
+        publish_verified_checkpoint(&candidate, || latest(fixture), |next| put(fixture, next))
+            .expect("selected Store denied verified CAS publication or readback");
     assert_eq!(published.checkpoint, candidate);
     let restored = latest(fixture).unwrap().expect("published source missing");
     assert_eq!(restored, candidate);
