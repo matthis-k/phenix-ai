@@ -366,7 +366,6 @@ fn action_publish(fixture: &Fixture) -> serde_json::Value {
                     Err(format!("{failure:?}"))
                 }
             }
-            other => Err(format!("{other:?}")),
         }
     }
 
