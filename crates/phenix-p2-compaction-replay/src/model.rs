@@ -34,13 +34,14 @@ pub enum ModelSelectionError<E> {
 /// A source integrity failure aborts selection: retrying an older view could
 /// conceal source erasure/tampering. A genuine capacity miss may try an older
 /// checkpoint. The callback builds an entire request from authoritative
-/// history plus this view, and measures *that same* request via the provider.
+/// history plus this view, then passes *that same* request by reference to the Model provider's\n/// token meter. Model admission must use the returned object unchanged.
 pub fn select_model_view<T, E>(
     checkpoints: &[CompactionCheckpoint],
     journal: &[Event],
     max_visible_payload_bytes: u64,
     max_model_input_tokens: u64,
-    mut assemble_and_measure: impl FnMut(&ContextProjection) -> Result<(T, u64), E>,
+    mut assemble_request: impl FnMut(&ContextProjection) -> Result<T, E>,
+    mut measure_request_tokens: impl FnMut(&T) -> Result<u64, E>,
 ) -> Result<SelectedModelView<T>, ModelSelectionError<E>> {
     if max_visible_payload_bytes == 0 || max_model_input_tokens == 0 {
         return Err(ModelSelectionError::InvalidBudget);
@@ -51,8 +52,9 @@ pub fn select_model_view<T, E>(
             Err(ViewProblem::OverBudget) => continue,
             Err(problem) => return Err(ModelSelectionError::Projection(problem)),
         };
-        let (request, model_input_tokens) =
-            assemble_and_measure(&view).map_err(ModelSelectionError::Model)?;
+        let request = assemble_request(&view).map_err(ModelSelectionError::Model)?;
+        let model_input_tokens =
+            measure_request_tokens(&request).map_err(ModelSelectionError::Model)?;
         if model_input_tokens <= max_model_input_tokens {
             return Ok(SelectedModelView {
                 request,
