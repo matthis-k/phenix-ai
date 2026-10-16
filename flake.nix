@@ -776,6 +776,29 @@
       };
       basicComposition = pkgs.writeText "phenix-basic-composition.json"
         (builtins.toJSON basicCompositionSpec);
+      # Opt-in real-provider Basic preset. Change only the selected Model and
+      # its journal grant; retain the P1 agent graph, tools and storage.
+      basicHttpCompositionSpec = basicCompositionSpec // {
+        artifacts =
+          builtins.filter (item: item != "${scriptedModel}") basicCompositionSpec.artifacts
+          ++ [ "${httpModel}" ];
+        slots = map (binding:
+          if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
+          then binding // { provider = "phenix.model.http"; }
+          else binding
+        ) basicCompositionSpec.slots ++ [
+          (basicBinding "phenix.model.http" "Journal" "phenix.basic.event-journal" "Journal")
+        ];
+        grants = basicCompositionSpec.grants ++ [
+          { caller = "phenix.model.http";
+            interface = "phenix.basic.journal@1";
+            operation = "append";
+            resources = [ "phenix.session.s1" ];
+          }
+        ];
+      };
+      basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
+        (builtins.toJSON basicHttpCompositionSpec);
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
       historyVerificationCompositionSpec = basicCompositionSpec // {
@@ -1036,6 +1059,10 @@
       basicBinary = overridablePreset (basicCompositionSpec // {
         name = "phenix-basic";
         compositionName = "phenix-basic-composition.json";
+      });
+      basicHttpBinary = overridablePreset (basicHttpCompositionSpec // {
+        name = "phenix-basic-http";
+        compositionName = "phenix-basic-http-composition.json";
       });
       historyVerificationBinary = overridablePreset (historyVerificationCompositionSpec // {
         name = "phenix-basic-verification";
@@ -1714,6 +1741,8 @@
         phenix-basic-runtime = basicRuntime;
         phenix-basic-composition = basicComposition;
         phenix-basic = basicBinary;
+        phenix-basic-http = basicHttpBinary;
+        phenix-basic-http-composition = basicHttpComposition;
         phenix-basic-verification-composition = historyVerificationComposition;
         # Explicit opt-in test binary: Basic runtime plus a history-only Model.
         phenix-basic-verification = historyVerificationBinary;
@@ -1734,6 +1763,25 @@
         phenix-basic-acp = pkgs.writeShellApplication {
           name = "phenix-basic-acp";
           text = "exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition}";
+        };
+        # The executable reads credentials only at invocation. Nothing secret
+        # enters the Nix expression or store; OPENAI_API_KEY is an optional
+        # compatibility alias for the HTTP plugin's credential variable.
+        phenix-basic-http-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-http-acp";
+          text = ''
+            set -eu
+            if [ -z "''${PHENIX_MODEL_HTTP_API_KEY:-}" ] && [ -n "''${OPENAI_API_KEY:-}" ]; then
+              export PHENIX_MODEL_HTTP_API_KEY="$OPENAI_API_KEY"
+            fi
+            export PHENIX_MODEL_HTTP_ENDPOINT="''${PHENIX_MODEL_HTTP_ENDPOINT:-https://api.openai.com/v1/chat/completions}"
+            export PHENIX_MODEL_HTTP_MODEL="''${PHENIX_MODEL_HTTP_MODEL:-gpt-4.1-mini}"
+            if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
+              export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/basic-http.sqlite"
+            fi
+            mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+            exec ${basicHttpBinary}/bin/phenix-basic-http acp "$@"
+          '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
