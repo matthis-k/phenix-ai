@@ -195,6 +195,26 @@ fn rejects_forged_previous_checkpoint_and_bad_revision_or_summary() {
 }
 
 #[test]
+fn repeated_source_proposal_is_noop_without_spending_a_revision() {
+    let (request, journal) = source();
+    let first = plan_verified_checkpoint(&request, &journal, None, policy())
+        .unwrap()
+        .unwrap();
+    let repeated = plan_verified_checkpoint(
+        &request,
+        &journal,
+        Some(&first),
+        CheckpointPlan {
+            id: "cp-auto-next",
+            revision: 2,
+            parent_checkpoint: Some("cp-auto"),
+            ..policy()
+        },
+    );
+    assert_eq!(repeated, Ok(None));
+}
+
+#[test]
 fn never_summarizes_unattested_legacy_tool_turns() {
     let (mut request, mut journal) = source();
     // Convert the second completed turn into a tool-bearing turn with no
