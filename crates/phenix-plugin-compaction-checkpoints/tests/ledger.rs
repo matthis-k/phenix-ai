@@ -3,6 +3,7 @@
 use phenix_advanced_contracts::{CheckpointStoreProblem, CompactionCheckpoint, JournalSpan};
 use phenix_plugin_compaction_checkpoints::{
     append_checkpoint, find_checkpoint, newest_checkpoint, validate_ledger,
+    verify_checkpoint_ancestry, AncestryVerificationError,
 };
 
 fn checkpoint(id: &str, revision: u64, parent: Option<&str>) -> CompactionCheckpoint {
@@ -135,5 +136,53 @@ fn latest_checkpoint_is_monotone_and_session_scoped() {
     assert_eq!(
         newest_checkpoint(&corrupt, "s1"),
         Err(CheckpointStoreProblem::StorageFailed),
+    );
+}
+
+#[test]
+fn checkpoint_ancestry_verifies_every_source_in_parent_order() {
+    let one = append_checkpoint(&[], &checkpoint("cp1", 1, None), "s1").unwrap();
+    let two = append_checkpoint(&one, &checkpoint("cp2", 2, Some("cp1")), "s1").unwrap();
+    let mut visited = Vec::new();
+    assert_eq!(
+        verify_checkpoint_ancestry(&two, "cp2", |cp| {
+            visited.push(cp.id.clone());
+            Ok::<(), &'static str>(())
+        }),
+        Ok(()),
+    );
+    assert_eq!(visited, ["cp1", "cp2"]);
+
+    let mut visited = Vec::new();
+    assert_eq!(
+        verify_checkpoint_ancestry(&two, "cp1", |cp| {
+            visited.push(cp.id.clone());
+            Ok::<(), &'static str>(())
+        }),
+        Ok(()),
+    );
+    assert_eq!(visited, ["cp1"]);
+}
+
+#[test]
+fn stale_ancestor_denies_descendant_instead_of_using_latest_source_only() {
+    let one = append_checkpoint(&[], &checkpoint("cp1", 1, None), "s1").unwrap();
+    let two = append_checkpoint(&one, &checkpoint("cp2", 2, Some("cp1")), "s1").unwrap();
+    let mut visited = Vec::new();
+    assert_eq!(
+        verify_checkpoint_ancestry(&two, "cp2", |cp| {
+            visited.push(cp.id.clone());
+            if cp.id == "cp1" {
+                Err("ancestor source erased")
+            } else {
+                Ok(())
+            }
+        }),
+        Err(AncestryVerificationError::Source("ancestor source erased")),
+    );
+    assert_eq!(visited, ["cp1"]);
+    assert_eq!(
+        verify_checkpoint_ancestry(&two, "missing", |_| Ok::<(), &'static str>(())),
+        Err(AncestryVerificationError::MissingCheckpoint),
     );
 }

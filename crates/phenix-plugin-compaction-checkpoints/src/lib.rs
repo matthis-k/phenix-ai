@@ -94,6 +94,31 @@ pub fn newest_checkpoint<'a>(
     history.last().ok_or(CheckpointStoreProblem::NotFound)
 }
 
+/// A checkpoint with a valid own span may still depend on erased sources
+/// cited by earlier revisions. Call the source verifier for every ancestor,
+/// in revision order, before returning or committing the selected checkpoint.
+/// The caller must validate the persisted ledger and session scope first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AncestryVerificationError<E> {
+    MissingCheckpoint,
+    Source(E),
+}
+
+pub fn verify_checkpoint_ancestry<E>(
+    history: &[CompactionCheckpoint],
+    checkpoint_id: &str,
+    mut verify: impl FnMut(&CompactionCheckpoint) -> Result<(), E>,
+) -> Result<(), AncestryVerificationError<E>> {
+    let last = history
+        .iter()
+        .position(|checkpoint| checkpoint.id == checkpoint_id)
+        .ok_or(AncestryVerificationError::MissingCheckpoint)?;
+    for checkpoint in &history[..=last] {
+        verify(checkpoint).map_err(AncestryVerificationError::Source)?;
+    }
+    Ok(())
+}
+
 pub fn find_checkpoint<'a>(
     history: &'a [CompactionCheckpoint],
     id: &str,
@@ -115,7 +140,7 @@ pub fn find_checkpoint<'a>(
 mod plugin {
     use super::{
         append_checkpoint, find_checkpoint, newest_checkpoint, problem, validate_ledger,
-        MAX_JOURNAL_EVENTS, RECORD_KEY,
+        verify_checkpoint_ancestry, AncestryVerificationError, MAX_JOURNAL_EVENTS, RECORD_KEY,
     };
     use phenix_advanced_contracts::{
         validate_checkpoint, CheckpointKey, CheckpointStoreError, CheckpointStoreProblem,
@@ -238,6 +263,23 @@ mod plugin {
         Ok(())
     }
 
+    fn verify_source_ancestry(
+        host: &Host<'_>,
+        history: &[CompactionCheckpoint],
+        checkpoint_id: &str,
+    ) -> CallResult<(), CheckpointStoreError> {
+        verify_checkpoint_ancestry(history, checkpoint_id, |checkpoint| {
+            verify_journal(host, checkpoint)
+        })
+        .map_err(|error| match error {
+            AncestryVerificationError::MissingCheckpoint => CallError::Domain(problem(
+                CheckpointStoreProblem::StorageFailed,
+                "checkpoint missing from validated durable lineage",
+            )),
+            AncestryVerificationError::Source(error) => error,
+        })
+    }
+
     #[provide(CompactionStore::put)]
     fn put(
         _: &mut State,
@@ -247,7 +289,7 @@ mod plugin {
         let (revision, history) = load(host, &checkpoint.session)?;
         let updated = append_checkpoint(&history, &checkpoint, &checkpoint.session)
             .map_err(|code| CallError::Domain(problem(code, "invalid checkpoint revision")))?;
-        verify_journal(host, &checkpoint)?;
+        verify_source_ancestry(host, &updated, &checkpoint.id)?;
         let data = encode(&updated).map_err(CallError::Kernel)?;
         let result = host
             .invoke::<Storage::transact>(
@@ -282,7 +324,7 @@ mod plugin {
             .map_err(|code| CallError::Domain(problem(code, "no valid latest checkpoint")))?;
         // A durable metadata record must never remain usable after its source
         // is erased, altered, or authorization is revoked.
-        verify_journal(host, checkpoint)?;
+        verify_source_ancestry(host, &history, &checkpoint.id)?;
         Ok(checkpoint.clone())
     }
 
@@ -297,7 +339,7 @@ mod plugin {
             .map_err(|code| CallError::Domain(problem(code, "checkpoint not found")))?;
         // Get is not permission to bypass source erasure or source revision
         // checks. Consumers can use exact replay only after this gate.
-        verify_journal(host, checkpoint)?;
+        verify_source_ancestry(host, &history, &checkpoint.id)?;
         Ok(checkpoint.clone())
     }
 }
