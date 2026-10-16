@@ -59,7 +59,7 @@ def prompt(text, limit=512):
         "limits": {"model_tokens": limit},
     }
 
-def run(messages, composition=path, expected_error=None):
+def run(messages, composition=path, expected_error=None, expected_failure_text=None):
     database = "metered.sqlite" if composition == path else "meter-denied.sqlite"
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
@@ -70,13 +70,20 @@ def run(messages, composition=path, expected_error=None):
     if expected_error is None:
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
     else:
-        # A denied runtime turn emits its durable Failure event and returns a
-        # nonzero process status. That is an expected rejection, not success.
+        # Invalid replies and kernel denials exit nonzero. Some domain turn
+        # rejections instead return a successful JSONL command that contains
+        # the durable Failure event. In either case no Answer may be emitted.
         assert proc.returncode != 0, (proc.stdout, proc.stderr)
         assert expected_error in proc.stderr, (proc.stdout, proc.stderr)
     events = [json.loads(line) for line in proc.stdout.splitlines()]
-    if expected_error is not None and "has no effective grant" not in expected_error:
+    if expected_error is not None or expected_failure_text is not None:
+        assert not [event for event in events if event["kind"] == "Answer"], events
         assert any(event["kind"] == "Failure" for event in events), events
+    if expected_failure_text is not None:
+        assert any(
+            event["kind"] == "Failure" and expected_failure_text in event["text"]
+            for event in events
+        ), (events, proc.stderr)
     return events
 
 accepted = run([prompt("hello")])
@@ -112,14 +119,14 @@ assert any(e["kind"] == "Failure" for e in invalid), invalid
 # Without explicit output reserve, the opted-in measured model must fail
 # rather than invent a context budget.
 missing_limit = {"type": "prompt", "session": "s1", "text": "no-limit"}
-no_reserve = run([missing_limit], expected_error="TurnLimit")
+no_reserve = run([missing_limit], expected_failure_text="requires an explicit positive token budget")
 assert not [e for e in no_reserve if e["kind"] == "Answer"], no_reserve
 assert any(e["kind"] == "Failure" for e in no_reserve), no_reserve
 
 # The exact preflight must also account for the selected Model's output
 # reservation, not only the observed input length. This call's Model would
 # otherwise generate a short valid fixture answer.
-over_budget = run([prompt("reserve-too-large", limit=65_535)], expected_error="TurnLimit")
+over_budget = run([prompt("reserve-too-large", limit=65_535)], expected_failure_text="selected Model token measurement rejected")
 assert not [e for e in over_budget if e["kind"] == "Answer"], over_budget
 assert any(e["kind"] == "Failure" for e in over_budget), over_budget
 
