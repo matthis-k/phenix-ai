@@ -1104,6 +1104,7 @@ dependencies = [
  "phenix-advanced-contracts",
  "phenix-basic-contracts",
  "phenix-sdk",
+ "phenix-p2-compaction-replay",
 ]
 
 [[package]]
