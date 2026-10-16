@@ -1,12 +1,8 @@
 //! P2-3u RED: checkpoint pressure derives from the selected Model's exact
 //! full-request measurement. It does not execute, summarize, or store effects.
-use phenix_advanced_contracts::{
-    model_request_sha256, ModelTokenMeasurement, ModelTokenProblem,
-};
+use phenix_advanced_contracts::{model_request_sha256, ModelTokenMeasurement, ModelTokenProblem};
 use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
-use phenix_p2_compaction_replay::{
-    checkpoint_pressure, CheckpointPressure, PressureProblem,
-};
+use phenix_p2_compaction_replay::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 
 fn request() -> ModelRequest {
     ModelRequest {
@@ -77,12 +73,16 @@ fn measurement_must_identify_the_exact_request_and_selected_model() {
     meter.request_sha256 = "0".repeat(64);
     assert_eq!(
         checkpoint_pressure(&req, &meter, "fixture:selected-model", 80),
-        Err(PressureProblem::Measurement(ModelTokenProblem::RequestChanged)),
+        Err(PressureProblem::Measurement(
+            ModelTokenProblem::RequestChanged
+        )),
     );
     let meter = measurement(&req, 9_900, 10_000);
     assert_eq!(
         checkpoint_pressure(&req, &meter, "different-provider", 80),
-        Err(PressureProblem::Measurement(ModelTokenProblem::ModelChanged)),
+        Err(PressureProblem::Measurement(
+            ModelTokenProblem::ModelChanged
+        )),
     );
 }
 
@@ -94,7 +94,12 @@ fn selected_output_reserve_and_policy_threshold_are_mandatory() {
     no_limit.limits.model_tokens = None;
     let meter_without_limit = measurement(&no_limit, 7_500, 10_000);
     assert_eq!(
-        checkpoint_pressure(&no_limit, &meter_without_limit, "fixture:selected-model", 80),
+        checkpoint_pressure(
+            &no_limit,
+            &meter_without_limit,
+            "fixture:selected-model",
+            80
+        ),
         Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget)),
     );
     for bad in [0, 101, u64::MAX] {
