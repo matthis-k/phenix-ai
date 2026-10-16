@@ -5,8 +5,8 @@
 //! through M1 pending imports. The Basic graph owns tool progression,
 //! durable sessions, journal effects and turn boundaries. The optional
 //! Meter slot is an opt-in preflight for provider-specific token accounting.
-//! Until source-backed compaction admission exists, the original request is
-//! submitted unchanged. Without a Meter binding, forwarding is unchanged.
+//! Opted-in checkpoint reads are source-verified and selected-model metered.
+//! Without a Meter binding, the public Advanced preset remains pass-through.
 #[phenix_sdk::plugin(
     id = "phenix.advanced.model-adapter",
     version = "1.0.0",
