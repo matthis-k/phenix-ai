@@ -49,7 +49,11 @@ pub fn checkpoint_pressure(
         Ok(()) => {}
         Err(ModelTokenProblem::OverBudget) if output_reserve > 0 => {
             // Identity, tokenizer and request digest were validated before
-            // capacity by the canonical measurement verifier.
+            // capacity by the canonical measurement verifier. Compaction
+            // cannot help if the output reserve alone consumes the window.
+            if output_reserve >= measurement.context_window_tokens {
+                return Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget));
+            }
             return Ok(CheckpointPressure::OverContextWindow);
         }
         Err(problem) => return Err(PressureProblem::Measurement(problem)),
