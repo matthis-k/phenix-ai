@@ -78,7 +78,11 @@ def run(messages, composition=path, expected_error=None, expected_failure_text=N
     events = [json.loads(line) for line in proc.stdout.splitlines()]
     if expected_error is not None or expected_failure_text is not None:
         assert not [event for event in events if event["kind"] == "Answer"], events
-        assert any(event["kind"] == "Failure" for event in events), events
+        # Kernel authority denial aborts the imported effect before the Basic
+        # agent can journal a Failure. Agent-level Model errors instead write
+        # the durable Failure event, including invalid replies and turn caps.
+        if expected_error != "has no effective grant":
+            assert any(event["kind"] == "Failure" for event in events), events
     if expected_failure_text is not None:
         assert any(
             event["kind"] == "Failure" and expected_failure_text in event["text"]
