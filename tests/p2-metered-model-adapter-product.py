@@ -63,8 +63,9 @@ def prompt(text, limit=512):
         "limits": {"model_tokens": limit},
     }
 
-def run(messages, composition=path, expected_error=None, expected_failure_text=None):
-    database = "metered.sqlite" if composition == path else f"{composition.stem}.sqlite"
+def run(messages, composition=path, expected_error=None, expected_failure_text=None, database=None):
+    if database is None:
+        database = "metered.sqlite" if composition == path else f"{composition.stem}.sqlite"
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
         [runtime, "jsonl", str(composition)],
@@ -275,6 +276,7 @@ denied_read = run(
     [prompt("inspect-compaction")],
     composition=no_read_path,
     expected_error="has no effective grant",
+    database=f"{live_path.stem}.sqlite",
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
 
