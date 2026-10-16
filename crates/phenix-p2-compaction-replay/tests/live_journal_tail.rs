@@ -28,12 +28,18 @@ fn history() -> Vec<Event> {
 }
 fn checkpoint(events: &[Event]) -> CompactionCheckpoint {
     CompactionCheckpoint {
-        id: "cp-1".into(), session: "s1".into(), revision: 1,
-        parent_checkpoint: None, input: span_for_events(events).unwrap(),
+        id: "cp-1".into(),
+        session: "s1".into(),
+        revision: 1,
+        parent_checkpoint: None,
+        input: span_for_events(events).unwrap(),
         summarized: vec![span_for_events(&events[..2]).unwrap()],
         retained: vec![span_for_events(&events[2..]).unwrap()],
-        excluded: vec![], summary: "source-backed older turn".into(),
-        policy: "live-journal".into(), policy_version: 1, model: None,
+        excluded: vec![],
+        summary: "source-backed older turn".into(),
+        policy: "live-journal".into(),
+        policy_version: 1,
+        model: None,
         hydration_sources: vec![],
     }
 }
@@ -51,8 +57,14 @@ fn appended_events_are_exact_and_newly_cited_without_rewriting_checkpoint() {
     assert_eq!(projection.base.source_span, cp.input);
     assert_eq!(projection.base.parts.len(), 3);
     assert_eq!(projection.trailing, tail);
-    assert_eq!(projection.trailing_span, Some(span_for_events(&tail).unwrap()));
-    assert!(matches!(projection.base.parts[0], ContextPart::Summary { .. }));
+    assert_eq!(
+        projection.trailing_span,
+        Some(span_for_events(&tail).unwrap())
+    );
+    assert!(matches!(
+        projection.base.parts[0],
+        ContextPart::Summary { .. }
+    ));
     assert!(projection.visible_payload_bytes >= projection.base.visible_payload_bytes);
     assert_eq!(prefix, history());
 }
@@ -64,7 +76,10 @@ fn empty_tail_and_exact_zero_length_extension_do_not_invent_history() {
     let projection = extend_verified_view(&cp, &prefix, &[], 4096).unwrap();
     assert!(projection.trailing.is_empty());
     assert_eq!(projection.trailing_span, None);
-    assert_eq!(projection.visible_payload_bytes, projection.base.visible_payload_bytes);
+    assert_eq!(
+        projection.visible_payload_bytes,
+        projection.base.visible_payload_bytes
+    );
 }
 
 #[test]
@@ -74,8 +89,15 @@ fn tampered_checkpoint_source_rejects_even_when_tail_is_intact() {
     let mut forged = prefix.clone();
     forged[1].text = "rewritten older answer".into();
     assert_eq!(
-        extend_verified_view(&cp, &forged, &[event(5, EventKind::PromptAccepted, "new", "")], 4096),
-        Err(TailProblem::Checkpoint(ViewProblem::Replay(ReplayProblem::DigestChanged))),
+        extend_verified_view(
+            &cp,
+            &forged,
+            &[event(5, EventKind::PromptAccepted, "new", "")],
+            4096
+        ),
+        Err(TailProblem::Checkpoint(ViewProblem::Replay(
+            ReplayProblem::DigestChanged
+        ))),
     );
 }
 
@@ -84,7 +106,12 @@ fn tail_requires_contiguous_sequences_and_exact_session_scope() {
     let prefix = history();
     let cp = checkpoint(&prefix);
     assert_eq!(
-        extend_verified_view(&cp, &prefix, &[event(6, EventKind::PromptAccepted, "gap", "")], 4096),
+        extend_verified_view(
+            &cp,
+            &prefix,
+            &[event(6, EventKind::PromptAccepted, "gap", "")],
+            4096
+        ),
         Err(TailProblem::InvalidSequence),
     );
     let mut wrong = event(5, EventKind::PromptAccepted, "other", "");
@@ -95,9 +122,12 @@ fn tail_requires_contiguous_sequences_and_exact_session_scope() {
     );
     assert_eq!(
         extend_verified_view(
-            &cp, &prefix,
-            &[event(5, EventKind::PromptAccepted, "ok", ""),
-              event(5, EventKind::Answer, "duplicate", "")],
+            &cp,
+            &prefix,
+            &[
+                event(5, EventKind::PromptAccepted, "ok", ""),
+                event(5, EventKind::Answer, "duplicate", "")
+            ],
             4096
         ),
         Err(TailProblem::InvalidSequence),
@@ -109,18 +139,33 @@ fn in_flight_and_orphaned_tail_tool_effects_fail_closed() {
     let prefix = history();
     let cp = checkpoint(&prefix);
     assert_eq!(
-        extend_verified_view(&cp, &prefix, &[event(5, EventKind::ToolStarted, "uppercase", "call-1")], 4096),
+        extend_verified_view(
+            &cp,
+            &prefix,
+            &[event(5, EventKind::ToolStarted, "uppercase", "call-1")],
+            4096
+        ),
         Err(TailProblem::UnresolvedToolCall),
     );
     assert_eq!(
-        extend_verified_view(&cp, &prefix, &[event(5, EventKind::ToolFinished, "output", "call-1")], 4096),
+        extend_verified_view(
+            &cp,
+            &prefix,
+            &[event(5, EventKind::ToolFinished, "output", "call-1")],
+            4096
+        ),
         Err(TailProblem::InvalidToolSequence),
     );
     let paired = vec![
         event(5, EventKind::ToolStarted, "uppercase", "call-1"),
         event(6, EventKind::ToolFinished, "output", "call-1"),
     ];
-    assert_eq!(extend_verified_view(&cp, &prefix, &paired, 4096).unwrap().trailing, paired);
+    assert_eq!(
+        extend_verified_view(&cp, &prefix, &paired, 4096)
+            .unwrap()
+            .trailing,
+        paired
+    );
 }
 
 #[test]
