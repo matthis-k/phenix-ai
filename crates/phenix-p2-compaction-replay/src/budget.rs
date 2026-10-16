@@ -43,12 +43,8 @@ pub fn checkpoint_pressure(
         return Err(PressureProblem::InvalidThreshold);
     }
     let output_reserve = request.limits.model_tokens.unwrap_or(0);
-    let checked = validate_model_token_measurement(
-        request,
-        measurement,
-        selected_model,
-        output_reserve,
-    );
+    let checked =
+        validate_model_token_measurement(request, measurement, selected_model, output_reserve);
     match checked {
         Ok(()) => {}
         Err(ModelTokenProblem::OverBudget) if output_reserve > 0 => {
@@ -58,11 +54,9 @@ pub fn checkpoint_pressure(
         }
         Err(problem) => return Err(PressureProblem::Measurement(problem)),
     }
-    let total_tokens =
-        u128::from(measurement.input_tokens) + u128::from(output_reserve);
+    let total_tokens = u128::from(measurement.input_tokens) + u128::from(output_reserve);
     let used = total_tokens * 100;
-    let threshold =
-        u128::from(measurement.context_window_tokens) * u128::from(high_water_percent);
+    let threshold = u128::from(measurement.context_window_tokens) * u128::from(high_water_percent);
     Ok(if used >= threshold {
         CheckpointPressure::AtThreshold
     } else {
