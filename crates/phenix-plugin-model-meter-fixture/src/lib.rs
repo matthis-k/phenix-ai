@@ -172,9 +172,7 @@ mod plugin {
             }
         })?;
         let last = input.request.history.last();
-        if last.is_none_or(|msg| {
-            msg.text != "auto-compact" && msg.text != "auto-invalid-citation"
-        })
+        if last.is_none_or(|msg| msg.text != "auto-compact" && msg.text != "auto-invalid-citation")
             || input.journal.len() < 10
             || input.journal[0].text != "seed-one"
             || input.journal[4].text != "seed-two"
