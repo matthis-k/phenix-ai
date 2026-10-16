@@ -436,7 +436,10 @@ impl Prepared {
         loop {
             let mut grew = false;
             for (caller, provider) in &selected_edges {
-                let downstream = delegated_definitions.get(provider).cloned().unwrap_or_default();
+                let downstream = delegated_definitions
+                    .get(provider)
+                    .cloned()
+                    .unwrap_or_default();
                 let inherited = delegated_definitions
                     .get_mut(caller)
                     .expect("selected import caller has a loaded descriptor");
