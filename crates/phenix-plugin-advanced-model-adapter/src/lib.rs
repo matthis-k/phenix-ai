@@ -30,14 +30,17 @@
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore, ModelTokenMeter,
-        ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore, ModelTokenMeasurement,
+        ModelTokenMeter, ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
         Message, Model, ModelReply, ModelRequest, Role, Scope,
     };
-    use phenix_p2_compaction_replay::assemble_verified_tail_request;
+    use phenix_p2_compaction_replay::{
+        assemble_verified_tail_request, checkpoint_pressure, validate_compacted_meter_transition,
+        CompactedMeterProblem, PressureProblem,
+    };
     use phenix_sdk::{
         CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
         PendingResult,
@@ -255,14 +258,12 @@ mod plugin {
         )))
     }
 
-    fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
-        // An absent optional Meter preserves the public Advanced pass-through.
-        // When present, it must be exported by the *same pinned plugin
-        // instance* as the selected upstream Model, not simply claim the
-        // same model-name string in a potentially untrusted measurement.
-        if host.slot_count("Meter").map_err(CallError::Kernel)? == 0 {
-            return Ok(());
-        }
+    /// Measure the exact request through the same pinned provider selected
+    /// for upstream Model execution. Selection does not confer a grant.
+    fn selected_measurement(
+        host: &Host<'_>,
+        request: &ModelRequest,
+    ) -> CallResult<ModelTokenMeasurement, BasicError> {
         let upstream = host
             .selected_provider::<Model::complete>("Upstream")
             .map_err(CallError::Kernel)?;
@@ -275,19 +276,23 @@ mod plugin {
                 "token meter does not share the selected Model provider",
             )));
         }
-        let measurement = match host.invoke::<ModelTokenMeter::measure>("Meter", request) {
-            Ok(measurement) => measurement,
-            Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
-            Err(CallError::Domain(_)) => {
-                return Err(CallError::Domain(error(
-                    ErrorCode::ModelFailed,
-                    "selected Model token meter failed",
-                )));
-            }
-        };
-        // model_tokens is the selected Model's completion-token ceiling.
-        // Reserve the full amount; never fabricate a default output reserve
-        // for an explicitly metered composition.
+        match host.invoke::<ModelTokenMeter::measure>("Meter", request) {
+            Ok(measurement) => Ok(measurement),
+            Err(CallError::Kernel(failure)) => Err(CallError::Kernel(failure)),
+            Err(CallError::Domain(_)) => Err(CallError::Domain(error(
+                ErrorCode::ModelFailed,
+                "selected Model token meter failed",
+            ))),
+        }
+    }
+
+    fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
+        // An absent optional Meter preserves the public Advanced pass-through.
+        if host.slot_count("Meter").map_err(CallError::Kernel)? == 0 {
+            return Ok(());
+        }
+        let measurement = selected_measurement(host, request)?;
+        // Reserve the selected Model's full completion limit.
         let output_reserve = request
             .limits
             .model_tokens
@@ -311,6 +316,52 @@ mod plugin {
             })
     }
 
+    /// The source journal and checkpoint were already read through selected,
+    /// scoped imports and reassembled byte-for-byte. Verify the original
+    /// ModelRequest even when it exceeds the context window; its compacted
+    /// successor must then fit under the identical Model configuration.
+    fn preflight_compacted(
+        host: &Host<'_>,
+        original: &ModelRequest,
+        rebuilt: &ModelRequest,
+    ) -> CallResult<(), BasicError> {
+        let original_measurement = selected_measurement(host, original)?;
+        checkpoint_pressure(
+            original,
+            &original_measurement,
+            &original_measurement.model,
+            100,
+        )
+        .map_err(|problem| {
+            let code = if problem
+                == PressureProblem::Measurement(ModelTokenProblem::OverBudget)
+            {
+                ErrorCode::TurnLimit
+            } else {
+                ErrorCode::InvalidReply
+            };
+            CallError::Domain(error(code, "original Model token measurement rejected"))
+        })?;
+        let rebuilt_measurement = selected_measurement(host, rebuilt)?;
+        validate_compacted_meter_transition(
+            original,
+            rebuilt,
+            &original_measurement,
+            &rebuilt_measurement,
+            &original_measurement.model,
+        )
+        .map_err(|problem| {
+            let code = if problem
+                == CompactedMeterProblem::CandidateMeasurement(ModelTokenProblem::OverBudget)
+            {
+                ErrorCode::TurnLimit
+            } else {
+                ErrorCode::InvalidReply
+            };
+            CallError::Domain(error(code, "compacted Model configuration or token count rejected"))
+        })
+    }
+
     #[pending(Model::complete)]
     fn begin(
         state: &mut State,
@@ -326,13 +377,20 @@ mod plugin {
                 "Advanced Model is already awaiting its selected upstream",
             ))));
         }
-        // The exact source-verified ModelRequest, not the original Basic
-        // history or a journal-derived approximation, is metered and sent.
-        let request = match prepare_request(host, &request) {
+        // A source-verified request is metered exactly as sent. When a
+        // checkpoint changes the request, independently measure the original
+        // and rebuilt requests under one selected Model configuration.
+        let source = request;
+        let request = match prepare_request(host, &source) {
             Ok(request) => request,
             Err(failure) => return finish(Err(failure)),
         };
-        if let Err(failure) = preflight_meter(host, &request) {
+        let checked = if request == source {
+            preflight_meter(host, &request)
+        } else {
+            preflight_compacted(host, &source, &request)
+        };
+        if let Err(failure) = checked {
             return finish(Err(failure));
         }
         match host.begin::<Model::complete>("Upstream", &request) {
