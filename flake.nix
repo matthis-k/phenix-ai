@@ -528,6 +528,7 @@
           src = subset (publicPaths ++ [
             ./crates/phenix-basic-contracts
             ./crates/phenix-advanced-contracts
+            ./crates/phenix-p2-compaction-replay
             ./crates/phenix-plugin-advanced-model-adapter
           ]);
         });
@@ -1211,7 +1212,10 @@
         mkdir -p "$out"
         python ${./tests/p2-metered-model-adapter-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${advancedComposition} ${p2ModelMeterFixtureCheck} "$out"
+          ${advancedComposition} ${p2ModelMeterFixtureCheck} \
+          ${p2CompactionProductRunner}/bin/phenix-p2-compaction-product \
+          ${compactionCheckpointStore} ${eventJournal} ${storageSqlite} \
+          ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/accepted.json"
       '';
       p2ModelAdapterProductCheck = pkgs.runCommand "phenix-p2-model-adapter-product" {
