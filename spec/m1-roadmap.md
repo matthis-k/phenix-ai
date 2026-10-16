@@ -368,9 +368,9 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | F3 | P1, S5; S6 only for concurrent-session acceptance | Migrate named reactive plugin consumers/producers and the frontend host to generated hooks; prove ACP and Terminal/JSONL parity | All required plugins in the F3 migration inventory use typed declarative handlers instead of redundant watch registration, journal polling or event dispatch; preserve durable event order, cancellation, scopes and transport ownership | [ ] PLANNED POST-P1: inventory and migration gates specified; implementation pending |
 
 | P2a | P1 accepted | Common host-side session execution driver and SDK handles | Submit, observe, cancel and drain through one kernel-owning controller; remove frontend-specific polling without a second kernel scheduler | [ ] PLANNED: post-P1 only |
-| P2b | P2a | Session hub and independently typed client projections | Multiple authorized frontends observe one canonical session using separate subscriptions, cursors, replay boundaries, queues and protocol-specific views | [ ] PLANNED: post-P1 only |
-| P2c | P2a; P2b for projection routes | Plugin-declared typed I/O ports and configurable forwarding | Multiple ports and one-to-many sinks including pipes/sockets; route authority, backpressure, shutdown and revocation; no kernel dispatch per raw byte | [ ] PLANNED: post-P1 only |
-| P2d | P2b, P2c | Multi-client protocol and I/O fixtures | ACP v1, official ACP v2 and WebUI share session state without sharing wire streams; exercise reconnect, isolation, concurrent commands and multi-sink routing | [ ] PLANNED: post-P1 only |
+| P2b | P2a | Session hub, independently typed client projections and A2UI capability selection | Multiple authorized frontends observe one canonical session with separate subscriptions/cursors; a target client advertises its supported standard A2UI catalogs and receives only validated compatible UI | [ ] PLANNED: post-P1 only |
+| P2c | P2a; P2b for projection routes | Plugin-declared typed I/O ports, configurable forwarding and standard A2UI message/action transport | Multiple ports and one-to-many sinks including pipes/sockets; preserve unmodified A2UI envelopes and authorized return actions over compatible existing transports; no new UI wire format or kernel dispatch per raw byte | [ ] PLANNED: post-P1 only |
+| P2d | P2b, P2c | Multi-client, A2UI and I/O fixtures | ACP v1, official ACP v2 and WebUI share session state without sharing streams; verify A2UI catalog negotiation, validation, actions, fallback, isolation, reconnect and multi-sink routing where transport support exists | [ ] PLANNED: post-P1 only |
 | K1 | S3b | Kernel generation and prepared composition APIs in `phenix-kernel` | Authorized stage/load/replace/unload/trial/promote/retire of verified plugins; preserve grants, active roots, rollback and leases; builds stay outside kernel | [ ] PLANNED: generation lifecycle exists, management API incomplete |
 | K2 | K1, G2 | Kernel desired-state diff/preview/reconciliation using existing resolver, DAG compiler and generation manager | No-effect preview; deterministic diff; atomic promotion or rollback; unchanged roots and safe draining; no second registry or dispatcher | [ ] PLANNED: generation transition exists, desired-state reconciliation absent |
 | K3 | G3, G4 | Kernel diagnostic event emission and authenticated internal inspection API | Structured execution/lifecycle/state/denial facts with correlation; authorized consistent snapshots; dropped diagnostic events detectable; no consumer affects execution | [ ] PLANNED: basic inspect methods exist, diagnostic emitter missing |
@@ -419,6 +419,37 @@ Each client owns a bounded queue, cursor, backpressure and disconnect policy.
 Filter by authorized resources before serialization. Slow or disconnected
 observers cannot stall execution or advance another observer's cursor.
 
+**P2b: A2UI capability selection.** Add optional Agent-to-UI support through a
+frontend plugin, using the upstream [A2UI v0.9.1 production
+specification](https://github.com/a2ui-project/a2ui/blob/main/specification/v0_9_1/docs/a2ui_protocol.md),
+its published JSON Schemas, component catalogs and capability metadata.
+Do not define Phenix UI components, a parallel JSON dialect or a second
+catalog format. A2UI v1.0 remains a candidate and requires a separate
+compatibility review; do not silently interpret v1.0 messages as v0.9.1.
+Frontend connections announce supported catalog IDs and optional inline
+catalogs using the metadata/initialization mechanism of a supported transport.
+The selected A2UI provider advertises only versions and catalogs it can
+validate. An inline catalog is untrusted until checked against the upstream
+catalog-definition rules and deployment policy; its prose instructions are not
+authority. The provider resolves an explicit target client's offered catalogs
+against its own supported set. Keep the selected catalog ID, definition/version
+and target client attached to the UI delivery. Per-client differences must not
+change canonical session history or widen any client's grants.
+
+An ordinary agent-facing plugin import presents the **selected upstream
+catalog** and output constraints to the Model. Model compliance is not a
+security guarantee. Validate each generated upstream A2UI envelope against
+the selected catalog and upstream schemas, then check the surface lifecycle,
+component references, resource budgets and authorization before sending it to
+the target. A surface keeps its catalog until deletion, as required by A2UI.
+Validate any updates against the pinned catalog, even across reconnect and
+plugin generations. Reject malformed or unsupported messages without
+forwarding partial unvalidated content. Non-A2UI clients receive ordinary
+text/progress; for a required interactive exchange, report unsupported
+capability instead of fabricating a form. An SVG renderer is supported only
+when a trusted catalog advertises that component and the frontend enforces a
+safe SVG profile. Schema validation alone does not sanitize active SVG content.
+
 **P2c: I/O routing.** Plugins declare any number of distinct typed input and
 output ports, including names, payload schemas and authority requirements.
 Composition configures their destinations and one-to-many forwarding to
@@ -428,6 +459,17 @@ when binding; handle generation changes, scope revocation and disconnect.
 Semantic state-mutating commands use kernel admission. Authorized raw-byte
 streams use maintained I/O crates rather than graph invocation per chunk.
 Reuse protocol/transport libraries, notably the official ACP SDK.
+Forward upstream A2UI messages without rewriting their protocol structure,
+using an existing supported transport binding. A2UI itself is transport
+agnostic. ACP remains an ACP protocol adapter: use only capabilities, content
+or extension facilities actually supported by the chosen official SDK and
+peer; do not invent ACP method names, envelopes or an A2UI-over-ACP protocol.
+If an ACP client cannot carry A2UI through a verified compatible mechanism,
+retain text/ACP elicitation or use a separately supported standard A2UI
+transport. A2UI renderer actions enter through the supported return channel,
+are validated against the live surface/catalog, authenticated to the client
+and session, and admitted through the existing kernel command/approval path.
+A visible button cannot confer permission to execute its action.
 
 **P2d: integration gate.** Start ACP v1 and WebUI clients on the same
 session, plus ACP v2 through its supported official protocol adapter.
@@ -442,10 +484,23 @@ multi-destination pipes/sockets, disconnect, cancellation and physical
 draining. A client disconnect does not cancel a shared run by default;
 explicit authorized lifetime policy may do so. Use independent SDK clients
 rather than only self-to-self mocks.
+Add independent A2UI v0.9.1 schema/catalog fixtures and an actual renderer
+or protocol client, not only hand-authored Phenix JSON. Verify that a client
+advertising only Text/Button cannot receive a form or SVG, while another
+authorized client with a trusted SVG/form catalog can. Test unknown catalog,
+bad component properties, malformed envelopes, invalid surface ordering,
+stale catalog after reconnect, forged action names or component refs, cross-session/cross-
+client replies, concurrent responders, size/depth limits and disconnect.
+Prove that unsupported clients retain text behavior, a valid response is
+admitted once, and no invalid UI frame reaches a renderer.
 
 **Non-goals.** No second session registry, event journal, agent executor
 or kernel-native network/protocol stack. No assumption that clients share
-wire bytes or that ACP v2 unsupported operations already work.
+wire bytes or that ACP v2 unsupported operations already work. No new
+Phenix-specific UI protocol, catalog format, ACP extension wire contract,
+kernel renderer or alternative A2UI parser. Select a maintained validator
+and existing renderer/transport libraries after the R1 fit audit; Phenix
+owns only its bindings, authorization, selection and delivery policies.
 
 ### Library and protocol reuse policy (R1)
 

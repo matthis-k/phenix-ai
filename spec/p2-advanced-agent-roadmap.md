@@ -381,6 +381,9 @@ Retain oldmain's tested memory-specific semantics where they remain useful: immu
 
 PR #852 used P2a–P2d for multi-client state projection and I/O routing before the Advanced release label was assigned. Keep its work and dependency, but name its track P2-IO1 through P2-IO4 when integrating its roadmap. Advanced P2-0 through P2-10 is the product track. The multi-client I/O track can proceed in parallel after the CI gate; P2 does not depend on synchronized multiple frontends unless a verification scenario explicitly requires them.
 
+
+Standard [A2UI interactive UI support](m1-roadmap.md#post-p1-p2-shared-session-projections-and-typed-io-routing) belongs to the adjacent P2-IO2 through P2-IO4 frontend track. It uses upstream A2UI contracts, not a Phenix-specific UI protocol. It does not make rich interactive UI an Advanced P2-0 through P2-10 release gate; keep this requirement and its tests in the M1 roadmap.
+
 ## Release decision
 
 P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, including P2-6A and functional cases AV-35 through AV-45, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
