@@ -46,7 +46,6 @@ fn measured_headroom_decides_checkpoint_before_model_admission() {
             &req,
             &measurement(&req, 1_000, 10_000),
             "fixture:selected-model",
-            500,
             80,
         ),
         Ok(CheckpointPressure::EnoughHeadroom)
@@ -56,7 +55,6 @@ fn measured_headroom_decides_checkpoint_before_model_admission() {
             &req,
             &measurement(&req, 7_500, 10_000),
             "fixture:selected-model",
-            500,
             80,
         ),
         Ok(CheckpointPressure::AtThreshold)
@@ -66,7 +64,6 @@ fn measured_headroom_decides_checkpoint_before_model_admission() {
             &req,
             &measurement(&req, 9_501, 10_000),
             "fixture:selected-model",
-            500,
             80,
         ),
         Ok(CheckpointPressure::OverContextWindow)
@@ -79,12 +76,12 @@ fn measurement_must_identify_the_exact_request_and_selected_model() {
     let mut meter = measurement(&req, 7_500, 10_000);
     meter.request_sha256 = "0".repeat(64);
     assert_eq!(
-        checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, 80),
+        checkpoint_pressure(&req, &meter, "fixture:selected-model", 80),
         Err(PressureProblem::Measurement(ModelTokenProblem::RequestChanged)),
     );
     let meter = measurement(&req, 9_900, 10_000);
     assert_eq!(
-        checkpoint_pressure(&req, &meter, "different-provider", 500, 80),
+        checkpoint_pressure(&req, &meter, "different-provider", 80),
         Err(PressureProblem::Measurement(ModelTokenProblem::ModelChanged)),
     );
 }
@@ -93,13 +90,16 @@ fn measurement_must_identify_the_exact_request_and_selected_model() {
 fn selected_output_reserve_and_policy_threshold_are_mandatory() {
     let req = request();
     let meter = measurement(&req, 7_500, 10_000);
+    let mut no_limit = req.clone();
+    no_limit.limits.model_tokens = None;
+    let meter_without_limit = measurement(&no_limit, 7_500, 10_000);
     assert_eq!(
-        checkpoint_pressure(&req, &meter, "fixture:selected-model", 0, 80),
+        checkpoint_pressure(&no_limit, &meter_without_limit, "fixture:selected-model", 80),
         Err(PressureProblem::Measurement(ModelTokenProblem::OverBudget)),
     );
     for bad in [0, 101, u64::MAX] {
         assert_eq!(
-            checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, bad),
+            checkpoint_pressure(&req, &meter, "fixture:selected-model", bad),
             Err(PressureProblem::InvalidThreshold),
         );
     }
@@ -110,7 +110,7 @@ fn threshold_arithmetic_does_not_overflow_for_large_valid_measurements() {
     let req = request();
     let meter = measurement(&req, u64::MAX - 1000, u64::MAX);
     assert_eq!(
-        checkpoint_pressure(&req, &meter, "fixture:selected-model", 500, 80),
+        checkpoint_pressure(&req, &meter, "fixture:selected-model", 80),
         Ok(CheckpointPressure::AtThreshold)
     );
 }
