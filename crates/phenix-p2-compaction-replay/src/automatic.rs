@@ -49,13 +49,8 @@ pub fn automatic_checkpoint(
     previous: Option<&CompactionCheckpoint>,
     policy: CheckpointPlan<'_>,
 ) -> Result<AutomaticCheckpointDecision, AutomaticCheckpointProblem> {
-    let pressure = checkpoint_pressure(
-        request,
-        measurement,
-        selected_model,
-        high_water_percent,
-    )
-    .map_err(AutomaticCheckpointProblem::Pressure)?;
+    let pressure = checkpoint_pressure(request, measurement, selected_model, high_water_percent)
+        .map_err(AutomaticCheckpointProblem::Pressure)?;
     if pressure == CheckpointPressure::EnoughHeadroom {
         return Ok(AutomaticCheckpointDecision::UseOriginal);
     }
@@ -70,9 +65,7 @@ pub fn automatic_checkpoint(
             checkpoint,
             mandatory: pressure == CheckpointPressure::OverContextWindow,
         }),
-        (CheckpointPressure::AtThreshold, None) => {
-            Ok(AutomaticCheckpointDecision::UseOriginal)
-        }
+        (CheckpointPressure::AtThreshold, None) => Ok(AutomaticCheckpointDecision::UseOriginal),
         (CheckpointPressure::OverContextWindow, None) => {
             Err(AutomaticCheckpointProblem::NoSafeCheckpoint)
         }
