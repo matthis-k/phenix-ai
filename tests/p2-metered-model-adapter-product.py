@@ -287,6 +287,18 @@ denied_read = run(
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
 
+# P2-3x positive control: the un-compacted request cannot fit the
+# selected Model window, but the cited, rebuilt request can. This must
+# continue through the real Advanced adapter rather than denying early.
+capacity_fork = fork_live_database("dual-meter-overwindow")
+capacity_events = run(
+    [prompt("inspect-original-overwindow")], composition=live_path,
+    database=capacity_fork,
+)
+assert [e["text"] for e in capacity_events if e["kind"] == "Answer"] == [
+    "fixture:inspect-original-overwindow"
+], capacity_events
+
 # P2-3x RED: the same selected Model must measure both the original
 # authoritative request and its source-rebuilt compacted counterpart.
 # These fault probes act only inside the verification provider and use
@@ -407,6 +419,7 @@ assert [event["text"] for event in page_continuation if event["kind"] == "Answer
         "journal-receipt-survives-sqlite-restart-without-duplicate",
         "missing-journal-grant-denies-before-tool-effect",
         "live-checkpoint-and-tail-model-request-is-metered",
+        "overwindow-original-enters-compaction-and-fitted-request-succeeds",
         "original-uncompacted-model-measurement-must-be-source-authentic",
         "selected-tokenizer-drift-between-original-and-compact-denied",
         "live-checkpoint-read-requires-explicit-grant",
