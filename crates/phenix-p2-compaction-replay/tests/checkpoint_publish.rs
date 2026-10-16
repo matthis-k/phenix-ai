@@ -103,12 +103,21 @@ fn competing_revision_or_parent_is_rejected_before_any_storage_write() {
     );
     assert_eq!(conflict, Err(CheckpointPublishProblem::StaleHead));
     assert_eq!(writes.get(), 0);
+    let reads = Cell::new(0);
     let accepted = publish_verified_checkpoint(
         &candidate,
-        || Ok::<_, &'static str>(Some(old.clone())),
+        || {
+            reads.set(reads.get() + 1);
+            Ok::<_, &'static str>(if reads.get() == 1 {
+                Some(old.clone())
+            } else {
+                None
+            })
+        },
         |next| Ok::<_, &'static str>(next.clone()),
     );
-    // No durable readback means Model admission must remain blocked.
+    // A successful CAS acknowledgement with missing source-backed readback
+    // must not authorize the compacted request.
     assert_eq!(accepted, Err(CheckpointPublishProblem::MissingReadback));
 }
 
