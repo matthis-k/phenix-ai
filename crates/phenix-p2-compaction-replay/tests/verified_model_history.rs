@@ -14,7 +14,7 @@ fn event(sequence: u64, kind: EventKind, text: &str) -> Event {
     Event {
         sequence,
         session: "s1".into(),
-        run: format!("run-{}", (sequence + 1) / 2),
+        run: format!("run-{}", sequence.div_ceil(2)),
         kind,
         call_id: String::new(),
         text: text.into(),
