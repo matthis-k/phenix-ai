@@ -59,14 +59,19 @@ def prompt(text, limit=512):
         "limits": {"model_tokens": limit},
     }
 
-def run(messages, composition=path):
-    env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / "metered.sqlite"))
+def run(messages, composition=path, expect_success=True):
+    database = "metered.sqlite" if composition == path else "meter-denied.sqlite"
+    env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     proc = subprocess.run(
         [runtime, "jsonl", str(composition)],
         input="".join(json.dumps(item) + "\n" for item in messages),
         text=True, capture_output=True, env=env, timeout=90,
     )
-    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    if expect_success:
+        assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    else:
+        assert proc.returncode != 0, (proc.stdout, proc.stderr)
+        assert "has no effective grant" in proc.stderr, proc.stderr
     return [json.loads(s) for s in proc.stdout.splitlines()]
 
 accepted = run([prompt("hello")])
@@ -88,9 +93,9 @@ ungranted["grants"] = [
 ]
 ungranted_path = out / "meter-denied-composition.json"
 ungranted_path.write_text(json.dumps(ungranted))
-no_grant = run([prompt("no-meter-grant")], composition=ungranted_path)
+no_grant = run([prompt("no-meter-grant")], composition=ungranted_path, expect_success=False)
 assert not [e for e in no_grant if e["kind"] == "Answer"], no_grant
-assert any(e["kind"] == "Failure" for e in no_grant), no_grant
+assert any(e["kind"] == "ModelStarted" for e in no_grant), no_grant
 
 # This token-meter fixture returns an invalid digest for the next prompt.
 # The direct Model would still return a fixture answer, so a failure proves
