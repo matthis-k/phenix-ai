@@ -383,7 +383,33 @@ fn action_publish(fixture: &Fixture) -> serde_json::Value {
     }
 
     let page = fixture.journal();
-    let candidate = make_checkpoint(&page, "cp-published", 1, None);
+    let first_complete_turn = page
+        .events
+        .iter()
+        .position(|event| event.kind == EventKind::Answer)
+        .expect("first completed native Basic turn")
+        + 1;
+    assert!(first_complete_turn > 1 && first_complete_turn < page.events.len());
+    let original = &page.events;
+    let candidate = CompactionCheckpoint {
+        id: "cp-published".into(),
+        session: SESSION.into(),
+        revision: 1,
+        parent_checkpoint: None,
+        input: span_for_events(original).unwrap(),
+        summarized: vec![span_for_events(&original[..first_complete_turn]).unwrap()],
+        retained: vec![span_for_events(&original[first_complete_turn..]).unwrap()],
+        excluded: vec![],
+        summary: format!(
+            "Source user prompt: {}; source answer: {}",
+            original[0].text,
+            original[first_complete_turn - 1].text,
+        ),
+        policy: "p2-verified-completed-turns".into(),
+        policy_version: 1,
+        model: None,
+        hydration_sources: vec![],
+    };
     let published =
         publish_verified_checkpoint(&candidate, || latest(fixture), |next| put(fixture, next))
             .expect("selected Store denied verified CAS publication or readback");
