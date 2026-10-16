@@ -336,6 +336,35 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 .ok_or_else(|| Failure::new(Code::Denied, "undeclared slot"))?;
             return Ok(Reply::value(0, Value::U64(*count)));
         }
+        if key == "phenix.host.slots@1/selected" {
+            let Value::String(operation) = Value::decode(bytes)? else {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "selected provider query expects an operation key",
+                ));
+            };
+            if !phenix_contract::operation_key(&operation) {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "invalid selected operation key",
+                ));
+            }
+            let base = slot.split_once('#').map_or(slot, |(base, _)| base);
+            if !kernel
+                .prepared
+                .slot_counts
+                .contains_key(&(record.caller.clone(), base.into()))
+            {
+                return Err(Failure::new(Code::Denied, "undeclared slot"));
+            }
+            let identity = phenix_contract::import_identity(slot, &operation);
+            let provider = kernel
+                .prepared
+                .bindings
+                .get(&(record.caller.clone(), identity))
+                .ok_or_else(|| Failure::new(Code::MissingBinding, "slot operation not selected"))?;
+            return Ok(Reply::value(0, Value::String(provider.clone())));
+        }
         if key == "phenix.host.state@1/snapshot" {
             let Value::List(items) = Value::decode(bytes)? else {
                 return Err(Failure::new(
