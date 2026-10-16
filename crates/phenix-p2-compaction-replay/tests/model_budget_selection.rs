@@ -84,24 +84,28 @@ fn newest_fitting_checkpoint_is_selected_with_full_request_token_measurement() {
         "longer source-cited summary",
     );
     let mut considered = Vec::new();
-    let selected = select_model_view(&[old, newest], &events, 4096, 100, |view| {
-        considered.push(view.checkpoint_id.clone());
-        let summary = view
-            .parts
-            .iter()
-            .find_map(|p| match p {
-                phenix_p2_compaction_replay::ContextPart::Summary { text, .. } => {
-                    Some(text.as_str())
-                }
+    let selected = select_model_view(
+        &[old, newest],
+        &events,
+        4096,
+        100,
+        |view| {
+            considered.push(view.checkpoint_id.clone());
+            let summary = view.parts.iter().find_map(|part| match part {
+                phenix_p2_compaction_replay::ContextPart::Summary { text, .. } => Some(text.as_str()),
                 _ => None,
-            })
-            .unwrap();
-        // Represents an exact count by the selected Model adapter over
-        // every request field (history, tool schemas, context, overhead).
-        let tokens = if view.checkpoint_id == "new" { 120 } else { 89 };
-        Ok::<_, &'static str>((request(summary), tokens))
-    })
-    .unwrap();
+            }).unwrap();
+            Ok::<_, &'static str>(request(summary))
+        },
+        |full_request| {
+            // The selected adapter receives the complete assembled request,
+            // not a standalone summary or its journal event bytes.
+            assert_eq!(full_request.history[0].text, "authoritative session input");
+            assert_eq!(full_request.context.len(), 1);
+            let tokens = if full_request.context[0].text.starts_with("longer") { 120 } else { 89 };
+            Ok::<_, &'static str>(tokens)
+        },
+    ).unwrap();
     assert_eq!(considered, vec!["new", "old"]);
     assert_eq!(selected.view.checkpoint_id, "old");
     assert_eq!(selected.model_input_tokens, 89);
@@ -120,8 +124,8 @@ fn stale_source_must_not_fallback_to_older_checkpoint_or_issue_a_model_request()
     let mut called = false;
     let result = select_model_view(&[old, newest], &events, 4096, 100, |_| {
         called = true;
-        Ok::<_, &'static str>((request("ignored"), 1))
-    });
+        Ok::<_, &'static str>(request("ignored"))
+    }, |_| Ok::<_, &'static str>(1));
     assert_eq!(
         result.err(),
         Some(ModelSelectionError::Projection(ViewProblem::Replay(
@@ -135,17 +139,20 @@ fn stale_source_must_not_fallback_to_older_checkpoint_or_issue_a_model_request()
 fn model_counter_failure_and_no_fit_fail_closed() {
     let events = journal();
     let cp = checkpoint(&events, "cp1", 1, None, "summary");
-    let broken: Result<_, ModelSelectionError<&'static str>> =
-        select_model_view(std::slice::from_ref(&cp), &events, 4096, 100, |_| {
-            Err("token counter unavailable")
-        });
+    let broken: Result<_, ModelSelectionError<&'static str>> = select_model_view(
+        std::slice::from_ref(&cp), &events, 4096, 100,
+        |_| Ok(request("summary")),
+        |_| Err("token counter unavailable"),
+    );
     assert_eq!(
         broken.err(),
         Some(ModelSelectionError::Model("token counter unavailable"))
     );
-    let expensive = select_model_view(&[cp], &events, 4096, 10, |_| {
-        Ok::<_, &'static str>((request("summary"), 11))
-    });
+    let expensive = select_model_view(
+        &[cp], &events, 4096, 10,
+        |_| Ok::<_, &'static str>(request("summary")),
+        |_| Ok::<_, &'static str>(11),
+    );
     assert_eq!(expensive.err(), Some(ModelSelectionError::NoFittingView));
 }
 
@@ -153,12 +160,16 @@ fn model_counter_failure_and_no_fit_fail_closed() {
 fn zero_budget_and_bytes_cap_cannot_be_treated_as_token_estimates() {
     let events = journal();
     let cp = checkpoint(&events, "cp1", 1, None, "summary");
-    let zero = select_model_view(&[cp.clone()], &events, 4096, 0, |_| {
-        Ok::<_, &'static str>((request("summary"), 1))
-    });
+    let zero = select_model_view(
+        &[cp.clone()], &events, 4096, 0,
+        |_| Ok::<_, &'static str>(request("summary")),
+        |_| Ok::<_, &'static str>(1),
+    );
     assert_eq!(zero.err(), Some(ModelSelectionError::InvalidBudget));
-    let max_bytes = select_model_view(&[cp], &events, 1, 100, |_| {
-        Ok::<_, &'static str>((request("summary"), 1))
-    });
+    let max_bytes = select_model_view(
+        &[cp], &events, 1, 100,
+        |_| Ok::<_, &'static str>(request("summary")),
+        |_| Ok::<_, &'static str>(1),
+    );
     assert_eq!(max_bytes.err(), Some(ModelSelectionError::NoFittingView));
 }
