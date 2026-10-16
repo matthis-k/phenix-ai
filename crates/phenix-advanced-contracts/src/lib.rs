@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod compaction;
 pub use compaction::*;
+pub mod model_tokens;
+pub use model_tokens::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum EvidenceScopeKind {
@@ -389,6 +391,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(ProjectStorage),
     define(ProjectMembership),
     define(CompactionStore),
+    define(ModelTokenMeter),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -403,7 +406,7 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 5);
+        assert_eq!(metadata.definitions.len(), 6);
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());

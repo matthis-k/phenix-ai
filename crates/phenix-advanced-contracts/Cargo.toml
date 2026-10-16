@@ -8,3 +8,4 @@ license.workspace = true
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true
+sha2 = "0.10"

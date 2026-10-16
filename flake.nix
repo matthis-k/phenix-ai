@@ -257,6 +257,46 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      # The byte-token tokenizer is a deterministic fixture, never a
+      # production estimate. Build it independently and run its real tests.
+      p2ModelMeterFixtureCheck = rust.buildRustPackage {
+        pname = "phenix-plugin-model-meter-fixture";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-model-meter-fixture
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-model-meter-fixture" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-model-meter-fixture" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_model_meter_fixture.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      p2ModelMeterProductRunner = build "phenix-p2-model-meter-product" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-advanced-contracts
+        ./crates/phenix-p2-model-meter-product
+      ]));
+      p2ModelMeterProductCheck = pkgs.runCommand "phenix-p2-model-meter-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/p2-model-meter-product.py} \
+          ${p2ModelMeterProductRunner}/bin/phenix-p2-model-meter-product \
+          ${p2ModelMeterFixtureCheck} ${basicDefinitions} ${advancedDefinitions} "$out"
+        test -s "$out/accepted.json"
+      '';
       # P2-3 source bytes stay in the authorized Basic journal; this package
       # checks canonical spans and exact expansion without duplicating storage.
       p2CompactionReplayCheck = rust.buildRustPackage {
@@ -307,7 +347,7 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 5, report
+        assert len(report["definitions"]) == 6, report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -1722,6 +1762,8 @@
         p2-preset-overrides = p2PresetOverridesCheck;
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
+        p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
+        p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
         p2-compaction-checkpoints-product = p2CompactionProductCheck;
         p2-source-evidence-product = p2SourceEvidenceProductCheck;
