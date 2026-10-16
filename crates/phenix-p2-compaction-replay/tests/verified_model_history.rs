@@ -236,3 +236,182 @@ fn forged_projection_cannot_inject_uncited_model_context() {
         Err(TranscriptProblem::UnalignedSource),
     );
 }
+
+fn tool_source() -> Vec<Event> {
+    let mut events = vec![
+        event(1, EventKind::PromptAccepted, "older question"),
+        event(2, EventKind::Answer, "older answer"),
+        event(3, EventKind::PromptAccepted, "tool question"),
+        event(4, EventKind::ModelStarted, ""),
+        event(5, EventKind::ToolStarted, "uppercase"),
+        event(6, EventKind::ToolFinished, "HELLO"),
+        event(7, EventKind::ModelStarted, ""),
+        event(8, EventKind::Answer, "tool completed"),
+        event(9, EventKind::PromptAccepted, "current question"),
+    ];
+    for entry in &mut events[2..8] {
+        entry.run = "run-2".into();
+    }
+    events[8].run = "run-3".into();
+    events[4].call_id = "t1".into();
+    events[5].call_id = "t1".into();
+    events
+}
+fn tool_request() -> ModelRequest {
+    let mut request = original_request();
+    request.history = vec![
+        message(Role::User, "older question"),
+        message(Role::Assistant, "older answer"),
+        message(Role::User, "tool question"),
+        Message {
+            role: Role::Assistant,
+            text: "calling tool".into(),
+            calls: vec![ToolCall {
+                id: "t1".into(),
+                tool: "uppercase".into(),
+                arguments: r#""hello""#.into(),
+            }],
+            call_id: String::new(),
+            error: None,
+        },
+        Message {
+            role: Role::Tool,
+            text: "HELLO".into(),
+            calls: vec![],
+            call_id: "t1".into(),
+            error: None,
+        },
+        message(Role::Assistant, "tool completed"),
+        message(Role::User, "current question"),
+    ];
+    request
+}
+fn tool_checkpoint(events: &[Event]) -> CompactionCheckpoint {
+    let mut cp = checkpoint(events);
+    cp.retained = vec![span_for_events(&events[2..]).unwrap()];
+    cp
+}
+
+#[test]
+fn compact_old_text_but_retain_complete_authoritative_tool_turn() {
+    let journal = tool_source();
+    let cp = tool_checkpoint(&journal);
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let authoritative = tool_request();
+    let result = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
+    assert_eq!(result.history, authoritative.history[2..]);
+    assert_eq!(result.history[1].calls[0].arguments, r#""hello""#);
+    assert_eq!(result.history[2].text, "HELLO");
+    assert_eq!(result.context[1].text, "Old turn anchored in journal");
+    assert_eq!(authoritative.history.len(), 7);
+}
+
+#[test]
+fn tool_history_rejects_modified_results_missing_source_and_tool_elision() {
+    let journal = tool_source();
+    let cp = tool_checkpoint(&journal);
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let mut forged = tool_request();
+    forged.history[4].text = "FORGED".into();
+    assert_eq!(
+        assemble_verified_basic_request(&forged, &journal, &cp, &view),
+        Err(TranscriptProblem::UnalignedHistory),
+    );
+
+    let mut forged = tool_request();
+    forged.history[3].calls[0].id = "other".into();
+    assert_eq!(
+        assemble_verified_basic_request(&forged, &journal, &cp, &view),
+        Err(TranscriptProblem::UnalignedHistory),
+    );
+
+    // The legacy journal records IDs, tool names and results, not arguments.
+    // Even an otherwise matched tool turn must never enter a summary.
+    let mut elided = tool_checkpoint(&journal);
+    elided.summarized = vec![span_for_events(&journal[..8]).unwrap()];
+    elided.retained = vec![span_for_events(&journal[8..]).unwrap()];
+    let elided_view = compacted_view(&elided, &journal, 4096).unwrap();
+    assert_eq!(
+        assemble_verified_basic_request(&tool_request(), &journal, &elided, &elided_view),
+        Err(TranscriptProblem::UnsupportedToolHistory),
+    );
+}
+
+#[test]
+fn in_progress_tool_result_may_continue_same_model_turn_without_answer() {
+    let mut journal = tool_source();
+    journal.truncate(7);
+    // This is the next ModelStarted after the full tool call/result pair.
+    let mut cp = tool_checkpoint(&journal);
+    cp.retained = vec![span_for_events(&journal[2..]).unwrap()];
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let mut authoritative = tool_request();
+    authoritative.history.truncate(5);
+    let input = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
+    assert_eq!(input.history, authoritative.history[2..]);
+    assert_eq!(input.history.last().unwrap().role, Role::Tool);
+    assert_eq!(input.history[1].calls[0].arguments, r#""hello""#);
+
+    // The next ModelStarted journal event is needed to prove that the
+    // submitted request follows the completed tool response.
+    let mut incomplete = journal.clone();
+    incomplete.pop();
+    let cp = tool_checkpoint(&incomplete);
+    let view = compacted_view(&cp, &incomplete, 4096).unwrap();
+    assert_eq!(
+        assemble_verified_basic_request(&authoritative, &incomplete, &cp, &view),
+        Err(TranscriptProblem::MissingCurrentPrompt),
+    );
+}
+
+#[test]
+fn tool_failure_status_must_match_authoritative_session_message() {
+    let mut journal = tool_source();
+    journal[5].text = "tool failed".into();
+    journal[5].data =
+        phenix_basic_contracts::encode(&phenix_basic_contracts::ToolCompletion { failed: true })
+            .unwrap();
+    let cp = tool_checkpoint(&journal);
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let mut request = tool_request();
+    request.history[4].text.clear();
+    request.history[4].error = Some("tool failed".into());
+    assert!(assemble_verified_basic_request(&request, &journal, &cp, &view).is_ok());
+    request.history[4].error = None;
+    assert_eq!(
+        assemble_verified_basic_request(&request, &journal, &cp, &view),
+        Err(TranscriptProblem::UnalignedHistory),
+    );
+}
+
+#[test]
+fn all_events_of_tool_bearing_run_must_remain_visible() {
+    let journal = tool_source();
+    let mut cp = tool_checkpoint(&journal);
+    cp.retained = vec![
+        span_for_events(&journal[2..6]).unwrap(),
+        span_for_events(&journal[7..]).unwrap(),
+    ];
+    cp.excluded = vec![span_for_events(&journal[6..7]).unwrap()];
+    // ToolStarted and ToolFinished are both retained. The otherwise-valid
+    // projection excludes their following ModelStarted in the same run.
+    // Retained tool-message lineage must reject this partial journal.
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    assert_eq!(
+        assemble_verified_basic_request(&tool_request(), &journal, &cp, &view),
+        Err(TranscriptProblem::UnsupportedToolHistory),
+    );
+}
+
+#[test]
+fn active_model_run_must_match_final_authoritative_session_run() {
+    let journal = tool_source();
+    let cp = tool_checkpoint(&journal);
+    let view = compacted_view(&cp, &journal, 4096).unwrap();
+    let mut authoritative = tool_request();
+    authoritative.run = "run-999".into();
+    assert_eq!(
+        assemble_verified_basic_request(&authoritative, &journal, &cp, &view),
+        Err(TranscriptProblem::UnalignedHistory),
+    );
+}
