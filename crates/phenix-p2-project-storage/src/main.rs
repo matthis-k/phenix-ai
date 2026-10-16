@@ -22,14 +22,13 @@ struct Fixture {
     definitions: Vec<String>,
 }
 impl Fixture {
-    fn invoke_selected(
+    fn composition(
         &self,
         resource: String,
         interface: &str,
         allowed: &[&str],
         operation: &str,
-        input: Value,
-    ) -> Result<Outcome, phenix_contract::Failure> {
+    ) -> Composition {
         let grants = allowed
             .iter()
             .map(|operation| ScopedGrant {
@@ -39,7 +38,7 @@ impl Fixture {
                 resources: BTreeSet::from([resource.clone()]),
             })
             .collect::<Vec<_>>();
-        let policy = Composition {
+        Composition {
             format: "phenix.composition.v2".into(),
             artifacts: vec![self.package.clone()],
             definitions: self.definitions.clone(),
@@ -57,7 +56,18 @@ impl Fixture {
             excluded: BTreeSet::new(),
             substitutions: vec![],
             resource: Some(resource),
-        };
+        }
+    }
+
+    fn invoke_selected(
+        &self,
+        resource: String,
+        interface: &str,
+        allowed: &[&str],
+        operation: &str,
+        input: Value,
+    ) -> Result<Outcome, phenix_contract::Failure> {
+        let policy = self.composition(resource, interface, allowed, operation);
         let kernel = Prepared::prepare(policy)?.load()?;
         let root = kernel.admit_default_root()?;
         root.invoke(&input)
@@ -439,6 +449,39 @@ fn member_after_revoke(fixture: &Fixture) -> serde_json::Value {
     );
     serde_json::json!({"retained_member": "s1", "revoked_member_denied": "s2"})
 }
+/// Keep a session root admitted while a separate project-authorized root
+/// revokes its membership. Its first later effect must consult live membership.
+fn member_live_revoke(fixture: &Fixture) -> serde_json::Value {
+    let before = fixture.session_project_read("s1", "alpha", "theme");
+    let Outcome::Success(value) = before else {
+        panic!("member must read project record before revocation: {before:?}");
+    };
+    assert_eq!(ProjectRecord::from_value(value).unwrap().data.0, b"blue");
+
+    let policy = fixture.composition("phenix.session.s1".into(), INTERFACE, &["read"], "read");
+    let kernel = Prepared::prepare(policy).unwrap().load().unwrap();
+    let admitted = kernel.admit_default_root().unwrap();
+    let revoked = fixture.member_ok(
+        "phenix.project.alpha",
+        "set",
+        member_change("alpha", "s1", 1, false),
+    );
+    assert_eq!(revoked.revision, 2);
+    assert!(!revoked.active);
+
+    let after = admitted.invoke(&key("alpha", "theme")).unwrap();
+    let Outcome::Domain(value) = after else {
+        panic!("admitted root must revalidate live membership: {after:?}");
+    };
+    let problem = ProjectStorageError::from_value(value).unwrap().problem;
+    assert_eq!(problem, ProjectStorageProblem::Denied);
+    serde_json::json!({
+        "pre_revocation_read": true,
+        "admitted_root_denied": true,
+        "new_membership_revision": revoked.revision,
+    })
+}
+
 fn project_source(revision: u64, bytes: &[u8]) -> SourceRef {
     let digest = Sha256::digest(bytes);
     SourceRef {
@@ -540,6 +583,7 @@ fn main() {
         "member-check" => member_check(&fixture),
         "member-revoke" => member_revoke(&fixture),
         "member-after-revoke" => member_after_revoke(&fixture),
+        "member-live-revoke" => member_live_revoke(&fixture),
         "source-current" => source_current(&fixture),
         "source-changed" => source_changed(&fixture),
         "source-after-revoke" => source_after_revoke(&fixture),
