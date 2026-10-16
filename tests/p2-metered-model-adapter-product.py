@@ -431,6 +431,56 @@ auto_seed = run(
 assert [e["text"] for e in auto_seed if e["kind"] == "Answer"] == [
     "fixture:seed-one", "fixture:seed-two", "fixture:seed-three"
 ], auto_seed
+# Denied imports must not create a checkpoint or execute the selected
+# Model. Each test starts from the identical completed source turns.
+def fork_auto_source(name):
+    destination = out / f"{name}.sqlite"
+    with sqlite3.connect(out / auto_db) as source, sqlite3.connect(destination) as target:
+        source.backup(target)
+    return destination.name
+
+no_summary_grant = json.loads(json.dumps(automatic))
+no_summary_grant["grants"] = [g for g in no_summary_grant["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.advanced.compaction-summary@1"
+    and g["operation"] == "summarize"
+)]
+no_summary_path = out / "auto-summary-grant-denied.json"
+no_summary_path.write_text(json.dumps(no_summary_grant))
+no_summary_events = run(
+    [prompt("auto-compact")], composition=no_summary_path,
+    database=fork_auto_source("auto-summary-grant-denied"),
+    expected_error="has no effective grant",
+)
+assert not [e for e in no_summary_events if e["kind"] == "Answer"], no_summary_events
+
+no_put_grant = json.loads(json.dumps(automatic))
+no_put_grant["grants"] = [g for g in no_put_grant["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.advanced.compaction-checkpoints@1"
+    and g["operation"] == "put"
+)]
+no_put_path = out / "auto-put-grant-denied.json"
+no_put_path.write_text(json.dumps(no_put_grant))
+no_put_events = run(
+    [prompt("auto-compact")], composition=no_put_path,
+    database=fork_auto_source("auto-put-grant-denied"),
+    expected_error="has no effective grant",
+)
+assert not [e for e in no_put_events if e["kind"] == "Answer"], no_put_events
+
+bad_summary_db = fork_auto_source("auto-summary-citation-forged")
+bad_summary_events = run(
+    [prompt("auto-invalid-citation")], composition=auto_path,
+    database=bad_summary_db, expected_error="InvalidReply",
+)
+assert not [e for e in bad_summary_events if e["kind"] == "Answer"], bad_summary_events
+with sqlite3.connect(out / bad_summary_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "forged citation created checkpoint"
+
 auto_events = run(
     [prompt("auto-compact")], composition=auto_path, database=auto_db,
 )
@@ -483,5 +533,8 @@ with sqlite3.connect(out / auto_db) as connection:
         "multi-page-checkpoint-source-and-live-continuation",
         "opt-in-selected-summarizer-creates-native-checkpoint-at-pressure",
         "automatic-cas-creates-one-revision-and-reuses-after-native-restart",
+        "missing-summary-grant-denies-before-model",
+        "missing-checkpoint-write-grant-denies-before-model",
+        "forged-summary-source-citation-denies-before-CAS",
     ],
 }, indent=2, sort_keys=True))
