@@ -160,6 +160,61 @@ assert [e["text"] for e in after if e["kind"] == "Answer"] == [
     "fixture:recovered"
 ], after
 
+# RED P2-3o: the Advanced Model adapter may opt into an authenticated
+# Journal import to persist the exact assistant tool-call arguments before
+# Basic executes tools. The public Advanced preset stays unchanged.
+provenance = json.loads(json.dumps(source))
+assert not [
+    slot for slot in source["slots"]
+    if slot["caller"] == adapter and slot["slot"] == "Transcript"
+]
+provenance["slots"].append({
+    "caller": adapter,
+    "slot": "Transcript",
+    "index": 0,
+    "provider": "phenix.basic.event-journal",
+    "export": "Journal",
+})
+provenance_path = out / "tool-reply-provenance-composition.json"
+provenance_path.write_text(json.dumps(provenance))
+tool_events = run([prompt("tools:hello")], composition=provenance_path)
+assert [e["text"] for e in tool_events if e["kind"] == "Answer"] == [
+    "mock:call-1:HELLO|call-2:5"
+], tool_events
+receipts = [e for e in tool_events if e["kind"] == "AssistantReply"]
+assert len(receipts) == 1 and receipts[0]["data"], tool_events
+assert receipts[0]["text"] == "", receipts
+assert receipts[0]["sequence"] < min(
+    e["sequence"] for e in tool_events if e["kind"] == "ToolStarted"
+), tool_events
+restarted = run([prompt("after-tools")], composition=provenance_path)
+assert [e["text"] for e in restarted if e["kind"] == "Answer"] == [
+    "mock:after-tools"
+], restarted
+assert not [e for e in restarted if e["kind"] == "AssistantReply"], restarted
+
+# A selected Transcript without its own grant must not record a receipt or
+# allow tool execution. Ancestor ceiling and root authority do not suffice.
+provenance_denied = json.loads(json.dumps(provenance))
+provenance_denied["grants"] = [
+    grant for grant in provenance_denied["grants"]
+    if not (
+        grant["caller"] == adapter
+        and grant["interface"] == "phenix.basic.journal@1"
+        and grant["operation"] == "append"
+    )
+]
+denied_path = out / "tool-reply-provenance-denied-composition.json"
+denied_path.write_text(json.dumps(provenance_denied))
+denied_events = run(
+    [prompt("tools:denied")],
+    composition=denied_path,
+    expected_error="has no effective grant",
+)
+assert not [e for e in denied_events if e["kind"] in (
+    "Answer", "AssistantReply", "ToolStarted"
+)], denied_events
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -173,5 +228,8 @@ assert [e["text"] for e in after if e["kind"] == "Answer"] == [
         "missing-output-reserve-denied",
         "input-plus-reserved-output-over-context-denied",
         "recovery-after-denial",
+        "authorized-tool-reply-journal-receipt-before-execution",
+        "journal-receipt-survives-sqlite-restart-without-duplicate",
+        "missing-journal-grant-denies-before-tool-effect",
     ],
 }, indent=2, sort_keys=True))
