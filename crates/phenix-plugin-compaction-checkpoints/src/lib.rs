@@ -122,8 +122,8 @@ mod plugin {
         CompactionCheckpoint, CompactionStore,
     };
     use phenix_basic_contracts::{
-        decode, encode, BasicError, ErrorCode, EventJournal, JournalQuery, RecordKey, Scope, Storage,
-        StorageEdit, StorageTransaction,
+        decode, encode, BasicError, ErrorCode, EventJournal, JournalQuery, RecordKey, Scope,
+        Storage, StorageEdit, StorageTransaction,
     };
     use phenix_p2_compaction_replay::{restore_original_events, ReplayProblem};
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
