@@ -37,12 +37,12 @@ pub fn checkpoint_pressure(
     request: &ModelRequest,
     measurement: &ModelTokenMeasurement,
     selected_model: &str,
-    output_reserve: u64,
     high_water_percent: u64,
 ) -> Result<CheckpointPressure, PressureProblem> {
     if !(1..=100).contains(&high_water_percent) {
         return Err(PressureProblem::InvalidThreshold);
     }
+    let output_reserve = request.limits.model_tokens.unwrap_or(0);
     let checked = validate_model_token_measurement(
         request,
         measurement,
