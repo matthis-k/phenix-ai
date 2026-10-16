@@ -104,3 +104,60 @@ pub fn extend_verified_view(
         visible_payload_bytes,
     })
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TailAssemblyProblem {
+    Tail(TailProblem),
+    Replay(crate::ReplayProblem),
+    Projection(ViewProblem),
+    Transcript(crate::TranscriptProblem),
+}
+
+/// Assemble the exact ModelRequest using a durable checkpoint and a later,
+/// independently authorized EventJournal suffix. The checkpoint is never
+/// mutated or committed. An in-memory extension retains all suffix events,
+/// then verifies the complete SessionSnapshot against every source event.
+///
+/// The caller must read the original and suffix through the selected Journal,
+/// check checkpoint ancestry and source-erasure policy, and meter the exact
+/// returned request with the selected Model before executing it. This pure
+/// helper grants no authority and never retries tool effects.
+pub fn assemble_verified_tail_request(
+    authoritative: &phenix_basic_contracts::ModelRequest,
+    checkpoint: &CompactionCheckpoint,
+    original_checkpoint_events: &[Event],
+    appended_events: &[Event],
+    max_visible_payload_bytes: u64,
+) -> Result<phenix_basic_contracts::ModelRequest, TailAssemblyProblem> {
+    let extended = extend_verified_view(
+        checkpoint,
+        original_checkpoint_events,
+        appended_events,
+        max_visible_payload_bytes,
+    )
+    .map_err(TailAssemblyProblem::Tail)?;
+    if appended_events.is_empty() {
+        return crate::assemble_verified_basic_request(
+            authoritative,
+            original_checkpoint_events,
+            checkpoint,
+            &extended.base,
+        )
+        .map_err(TailAssemblyProblem::Transcript);
+    }
+
+    let mut source = Vec::with_capacity(original_checkpoint_events.len() + appended_events.len());
+    source.extend_from_slice(original_checkpoint_events);
+    source.extend_from_slice(appended_events);
+    let mut effective = checkpoint.clone();
+    effective.input = span_for_events(&source).map_err(TailAssemblyProblem::Replay)?;
+    effective.retained.push(
+        extended
+            .trailing_span
+            .ok_or(TailAssemblyProblem::Tail(TailProblem::InvalidSequence))?,
+    );
+    let view = compacted_view(&effective, &source, max_visible_payload_bytes)
+        .map_err(TailAssemblyProblem::Projection)?;
+    crate::assemble_verified_basic_request(authoritative, &source, &effective, &view)
+        .map_err(TailAssemblyProblem::Transcript)
+}

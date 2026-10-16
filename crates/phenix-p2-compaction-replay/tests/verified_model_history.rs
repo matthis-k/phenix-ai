@@ -485,3 +485,87 @@ fn tool_summary_denies_missing_or_altered_model_reply_receipt() {
         Err(TranscriptProblem::UnalignedSource),
     );
 }
+
+#[test]
+fn checkpoint_tail_assembly_keeps_exact_live_tool_turn() {
+    // A durable checkpoint need not contain the new prompt. Its authorized
+    // journal suffix must be verified against the complete SessionSnapshot.
+    let journal = attested_tool_source();
+    let mut cp = tool_checkpoint(&journal);
+    cp.input = span_for_events(&journal[..2]).unwrap();
+    cp.summarized = vec![cp.input.clone()];
+    cp.retained.clear();
+    let source = tool_request();
+    let projected = phenix_p2_compaction_replay::assemble_verified_tail_request(
+        &source,
+        &cp,
+        &journal[..2],
+        &journal[2..],
+        4096,
+    )
+    .unwrap();
+    assert_eq!(projected.history, source.history[2..]);
+    assert_eq!(projected.history[1].calls[0].arguments, r#""hello""#);
+    assert_eq!(projected.history[2].text, "HELLO");
+    assert_eq!(projected.context.last().unwrap().text, cp.summary);
+    assert_eq!(source.history.len(), 7);
+}
+
+#[test]
+fn checkpoint_tail_assembly_can_elide_attested_tool_turn_and_retain_new_prompt() {
+    let journal = attested_tool_source();
+    let mut cp = tool_checkpoint(&journal);
+    cp.input = span_for_events(&journal[..9]).unwrap();
+    cp.summarized = vec![cp.input.clone()];
+    cp.retained.clear();
+    cp.summary = "Verified old conversation".into();
+    let source = tool_request();
+    let projected = phenix_p2_compaction_replay::assemble_verified_tail_request(
+        &source,
+        &cp,
+        &journal[..9],
+        &journal[9..],
+        4096,
+    )
+    .unwrap();
+    assert_eq!(projected.history, source.history[6..]);
+    assert_eq!(projected.context.last().unwrap().text, cp.summary);
+}
+
+#[test]
+fn checkpoint_tail_assembly_rejects_orphaned_receipts_gaps_and_forged_messages() {
+    let journal = attested_tool_source();
+    let mut cp = tool_checkpoint(&journal);
+    cp.input = span_for_events(&journal[..2]).unwrap();
+    cp.summarized = vec![cp.input.clone()];
+    cp.retained.clear();
+    let source = tool_request();
+    let assemble = |source: &ModelRequest, suffix: &[Event]| {
+        phenix_p2_compaction_replay::assemble_verified_tail_request(
+            source,
+            &cp,
+            &journal[..2],
+            suffix,
+            4096,
+        )
+    };
+
+    // Crash after the exact assistant receipt but before its first tool
+    // effect. Reconciliation must deny continuation, not replay the call.
+    assert!(assemble(&source, &journal[2..5]).is_err());
+    // Crash after ToolStarted but before a matching completion.
+    assert!(assemble(&source, &journal[2..6]).is_err());
+    let mut forged = source.clone();
+    forged.history[3].calls[0].arguments = r#""forged""#.into();
+    assert!(assemble(&forged, &journal[2..]).is_err());
+
+    let mut missing = journal[2..].to_vec();
+    missing.remove(2); // Delete the AssistantReply receipt.
+    assert!(assemble(&source, &missing).is_err());
+    let mut changed = journal[2..].to_vec();
+    changed[2].data.0[0] ^= 0x7f;
+    assert!(assemble(&source, &changed).is_err());
+    let mut foreign = journal[2..].to_vec();
+    foreign[0].session = "other".into();
+    assert!(assemble(&source, &foreign).is_err());
+}
