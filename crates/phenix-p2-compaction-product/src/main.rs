@@ -2,7 +2,7 @@
 use phenix_advanced_contracts::{
     CheckpointKey, CheckpointStoreError, CheckpointStoreProblem, CompactionCheckpoint,
 };
-use phenix_basic_contracts::{EventPage, JournalQuery, Scope};
+use phenix_basic_contracts::{EventKind, EventPage, JournalQuery, Scope};
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection, SlotBinding},
@@ -283,6 +283,39 @@ fn action_restart(fixture: &Fixture) -> serde_json::Value {
         "view_visible_payload_bytes": projection.visible_payload_bytes
     })
 }
+fn action_live_seed(fixture: &Fixture) -> serde_json::Value {
+    // A separate native process commits one source-backed checkpoint over an
+    // entire completed Basic turn. The Advanced Model adapter must read the
+    // same SQLite ledger and journal through its own selected imports.
+    let page = fixture.journal();
+    let first_answer = page
+        .events
+        .iter()
+        .position(|event| event.kind == EventKind::Answer)
+        .expect("completed first turn")
+        + 1;
+    assert!(first_answer > 1 && first_answer < page.events.len());
+    let source = &page.events;
+    let checkpoint = CompactionCheckpoint {
+        id: "cp-live".into(),
+        session: SESSION.into(),
+        revision: 1,
+        parent_checkpoint: None,
+        input: span_for_events(source).unwrap(),
+        summarized: vec![span_for_events(&source[..first_answer]).unwrap()],
+        retained: vec![span_for_events(&source[first_answer..]).unwrap()],
+        excluded: vec![],
+        summary: "The user said seed-one; the assistant replied fixture:seed-one.".into(),
+        policy: "verified-model-request".into(),
+        policy_version: 1,
+        model: None,
+        hydration_sources: vec![],
+    };
+    let stored: CompactionCheckpoint = fixture.accept("put", checkpoint.to_value());
+    assert_eq!(stored, checkpoint);
+    serde_json::json!({"live_checkpoint": stored.id, "revision": stored.revision})
+}
+
 fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     fixture.deny(
         "get",
@@ -315,6 +348,7 @@ fn main() {
         "write" => action_write(&fixture),
         "restart" => action_restart(&fixture),
         "source-missing" => action_missing_source(&fixture),
+        "live-seed" => action_live_seed(&fixture),
         other => panic!("unknown product action: {other}"),
     };
     let target = Path::new(&args[7]);
