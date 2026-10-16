@@ -413,6 +413,47 @@ impl Prepared {
                 }
             }
         }
+        // A selected implementation may advertise explicit downstream
+        // delegation maxima without forcing its callers to depend on those
+        // private contracts. Propagate *definitions only* along selected
+        // import edges; mere artifact presence never expands an ancestor.
+        // Runtime effects still require root authority, a caller grant,
+        // resource scope, and every selected provider's own ceiling.
+        let mut delegated_definitions = BTreeMap::<String, BTreeSet<String>>::new();
+        for (id, package) in &packages {
+            let mut keys = BTreeSet::new();
+            for definition in &package.metadata().definitions {
+                for operation in &definition.operations {
+                    keys.insert(format!("{}/{}", definition.contract, operation.name));
+                }
+            }
+            delegated_definitions.insert(id.clone(), keys);
+        }
+        let selected_edges: BTreeSet<(String, String)> = bindings
+            .iter()
+            .map(|((caller, _), provider)| (caller.clone(), provider.clone()))
+            .collect();
+        loop {
+            let mut grew = false;
+            for (caller, provider) in &selected_edges {
+                let downstream = delegated_definitions.get(provider).cloned().unwrap_or_default();
+                let inherited = delegated_definitions
+                    .get_mut(caller)
+                    .expect("selected import caller has a loaded descriptor");
+                let previous_len = inherited.len();
+                inherited.extend(downstream);
+                grew |= inherited.len() != previous_len;
+            }
+            if !grew {
+                break;
+            }
+        }
+        for (provider, extensions) in delegated_definitions {
+            ceilings
+                .get_mut(&provider)
+                .expect("loaded provider has an operation ceiling")
+                .extend(extensions);
+        }
         let startup_order = crate::dag::order(&predecessors).map_err(|cycle| {
             error(
                 Code::MissingBinding,
