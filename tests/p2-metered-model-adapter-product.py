@@ -344,7 +344,9 @@ assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
 # journal page. A native checkpoint writer and the selected Model adapter
 # must both read all contiguous source pages, never truncate at page one.
 page_turns = 36
-page_prompts = [prompt(f"page-{n:02d}") for n in range(page_turns)]
+page_prompts = [prompt("seed-one")] + [
+    prompt(f"page-{n:02d}") for n in range(1, page_turns)
+]
 page_database = "paginated-checkpoint.sqlite"
 page_events = run(
     page_prompts, composition=live_path, database=page_database,
