@@ -377,7 +377,7 @@ fn action_publish(fixture: &Fixture) -> serde_json::Value {
         match fixture.checkpoint("put", candidate.to_value()) {
             Outcome::Success(value) => {
                 CompactionCheckpoint::from_value(value).map_err(|failure| format!("{failure:?}"))
-            },
+            }
             other => Err(format!("{other:?}")),
         }
     }
