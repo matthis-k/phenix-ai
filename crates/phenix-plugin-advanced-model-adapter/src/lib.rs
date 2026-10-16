@@ -20,13 +20,20 @@
     define(phenix_advanced_contracts::ModelTokenMeter),
     provide(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::Model, slot = "Upstream"),
-    require(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter", optional)
+    require(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter", optional),
+    // Explicit opt-in only: the public Advanced composition remains unchanged.
+    // When selected, this records the complete tool-call message before any
+    // Basic tool execution and never supplies its own persistence provider.
+    require(phenix_basic_contracts::EventJournal, slot = "Transcript", optional)
 )]
 mod plugin {
     use phenix_advanced_contracts::{
         validate_model_token_measurement, ModelTokenMeter, ModelTokenProblem,
     };
-    use phenix_basic_contracts::{error, BasicError, ErrorCode, Model, ModelReply, ModelRequest};
+    use phenix_basic_contracts::{
+        error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, Message,
+        Model, ModelReply, ModelRequest, Role,
+    };
     use phenix_sdk::{
         CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
         PendingResult,
@@ -35,6 +42,7 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         pending: Option<PendingImport<Model::complete>>,
+        pending_run: Option<(String, String)>,
     }
 
     fn finish(result: CallResult<ModelReply, BasicError>) -> PendingResult<ModelReply, BasicError> {
@@ -42,6 +50,61 @@ mod plugin {
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
             other => PendingResult::Ready(other),
         }
+    }
+
+    fn finish_with_receipt(
+        host: &Host<'_>,
+        session: &str,
+        run: &str,
+        result: CallResult<ModelReply, BasicError>,
+    ) -> PendingResult<ModelReply, BasicError> {
+        let Ok(reply) = &result else {
+            return finish(result);
+        };
+        if reply.calls.is_empty() {
+            return finish(result);
+        }
+        let count = match host.slot_count("Transcript") {
+            Ok(count) => count,
+            Err(failure) => return PendingResult::QuiescentFailure(failure),
+        };
+        if count == 0 {
+            return finish(result);
+        }
+        let message = Message {
+            role: Role::Assistant,
+            text: reply.text.clone(),
+            calls: reply.calls.clone(),
+            call_id: String::new(),
+            error: None,
+        };
+        let payload = match phenix_basic_contracts::encode(&message) {
+            Ok(payload) => payload,
+            Err(failure) => return PendingResult::QuiescentFailure(failure),
+        };
+        // The authorized Basic journal is the source of truth for recovery.
+        // Persist the complete Model tool-call message *before* returning
+        // that reply to the Basic agent, which alone executes the tools.
+        let event = Event {
+            sequence: 0,
+            session: session.into(),
+            run: run.into(),
+            kind: EventKind::AssistantReply,
+            call_id: String::new(),
+            text: message.text,
+            data: payload,
+        };
+        finish(
+            host.invoke::<EventJournal::append>(
+                "Transcript",
+                &JournalAppend {
+                    session: session.into(),
+                    events: vec![event],
+                },
+            )
+            .map(|_| ())
+            .map(|_| reply.clone()),
+        )
     }
 
     fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {
@@ -122,8 +185,11 @@ mod plugin {
             return finish(Err(failure));
         }
         match host.begin::<Model::complete>("Upstream", &request) {
-            Ok(ImportCall::Ready(result)) => finish(result),
+            Ok(ImportCall::Ready(result)) => {
+                finish_with_receipt(host, &request.session, &request.run, result)
+            }
             Ok(ImportCall::Pending(child)) => {
+                state.pending_run = Some((request.session, request.run));
                 state.pending = Some(child);
                 PendingResult::Pending
             }
@@ -144,7 +210,15 @@ mod plugin {
                 state.pending = Some(child);
                 PendingResult::Pending
             }
-            Ok(ImportPoll::Ready(result)) => finish(result),
+            Ok(ImportPoll::Ready(result)) => {
+                let Some((session, run)) = state.pending_run.take() else {
+                    return PendingResult::QuiescentFailure(Failure::new(
+                        Code::PluginFailed,
+                        "Advanced Model lost pending tool-reply identity",
+                    ));
+                };
+                finish_with_receipt(host, &session, &run, result)
+            }
             Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
                 Code::ScopeRejected,
                 "Advanced Model upstream cancelled",
@@ -158,6 +232,7 @@ mod plugin {
         // M1 cancels imported children and retains their resource leases.
         // This provider never detaches a model worker or replays an effect.
         state.pending = None;
+        state.pending_run = None;
         Ok(true)
     }
 }
