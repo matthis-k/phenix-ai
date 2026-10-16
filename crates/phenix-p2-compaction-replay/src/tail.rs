@@ -70,10 +70,8 @@ pub fn extend_verified_view(
                     return Err(TailProblem::InvalidToolSequence);
                 }
             }
-            EventKind::ToolFinished => {
-                if !active.remove(event.call_id.as_str()) {
-                    return Err(TailProblem::InvalidToolSequence);
-                }
+            EventKind::ToolFinished if !active.remove(event.call_id.as_str()) => {
+                return Err(TailProblem::InvalidToolSequence);
             }
             _ => {}
         }
