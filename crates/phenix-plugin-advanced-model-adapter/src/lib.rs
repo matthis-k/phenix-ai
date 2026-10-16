@@ -32,9 +32,9 @@
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, CheckpointStoreProblem,
-        CompactionStore, CompactionSummarizer, CompactionSummaryRequest, ModelTokenMeasurement,
-        ModelTokenMeter, ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore,
+        CompactionSummarizer, CompactionSummaryRequest, ModelTokenMeasurement, ModelTokenMeter,
+        ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
@@ -274,8 +274,8 @@ mod plugin {
             return Ok(source.clone());
         }
         let measurement = selected_measurement(host, source)?;
-        let pressure = checkpoint_pressure(source, &measurement, &measurement.model, 80)
-            .map_err(|reason| {
+        let pressure = checkpoint_pressure(source, &measurement, &measurement.model, 80).map_err(
+            |reason| {
                 CallError::Domain(error(
                     if reason == PressureProblem::Measurement(ModelTokenProblem::OverBudget) {
                         ErrorCode::TurnLimit
@@ -284,7 +284,8 @@ mod plugin {
                     },
                     "automatic compaction pressure measurement rejected",
                 ))
-            })?;
+            },
+        )?;
         if pressure == CheckpointPressure::EnoughHeadroom {
             return Ok(source.clone());
         }
