@@ -4,7 +4,8 @@
 //! EventJournal is *not* a complete Model transcript: tool arguments and some
 //! assistant messages exist only in SessionSnapshot. Tool-bearing histories
 //! therefore fail closed until explicit message-to-source lineage is available.
-use crate::{span_for_events, ContextPart, ContextProjection};
+use crate::{compacted_view, span_for_events, ContextPart, ContextProjection};
+use phenix_advanced_contracts::CompactionCheckpoint;
 use phenix_basic_contracts::{ContextItem, Event, EventKind, Message, ModelRequest, Role};
 use std::collections::BTreeSet;
 
@@ -30,6 +31,7 @@ pub enum TranscriptProblem {
 pub fn assemble_verified_basic_request(
     authoritative: &ModelRequest,
     journal: &[Event],
+    checkpoint: &CompactionCheckpoint,
     view: &ContextProjection,
 ) -> Result<ModelRequest, TranscriptProblem> {
     if journal
@@ -39,6 +41,14 @@ pub fn assemble_verified_basic_request(
         return Err(TranscriptProblem::WrongSession);
     }
     if span_for_events(journal).ok().as_ref() != Some(&view.source_span) {
+        return Err(TranscriptProblem::UnalignedSource);
+    }
+    // The view is a serializable/public structure, not an authority token.
+    // Independently rederive it from the checkpoint and exact source bytes;
+    // a caller must not inject forged summary text or missing provenance.
+    let verified = compacted_view(checkpoint, journal, u64::MAX)
+        .map_err(|_| TranscriptProblem::UnalignedSource)?;
+    if &verified != view {
         return Err(TranscriptProblem::UnalignedSource);
     }
     if authoritative.history.iter().any(|message| {
