@@ -56,7 +56,10 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     // verification and selected-provider metering. This branch exists only
     // in the verification Model, never in production Model adapters.
     let text = if prompt.text == "inspect-compaction" {
-        let cited = request.context.iter().any(|part| part.id == "compaction:cp-live");
+        let cited = request
+            .context
+            .iter()
+            .any(|part| part.id == "compaction:cp-live");
         format!(
             "fixture:history:{}:compaction:{}",
             request.history.len(),
