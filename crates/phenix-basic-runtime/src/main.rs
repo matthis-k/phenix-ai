@@ -154,7 +154,15 @@ fn render_new(
 fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
     let resource = format!("phenix.session.{session}");
     let mut authority = composition.authority.clone();
-    authority.resources = [resource.clone()].into();
+    // A Basic prompt is confined to its authenticated session, but graph
+    // contributions also need the M1 property identities explicitly granted
+    // by the trusted composition. Never pass unrelated session/project
+    // resources into this root. The kernel still checks the exact property's
+    // set/get/watch grants and its selected owner on every state effect.
+    authority.resources.retain(|granted| {
+        granted == &resource || granted.contains(".property.")
+    });
+    authority.resources.insert(resource.clone());
     ScopedRequest {
         authority,
         resource: Some(resource),
