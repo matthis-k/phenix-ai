@@ -16,8 +16,7 @@ jobs:
       - name: Compile and test provider contracts, codecs, vault, catalog and plugin
         run: |
           set -euo pipefail
-          trap 'git diff -- Cargo.lock' EXIT
-          cargo test \
+          cargo test --locked \
             -p phenix-provider-contracts \
             -p phenix-provider-discovery \
             -p phenix-provider-protocols \
