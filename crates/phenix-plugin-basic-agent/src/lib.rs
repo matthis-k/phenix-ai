@@ -32,7 +32,6 @@ pub fn project_model_request(
 /// observe the Basic request but cannot rewrite *any* execution byte yet.
 /// Source-backed compaction requires journal/CAS/meter admission in the
 /// later selected Advanced graph contribution.
-#[cfg(feature = "staged-graph")]
 pub fn verify_staged_model_candidate(
     original: &ModelRequest,
     candidate: &ModelRequest,
