@@ -7,7 +7,6 @@
 
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
-    ProviderModel,
 };
 use phenix_provider_builtins::registrations;
 
@@ -178,6 +177,6 @@ mod tests {
     fn native_plugin_defines_two_typed_operations() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provisions.len(), 2);
+        assert_eq!(metadata.provides.len(), 2);
     }
 }
