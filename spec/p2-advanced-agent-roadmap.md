@@ -245,6 +245,20 @@ Model request, and proves restart does not create duplicate CAS revisions.
 Further graph composition and configurable summarization policy remain
 required before P2-3 acceptance.
 
+P2-3ab extends the opt-in Advanced adapter to recognize pressure on an
+already selected, source-verified compacted request. If the compacted request
+fits comfortably, existing checkpoint reuse continues unchanged. When it no
+longer fits, the adapter authenticates the full Basic session, supplies the
+previous source-validated checkpoint and next linear revision to the existing
+P2-3z transaction, and CAS-publishes a fresh candidate before independently
+metering the new compacted request. No checkpoint or source journal is erased
+or rewritten, and a failed replan cannot fall back to a rejected, over-window
+Model input. A native SQLite restart acceptance case verifies revision 1→2
+and prevents an unnecessary revision 3 on repeated prompts. The selected
+Summarizer remains opt-in and first-stage policy is a fixed retained-turn
+count; independent graph contribution and production policy controls remain
+open.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
