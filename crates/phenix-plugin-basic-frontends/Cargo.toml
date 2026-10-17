@@ -12,6 +12,9 @@ default = ["terminal"]
 terminal = []
 jsonl = []
 acp = ["dep:agent-client-protocol-schema"]
+# Reuse the same native ACP Frontend contract with the official draft-v2
+# schema. Protocol transport and lifecycle remain owned by the SDK host.
+acp_v2 = ["acp", "agent-client-protocol-schema/unstable_protocol_v2"]
 
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
