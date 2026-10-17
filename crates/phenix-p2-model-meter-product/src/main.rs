@@ -9,7 +9,7 @@ use phenix_basic_contracts::{
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
     resolve::{Composition, Prepared, ScopedGrant, Selection},
-    Outcome,
+    Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -57,7 +57,31 @@ fn invoke(
     };
     let kernel = Prepared::prepare(composition).ok()?.load().ok()?;
     let root = kernel.admit_default_root().ok()?;
-    root.invoke(&input).ok()
+    // Model is a pending-capable contract even when the fixture resolves
+    // immediately. Root::invoke accepts only synchronous implementations.
+    // Exercise the same authenticated kernel lifecycle as every caller.
+    match root.begin(&input).ok()? {
+        Call::Ready(outcome) => Some(outcome),
+        Call::Pending(ticket) => {
+            for _ in 0..512 {
+                match root.poll(&ticket).ok()? {
+                    Poll::Pending | Poll::Draining | Poll::Cancelled { quiescent: false } => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Poll::Ready(result) => {
+                        root.release(&ticket).ok()?;
+                        return result.ok();
+                    }
+                    Poll::Cancelled { quiescent: true } => {
+                        root.release(&ticket).ok()?;
+                        return None;
+                    }
+                }
+            }
+            root.cancel(&ticket).ok()?;
+            None
+        }
+    }
 }
 
 fn request() -> ModelRequest {
