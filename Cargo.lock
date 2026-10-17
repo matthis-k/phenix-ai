@@ -1233,10 +1233,10 @@ version = "0.1.0"
 dependencies = [
  "curl",
  "phenix-basic-contracts",
+ "phenix-provider-protocols",
  "phenix-sdk",
  "serde_json",
  "sse-parse",
- "url",
 ]
 
 [[package]]
