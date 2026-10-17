@@ -89,6 +89,12 @@ fn internal_basic(problem: BasicError) -> acp::Error {
         "message": problem.message,
     }))
 }
+fn internal_storage(reason: impl ToString) -> acp::Error {
+    internal_basic(BasicError {
+        code: ErrorCode::StorageFailed,
+        message: reason.to_string(),
+    })
+}
 fn invalid(message: &str) -> acp::Error {
     acp::Error::invalid_params().data(message)
 }
@@ -410,8 +416,8 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        let mut owner = session_lock(&session).map_err(internal)?;
-        recover_owned_run(kernel, &session, &mut owner).map_err(internal)?;
+        let mut owner = session_lock(&session).map_err(internal_storage)?;
+        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
         let execution =
             begin_submission(kernel, submission, basic_scope(&self.composition, &session))
                 .map_err(internal)?;
