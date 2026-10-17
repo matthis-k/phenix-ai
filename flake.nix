@@ -347,7 +347,8 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 6, report
+        assert len(report["definitions"]) == 7, report
+        assert "phenix.advanced.compaction-summary@1" in report["definitions"], report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
