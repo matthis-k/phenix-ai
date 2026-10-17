@@ -7,6 +7,9 @@
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
+pub mod selection;
+pub use selection::{validate_model_selection, ModelSelection};
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum ProviderErrorCode {
     InvalidInput,
