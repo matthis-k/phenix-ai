@@ -17,6 +17,7 @@ pub mod model;
 pub mod plan;
 pub mod publish;
 pub mod tail;
+pub mod transaction;
 pub mod view;
 pub use admission::{
     remeasure_verified_checkpoint, validate_compacted_meter_transition, CompactedAdmissionProblem,
@@ -33,6 +34,9 @@ pub use publish::{publish_verified_checkpoint, CheckpointPublishProblem, Publish
 pub use tail::{
     assemble_verified_tail_request, extend_verified_view, ExtendedProjection, TailAssemblyProblem,
     TailProblem,
+};
+pub use transaction::{
+    admit_compaction, CompactionAdmission, CompactionAdmissionInput, CompactionAdmissionProblem,
 };
 pub use view::{compacted_view, ContextPart, ContextProjection, ViewProblem};
 
