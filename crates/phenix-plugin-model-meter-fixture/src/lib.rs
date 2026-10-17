@@ -188,8 +188,7 @@ mod plugin {
             msg.text != "auto-compact"
                 && msg.text != "auto-invalid-citation"
                 && msg.text != "auto-compact-again"
-        })
-            || input.journal.len() < 10
+        }) || input.journal.len() < 10
             || input.journal[0].text != "seed-one"
             || input.journal[4].text != "seed-two"
         {
