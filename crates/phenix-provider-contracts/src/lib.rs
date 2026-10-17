@@ -103,12 +103,13 @@ impl AuthenticationStatus {
     /// A connection with no declared methods needs no credentials.
     /// A protected connection is ready when any supported method is valid.
     pub fn ready(&self, descriptor: &ConnectionDescriptor) -> bool {
-        descriptor.auth_methods.is_empty()
-            || descriptor.auth_methods.iter().any(|method| {
+        self.connection_id == descriptor.id
+            && (descriptor.auth_methods.is_empty()
+                || descriptor.auth_methods.iter().any(|method| {
                 self.methods
                     .iter()
                     .any(|status| status.method_id == method.id && status.valid)
-            })
+                }))
     }
 }
 
@@ -230,6 +231,9 @@ mod tests {
             methods: vec![],
         };
         assert!(state.ready(&descriptor(vec![])));
+        let mut other = descriptor(vec![]);
+        other.id = "unrelated-connection".into();
+        assert!(!state.ready(&other));
         let key = method("key", AuthenticationKind::ApiKey);
         let oauth = method("oauth", AuthenticationKind::OAuthAuthorizationCode);
         assert!(!state.ready(&descriptor(vec![key.clone()])));
