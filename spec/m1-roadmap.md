@@ -1,7 +1,7 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
 Status: P1 integrated product accepted at 68f46f63; C4 authoritative CI accepted on main at b7017042; post-P1 work resumed
-Updated: 2026-10-15
+Updated: 2026-10-17
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
@@ -405,6 +405,33 @@ ChatGPT Plus/Pro subscription access is **not interchangeable with OpenAI API-ke
 
 **Grill tracking and build order:** All **17 decisions are resolved; 0 open and 0 deferred**. [#891](https://github.com/matthis-k/phenix-ai/issues/891#provider-grill-decision-tree-and-first-frontier-2026-10-17) owns the accepted decision ledger, and this roadmap owns the behavior and functional acceptance. Independent work started in [#948](https://github.com/matthis-k/phenix-ai/pull/948) (definition-only provider/auth/catalog contracts), stacked [#949](https://github.com/matthis-k/phenix-ai/pull/949) (bounded model-list decoders), and [#950](https://github.com/matthis-k/phenix-ai/pull/950) (secure endpoint and credential-origin validation). All are draft implementation slices pending exact-head verification. The endpoint library validates configuration; network resolution, redirect behavior and credential grants remain runtime/transport obligations. The next provider adapters, runtime credential store and Neovim management client depend on those contracts and the Grill answers. Keep all later features in #891 rather than adding competing owners.
 
+#### Provider implementation packets: current coding queue
+
+This is the coding handoff for #891. The accepted method/connection/model
+semantics above remain the behavior source. The [R1 audit](m1-r1-library-audit.md)
+owns standards and library selection; do not duplicate its provider matrix.
+Build one independently runnable slice at a time. Paths here are entry points,
+not prescriptions for private module layout.
+
+| Order | Inspect / change | First implementation and RED case |
+| --- | --- | --- |
+| **PV1: finish discovery contracts** | `crates/phenix-provider-contracts/src/lib.rs`, #948 and stacked #949/#950, provider-contracts Nix package | Verify the already-defined `ProviderDescriptor`, `ConnectionDescriptor`, `AuthenticationStatus`, `CredentialProfile` and model provenance round-trip, including malformed, duplicate and too-large catalogs. Reuse bounded provider-specific decoders and strict URL validation. A configured URL never chooses a protocol. Run `cargo test --locked -p phenix-provider-contracts` and the package descriptor check. Integrate or reconcile overlapping PRs before creating another definition. |
+| **PV2: usable API-key connection** | Existing typed provider contract, `crates/phenix-plugin-model-http/src/{request,transport,stream}.rs`, selected runtime Storage/authority | Add one provider-declared API-key connection, a secret-safe submission operation and selected credential profile. Resolve secret bytes only at the transport's authorized call, never in `ModelRequest`, persistent session history or frontend event. Use the OS secret service where available; add the accepted explicit `0600` headless fallback without silently enabling it. Test save/restart/revoke, wrong-session grant, transcript/log redaction and no secret in generated Nix artifacts. |
+| **PV3: actual credential-bound Model request** | Selected `Model` import, existing `phenix-plugin-model-http` curl/SSE stack, `phenix-basic-runtime` model selection | Pass an explicit provider/connection/profile/model/protocol identity to the selected transport. Add `openai-chat` first and keep its request, stream and tool-call fixtures passing. A second valid account must never be used when the selected account expires. Deny before HTTP on missing grant, stale model, protocol mismatch or revoked credential. Preserve pending cancellation and physical drain. |
+| **PV4: discovery and static fallback** | Provider contract `DiscoverySource`, #949 response normalization, existing Catalog query/selection surfaces | Query a provider's documented model-list endpoint lazily and within bounds. Merge declared and dynamic choices with source identity and freshness; a stale snapshot remains readable but cannot authorize selection or inference. Add static-only/no-auth provider fixtures and authenticated discovery fixtures. Verify pagination, unknown types, retired models and transport/thinking capability filters; no default `/models` guess. |
+| **PV5: authorized model mutation** | `crates/phenix-basic-runtime/src/acp_sdk.rs`, ACP SDK session config options, existing Session/Journal/Storage, #958 | Extend the already supported runtime-controlled model selector instead of inventing a second ACP management protocol. Persist the specific provider + connection + credential profile + model with scope, source and CAS revision. Changes apply to later turns. Return typed denied/stale conflicts and publish an observable update; a running turn retains its binding. Test two clients racing, restart and an unavailable saved selection. Any management operation absent from stable ACP must use a verified standard extension/facility or stay unavailable. |
+| **PV6: OAuth only for approved connections** | Chosen `oauth2`/OIDC crates and credential backend from R1, the PV2 provider operation | Add PKCE/browser or device flow only where the provider permits this client and transport. Store refresh/revocation per named profile. Expired or revoked OAuth must not switch to another account or API key; both methods can remain separately ready. Test state/nonce/issuer/audience checks where applicable, replayed callbacks, refresh failure and restart with a deterministic fake identity provider. An unsupported subscription integration is displayed unavailable. |
+| **PV7: Neovim release journey** | Runtime #891 + `phenix-ai.nvim` N4 + `phenix-nvim` D4 | Use runtime-owned provider/auth/model discovery in `:Phenix auth` and `:Phenix model`. With zero/one/two supported methods, show no chooser/direct action/choice respectively. Prove one actual authorized packaged Basic and Advanced turn after selection, plus reconnect, denied/stale choice and no secret leakage. Client/distribution roadmaps own UI and pinning details. |
+
+For every packet: first add a failing unit/native or packaged fixture, then
+implement the minimum selected-provider path and include a denial/failure
+counterfactual. Keep the existing `Model` contract, graph admission and
+libcurl cancellation behavior; treat internal DTOs, helper methods, individual
+provider plugin grouping and file organization as implementation choices.
+Stop if a slice requires a new authoritative session store, independent
+provider registry, another HTTP stack or invented ACP method. Record the
+specific missing contract in #891 for review rather than building around it.
+
 **Product acceptance (RED before implementation):** verify zero/one/two supported auth-method flow branches; both methods valid, only one valid, revocation, expiry and reconnection; distinct API vs subscription connection catalogs and billing identity; dynamic `/models` discovery, static-only providers, mixed catalogs, stale/retired IDs and unsupported inference models; authorized revision-checked model switching while another turn runs; masked secret input/no secrets in Nix store, journal, transcript or logs; and packaged Neovim `:Phenix auth` -> `:Phenix model` -> real Basic and Advanced turn. Use deterministic provider/OAuth fixtures in CI and separately label any manually tested live-provider/partner authorization. This is a **top-priority cross-product gate** before P2 is declared usable as an interactive product; issue #891 remains the owning implementation tracker.
 
 
@@ -508,6 +535,23 @@ stale catalog after reconnect, forged action names or component refs, cross-sess
 client replies, concurrent responders, size/depth limits and disconnect.
 Prove that unsupported clients retain text behavior, a valid response is
 admitted once, and no invalid UI frame reaches a renderer.
+
+**P2-IO coding handoff.** Implement the existing P2a–P2d track with the
+smallest independently provable sequence, not a new frontend framework:
+
+| Packet | Concrete implementation path | Observable gate |
+| --- | --- | --- |
+| IO1 driver | Extract common graph polling/wakeup/physical drain from `crates/phenix-basic-runtime/src/main.rs` and `acp_sdk.rs` into one host controller; preserve the existing non-`Send` graph-owner thread and pending tickets. | Simultaneous ACP/JSONL/Terminal inputs use the same execution semantics. Cancel or EOF drains exactly once. Existing P1 history and independent ACP-SDK fixtures remain green. |
+| IO2 projections | Add typed session snapshot/change/cursor contracts on top of existing Session + EventJournal + ValueRef subscriptions. Introduce per-client bounded queues in the host adapter only after a journal/snapshot atomic-attachment test. | Attach a second client while an event commits; neither missing nor duplicate event appears. Disconnect/reconnect one cursor without advancing the other; deny unauthorized fields before serialization. |
+| IO3 typed ports | Define bounded named ports only for concrete producer/consumer needs. Bind each to selected imports and current grants. Preserve raw-stream handling through ordinary maintained I/O; semantic mutations still pass existing kernel root admission. | Fan out one real progress stream to two consumers. Closing a slow consumer does not stall a Model/tool effect. Removed or revoked route denies further delivery. |
+| IO4 A2UI negotiation | Add the upstream versioned catalog validation and per-target selection at the frontend adapter. Pass catalog constraints to the selected Model-facing plugin and validate output before delivery. Use the official ACP SDK only where its actual negotiated wire facility supports the payload; otherwise use text/elicitation or a compatible separate transport. | Independent upstream-schema fixture rejects unsupported form/SVG, stale catalog and forged action; a text-only peer still receives normal progress. A valid action goes through current session/client authority once. |
+
+Shared commands after each applicable change: `cargo fmt --all --check`,
+focused native tests, official ACP SDK interoperability, packaged Nix product
+tests and finally `nix flake check -L` on the exact head. Do not mark the
+whole P2-IO track accepted from a pure encoder test. Typed contract names
+marked "proposed" above remain editable until a first tested public SDK
+consumer depends on them.
 
 **Non-goals.** No second session registry, event journal, agent executor
 or kernel-native network/protocol stack. No assumption that clients share
