@@ -31,6 +31,14 @@ stage["authority"]["operations"].extend([
     pending_property + "/get",
 ])
 stage["authority"]["resources"].append(pending_property[:-2])
+# The root Basic action is the authority ceiling for its entire graph wave.
+# Unless this root grant contains the property resource, the child node's
+# narrower property grant cannot restore it later.
+for grant in stage["grants"]:
+    if (grant["caller"] == "root"
+            and grant["interface"] == "phenix.basic.input@1"
+            and grant["operation"] == "submit"):
+        grant["resources"].append(pending_property[:-2])
 stage["grants"].extend([
     {"caller": "phenix.basic.agent", "interface": pending_property,
      "operation": operation, "resources": [scoped, pending_property[:-2]]}
@@ -40,7 +48,7 @@ stage["grants"].append({
     "caller": "phenix.basic.agent",
     "interface": "phenix.basic.turn-prepare@1",
     "operation": "prepare",
-    "resources": [scoped],
+    "resources": [scoped, pending_property[:-2]],
 })
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
