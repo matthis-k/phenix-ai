@@ -226,6 +226,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::SetConfig(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.set_config_option(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
