@@ -730,7 +730,12 @@ transport to save compile time.
     typed Basic cancellation action. It tests authorized and cross-session
     cancellation, invalid payloads and stable-v1 coexistence.
     `.github/workflows/r1-acp-v2-frontend.yml` keeps both feature modes
-    under `cargo test --locked` and checks the host compile. This tests the
+    under `cargo test --locked` and `cargo clippy --locked --all-targets
+    -- -D warnings`, then checks the host compile. The official SDK
+    interoperability workflow no longer sets the obsolete
+    `PHENIX_BASIC_USE_ACP_SDK` environment switch. The sole host remains
+    selected unconditionally on R1-ACP3; neither workflow enables v2
+    protocol routing. This tests the
     native Frontend contract only; no v2 session controller or wire endpoint
     is advertised. Accept only after feature-gated unit, native ABI and
     exact-head checks.
@@ -741,6 +746,13 @@ transport to save compile time.
     reason after durable graph completion. Implement new/list/resume/
     close/cancel; do not pretend v1's final `PromptResponse` represents
     the v2 lifecycle. Preserve persistence, authority and bounded input.
+    The first v2 output slice in `impl/m1-r1-acp-v2-journal-updates` maps
+    typed journal text and tool events directly to official
+    `v2::UpdateSessionNotification` values. It shares tool-completion
+    decoding with stable v1 and keeps SDK framing out of the native plugin.
+    It does not yet wire v2 output into the runtime, report running/idle,
+    or enable v2 negotiation. Require exact-head v2 native tests, Rustfmt,
+    Clippy, canonical conformance and SDK v1 regression before acceptance.
   - [ ] **R1-ACP5c — version routing and independent acceptance.** Route
     negotiated v1/v2 using the *same official crate*, without a second
     JSON-RPC parser. Run independent v2 SDK client tests for interleaved
