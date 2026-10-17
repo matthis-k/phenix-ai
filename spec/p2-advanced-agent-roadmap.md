@@ -372,6 +372,21 @@ Model advance node, including multi-turn tool continuations. Do not ship
 the prepare-only composition as an agent, and do not model a state-hook
 as able to interrupt an already-pending Basic submit node.
 
+**P2-3aj: selected reactive Advanced preparation (opt-in).** A separate
+`phenix.advanced.graph-preparer` plugin contributes the native state-triggered
+`prepare` node watching `phenix.basic.agent/pending_model_request`. The
+request arrives exclusively through an explicitly selected property import
+from the authoritative Basic agent; this node does not re-read the session
+and cannot invent a Basic tool result. It validates a canonical request hash,
+checks inherited session scope, constructs the no-op
+`ModelPreparationProposal` using `phenix.advanced.model-preparation@1`
+and commits it to a separate watched Advanced proposal cell. Source
+identity/authority is checked again by the later Basic Model advance node,
+so this proposal never serves as an execution token. The native test
+actually runs the graph state wave and removes its selected Basic property
+read grant as a negative control. No Model or tool is executed in this
+preparation-only slice.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
