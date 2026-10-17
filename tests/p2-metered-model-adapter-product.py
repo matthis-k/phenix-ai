@@ -528,9 +528,17 @@ with sqlite3.connect(out / pending_db) as connection:
 
 # A selected summarizer must never proxy a Model reply containing tools into
 # a summary proposal. Reject a deliberately pending tool-bearing response.
-tool_summary_db = fork_auto_source("pending-summary-tool-reply")
+# The pending prompt is intentionally excluded from the nested Model
+# view. Inject the adversarial fixture marker into an *older*, eligible
+# completed turn instead, and verify that a tool-bearing summary still fails.
+tool_summary_db = "pending-summary-tool-reply.sqlite"
+malicious_seed = run(
+    [prompt("malicious-summary-fixture"), prompt("seed-two"), prompt("seed-three")],
+    composition=pending_summary_path, database=tool_summary_db,
+)
+assert len([e for e in malicious_seed if e["kind"] == "Answer"]) == 3, malicious_seed
 tool_summary = run(
-    [prompt("auto-unsafe-summary")], composition=pending_summary_path,
+    [prompt("auto-compact")], composition=pending_summary_path,
     database=tool_summary_db, expected_error="InvalidReply",
 )
 assert not [e for e in tool_summary if e["kind"] == "Answer"], tool_summary
