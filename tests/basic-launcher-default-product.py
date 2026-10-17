@@ -104,6 +104,35 @@ assert rpc(third, third_messages, 3, "session/prompt", {
 close(third)
 assert override.is_file(), "explicit SQLite override was not initialized"
 
+# Empty and relative XDG values are unspecified under the XDG convention.
+# Exercise the actual installed launcher rather than duplicating its resolver.
+for name, xdg in [("empty", ""), ("relative", "relative-state")]:
+    home = root / ("home-" + name)
+    fallback_env = dict(env, HOME=str(home), XDG_STATE_HOME=xdg)
+    proc, messages = start(fallback_env)
+    initialize(proc, messages)
+    fallback_session = rpc(proc, messages, 2, "session/new", {
+        "cwd": str(root), "mcpServers": [],
+    })["sessionId"]
+    assert rpc(proc, messages, 3, "session/prompt", {
+        "sessionId": fallback_session,
+        "prompt": [{"type": "text", "text": "fallback storage"}],
+    })["stopReason"] == "end_turn"
+    close(proc)
+    fallback_database = home / ".local/state/phenix/basic.sqlite"
+    assert fallback_database.is_file(), fallback_database
+    assert stat.S_IMODE(fallback_database.stat().st_mode) == 0o600
+assert not Path("relative-state").exists()
+
+for missing in [dict(env, HOME="", XDG_STATE_HOME=""),
+                dict(env, HOME="relative-home", XDG_STATE_HOME="")]:
+    rejected = subprocess.run(
+        [binary], input="", capture_output=True, text=True,
+        env=missing, timeout=10,
+    )
+    assert rejected.returncode != 0
+    assert "absolute XDG_STATE_HOME or HOME" in rejected.stderr, rejected.stderr
+
 relative = subprocess.run(
     [binary], input="", capture_output=True, text=True,
     env=dict(env, PHENIX_BASIC_SQLITE_PATH="relative.sqlite"), timeout=10,
@@ -113,6 +142,7 @@ assert "must be absolute" in relative.stderr, relative.stderr
 assert not Path("relative.sqlite").exists()
 (root / "accepted.json").write_text(json.dumps({
     "cases": ["unset-default", "session-restart", "absolute-override",
-              "reject-relative"],
+              "reject-relative", "empty-xdg-home-fallback",
+              "relative-xdg-home-fallback", "reject-missing-absolute-home"],
     "format": "phenix.basic.sqlite-launcher.v1",
 }, sort_keys=True, indent=2))
