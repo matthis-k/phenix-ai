@@ -25,13 +25,21 @@ fn source() -> ModelRequest {
 fn staged_graph_requires_distinct_prepare_then_model_advance_nodes() {
     let graph = GRAPH.owned().unwrap();
     assert_eq!(graph.nodes.len(), 2);
-    let first = graph.nodes.iter().find(|node| node.id == "prepare").unwrap();
+    let first = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == "prepare")
+        .unwrap();
     assert_eq!(first.id, "prepare");
     assert_eq!(first.triggers, ["phenix.basic.prompt"]);
     assert_eq!(first.operation, "phenix.basic.turn-prepare@1/prepare");
     assert_eq!(first.writes, ["phenix.basic.agent/pending_model_request"]);
 
-    let next = graph.nodes.iter().find(|node| node.id == "model-advance").unwrap();
+    let next = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == "model-advance")
+        .unwrap();
     assert_eq!(next.id, "model-advance");
     assert_eq!(
         next.triggers,
