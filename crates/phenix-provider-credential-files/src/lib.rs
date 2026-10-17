@@ -354,6 +354,44 @@ mod tests {
     }
 
     #[test]
+    fn replacing_the_configured_path_cannot_redirect_open_vault_operations() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let original = Secret::new(b"original-secret".to_vec()).unwrap();
+        root.store(&id("work"), &original).unwrap();
+
+        // A validated path is not a stable authority boundary: the parent
+        // can replace it after the vault opens, without using a symlink.
+        let pinned = fixture.0.with_extension("original");
+        fs::rename(&fixture.0, &pinned).unwrap();
+        fs::create_dir(&fixture.0).unwrap();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
+        let filename = id("work").file_name().unwrap();
+        let impostor = fixture.0.join(&filename);
+        fs::write(&impostor, b"impostor-secret").unwrap();
+        fs::set_permissions(&impostor, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(
+            root.read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"original-secret"
+        );
+        root.store(
+            &id("work"),
+            &Secret::new(b"updated-secret".to_vec()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(pinned.join(&filename)).unwrap(), b"updated-secret");
+        assert_eq!(fs::read(&impostor).unwrap(), b"impostor-secret");
+        root.revoke(&id("work")).unwrap();
+        assert!(!pinned.join(&filename).exists());
+        assert_eq!(fs::read(&impostor).unwrap(), b"impostor-secret");
+
+        fs::remove_dir_all(&pinned).unwrap();
+    }
+
+    #[test]
     fn cannot_log_secret_data_via_debug_or_error() {
         let secret = Secret::new(b"do-not-log-me".to_vec()).unwrap();
         assert!(!format!("{secret:?}").contains("do-not-log-me"));
