@@ -267,11 +267,14 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
-      providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" { } ''
+      providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" {
+        nativeBuildInputs = [ pkgs.jq ];
+      } ''
         mkdir -p "$out"
         test -s "${providerBuiltinsPlugin}/descriptor.bin"
-        grep -F '"plugin": "phenix.provider.builtins"' "${providerBuiltinsPlugin}/package.json" >/dev/null || true
         test -s "${providerBuiltinsPlugin}/lib/plugin.so"
+        ${describe}/bin/phenix-describe --metadata "${providerBuiltinsPlugin}" \
+          | jq -e '.plugin == "phenix.provider.builtins" and (.format == "phenix.contract-package.v2")'
         touch "$out/verified"
       '';
       providerBuiltinsSource = subset (publicPaths ++ [
