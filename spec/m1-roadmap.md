@@ -441,6 +441,123 @@ Permission policy is provided through typed plugins; kernel grants remain the ma
 
 **Recovery and verification.** Reuse the existing session journal, CAS transactions, fenced owner markers, pending tickets and cancellation. An acknowledged queued turn or approval must not disappear on restart. Admission is exactly once by durable identity; external effects can remain indeterminate after a crash and must never be blindly replayed. Independent fixtures must cover two concurrent client responses, approval deadline/restart/denial, client disconnect, persistent follow-up ordering, interrupt-and-submit, changed configuration during a running turn, explicit model incompatibility, unauthorized cross-project/session access, and replay without duplicate tool effects. These are observable product tests, not a second architecture CI model.
 
+#### Client-contributed MCP capabilities (post-P1)
+
+**Accepted client-capabilities Grill, 2026-10-16, Q1-Q36.** This section owns
+the behavior, implementation slices and acceptance tests. The
+[product decision](agent-product-decision.md) owns only the kernel/plugin
+boundary; [runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891)
+owns authenticated clients, grants, session admission and permission
+responses. [P2 Advanced](p2-advanced-agent-roadmap.md) consumes the same
+ordinary providers and does not gain a second tool engine or release gate.
+This is post-P1 interoperability work shared by Basic and Advanced, adjacent
+to P2-IO1 through P2-IO4, not a dependency on the Advanced agent loop.
+
+**Protocols and providers (Q1-Q7, Q29-Q36).** An ACP client MAY offer
+application-local MCP servers at session setup. Prefer the existing ACP
+`mcpServers` declarations and official SDK. Stable ACP v1 and independently
+negotiated draft ACP v2 must retain their own verified protocol paths. For
+compatible peers, opt in to the official *unstable* native MCP-over-ACP binding:
+`mcp/message` addresses a declared `serverId` and a fresh logical
+`requestId`, with MCP 2026-07-28 metadata on each request. This binding
+has no MCP initialization, connect/disconnect exchange, or reverse request
+channel. Reuse the official ACP and MCP SDKs; use compatible standard MCP
+stdio/Streamable HTTP transports when native binding is unavailable. Do not
+invent ACP methods, translate incompatible MCP revisions by hand, or assume
+a server can be added mid-session. One stable application server can add,
+replace or remove its tools, resources and skills during a session; separately
+authorized server declarations remain possible. The frontend's own Lua/Rust/
+TypeScript bindings are presentation and application adapters, not Phenix
+plugins or privileged kernel operations. ACP remains frontend control and
+permission transport; MCP is the client-to-agent capability interface.
+
+**Origin, discovery and authorization (Q1, Q3-Q13, Q16-Q17, Q26-Q31).**
+An MCP contribution is bound to the authenticated client/connection,
+host-assigned MCP server identity and original tool name or skill URI.
+Names are display labels, not security identities. Preserve the original
+MCP names, disambiguate collisions in the model projection and forbid
+silent skill shadowing. Client registration makes an item *discoverable*,
+not executable. Filter it through existing ToolCatalog/ToolExecute,
+Skills/Context and kernel authority before model inclusion and each effect.
+The agent can discover all advertised, authorized capabilities; include only
+selected schemas and loaded skill instructions in a model request. For
+partially enumerated skills support origin-bound `skills/get` by known URI.
+Only a caller/session explicitly granted the client tool can invoke it.
+Cross-client and project-wide access requires separately authenticated
+authorization; sub-agents receive only attenuated, origin-bound grants.
+Retain origin and effective grant in read-only client projections.
+Approval defaults to a single call; explicit standing rules use the
+existing scoped, revisioned and revocable runtime grant system. A persistent
+grant is bound to trusted logical client identity, server, operation identity,
+scope and validated capability fingerprint, never to a display name or a
+reconnected socket alone. Changed privilege/semantics needs fresh approval.
+Unrestricted application scripting such as Neovim `nvim_exec_lua` is an
+optional high-privilege tool requiring per-call approval by default.
+ACP `session/request_permission` may collect approval; the owner application
+may also refuse. Timeouts, headless operation and unavailable approvers deny.
+
+**Reactive state and lifecycle (Q2, Q8, Q11, Q14-Q15, Q18-Q25).**
+Watch declared tool and skill catalogs without model calls. For MCP
+2026-07-28 consume `subscriptions/listen` change notifications where
+advertised, then relist or refresh; use its `ttlMs`/`cacheScope` and
+selective `skills/get` for eventual freshness where push is absent. Do
+not claim immediate notification for skills without a suitable upstream
+signal. Subscribe to application resources only for authorized consumers;
+`resources/updated` invalidates their snapshot and existing M1
+`ValueRef` watches/graph triggers observe committed revisions. An
+invalidation does not start a model turn: only explicit user input or
+authorized contributed triggers do so. Coalesce state invalidations,
+not distinct durable operations; bound per-client queues and reconcile
+authoritative state after overflow or reconnection. MCP subscriptions do
+not supply durable replay; use existing EventJournal cursors for durable
+events. Hold each model step's admitted tool/skill definitions and source
+revisions for historical accuracy. Apply new catalogs to later model
+requests, but revalidate authority and compatibility before every new
+tool effect; revocation denies even an older pinned graph generation.
+Changed or removed definitions fail closed rather than silently switching.
+On disconnect, remove the live endpoint and cancel affected calls. Ordinary
+calls fail; eligible durable jobs may wait with explicit deadline and
+revalidate on authenticated reconnect. Cancellation is best effort.
+A tool effect interrupted after dispatch may be indeterminate: record that
+outcome, reconcile with its owner and never blindly retry it. MCP metadata
+does not establish idempotency; unknown tools must not be assumed safe to
+replay. Keep skill content-bound approvals and held entries per the MCP
+Skills Extension; refresh a changed manifest, verify digest/size and YAML
+frontmatter on read, require required approvals before code execution,
+isolate resource reads to their source server and require per-call approval
+for cross-origin reads. A skill with `resources: "dynamic"` cannot receive
+persistent content-bound approval. Skill discovery does not automatically
+activate skill instructions or grant tools.
+
+**Contract fit and migration.** Existing Basic
+`ToolCatalog`/`ToolExecute`, `Skills` and `Context` are the only
+agent-facing interfaces. MCP discovery, requests and client transport
+belong to replaceable plugins/adapters. The current `ToolInfo` advertises
+an `idempotent` flag without MCP evidence; treat unspecified external
+operations as non-idempotent until a provider supplies verifiable semantics.
+The current `Skill` value and session `Skills::set` do not encode a
+complete MCP skill manifest or lazy content verification. Enforce those
+rules inside a Skills adapter, and extend the existing typed contract only
+when an independent acceptance case demonstrates missing public semantics.
+Do not add a second catalog, session store, grant registry, graph runner
+or application-specific kernel logic. The current Basic ACP controller
+rejects nonempty `request.mcp_servers` in `new_session`; remove that
+limitation only alongside a verified, authorized provider path. Continue
+rejecting unsupported session options such as additional directories
+independently.
+
+| Slice | Required implementation and independent acceptance |
+| --- | --- |
+| IO-MCP1: standard MCP | Official SDK-compatible ACP v1 session-supplied stdio/HTTP MCP tools through current Tool contracts; supported ACP v2 tested separately; empty-server P1 behavior unchanged. Reject forged client/server IDs and denied effects. |
+| IO-MCP2: native MCP-over-ACP | Negotiated SDK-supported draft binding at MCP 2026-07-28; validate `serverId`, fresh request ID, per-request metadata, outer/inner error distinction, cancellation and downgrade to supported *standard transport*, not hidden protocol translation. |
+| IO-MCP3: skills and live subscriptions | Skills Extension `server/discover`, `skills/list` pagination, partial listing and `skills/get`, manifest approval and resource verification; reactive catalog/resource invalidation, TTL fallback, bounded coalescing and graph state update with zero discovery model calls. |
+| IO-MCP4: lifecycle and cross-client product | Two independent official protocol peers and deterministic fake application implementations in existing Basic verification composition. Concurrent client visibility and scoped call denial; grant revisions, reconnect, schema/revocation races, stale skills, multi-client target selection, job wait/cancel, unknown external effects and no duplicate execution. Neovim Lua registration is one reusable client example, not a required Phenix-only bridge. |
+
+Tests are functional and authorization gates on the real kernel/SDK, not a
+second architecture CI target. Required failures return typed denial,
+unavailable, stale or indeterminate outcomes. No slice claims product
+acceptance before its exact-head tests and authoritative CI pass.
+
 **P2a: execution driver.** Extract duplicated ACP, Terminal and JSONL graph
 polling, cancellation and draining into one host-side controller. Expose
 scoped handles with proposed `session.submit(...)`, `session.cancel(...)`

@@ -889,6 +889,8 @@ Retain oldmain's tested memory-specific semantics where they remain useful: immu
 PR #852 used P2a–P2d for multi-client state projection and I/O routing before the Advanced release label was assigned. Keep its work and dependency, but name its track P2-IO1 through P2-IO4 when integrating its roadmap. Advanced P2-0 through P2-10 is the product track. The multi-client I/O track can proceed in parallel after the CI gate; P2 does not depend on synchronized multiple frontends unless a verification scenario explicitly requires them.
 
 
+Standard [client-contributed MCP tools, resources and skills](m1-roadmap.md#client-contributed-mcp-capabilities-post-p1) belong to the adjacent post-P1 I/O and client-management track. Basic and Advanced may compose the same MCP adapter; Advanced adds no distinct tool registry, permission engine or release dependency. Client-provided tools remain scoped to their authenticated origin and must pass the same kernel authority checks as other tools.
+
 Standard [A2UI interactive UI support](m1-roadmap.md#post-p1-p2-shared-session-projections-and-typed-io-routing) belongs to the adjacent P2-IO2 through P2-IO4 frontend track. It uses upstream A2UI contracts, not a Phenix-specific UI protocol. It does not make rich interactive UI an Advanced P2-0 through P2-10 release gate; keep this requirement and its tests in the M1 roadmap.
 
 ## Release decision
