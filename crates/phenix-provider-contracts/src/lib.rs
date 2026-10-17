@@ -215,7 +215,11 @@ mod tests {
     }
 
     fn method(id: &str, kind: AuthenticationKind) -> AuthenticationMethod {
-        AuthenticationMethod { id: id.into(), label: id.into(), kind }
+        AuthenticationMethod {
+            id: id.into(),
+            label: id.into(),
+            kind,
+        }
     }
 
     #[test]
@@ -230,14 +234,24 @@ mod tests {
         let oauth = method("oauth", AuthenticationKind::OAuthAuthorizationCode);
         assert!(!state.ready(&descriptor(vec![key.clone()])));
         state.methods.push(MethodStatus {
-            method_id: "wrong-method".into(), valid: true, reason: None,
+            method_id: "wrong-method".into(),
+            valid: true,
+            reason: None,
         });
         assert!(!state.ready(&descriptor(vec![key.clone()])));
-        state.methods.push(MethodStatus { method_id: "key".into(), valid: true, reason: None });
+        state.methods.push(MethodStatus {
+            method_id: "key".into(),
+            valid: true,
+            reason: None,
+        });
         assert!(state.ready(&descriptor(vec![key.clone()])));
         state.methods[1].valid = false;
         assert!(!state.ready(&descriptor(vec![key.clone()])));
-        state.methods.push(MethodStatus { method_id: "oauth".into(), valid: true, reason: None });
+        state.methods.push(MethodStatus {
+            method_id: "oauth".into(),
+            valid: true,
+            reason: None,
+        });
         assert!(state.ready(&descriptor(vec![key, oauth])));
     }
 
