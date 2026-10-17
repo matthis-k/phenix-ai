@@ -2,6 +2,8 @@
 //!
 //! A provider plugin chooses the format and maps returned IDs to a known
 //! protocol/endpoint. Discovery alone never grants model execution authority.
+pub mod cache;
+
 use serde_json::Value;
 use std::collections::BTreeSet;
 
