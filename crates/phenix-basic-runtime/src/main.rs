@@ -965,15 +965,15 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
+    use super::scoped_composition;
     use super::{
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use super::scoped_composition;
     use phenix_contract::Authority;
     use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
     use std::collections::BTreeSet;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn session_root_preserves_explicit_property_grants_but_never_foreign_sessions() {
@@ -1006,15 +1006,23 @@ mod session_lock_tests {
             resource: Some(session.into()),
         };
         let scoped = scoped_composition(&original, session);
-        assert_eq!(scoped.authority.resources, [session.into(), property.into()].into());
-        assert_eq!(scoped.grants[0].resources, [session.into(), property.into()].into());
+        assert_eq!(
+            scoped.authority.resources,
+            [session.into(), property.into()].into()
+        );
+        assert_eq!(
+            scoped.grants[0].resources,
+            [session.into(), property.into()].into()
+        );
         assert!(!scoped.authority.resources.contains(foreign));
         let foreign_scoped = scoped_composition(&original, foreign);
-        assert_eq!(foreign_scoped.authority.resources, [foreign.into(), property.into()].into());
+        assert_eq!(
+            foreign_scoped.authority.resources,
+            [foreign.into(), property.into()].into()
+        );
         assert!(!foreign_scoped.authority.resources.contains(session));
         assert_eq!(original.grants[0].resources.len(), 3, "original immutable");
     }
-
 
     #[test]
     fn recovery_requires_matching_versioned_run_marker() {
