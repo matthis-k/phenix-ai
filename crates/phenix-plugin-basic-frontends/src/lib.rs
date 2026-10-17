@@ -220,6 +220,15 @@ enum AcpInput {
     // Internal, tagged SDK-to-plugin payloads. No JSON-RPC frames.
     Prompt(agent_client_protocol_schema::v1::PromptRequest),
     Cancel(agent_client_protocol_schema::v1::CancelNotification),
+    #[cfg(feature = "acp_v2")]
+    PromptV2(agent_client_protocol_schema::v2::PromptRequest),
+}
+
+#[cfg(feature = "acp")]
+fn acp_resource_reference(name: &str, uri: &str) -> String {
+    // A URI is a reference for the Model or authorized Tool provider,
+    // never an instruction for the Frontend to fetch local/remote content.
+    format!("Resource link: {name} ({uri})")
 }
 
 #[cfg(feature = "acp")]
@@ -247,12 +256,39 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
                         // ACP v1 requires resource links. Basic carries the
                         // reference to the model as text; the frontend never
                         // dereferences a URI or grants filesystem authority.
-                        texts.push(format!("Resource link: {} ({})", link.name, link.uri));
+                        texts.push(acp_resource_reference(&link.name, &link.uri));
                     }
                     _ => {
                         return Err(error(
                             ErrorCode::InvalidInput,
                             "unsupported ACP content block",
+                        ))
+                    }
+                }
+            }
+            prompt(request.session, texts.join("\n"), Limits::default())
+        }
+        #[cfg(feature = "acp_v2")]
+        AcpInput::PromptV2(incoming) => {
+            use agent_client_protocol_schema::v2::ContentBlock as V2ContentBlock;
+            if incoming.session_id.to_string() != request.session {
+                return Err(error(ErrorCode::Denied, "ACP session mismatch"));
+            }
+            let mut texts = Vec::with_capacity(incoming.prompt.len());
+            for block in incoming.prompt {
+                match block {
+                    V2ContentBlock::Text(text) => texts.push(text.text),
+                    V2ContentBlock::ResourceLink(link) => {
+                        texts.push(acp_resource_reference(&link.name, &link.uri));
+                    }
+                    // The official draft-v2 schema preserves extensions.
+                    // This non-proxy Basic adapter may ignore unknown blocks,
+                    // but must not silently enable optional image/audio I/O.
+                    V2ContentBlock::Other(_) => {}
+                    _ => {
+                        return Err(error(
+                            ErrorCode::InvalidInput,
+                            "unsupported ACP v2 content block",
                         ))
                     }
                 }
@@ -452,6 +488,71 @@ mod tests {
         ] {
             assert_eq!(decode(packet).unwrap_err().code, ErrorCode::InvalidInput);
         }
+    }
+
+    #[cfg(feature = "acp_v2")]
+    #[test]
+    fn draft_v2_uses_same_authorized_submission_without_new_wire_parser() {
+        let decode = |payload: serde_json::Value| {
+            acp_decode(ClientInput {
+                session: "s1".into(),
+                line: payload.to_string(),
+            })
+        };
+        let submitted = decode(serde_json::json!({
+            "prompt_v2": {
+                "sessionId": "s1",
+                "prompt": [
+                    {"type": "text", "text": "inspect"},
+                    {"type": "resource_link", "name": "notes", "uri": "file:///tmp/notes.md"}
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(submitted.action, "phenix.basic.submit");
+        let turn: PromptSubmitted = phenix_basic_contracts::decode(&submitted.payload).unwrap();
+        assert_eq!(turn.session, "s1");
+        assert_eq!(
+            turn.text,
+            "inspect\nResource link: notes (file:///tmp/notes.md)"
+        );
+
+        let refused = decode(serde_json::json!({
+            "prompt_v2": {
+                "sessionId": "s2",
+                "prompt": [{"type": "text", "text": "forged"}]
+            }
+        }))
+        .unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Denied);
+        for payload in [
+            serde_json::json!({"prompt_v2": {
+                "sessionId": "s1",
+                "prompt": [{"type": "image", "data": "x", "mimeType": "image/png"}]
+            }}),
+            serde_json::json!({"prompt_v2": {"sessionId": "s1", "prompt": []}}),
+            // SDK wire parsing and JSON-RPC envelopes never belong to
+            // this native Frontend contract, for either v1 or v2.
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "session/prompt",
+                "params": {"sessionId": "s1", "prompt": []}
+            }),
+        ] {
+            assert_eq!(decode(payload).unwrap_err().code, ErrorCode::InvalidInput);
+        }
+
+        // The v1 tag remains available in the dual-schema build.
+        assert_eq!(
+            decode(serde_json::json!({
+                "prompt": {
+                    "sessionId": "s1",
+                    "prompt": [{"type": "text", "text": "stable v1"}]
+                }
+            }))
+            .unwrap()
+            .action,
+            "phenix.basic.submit"
+        );
     }
 
     #[test]
