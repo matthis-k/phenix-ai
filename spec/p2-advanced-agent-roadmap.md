@@ -475,6 +475,32 @@ candidate denial and a prepare-only black-box behavior. Full prepared
 node activation, pending Model and tool-iteration acceptance remain
 unaccepted pending a selected Advanced graph preparer.
 
+**P2-3ak: selected Advanced prepare graph handoff (identity-only).**
+A native `phenix.advanced.graph-preparer` plugin contributes one M1
+state-change node watching
+`phenix.basic.agent/pending_model_request`. It imports the selected
+Basic pending getter and prepared setter through existing property
+contracts and invokes the externally selected
+`phenix.advanced.model-preparation@1/prepare` provider. A separate
+`phenix.advanced.preparer-noop` plugin implements the initial strict
+identity proposal. The graph hook rechecks the current session resource,
+canonical original request digest, selected proposal source binding and
+candidate byte equality, and only then commits the prepared-request
+property. The resulting watched epoch activates Basic's distinct
+pending-capable `model-advance` node; the kernel owns the entire
+two-wave ordering and cancellation. No new scheduling protocol exists.
+
+A test-only native composition selects all three plugins (staged Basic,
+graph preparer, no-op preparer), defines their precise M1 property
+getter/watch/setter bindings and effective scoped grants, and verifies
+one JSONL/SQLite prompt produces an ordinary scripted-model answer,
+without speculative tools. The negative composition removes the
+graph-preparer's prepared-state write grant and must reject the graph
+before journaling any turn. The existing Basic and Advanced presets
+remain unchanged. Real pending summarizer selection, checkpoint CAS
+proof, tool-call re-entry through every graph wave, restart, cross-root
+concurrency and compaction migration are still required for P2 acceptance.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
