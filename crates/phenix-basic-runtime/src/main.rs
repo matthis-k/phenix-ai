@@ -893,16 +893,34 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
 
 /// ACP connection controller. Each session owns a fresh M1 kernel admission
 /// with the requested resource scope. Artifacts and resolver stay unchanged.
-fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
-    phenix_basic_contracts::session_resource(session)
-        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
-    let resource = format!("phenix.session.{session}");
+fn scoped_composition(composition: &Composition, resource: &str) -> Composition {
     let mut spec = composition.clone();
-    spec.resource = Some(resource.clone());
-    spec.authority.resources = [resource.clone()].into();
+    spec.resource = Some(resource.into());
+    // Retain only property resources already declared by the trusted
+    // composition. A session root must never inherit another session's
+    // grants, but reactive graph nodes still need their separately granted
+    // M1 property identities within this same pinned generation.
+    let property_resources: std::collections::BTreeSet<_> = spec
+        .authority
+        .resources
+        .iter()
+        .filter(|name| name.contains(".property."))
+        .cloned()
+        .collect();
+    spec.authority.resources = property_resources.clone();
+    spec.authority.resources.insert(resource.into());
     for grant in &mut spec.grants {
-        grant.resources = [resource.clone()].into();
+        let retained = grant.resources.intersection(&property_resources).cloned();
+        grant.resources = retained.collect();
+        grant.resources.insert(resource.into());
     }
+    spec
+}
+
+fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
+    let resource = phenix_basic_contracts::session_resource(session)
+        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
+    let spec = scoped_composition(composition, &resource);
     Prepared::prepare(spec)
         .map_err(|e| format!("{e:?}"))?
         .load()
