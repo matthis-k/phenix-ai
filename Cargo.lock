@@ -1254,6 +1254,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-provider-protocols"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
 name = "phenix-provider-discovery"
 version = "0.1.0"
 dependencies = [
