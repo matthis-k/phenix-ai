@@ -1268,6 +1268,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-builtins"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-storage-fixture"
 version = "0.1.0"
 dependencies = [
