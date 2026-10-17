@@ -1972,7 +1972,6 @@
         ln -s ${basicContractsCheck} $out/basic-contracts
         ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${httpModelCheck} $out/http-model
-        ln -s ${basicLauncherDefaultCheck} $out/basic-launcher-default-state
         ln -s ${basicToolsCheck} $out/basic-tools
         ln -s ${eventJournalCheck} $out/event-journal
         ln -s ${basicSessionCheck} $out/basic-session
