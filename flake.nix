@@ -243,6 +243,29 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      providerContractsSource = subset (publicPaths ++ [ ./crates/phenix-provider-contracts ]);
+      providerContractsBinary = rust.buildRustPackage {
+        pname = "phenix-provider-contracts";
+        version = "0.1.0";
+        src = providerContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-provider-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts" false;
+      providerContractsCheck = pkgs.runCommand "phenix-provider-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p $out
+        python - "${providerDefinitions}/inspection.json" "$out" <<'PY'
+        import json, sys
+        from pathlib import Path
+        report = json.load(open(sys.argv[1]))
+        assert len(report["definitions"]) == 2
+        assert report["plugin"] == "phenix.provider-contracts"
+        (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+        PY
+      '';
       advancedContractsSource = subset (publicPaths ++ [
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -1734,6 +1757,7 @@
         phenix-m1-release = release;
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
+        phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
         phenix-plugin-basic-tools = basicTools;
@@ -1820,6 +1844,7 @@
         m1-native-authoring = authoringCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
+        provider-contracts = providerContractsCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
