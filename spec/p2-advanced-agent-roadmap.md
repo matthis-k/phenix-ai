@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. The Advanced product and P2 release gates remain unaccepted.
+Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3ak are integrated, but the no-compaction graph handoff and all P2 release gates remain unaccepted. Provider catalog/credential metadata is integrated; runtime credential submission, model discovery, revision-checked selection mutation and the Neovim journey remain PV2–PV7.
 Updated: 2026-10-17
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
@@ -46,6 +46,39 @@ Refactor the P1 flake's basicCompositionSpec, historyVerificationComposition and
 | P2-8: sub-agents and session tree | P2-7, P2-1 | Session parent/child links, delegated scoped budgets, independent child contexts, aggregation and propagation policies | Scripted parent delegates to two real child sessions; restart, authority/limit enforcement, failure and cancellation |
 | P2-9: inspection and efficiency | P2-0; instrument P2-2 through P2-8 | Separate logging, introspection/debug and efficiency-evaluation plugins consuming permitted kernel events and projections | Durable/replayable traces, redacted inspection, cost/latency/usage metrics and repeatable comparisons |
 | P2-10: advanced verification and release | P2-2 through P2-9, including P2-6A | All scenario fixtures, production transport parity, oldmain capability matrix and benchmark/regression report | Full reproducible exact-head CI, P1 regression, five-package closure audit and final-main check |
+
+### Integrated P2-3 implementation evidence (2026-10-17)
+
+These slices are merged on `main`. They are implementation evidence, not P2-3
+release acceptance.
+
+| Slice | PR | Merge commit | Integrated behavior |
+| --- | --- | --- | --- |
+| P2-3s | [#931](https://github.com/matthis-k/phenix-ai/pull/931) | `47b05ea0` | Bounded, paginated, source-verified live journal reads |
+| P2-3t | [#932](https://github.com/matthis-k/phenix-ai/pull/932) | `08411a67` | Deterministic checkpoint proposal over completed turns |
+| P2-3u | [#934](https://github.com/matthis-k/phenix-ai/pull/934) | `cd6676ee` | Selected-meter context-pressure classification |
+| P2-3v | [#935](https://github.com/matthis-k/phenix-ai/pull/935) | `f27d80ce` | Over-window admission requires a verified checkpoint candidate |
+| P2-3w | [#936](https://github.com/matthis-k/phenix-ai/pull/936) | `07764087` | Compacted request remeasurement before admission |
+| P2-3x | [#937](https://github.com/matthis-k/phenix-ai/pull/937) | `555a3bad` | Dual live original/compacted measurement |
+| P2-3y | [#938](https://github.com/matthis-k/phenix-ai/pull/938) | `5f316e68` | Source-authenticated checkpoint publication through CAS |
+| P2-3z | [#939](https://github.com/matthis-k/phenix-ai/pull/939) | `d6f39f74` | One verified atomic compaction admission transaction |
+| P2-3aa | [#940](https://github.com/matthis-k/phenix-ai/pull/940) | `b6a62b38` | Opt-in live automatic checkpoint at measured pressure |
+| P2-3ab | [#941](https://github.com/matthis-k/phenix-ai/pull/941) | `21766101` | Incremental recompaction through linear CAS revisions |
+| P2-3ac | [#942](https://github.com/matthis-k/phenix-ai/pull/942) | `3480035a` | Selected Model-backed reversible summarizer plugin |
+| P2-3ad | [#943](https://github.com/matthis-k/phenix-ai/pull/943) | `39f534af` | Pending summarizer continuation before CAS/admission |
+| P2-3ae | [#944](https://github.com/matthis-k/phenix-ai/pull/944) | `a378f849` | Summary confined to verified older completed turns |
+| P2-3af | [#945](https://github.com/matthis-k/phenix-ai/pull/945) | `1486820e` | Native cancellation gate for transitive summary Model |
+| P2-3ag | [#946](https://github.com/matthis-k/phenix-ai/pull/946) | `f72ccf60` | Exact typed Basic-to-Model request projection |
+| P2-3ah | [#951](https://github.com/matthis-k/phenix-ai/pull/951) | `633bfdfb` | Source-bound Advanced preparation contract and denial gates |
+| P2-3ai | [#952](https://github.com/matthis-k/phenix-ai/pull/952) | `21c480be` | Opt-in Basic prepare node publishing a watched request |
+| P2-3aj | [#956](https://github.com/matthis-k/phenix-ai/pull/956) | `6f7f81a5` | Basic Model-advance node gates on the watched prepared request |
+| P2-3ak | [#957](https://github.com/matthis-k/phenix-ai/pull/957) | `f919c35f` | Selected Advanced preparer writes the watched Basic request; packaged JSONL/SQLite prepare→advance→answer proof |
+
+P2-3 is **not accepted**: changed candidates still require verified compaction
+admission, the Advanced preparer currently forwards only the exact original
+request, multi-turn tool continuations must be re-prepared through the graph,
+and crash-atomic journal/session reconciliation plus production tokenizer
+parity remain open.
 
 P2-2b has three integrated slices: [#906](https://github.com/matthis-k/phenix-ai/pull/906) authenticates durable project membership, [#907](https://github.com/matthis-k/phenix-ai/pull/907) revalidates project-record sources, and [#908](https://github.com/matthis-k/phenix-ai/pull/908) provides packaged cross-session EvidenceStore retrieval (merged at `340b2ac2`). [#910](https://github.com/matthis-k/phenix-ai/pull/910) verifies denial after revocation of an already-admitted root (merged at `8ea04017`). Trusted runtime session/project admission and cancellation of active work remain tracked in [#891](https://github.com/matthis-k/phenix-ai/issues/891); P2-2b is not accepted yet.
 
