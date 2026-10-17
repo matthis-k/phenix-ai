@@ -1012,7 +1012,7 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::scoped_composition;
+    use super::{scoped_composition, sqlite_default_name};
     use super::{
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
@@ -1021,6 +1021,19 @@ mod session_lock_tests {
     use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
     use std::collections::BTreeSet;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn sqlite_preset_identity_is_bounded_and_cannot_be_a_path() {
+        assert_eq!(sqlite_default_name(None).unwrap(), "basic.sqlite");
+        assert_eq!(sqlite_default_name(Some("basic.sqlite")).unwrap(), "basic.sqlite");
+        assert_eq!(
+            sqlite_default_name(Some("basic-http.sqlite")).unwrap(),
+            "basic-http.sqlite"
+        );
+        for invalid in ["", "../other.sqlite", "/tmp/other.sqlite", "basic-other.sqlite"] {
+            assert!(sqlite_default_name(Some(invalid)).is_err());
+        }
+    }
 
     #[test]
     fn session_root_preserves_explicit_property_grants_but_never_foreign_sessions() {
