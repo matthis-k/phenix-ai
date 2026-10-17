@@ -9,7 +9,8 @@ use phenix_kernel::{
     Outcome,
 };
 use phenix_p2_compaction_replay::{
-    compacted_view, restore_original_events, span_for_events, ContextPart,
+    compacted_view, publish_verified_checkpoint, restore_original_events, span_for_events,
+    ContextPart,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -342,6 +343,86 @@ fn action_live_seed(fixture: &Fixture) -> serde_json::Value {
     serde_json::json!({"live_checkpoint": stored.id, "revision": stored.revision})
 }
 
+fn action_publish(fixture: &Fixture) -> serde_json::Value {
+    // One native root per selected Store operation. The source provider and
+    // SQLite ledger are real: the reusable policy only checks CAS results.
+    fn latest(fixture: &Fixture) -> Result<Option<CompactionCheckpoint>, String> {
+        match fixture.checkpoint(
+            "latest",
+            Scope {
+                session: SESSION.into(),
+            }
+            .to_value(),
+        ) {
+            Outcome::Success(value) => CompactionCheckpoint::from_value(value)
+                .map(Some)
+                .map_err(|failure| format!("{failure:?}")),
+            Outcome::Domain(value) => {
+                let failure = CheckpointStoreError::from_value(value)
+                    .map_err(|reason| format!("{reason:?}"))?;
+                if failure.problem == CheckpointStoreProblem::NotFound {
+                    Ok(None)
+                } else {
+                    Err(format!("{failure:?}"))
+                }
+            }
+        }
+    }
+
+    fn put(
+        fixture: &Fixture,
+        candidate: &CompactionCheckpoint,
+    ) -> Result<CompactionCheckpoint, String> {
+        match fixture.checkpoint("put", candidate.to_value()) {
+            Outcome::Success(value) => {
+                CompactionCheckpoint::from_value(value).map_err(|failure| format!("{failure:?}"))
+            }
+            other => Err(format!("{other:?}")),
+        }
+    }
+
+    let page = fixture.journal();
+    let first_complete_turn = page
+        .events
+        .iter()
+        .position(|event| event.kind == EventKind::Answer)
+        .expect("first completed native Basic turn")
+        + 1;
+    assert!(first_complete_turn > 1 && first_complete_turn < page.events.len());
+    let original = &page.events;
+    let candidate = CompactionCheckpoint {
+        id: "cp-published".into(),
+        session: SESSION.into(),
+        revision: 1,
+        parent_checkpoint: None,
+        input: span_for_events(original).unwrap(),
+        summarized: vec![span_for_events(&original[..first_complete_turn]).unwrap()],
+        retained: vec![span_for_events(&original[first_complete_turn..]).unwrap()],
+        excluded: vec![],
+        summary: format!(
+            "Source user prompt: {}; source answer: {}",
+            original[0].text,
+            original[first_complete_turn - 1].text,
+        ),
+        policy: "p2-verified-completed-turns".into(),
+        policy_version: 1,
+        model: None,
+        hydration_sources: vec![],
+    };
+    let published =
+        publish_verified_checkpoint(&candidate, || latest(fixture), |next| put(fixture, next))
+            .expect("selected Store denied verified CAS publication or readback");
+    assert_eq!(published.checkpoint, candidate);
+    let restored = latest(fixture).unwrap().expect("published source missing");
+    assert_eq!(restored, candidate);
+    serde_json::json!({
+        "created": published.created,
+        "checkpoint_id": restored.id,
+        "revision": restored.revision,
+        "source_bound": restored.input == span_for_events(&page.events).unwrap(),
+    })
+}
+
 fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     fixture.deny(
         "get",
@@ -375,6 +456,7 @@ fn main() {
         "restart" => action_restart(&fixture),
         "source-missing" => action_missing_source(&fixture),
         "live-seed" => action_live_seed(&fixture),
+        "publish" => action_publish(&fixture),
         other => panic!("unknown product action: {other}"),
     };
     let target = Path::new(&args[7]);
