@@ -10,7 +10,7 @@ P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [
 
 P2 is the Advanced agent product. Its kernel is the same M1 kernel as P1. Phenix's goal is a fully customizable coding agent: plugins define what it does, and the kernel defines how contributions execute. Generic kernel behavior follows from that boundary, not an independent infrastructure product goal. The [accepted product decision](agent-product-decision.md) records the rationale. Advanced features live in independently replaceable plugins; the kernel retains authenticated dispatch, generation identity, pending tickets, graph scheduling, authority and cancellation. A product composition selects plugins and their declared bindings. It never becomes a second agent executor. Basic and Advanced remain working examples that users can extend or replace with entirely custom agent workflows.
 
-The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, architecture decision review and debugging/efficiency evaluation. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
+The P2 release target is a usable agent with P1 parity, reference-aware long-term memory, reversible compaction, code intelligence, safe plugin hot reload, workspace management, durable jobs, sub-agents with session trees, architecture decision review and debugging/efficiency evaluation. **Provider onboarding and usable model selection are also P2 product-release requirements**, with priority ahead of optional frontend embellishments: a user must be able to authenticate by an available API-key or approved OAuth method, discover/select a usable model and send an actual Advanced turn through the supported Neovim frontend without manually editing environment variables. Restore useful oldmain behavior through the M1 contracts and graph, not by importing the old kernel or its embedded application framework. General-purpose planning, repository workers, user-configurable hook rules, the standalone artifact catalog, a broad options service, command-toolbelt discovery and interactive UI remain deferred. These may be added later as ordinary plugins; any small functionality strictly required by the P2 acceptance tests is part of its owning P2 stage.
 
 **Sequence:** preserve the accepted P1 baseline and single-authority CI. PRs #897, #898, #899, #901 and #902 merged on 15 October 2026 after their PR-head checks passed. The resulting `main` commit is `aa48137bc2fb`. Its production CI is separate from PR-head verification. Tests are written RED before implementation for every feature slice. An exact-head full CI pass is required for release acceptance.
 
@@ -112,9 +112,293 @@ This does not enable automatic checkpoint creation, dynamic model policy,
 crash-atomic journal/session reconciliation or production HTTP tokenization.
 P2-3 remains unaccepted.
 
+P2-3r [#930](https://github.com/matthis-k/phenix-ai/pull/930) adds native
+SQLite restart controls for missing checkpoint or journal grants, a missing
+selected token meter and a corrupt checkpoint ledger. Failures must not
+silently forward unverified original requests or modify the good session.
+
+P2-3s adds bounded paginated source reads to the already opted-in Advanced
+Model adapter using only the selected EventJournal interface. Each returned
+page must contain strictly contiguous events for the selected session, an
+exact cursor and a bounded count. Read through the first empty page; neither
+a full nor a short nonempty page proves the end of the journal. Deny before
+Model execution on missing data, invalid cursors, foreign sessions or total
+capacity overflow. A packaged native SQLite test seeds and checkpoints more
+than one 128-event page, then verifies the exact compacted Model request.
+Automatic checkpoint policy, production tokenizer parity and crash-atomic
+checkpoint/session reconciliation remain unaccepted.
+
+P2-3t adds a **pure proposal** for source-verified checkpoint boundaries.
+The chosen policy retains the last N completed turns and the active Model
+continuation, and summarizes only whole older turns. It first verifies
+the complete authoritative SessionSnapshot against original Basic journal
+bytes with all events retained, then validates any proposed elision against
+the same historical evidence and typed AssistantReply receipts. Gaps,
+foreign sessions, forged history, incomplete/failed turns, unsupported
+tool-call elision, stale parent ancestry and invalid checkpoint lineage
+reject. Not enough completed history returns no proposal without writes.
+A separately selected summarizer must provide factual summary content;
+the structural planner cannot attest semantic faithfulness. The Advanced
+graph still owns token thresholds, authorized journal reads, selected
+summarization, checkpoint-store CAS and publication. This slice neither
+performs a Model request nor creates durable checkpoints on its own.
+
+P2-3u reuses the canonical ModelTokenMeasurement verifier to classify
+context pressure using a caller-selected high-water percentage and the
+output reserve in the *exact* authoritative ModelRequest. The selected
+Model/ModelTokenMeter provider co-binding remains an authenticated host
+selection check, not a model-name claim. Valid measurements below the
+threshold take no action; approaching the window triggers graph-owned
+checkpoint policy, and a validated over-context-window request requires
+compaction or explicit denial before Model execution. Changed request
+digests, missing output reserve and mismatched selected model identities
+deny; u128 arithmetic prevents token/percentage overflow. This policy
+only classifies and does not automatically summarize, commit, grant
+journal reads or execute a Model. The Advanced graph must integrate it.
+
+P2-3v joins the selected Model's measured context pressure to the existing
+source-verified completed-turn checkpoint planner. Below the configured
+high-water mark, the original budget-admissible request continues without
+requiring journal reads. At the high-water mark, a complete and verified
+candidate is proposed if one exists; otherwise the original request may
+continue while it still fits. An over-context-window request must produce a
+verified candidate or be denied before Model admission. Invalid measurements,
+changed source evidence and incomplete turns fail closed. This is a pure
+decision, not an automatic checkpoint write. The Advanced graph must select
+the summarizer, authorize journal and store access, commit with CAS and
+remeasure the rebuilt request through the same selected Model before execution.
+It cannot fall back to an over-window original after a failed compaction.
+
+P2-3w provides an exact-request admission check after a checkpoint
+candidate is selected. The pure verifier recreates the complete ModelRequest
+from the authoritative Basic SessionSnapshot and source-checked journal,
+retains the original nonhistory fields and context, then invokes the selected
+Model's meter on that exact rebuilt request. A candidate is accepted only if
+its measured input plus the original full output reserve fits the selected
+context window. Changed request digest, missing journal bytes, changed Model
+identity, tokenizer revision or context window, and provider failure reject
+before any upstream Model call. The original can be over budget only while
+proposing compaction; a derived over-budget request never reaches the Model.
+This helper neither commits a checkpoint nor authenticates provider co-binding.
+The Advanced graph still owns selected journal access, summarizer, CAS commit,
+provider generation and Model execution. P2-3 release remains unaccepted.
+
+P2-3x applies the same selected-model measurement rule to the actual
+opt-in Advanced Model adapter after a durable checkpoint. The adapter
+continues to read checkpoint ancestry through CompactionStore and exact
+journal bytes through its selected Transcript import. When that read
+changes the ModelRequest, it measures the original authoritative request
+and then the source-rebuilt request through the same authenticated pinned
+Model/ModelTokenMeter provider. A valid original over the context window
+may enter this compaction path, but only a rebuilt request that fits the
+window may reach Model execution. Changed original digest, tokenizer
+revision, model context window, and malformed rebuilt measurements reject.
+The tests use separate SQLite restart forks and fault-injected selected
+fixture measurements. Public Basic and unmetered Advanced presets stay
+unchanged. This is admission of already committed checkpoints, not
+automatic graph-triggered summarization or checkpoint writes.
+
+P2-3y adds source-authenticated checkpoint publication through the existing
+CompactionStore revision CAS and selected latest-read contract. A candidate
+must be structurally valid, match the current checkpoint head and expected
+parent revision, receive an exact CAS acknowledgement and survive a fresh
+authenticated source/lineage readback before its compacted Model view can be
+considered. A restarted authorized root reuses an exactly matching durable
+checkpoint without repeating a write; an ambiguous failed write never retries
+inside the same request. A competing head, forged acknowledgement, stale
+source, or failed readback denies admission. Native SQLite acceptance includes
+independent restart reuse and the unchanged Basic journal. The selected
+summarizer, pressure trigger, source reads, commit and downstream Model call
+remain graph responsibilities; this reusable publication guard is not itself
+the automatic graph contribution.
+
+P2-3z composes the accepted selected-pressure decision, structurally
+verified journal checkpoint planner, source-validated CompactionStore CAS
+publication and exact compacted Model-request remeasurement into one
+graph-callable pre-Model transaction. When the original fits comfortably,
+it makes no store write or second meter call. At a threshold with no
+eligible completed prefix, it keeps the original. An over-window original
+without a safe prefix is denied. A candidate can reach Model admission
+only after a selected-store CAS/readback and exact remeasurement under
+the same pinned Model configuration. The transaction performs no Model or
+tool execution. A committed checkpoint remains durable if later metering
+fails, but no prohibited fallback to over-window original occurs.
+Deterministic tests cover all paths. The real graph contribution, selected
+summary quality, provider wiring and native live acceptance for automatic
+checkpoint creation remain open.
+
+P2-3aa introduces an opt-in selected CompactionSummarizer typed contract
+and connects the complete pressure→journal→summary→verified checkpoint plan
+→CompactionStore CAS/readback→selected Model remeasurement transaction to
+the existing Advanced Model adapter. The Basic agent still owns the Model
+request, graph turn, session state, tools and streaming. When the optional
+Summarizer is unbound, the public Advanced composition behaves as before.
+The selected summary must cite the exact bounded journal source span; its
+contents are subject to the existing independently verified Basic snapshot
+alignment and checkpoint source hashing. Automatic compaction currently
+targets a first checkpoint with one retained completed turn and no
+existing checkpoint; continuation through a persisted checkpoint remains
+source verified. This is a stage-one selected Model-boundary trigger, not
+yet a separate additive graph node or dynamic checkpoint replanning.
+Native verification creates a checkpoint on pressure, checks the compacted
+Model request, and proves restart does not create duplicate CAS revisions.
+Further graph composition and configurable summarization policy remain
+required before P2-3 acceptance.
+
+P2-3ab extends the opt-in Advanced adapter to recognize pressure on an
+already selected, source-verified compacted request. If the compacted request
+fits comfortably, existing checkpoint reuse continues unchanged. When it no
+longer fits, the adapter authenticates the full Basic session, supplies the
+previous source-validated checkpoint and next linear revision to the existing
+P2-3z transaction, and CAS-publishes a fresh candidate before independently
+metering the new compacted request. No checkpoint or source journal is erased
+or rewritten, and a failed replan cannot fall back to a rejected, over-window
+Model input. Native SQLite acceptance verifies successive authorized
+turns advancing revisions 1→2→3 under renewed measured pressure. A newly
+submitted turn is not an exact CAS retry: even when the prompt text repeats,
+the authoritative session has grown. The same-candidate ambiguous-write
+recovery test independently verifies restart idempotence without an
+extra revision. The selected
+Summarizer remains opt-in and first-stage policy is a fixed retained-turn
+count; independent graph contribution and production policy controls remain
+open.
+
+P2-3ac introduces a separately packageable, opt-in Model-backed
+CompactionSummarizer plugin. It accepts the existing typed source-cited
+summary request, verifies the exact journal digest, encodes bounded event
+data as an untrusted input to a separately selected Model, forbids tool
+calls, constrains output budget and response size, and returns only a
+proposed source-bound summary. No checkpoint write, Basic journal edit,
+session authority transfer or agent loop is introduced. The plugin
+supports pending selected Model imports and cancellation. Its pure prompt
+and reply controls are tested independently in the Nix matrix. Completing
+real live integration requires making the Advanced adapter's selected
+Summarizer import pending-aware: its current synchronous import can only
+consume immediately ready summary implementations, such as the existing
+deterministic verification fixture. Model providers that stream journal
+deltas into the active Basic source ledger must not be bound to the
+summarizer without a separate authorized scratch/isolated context.
+Until that coordination and native end-to-end gate exist, this production
+provider is opt-in and not part of the default Advanced composition.
+
+P2-3ad makes the existing Advanced Model provider's pending lifecycle
+aware of a separately selected pending CompactionSummarizer. Preparation
+produces either a ready ModelRequest or a source-bound summary proposal.
+The same M1 pending ticket awaits the selected summary child, with no
+checkpoint write and no primary Model call while it is unresolved. The
+completed summary is independently checked against exact source bytes,
+submitted through the existing checkpoint CAS/readback transaction and
+remeasured before starting the original Upstream Model. Cancellation
+releases either pending child and clears source state. A dedicated native
+composition binds the actual Model-backed summary plugin to a fixture
+Model that deliberately replies only after poll; it also verifies denial
+of the nested summarizer->Model grant before any checkpoint CAS.
+Default Advanced remains unchanged and the Basic graph still owns turns,
+tool execution and authoritative state. A future additive graph
+contribution and failure/restart acceptance remain required.
+
+P2-3ae confines the nested summary Model's visible source to the exact
+older completed-turn prefix that the existing canonical checkpoint planner
+would elide with the configured one-turn retention. The full pending
+authoritative journal remains source-authenticated by its original SHA-256
+envelope, but the nested Model prompt receives only the separate
+source-verified elided prefix and its digest. The newest retained completed
+turn, pending user text, tools and independent context do not enter that
+prompt. If the planner finds no eligible prefix or history/source verification
+fails, deny before invoking any summarization Model. The source-cited
+CompactionSummary response retains the original full journal citation so
+CAS publication and selected Model remeasurement still bind the complete
+authoritative request. Native pure unit tests guard the exclusion and
+no-eligible-prefix cases; no duplicate history parser or new storage is added.
+
+P2-3af adds native cancellation acceptance for the selected nested
+pending summary Model. The test seeds completed Basic turns, starts an
+authorized pending summary whose deterministic Model fixture records a
+test-only witness, cancels the actual running JSONL graph root after that
+witness, then verifies the durable Cancelled event, absence of a new CAS
+checkpoint, and absence of downstream Answer or ToolStarted events.
+The existing kernel owns cancellation propagation and pending-ticket
+draining; the Advanced adapter and summarizer clear pending state without
+introducing their own scheduler, autonomous worker or storage write. The
+test does not assert safe recovery from an external process kill, which
+remains a separate acceptance requirement.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
+
+**P2-3ag: typed Basic request projection (preparatory, not a graph hook).**
+Extract the exact request snapshot from the existing Basic agent's pre-Model
+boundary into one pure, typed and independently tested
+`project_model_request` function. Include the complete journal-derived
+history (tool call arguments/results), selected tools and skills, context,
+run/session identity and caller limits. Both immediate and pending Model
+paths must consume the same value without state mutation. This refactor
+does **not** yet claim to move compaction out of the Model adapter.
+
+**P2-3ah: source-bound preparation contract (non-authorizing).** A new
+versioned `phenix.advanced.model-preparation@1` contract accepts the exact
+Basic ModelRequest and its canonical domain-separated digest. Selected
+preparers return a proposed candidate with the same source digest, session,
+run, tools, skills and limits. Any changed history/context requires a
+structurally valid checkpoint citation, but a citation is never sufficient
+to execute Model or grant a tool effect: the actual caller must independently
+source-verify complete EventJournal bytes, CAS/readback the checkpoint,
+remeasure the final selected Model request, and require effective graph/node
+authority. Pure native denial probes cover stale digests, foreign sessions,
+changed run identities, changed tool/skill permissions, output budgets and
+unproven history/context edits. This remains a **contract boundary**; it does
+not yet make Basic submit asynchronous across two graph waves.
+
+**P2-3ai: first real Basic graph preparation node (opt-in).**
+The same Basic agent is packaged in a separate `staged-graph` feature
+variant. Its graph contributes a standalone `prepare` node triggered by
+`phenix.basic.prompt`, declared as the writer of
+`phenix.basic.agent/pending_model_request`. It shares the existing
+session admission, selected tools/skills/context, turn limit and ModelStarted
+journal boundary with the production Basic turn logic. It retains the
+authoritative in-process Running state and publishes exactly one typed
+ModelRequest snapshot through M1 watched state before the graph wave
+finishes. The prepare operation does **not** invoke Model and no Advanced
+hook is invoked in this slice. A feature-specific graph declaration test
+and Nix-built native plugin establish the ABI and metadata; the default
+P1 Basic graph and product composition are unchanged.
+
+The staged binary is not user-facing or P2 accepted: its Running session
+has intentionally not yet reached a terminal answer. The next selected
+Advanced prepare node must read and source-check this watched request,
+publish an authorized candidate, and unblock a separately staged Basic
+Model advance node, including multi-turn tool continuations. Do not ship
+the prepare-only composition as an agent, and do not model a state-hook
+as able to interrupt an already-pending Basic submit node.
+
+**Mandatory graph split for P2-3ah onward.** The current Basic submit graph
+node remains pending while it invokes and polls the Model. M1 state-triggered
+hooks are admitted after a graph wave settles, not inside this pending
+node. A merely parallel Advanced node cannot see or gate the final
+authoritative ModelRequest. Implement the next slice as separate
+**Basic prepare → selected Advanced prepare → Basic Model advance** graph
+operations: Basic prepares the exact typed request and ends its graph
+wave; a watched, scoped kernel-owned property causes the selected
+Advanced prepare node to compute a verified, budgeted replacement; then
+a Basic advance node resumes the same durable session/run from an
+authorized prepared-request property. Subsequent Model/tool iterations
+must preserve this handoff, including their pending tickets and failure
+semantics. Use the existing M1 state-change triggers, selected imports,
+typed values, grants and graph scheduler. Do not add an Agent::run entry,
+manual event bus, protocol or a second scheduling engine.
+
+**Required native acceptance before switching defaults:** the Advanced
+node is actually activated and blocks Model admission; a denied or
+tampered prepared-request write never invokes Model; a no-compaction
+composition yields identical Basic multi-turn/tool results; a pending
+summarizer blocks the Model advance graph node; cancellation, restart,
+generation replacement and concurrent clients retain authoritative
+session identity and physical leases. During migration, the current
+Advanced Model adapter remains the working opt-in fallback. Only remove
+its compaction-preparation path after these checks pass on the integrated
+exact head.
+
 
 Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composition. It contributes typed graph nodes and event handlers around the selected Basic agent; it does not fork the Basic model/tool loop or implement a second scheduler.
 
@@ -447,4 +731,4 @@ Standard [A2UI interactive UI support](m1-roadmap.md#post-p1-p2-shared-session-p
 
 ## Release decision
 
-P2 is ACCEPTED only when all P2-0 through P2-10 gates pass together, including P2-6A and functional cases AV-35 through AV-45, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.
+P2 is ACCEPTED only when the packaged Advanced product also passes the interactive provider-authentication and model-selection gate owned by [M1 runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891) and the [M1 roadmap](m1-roadmap.md): one- and two-method onboarding, connection-specific model catalogs, secure credential handling, dynamic/static discovery, revision-checked selection and an actual authorized Neovim Advanced turn. OAuth subscription integrations must be officially supported for this application; otherwise they report unavailable rather than spoofing a login. General A2UI and visual customization remain outside this release gate. In addition, all P2-0 through P2-10 gates must pass together, including P2-6A and functional cases AV-35 through AV-45, each preset starts as a packaged executable, memory/compaction can produce verifiable evidence, code intelligence handles revision changes, hot reload is generation-safe, workspace and durable jobs pass their fault/authority tests, child sessions survive restart with bounded grants, inspection/efficiency evidence is available, and Basic tests still pass. Publish a comparison against the oldmain capability inventory and actual benchmark measurements. Keep the milestone PLANNED until executable checks exist.

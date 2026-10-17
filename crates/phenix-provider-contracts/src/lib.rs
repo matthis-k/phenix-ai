@@ -7,6 +7,9 @@
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
+pub mod selection;
+pub use selection::{validate_model_selection, ModelSelection};
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum ProviderErrorCode {
     InvalidInput,
@@ -27,6 +30,19 @@ pub struct ProviderError {
 pub struct ProviderQuery {
     /// Authorized runtime, project or session selector, not an authority grant.
     pub scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderDetailsQuery {
+    pub scope: String,
+    pub provider_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderPage {
+    /// Multiple providers may be contributed by one external plugin.
+    pub providers: Vec<ProviderDescriptor>,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -216,7 +232,8 @@ pub struct ModelPage {
 
 #[contract(id = "phenix.provider.catalog@1")]
 pub trait ProviderCatalog {
-    fn describe(&self, request: ProviderQuery) -> Result<ProviderDescriptor, ProviderError>;
+    fn list(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
+    fn describe(&self, request: ProviderDetailsQuery) -> Result<ProviderDescriptor, ProviderError>;
     fn models(&self, request: ModelQuery) -> Result<ModelPage, ProviderError>;
 }
 
@@ -345,6 +362,11 @@ mod tests {
         let portable = provider.to_value();
         let decoded = ProviderDescriptor::from_value(portable).unwrap();
         assert_eq!(decoded, provider);
+        let multi = ProviderPage {
+            providers: vec![provider.clone()],
+            revision: 2,
+        };
+        assert_eq!(ProviderPage::from_value(multi.to_value()).unwrap(), multi);
         let catalog = ModelPage {
             profile_id: Some("personal".into()),
             models: vec![ProviderModel {

@@ -9,7 +9,8 @@ use phenix_kernel::{
     Outcome,
 };
 use phenix_p2_compaction_replay::{
-    compacted_view, restore_original_events, span_for_events, ContextPart,
+    compacted_view, publish_verified_checkpoint, restore_original_events, span_for_events,
+    ContextPart,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -90,21 +91,47 @@ impl Fixture {
     }
 
     fn journal(&self) -> EventPage {
-        let result = self.invoke(
-            "phenix.basic.journal@1",
-            "read",
-            "phenix.basic.event-journal",
-            JournalQuery {
-                session: SESSION.into(),
-                after: 0,
-                limit: 128,
+        // Read source data from the real selected journal. The 128-event
+        // boundary is not an end-of-stream signal; verify every cursor.
+        const PAGE_EVENTS: u64 = 128;
+        const MAX_EVENTS: usize = 1024;
+        let mut after = 0_u64;
+        let mut events = Vec::new();
+        loop {
+            let result = self.invoke(
+                "phenix.basic.journal@1",
+                "read",
+                "phenix.basic.event-journal",
+                JournalQuery {
+                    session: SESSION.into(),
+                    after,
+                    limit: PAGE_EVENTS,
+                }
+                .to_value(),
+            );
+            let Outcome::Success(value) = result else {
+                panic!("source journal missing: {result:?}");
+            };
+            let page = EventPage::from_value(value).unwrap();
+            assert!(page.events.len() <= PAGE_EVENTS as usize);
+            if page.events.is_empty() {
+                assert_eq!(page.next, after, "empty journal page advanced cursor");
+                return EventPage {
+                    events,
+                    next: after,
+                };
             }
-            .to_value(),
-        );
-        let Outcome::Success(value) = result else {
-            panic!("source journal missing: {result:?}");
-        };
-        EventPage::from_value(value).unwrap()
+            let mut next = after;
+            for event in &page.events {
+                next = next.checked_add(1).expect("journal cursor overflow");
+                assert_eq!(event.sequence, next, "noncontiguous source journal");
+                assert_eq!(event.session, SESSION, "foreign session in journal");
+            }
+            assert_eq!(page.next, next, "invalid journal page cursor");
+            events.extend(page.events);
+            assert!(events.len() <= MAX_EVENTS, "source exceeds checkpoint cap");
+            after = next;
+        }
     }
 
     fn checkpoint(&self, operation: &str, input: Value) -> Outcome {
@@ -316,6 +343,86 @@ fn action_live_seed(fixture: &Fixture) -> serde_json::Value {
     serde_json::json!({"live_checkpoint": stored.id, "revision": stored.revision})
 }
 
+fn action_publish(fixture: &Fixture) -> serde_json::Value {
+    // One native root per selected Store operation. The source provider and
+    // SQLite ledger are real: the reusable policy only checks CAS results.
+    fn latest(fixture: &Fixture) -> Result<Option<CompactionCheckpoint>, String> {
+        match fixture.checkpoint(
+            "latest",
+            Scope {
+                session: SESSION.into(),
+            }
+            .to_value(),
+        ) {
+            Outcome::Success(value) => CompactionCheckpoint::from_value(value)
+                .map(Some)
+                .map_err(|failure| format!("{failure:?}")),
+            Outcome::Domain(value) => {
+                let failure = CheckpointStoreError::from_value(value)
+                    .map_err(|reason| format!("{reason:?}"))?;
+                if failure.problem == CheckpointStoreProblem::NotFound {
+                    Ok(None)
+                } else {
+                    Err(format!("{failure:?}"))
+                }
+            }
+        }
+    }
+
+    fn put(
+        fixture: &Fixture,
+        candidate: &CompactionCheckpoint,
+    ) -> Result<CompactionCheckpoint, String> {
+        match fixture.checkpoint("put", candidate.to_value()) {
+            Outcome::Success(value) => {
+                CompactionCheckpoint::from_value(value).map_err(|failure| format!("{failure:?}"))
+            }
+            other => Err(format!("{other:?}")),
+        }
+    }
+
+    let page = fixture.journal();
+    let first_complete_turn = page
+        .events
+        .iter()
+        .position(|event| event.kind == EventKind::Answer)
+        .expect("first completed native Basic turn")
+        + 1;
+    assert!(first_complete_turn > 1 && first_complete_turn < page.events.len());
+    let original = &page.events;
+    let candidate = CompactionCheckpoint {
+        id: "cp-published".into(),
+        session: SESSION.into(),
+        revision: 1,
+        parent_checkpoint: None,
+        input: span_for_events(original).unwrap(),
+        summarized: vec![span_for_events(&original[..first_complete_turn]).unwrap()],
+        retained: vec![span_for_events(&original[first_complete_turn..]).unwrap()],
+        excluded: vec![],
+        summary: format!(
+            "Source user prompt: {}; source answer: {}",
+            original[0].text,
+            original[first_complete_turn - 1].text,
+        ),
+        policy: "p2-verified-completed-turns".into(),
+        policy_version: 1,
+        model: None,
+        hydration_sources: vec![],
+    };
+    let published =
+        publish_verified_checkpoint(&candidate, || latest(fixture), |next| put(fixture, next))
+            .expect("selected Store denied verified CAS publication or readback");
+    assert_eq!(published.checkpoint, candidate);
+    let restored = latest(fixture).unwrap().expect("published source missing");
+    assert_eq!(restored, candidate);
+    serde_json::json!({
+        "created": published.created,
+        "checkpoint_id": restored.id,
+        "revision": restored.revision,
+        "source_bound": restored.input == span_for_events(&page.events).unwrap(),
+    })
+}
+
 fn action_missing_source(fixture: &Fixture) -> serde_json::Value {
     fixture.deny(
         "get",
@@ -349,6 +456,7 @@ fn main() {
         "restart" => action_restart(&fixture),
         "source-missing" => action_missing_source(&fixture),
         "live-seed" => action_live_seed(&fixture),
+        "publish" => action_publish(&fixture),
         other => panic!("unknown product action: {other}"),
     };
     let target = Path::new(&args[7]);

@@ -9,15 +9,34 @@ use phenix_basic_contracts::Event;
 use phenix_sdk::Portable;
 use sha2::{Digest, Sha256};
 
+pub mod admission;
+pub mod automatic;
+pub mod budget;
 pub mod history;
 pub mod model;
+pub mod plan;
+pub mod publish;
 pub mod tail;
+pub mod transaction;
 pub mod view;
+pub use admission::{
+    remeasure_verified_checkpoint, validate_compacted_meter_transition, CompactedAdmissionProblem,
+    CompactedMeterProblem, MeasuredCompactedRequest,
+};
+pub use automatic::{
+    automatic_checkpoint, AutomaticCheckpointDecision, AutomaticCheckpointProblem,
+};
+pub use budget::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
+pub use plan::{plan_verified_checkpoint, CheckpointPlan, PlanProblem};
+pub use publish::{publish_verified_checkpoint, CheckpointPublishProblem, PublishedCheckpoint};
 pub use tail::{
     assemble_verified_tail_request, extend_verified_view, ExtendedProjection, TailAssemblyProblem,
     TailProblem,
+};
+pub use transaction::{
+    admit_compaction, CompactionAdmission, CompactionAdmissionInput, CompactionAdmissionProblem,
 };
 pub use view::{compacted_view, ContextPart, ContextProjection, ViewProblem};
 

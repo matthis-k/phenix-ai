@@ -1,7 +1,34 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
+/// Pure snapshot projection for the authoritative Basic-to-Model boundary.
+///
+/// A future graph-managed prepare node must consume this exact typed value;
+/// it must not reconstruct history, tools or scopes independently. This
+/// function neither initiates a Model call nor changes Basic session state.
+pub fn project_model_request(
+    session: &str,
+    run: &str,
+    history: &[Message],
+    tools: &[ToolInfo],
+    skills: &[Skill],
+    context: &[ContextItem],
+    limits: &Limits,
+) -> ModelRequest {
+    ModelRequest {
+        session: session.into(),
+        run: run.into(),
+        history: history.to_vec(),
+        tools: tools.to_vec(),
+        skills: skills.to_vec(),
+        context: context.to_vec(),
+        limits: limits.clone(),
+    }
+}
+
+#[cfg(not(feature = "staged-graph"))]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
@@ -18,10 +45,32 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     }],
 };
 
+#[cfg(feature = "staged-graph")]
+const GRAPH: StaticGraphContribution = StaticGraphContribution {
+    plugin: "phenix.basic.agent",
+    events: &[],
+    actions: &[],
+    nodes: &[StaticGraphNode {
+        id: "prepare",
+        triggers: &["phenix.basic.prompt"],
+        after: &[],
+        selector: "",
+        operation: "phenix.basic.turn-prepare@1/prepare",
+        writes: &["phenix.basic.agent/pending_model_request"],
+        join: JoinPolicy::AllActive,
+        failure: FailurePolicy::FailRoot,
+    }],
+};
+
+#[cfg(all(test, feature = "staged-graph"))]
+#[path = "staged_graph_tests.rs"]
+mod staged_graph_tests;
+
 #[phenix_sdk::plugin(
     id = "phenix.basic.agent",
     version = "1.0.0",
     provide(phenix_basic_contracts::BasicInput, slot = "Input"),
+    provide(phenix_basic_contracts::BasicTurnPrepare, slot = "Prepare"),
     provide(phenix_basic_contracts::BasicOutput, slot = "Output"),
     require(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
@@ -37,9 +86,9 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, BasicError, BasicInput, BasicOutput, CatalogCursor, Context, ErrorCode, Event,
-        EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
-        ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
+        error, BasicError, BasicInput, BasicOutput, BasicTurnPrepare, CatalogCursor, Context,
+        ErrorCode, Event, EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message,
+        Model, ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
         RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion,
         ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
     };
@@ -66,6 +115,10 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
+        #[get]
+        #[set]
+        #[watch]
+        pending_model_request: Option<ModelRequest>,
     }
 
     fn event(
@@ -328,6 +381,77 @@ mod plugin {
         Ok(())
     }
 
+    /// Canonical boundary shared by ordinary P1 and staged P2 requests.
+    /// It accounts for turn limits and records the exact source journal
+    /// boundary before publishing any derived Model view.
+    fn prepare_next_model_request(
+        host: &Host<'_>,
+        running: &mut Running,
+    ) -> CallResult<ModelRequest, BasicError> {
+        if running
+            .input
+            .limits
+            .model_turns
+            .is_some_and(|max| running.turns >= max)
+        {
+            let problem = error(ErrorCode::TurnLimit, "model turn limit reached");
+            stopped(host, running.session.clone(), &problem)?;
+            return Err(CallError::Domain(problem));
+        }
+        running.model_after = event(
+            host,
+            &running.input.session,
+            &running.run,
+            EventKind::ModelStarted,
+            String::new(),
+            "",
+        )?;
+        Ok(super::project_model_request(
+            &running.input.session,
+            &running.run,
+            &running.session.history,
+            &running.tools,
+            &running.skills,
+            &running.context,
+            &running.input.limits,
+        ))
+    }
+
+    #[provide(BasicTurnPrepare::prepare)]
+    fn prepare_graph(
+        state: &mut State,
+        host: &Host<'_>,
+        request: PromptSubmitted,
+    ) -> CallResult<ModelRequest, BasicError> {
+        if state.active.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "a Basic run is already active",
+            )));
+        }
+        let mut running = prepare(host, request)?;
+        let projected = prepare_next_model_request(host, &mut running)?;
+        // Publishing the watched snapshot is the only graph handoff here.
+        // Model::complete is NOT invoked by this operation. A later graph
+        // contribution will validate a selected replacement and resume the
+        // same run, without re-creating a new Basic agent loop.
+        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property read: {err}"),
+            )
+        })?;
+        *edit = Some(projected.clone());
+        edit.commit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property CAS: {err}"),
+            )
+        })?;
+        state.active = Some(running);
+        Ok(projected)
+    }
+
     enum Advance {
         Pending,
         Done(RunResult),
@@ -478,33 +602,7 @@ mod plugin {
                 running.calls = new_total;
             }
 
-            if running
-                .input
-                .limits
-                .model_turns
-                .is_some_and(|max| running.turns >= max)
-            {
-                let problem = error(ErrorCode::TurnLimit, "model turn limit reached");
-                stopped(host, running.session.clone(), &problem)?;
-                return Err(CallError::Domain(problem));
-            }
-            running.model_after = event(
-                host,
-                &running.input.session,
-                &running.run,
-                EventKind::ModelStarted,
-                String::new(),
-                "",
-            )?;
-            let request = ModelRequest {
-                session: running.input.session.clone(),
-                run: running.run.clone(),
-                history: running.session.history.clone(),
-                tools: running.tools.clone(),
-                skills: running.skills.clone(),
-                context: running.context.clone(),
-                limits: running.input.limits.clone(),
-            };
+            let request = prepare_next_model_request(host, running)?;
             match host
                 .begin::<Model::complete>("Model", &request)
                 .map_err(CallError::Kernel)?

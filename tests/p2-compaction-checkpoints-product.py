@@ -41,14 +41,42 @@ def snapshot_original():
 original = snapshot_original()
 assert any(row[1] == "event-journal.v1" for row in original), original
 
-def run(mode):
+# P2-3y RED: isolate a fresh native checkpoint writer so that CAS
+# publication, readback and an independent restart prove idempotence.
+publish_db = out / "checkpoint-publication.sqlite"
+with sqlite3.connect(db) as source, sqlite3.connect(publish_db) as target:
+    source.backup(target)
+publish_env = dict(env, PHENIX_BASIC_SQLITE_PATH=str(publish_db))
+
+def run(mode, runtime_env=None):
     folder = out / mode
     target = [
         runner, checkpoint, journal, storage, basic_defs, advanced_defs, mode, str(folder),
     ]
-    result = subprocess.run(target, capture_output=True, text=True, env=env, timeout=90)
+    result = subprocess.run(
+        target, capture_output=True, text=True, env=runtime_env or env, timeout=90,
+    )
     assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
     return json.loads((folder / "compaction-product.json").read_text())
+
+# Native CAS publication through the selected store: the new process
+# must read back the authenticated checkpoint before returning acceptance.
+published = run("publish", publish_env)
+assert published["created"] is True, published
+assert published["revision"] == 1, published
+assert published["source_bound"] is True, published
+reused = run("publish", publish_env)
+assert reused["created"] is False, reused
+assert reused["checkpoint_id"] == published["checkpoint_id"], reused
+with sqlite3.connect(publish_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,)
+    assert connection.execute(
+        "SELECT session, name, revision, hex(data) FROM basic_records "
+        "WHERE name != 'compaction-checkpoints.v1' ORDER BY session, name"
+    ).fetchall() == original
 
 write = run("write")
 assert write["written"] == 2, write
@@ -88,6 +116,8 @@ assert missing["stale_checkpoint_denied"] is True
         "independent-basic-journal-source",
         "native-checkpoint-journal-sqlite-binding",
         "checkpoint-revision-cas",
+        "selected-store-cas-publication-with-authenticated-readback",
+        "publication-restart-reuses-exact-checkpoint-without-write",
         "immutable-linear-parent-checkpoint-history",
         "read-after-independent-process-restart",
         "latest-linear-checkpoint-after-restart",

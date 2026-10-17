@@ -238,7 +238,8 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 11
+        assert len(report["definitions"]) == 12
+        assert "phenix.basic.turn-prepare@1" in report["definitions"], report
         assert report["plugin"] == "phenix.basic-contracts"
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
@@ -400,6 +401,32 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      # Opt-in selected Model summarization; no hidden tools, journal writes
+      # or checkpoint authority. Build/test it outside the public Advanced
+      # preset until its provider and authority binding are selected.
+      p2SelectedModelSummarizer = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-summarizer";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-p2-compaction-replay
+          ./crates/phenix-plugin-advanced-summarizer
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_summarizer.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       compactionCheckpointStore = rust.buildRustPackage {
         pname = "phenix-plugin-compaction-checkpoints";
         version = "0.1.0";
@@ -434,7 +461,9 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 6, report
+        assert len(report["definitions"]) == 8, report
+        assert "phenix.advanced.model-preparation@1" in report["definitions"], report
+        assert "phenix.advanced.compaction-summary@1" in report["definitions"], report
         (Path(sys.argv[2]) / "evidence.json").write_text(
             json.dumps({"format": "phenix.p2.evidence-contracts.v1",
                         "definitions": report["definitions"],
@@ -730,6 +759,38 @@
         "phenix-plugin-basic-agent"
         "phenix_plugin_basic_agent"
         ./crates/phenix-plugin-basic-agent;
+      # Verification-only feature-variant of the very same Basic agent.
+      # The P1 preset and batched default-feature binary are unchanged.
+      basicStagedAgent = rust.buildRustPackage {
+        pname = "phenix-plugin-basic-agent-staged";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-plugin-basic-agent
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_basic_agent.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+          test -s "$out/descriptor.bin"
+        '';
+      };
+      p2BasicStagedPrepareCheck = pkgs.runCommand "phenix-p2-basic-staged-prepare"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out"
+        test -s "$out/accepted.json"
+      '';
       basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
@@ -1333,7 +1394,7 @@
         mkdir -p "$out"
         python ${./tests/p2-metered-model-adapter-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${advancedComposition} ${p2ModelMeterFixtureCheck} \
+          ${advancedComposition} ${p2ModelMeterFixtureCheck} ${p2SelectedModelSummarizer} \
           ${p2CompactionProductRunner}/bin/phenix-p2-compaction-product \
           ${compactionCheckpointStore} ${eventJournal} ${storageSqlite} \
           ${basicDefinitions} ${advancedDefinitions} "$out"
@@ -1933,6 +1994,9 @@
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
+        p2-selected-model-summarizer = p2SelectedModelSummarizer;
+        p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
+        p2-basic-staged-plugin = basicStagedAgent;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
