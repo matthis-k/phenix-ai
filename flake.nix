@@ -243,6 +243,21 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ]);
+      providerDiscoveryCheck = rust.buildRustPackage {
+        pname = "phenix-provider-discovery";
+        version = "0.1.0";
+        src = providerDiscoverySource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-discovery" ];
+        cargoTestFlags = [ "-p" "phenix-provider-discovery" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out
+          touch $out/verified
+        '';
+      };
       providerContractsSource = subset (publicPaths ++ [ ./crates/phenix-provider-contracts ]);
       providerContractsBinary = rust.buildRustPackage {
         pname = "phenix-provider-contracts";
@@ -1845,6 +1860,7 @@
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
         provider-contracts = providerContractsCheck;
+        provider-discovery = providerDiscoveryCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;

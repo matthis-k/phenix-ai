@@ -1263,6 +1263,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-provider-discovery"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-sdk"
 version = "0.1.0"
 dependencies = [
