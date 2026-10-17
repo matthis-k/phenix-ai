@@ -268,6 +268,31 @@ impl Controller {
             .collect()
     }
 
+    fn set_config_option(
+        &mut self,
+        request: SetSessionConfigOptionRequest,
+    ) -> acp::Result<SetSessionConfigOptionResponse> {
+        if !self.sessions.contains_key(&request.session_id.to_string()) {
+            return Err(invalid("unknown ACP session"));
+        }
+        let chosen = match request.value {
+            SessionConfigOptionValue::ValueId { value } => value.to_string(),
+            _ => return Err(invalid("unsupported model configuration value")),
+        };
+        let admitted = self.composition.slots.iter().any(|binding| {
+            binding.caller == "phenix.basic.agent"
+                && binding.slot == "Model"
+                && binding.index == 0
+                && binding.provider == chosen
+        });
+        if request.config_id.to_string() != "model" || !admitted {
+            return Err(invalid("unavailable or unauthorized model"));
+        }
+        // Until dynamic graph routing is installed, selection of the
+        // already admitted model is idempotent. A different model is denied.
+        Ok(SetSessionConfigOptionResponse::new(self.model_options()))
+    }
+
     fn new_session(&mut self, request: NewSessionRequest) -> acp::Result<NewSessionResponse> {
         if !request.cwd.is_absolute()
             || !request.mcp_servers.is_empty()
