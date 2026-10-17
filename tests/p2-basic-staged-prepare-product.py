@@ -25,6 +25,17 @@ stage["artifacts"] = [
     for artifact in source["artifacts"]
 ]
 stage["authority"]["operations"].append(key)
+pending_property = "phenix.basic.agent.property.pending_model_request@1"
+stage["authority"]["operations"].extend([
+    pending_property + "/set",
+    pending_property + "/get",
+])
+stage["authority"]["resources"].append(pending_property[:-2])
+stage["grants"].extend([
+    {"caller": "phenix.basic.agent", "interface": pending_property,
+     "operation": operation, "resources": [scoped, pending_property[:-2]]}
+    for operation in ("get", "set")
+])
 stage["grants"].append({
     "caller": "phenix.basic.agent",
     "interface": "phenix.basic.turn-prepare@1",
