@@ -18,13 +18,14 @@ assert staged_agent not in source["artifacts"], source["artifacts"]
 assert source["entry"]["interface"] == "phenix.basic.input@1"
 assert source["entry"]["operation"] == "submit"
 key = "phenix.basic.turn-prepare@1/prepare"
+advance_key = "phenix.basic.turn-advance@1/advance"
 scoped = "phenix.session.s1"
 stage = json.loads(json.dumps(source))
 stage["artifacts"] = [
     staged_agent if artifact == basic_agent else artifact
     for artifact in source["artifacts"]
 ]
-stage["authority"]["operations"].append(key)
+stage["authority"]["operations"].extend([key, advance_key])
 pending_property = "phenix.basic.agent.property.pending_model_request@1"
 stage["authority"]["operations"].extend([
     pending_property + "/set",
@@ -42,6 +43,23 @@ stage["grants"].append({
     "operation": "prepare",
     "resources": [scoped],
 })
+stage["grants"].append({
+    "caller": "phenix.basic.agent",
+    "interface": "phenix.basic.turn-advance@1",
+    "operation": "advance",
+    "resources": [scoped],
+})
+prepared_property = "phenix.basic.agent.property.prepared_model_request@1"
+stage["authority"]["operations"].extend([
+    prepared_property + "/get",
+    prepared_property + "/watch",
+])
+stage["authority"]["resources"].append(prepared_property[:-2])
+stage["grants"].extend([
+    {"caller": "phenix.basic.agent", "interface": prepared_property,
+     "operation": operation, "resources": [scoped, prepared_property[:-2]]}
+    for operation in ("get", "watch")
+])
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
 
