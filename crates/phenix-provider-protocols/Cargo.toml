@@ -1,0 +1,8 @@
+[package]
+name = "phenix-provider-protocols"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+url = "=2.5.8"
