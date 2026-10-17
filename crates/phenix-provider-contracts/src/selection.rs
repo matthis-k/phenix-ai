@@ -127,7 +127,12 @@ pub fn validate_model_selection(
 mod tests {
     use super::*;
 
-    fn fixture() -> (ProviderDescriptor, AuthenticationStatus, ModelPage, ModelSelection) {
+    fn fixture() -> (
+        ProviderDescriptor,
+        AuthenticationStatus,
+        ModelPage,
+        ModelSelection,
+    ) {
         let provider = ProviderDescriptor {
             id: "openai".into(),
             label: "OpenAI".into(),
@@ -197,7 +202,10 @@ mod tests {
         let (provider, auth, page, request) = fixture();
         let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
         assert_eq!(admitted, page.models[0]);
-        assert_eq!(ModelSelection::from_value(request.to_value()).unwrap(), request);
+        assert_eq!(
+            ModelSelection::from_value(request.to_value()).unwrap(),
+            request
+        );
     }
 
     #[test]
