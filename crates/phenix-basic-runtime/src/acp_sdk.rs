@@ -7,7 +7,8 @@ use acp::schema::{
         AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
-        SessionConfigOptionCategory, SessionConfigSelectOption, SessionNotification, StopReason,
+        SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
     },
     ProtocolVersion,
 };
