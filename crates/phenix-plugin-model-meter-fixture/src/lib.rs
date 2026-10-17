@@ -55,7 +55,7 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     let input_tokens = if (prompt == Some("auto-compact-again") && request.history.len() > 3)
         || (matches!(
             prompt,
-            Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
+            Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation" | "auto-unsafe-summary")
         ) && !compacted)
     {
         CONTEXT_WINDOW
@@ -144,10 +144,13 @@ mod plugin {
         CompactionSummaryRequest, ModelTokenError, ModelTokenMeasurement, ModelTokenMeter,
     };
     use phenix_basic_contracts::{BasicError, Model, ModelReply, ModelRequest};
-    use phenix_sdk::{CallError, CallResult, Host};
+    use phenix_sdk::{CallError, CallResult, Code, Failure, Host, PendingResult};
 
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        pending_summary: bool,
+        pending_summary_tools: bool,
+    }
 
     #[provide(ModelTokenMeter::measure)]
     fn measure(
@@ -206,13 +209,60 @@ mod plugin {
         })
     }
 
-    #[provide(Model::complete)]
-    fn complete(
-        _: &mut State,
+    #[pending(Model::complete)]
+    fn begin(
+        state: &mut State,
         host: &Host<'_>,
         request: ModelRequest,
-    ) -> CallResult<ModelReply, BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        super::complete(&request).map_err(CallError::Domain)
+    ) -> PendingResult<ModelReply, BasicError> {
+        if let Err(failure) = phenix_basic_contracts::check_session(host, &request.session) {
+            return match failure {
+                CallError::Kernel(kernel) => PendingResult::QuiescentFailure(kernel),
+                CallError::Domain(domain) => PendingResult::Ready(Err(CallError::Domain(domain))),
+            };
+        }
+        if request.history.len() == 1 && request.history[0].text.contains("SOURCE_EVENTS_JSON:") {
+            if state.pending_summary {
+                return PendingResult::QuiescentFailure(Failure::new(
+                    Code::PluginFailed,
+                    "fixture summary already pending",
+                ));
+            }
+            state.pending_summary_tools = request.history[0].text.contains("auto-unsafe-summary");
+            state.pending_summary = true;
+            return PendingResult::Pending;
+        }
+        PendingResult::Ready(super::complete(&request).map_err(CallError::Domain))
+    }
+
+    #[poll(Model::complete)]
+    fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<ModelReply, BasicError> {
+        if !std::mem::take(&mut state.pending_summary) {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "no pending fixture Model summary",
+            ));
+        }
+        let calls = if std::mem::take(&mut state.pending_summary_tools) {
+            vec![phenix_basic_contracts::ToolCall {
+                id: "unauthorized-summary-tool".into(),
+                tool: "shell".into(),
+                arguments: "{}".into(),
+            }]
+        } else {
+            vec![]
+        };
+        PendingResult::Ready(Ok(ModelReply {
+            text: "The user said seed-one and was answered fixture:seed-one; the user said seed-two and was answered fixture:seed-two. Original journal events remain available.".into(),
+            calls,
+            usage: phenix_basic_contracts::Usage::default(),
+        }))
+    }
+
+    #[cancel(Model::complete)]
+    fn cancel(state: &mut State) -> Result<bool, Failure> {
+        state.pending_summary = false;
+        state.pending_summary_tools = false;
+        Ok(true)
     }
 }
