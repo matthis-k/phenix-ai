@@ -663,7 +663,9 @@ mod plugin {
         match stopped(host, running.session.clone(), &problem) {
             Ok(()) => PendingResult::QuiescentFailure(failure),
             Err(CallError::Kernel(cleanup)) => PendingResult::QuiescentFailure(cleanup),
-            Err(CallError::Domain(cleanup)) => PendingResult::Ready(Err(CallError::Domain(cleanup))),
+            Err(CallError::Domain(cleanup)) => {
+                PendingResult::Ready(Err(CallError::Domain(cleanup)))
+            }
         }
     }
 
