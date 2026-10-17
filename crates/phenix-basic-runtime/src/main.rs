@@ -60,7 +60,9 @@ fn ensure_default_sqlite_path() -> Result<(), String> {
         let mut builder = std::fs::DirBuilder::new();
         builder.recursive(true);
         builder.mode(0o700);
-        builder.create(parent).map_err(|err| format!("SQLite state directory: {err}"))?;
+        builder
+            .create(parent)
+            .map_err(|err| format!("SQLite state directory: {err}"))?;
     }
     #[cfg(not(unix))]
     std::fs::create_dir_all(parent).map_err(|err| format!("SQLite state directory: {err}"))?;
@@ -1012,11 +1014,11 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::{scoped_composition, sqlite_default_name};
     use super::{
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
+    use super::{scoped_composition, sqlite_default_name};
     use phenix_contract::Authority;
     use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
     use std::collections::BTreeSet;
@@ -1025,12 +1027,20 @@ mod session_lock_tests {
     #[test]
     fn sqlite_preset_identity_is_bounded_and_cannot_be_a_path() {
         assert_eq!(sqlite_default_name(None).unwrap(), "basic.sqlite");
-        assert_eq!(sqlite_default_name(Some("basic.sqlite")).unwrap(), "basic.sqlite");
+        assert_eq!(
+            sqlite_default_name(Some("basic.sqlite")).unwrap(),
+            "basic.sqlite"
+        );
         assert_eq!(
             sqlite_default_name(Some("basic-http.sqlite")).unwrap(),
             "basic-http.sqlite"
         );
-        for invalid in ["", "../other.sqlite", "/tmp/other.sqlite", "basic-other.sqlite"] {
+        for invalid in [
+            "",
+            "../other.sqlite",
+            "/tmp/other.sqlite",
+            "basic-other.sqlite",
+        ] {
             assert!(sqlite_default_name(Some(invalid)).is_err());
         }
     }
