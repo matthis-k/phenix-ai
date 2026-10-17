@@ -178,7 +178,7 @@ mod tests {
         for name in [
             " https://example.test/v1",
             "https://example.test/\n",
-            "https:///v1",
+            "https://",
             "file:///tmp/model",
         ] {
             assert!(validate_endpoint(name, EndpointMode::Remote).is_err());
