@@ -1277,6 +1277,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-credential-files"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-contracts",
+ "phenix-provider-credential-files",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-storage-fixture"
 version = "0.1.0"
 dependencies = [

@@ -299,6 +299,35 @@
           touch $out/verified
         '';
       };
+      providerCredentialStoreSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-credential-files
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-credential-files
+      ]);
+      providerCredentialStore = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-credential-files";
+        version = "0.1.0";
+        src = providerCredentialStoreSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-credential-files" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-credential-files" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_credential_files.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerCredentialStoreCheck = pkgs.runCommand "phenix-provider-credential-store-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        python ${./tests/provider-credential-store-product.py} \
+          ${kernel}/bin/phenix-kernel ${providerCredentialStore} ${providerDefinitions} "$out"
+      '';
       providerCredentialFilesSource = subset (publicPaths ++ [ ./crates/phenix-provider-credential-files ]);
       providerCredentialFilesCheck = rust.buildRustPackage {
         pname = "phenix-provider-credential-files";
@@ -362,7 +391,8 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 2
+        assert len(report["definitions"]) == 3
+        assert "phenix.provider.credentials@1" in report["definitions"]
         assert report["plugin"] == "phenix.provider-contracts"
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
@@ -2006,6 +2036,7 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
+        phenix-plugin-provider-credential-files = providerCredentialStore;
         phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
@@ -2103,6 +2134,7 @@
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
+        provider-credential-store = providerCredentialStoreCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         b4-scripted = scriptedModelCheck;

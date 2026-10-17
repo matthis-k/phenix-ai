@@ -17,11 +17,16 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_PROFILE_COMPONENT: usize = 64;
+#[cfg(test)]
 static NONCE: AtomicU64 = AtomicU64::new(0);
+// Reserved publish slot, accessed only while exclusively locking the pinned
+// directory. No other candidate names are scanned or removed.
+const PENDING: &str = ".credential-pending";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialError {
@@ -129,11 +134,13 @@ impl CredentialFiles {
             .open(&path)
             .map_err(|_| CredentialError::InsecureDirectory)?;
         validate_directory(&directory)?;
-        Ok(Self {
+        let backend = Self {
             #[cfg(test)]
             root: path,
             directory,
-        })
+        };
+        let _lock = backend.lock_and_recover()?;
+        Ok(backend)
     }
 
     #[cfg(test)]
@@ -200,41 +207,84 @@ impl CredentialFiles {
     }
 
     pub fn store(&self, id: &CredentialId, secret: &Secret) -> Result<(), CredentialError> {
+        self.store_with_hook(id, secret, |_| {})
+    }
+
+    fn lock_and_recover(&self) -> Result<File, CredentialError> {
+        // A fresh open description is essential: dup/flock on the shared fd
+        // would not serialize threads using the same backend instance.
+        let lock = self
+            .open_relative(".", libc::O_RDONLY | libc::O_DIRECTORY, 0)
+            .map_err(|_| CredentialError::Io)?;
+        loop {
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0 {
+                break;
+            }
+            if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                return Err(CredentialError::Io);
+            }
+        }
         validate_directory(&self.directory)?;
+        match self.unlink_relative(PENDING) {
+            Ok(()) => self.directory.sync_all().map_err(|_| CredentialError::Io)?,
+            Err(CredentialError::NotFound) => (),
+            Err(error) => return Err(error),
+        }
+        Ok(lock)
+    }
+
+    fn store_with_hook(
+        &self,
+        id: &CredentialId,
+        secret: &Secret,
+        checkpoint: impl Fn(&str),
+    ) -> Result<(), CredentialError> {
         let destination = id.file_name()?;
-        let candidate = format!(
-            ".credential-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::Relaxed)
-        );
+        let _lock = self.lock_and_recover()?;
+        // No named plaintext candidate exists while writing/syncing. Unsupported
+        // filesystems fail closed, rather than falling back to orphanable files.
+        let mut output = self
+            .open_relative(".", libc::O_RDWR | libc::O_TMPFILE, 0o600)
+            .map_err(|_| CredentialError::Io)?;
+        output
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| CredentialError::Io)?;
+        output
+            .write_all(secret.expose_for_authorized_provider())
+            .map_err(|_| CredentialError::Io)?;
+        output.sync_all().map_err(|_| CredentialError::Io)?;
+        checkpoint("synced");
+        // /proc/self/fd permits linking our anonymous inode without requiring
+        // CAP_DAC_READ_SEARCH (unlike linkat with AT_EMPTY_PATH).
+        let source = CString::new(format!("/proc/self/fd/{}", output.as_raw_fd())).unwrap();
+        let pending = CString::new(PENDING).unwrap();
+        if unsafe {
+            libc::linkat(
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                self.directory.as_raw_fd(),
+                pending.as_ptr(),
+                libc::AT_SYMLINK_FOLLOW,
+            )
+        } != 0
+        {
+            return Err(CredentialError::Io);
+        }
         let result = (|| -> Result<(), CredentialError> {
-            let mut output = self
-                .open_relative(
-                    &candidate,
-                    libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
-                    0o600,
-                )
-                .map_err(|_| CredentialError::Io)?;
-            // A restrictive umask must not produce an unreadable stored secret.
-            output
-                .set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|_| CredentialError::Io)?;
-            output
-                .write_all(secret.expose_for_authorized_provider())
-                .map_err(|_| CredentialError::Io)?;
-            output.sync_all().map_err(|_| CredentialError::Io)?;
-            self.rename_relative(&candidate, &destination)?;
+            checkpoint("linked");
+            self.rename_relative(PENDING, &destination)?;
             self.directory.sync_all().map_err(|_| CredentialError::Io)?;
             Ok(())
         })();
         if result.is_err() {
-            let _ = self.unlink_relative(&candidate);
+            // This path is reachable only after we successfully linked our inode.
+            let _ = self.unlink_relative(PENDING);
         }
         result
     }
 
     pub fn read(&self, id: &CredentialId) -> Result<Secret, CredentialError> {
-        validate_directory(&self.directory)?;
+        let _lock = self.lock_and_recover()?;
         let input = self
             .open_relative(&id.file_name()?, libc::O_RDONLY | libc::O_NONBLOCK, 0)
             .map_err(|err| {
@@ -268,7 +318,7 @@ impl CredentialFiles {
     }
 
     pub fn revoke(&self, id: &CredentialId) -> Result<(), CredentialError> {
-        validate_directory(&self.directory)?;
+        let _lock = self.lock_and_recover()?;
         self.unlink_relative(&id.file_name()?)?;
         self.directory.sync_all().map_err(|_| CredentialError::Io)
     }
@@ -399,6 +449,31 @@ mod tests {
 
     #[test]
     fn a_long_combined_identity_cannot_exceed_filename_limits() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let boundary = CredentialId {
+            provider: "a".repeat(64),
+            connection: "b".repeat(48),
+            profile: "c".into(),
+        };
+        assert_eq!(boundary.file_name().unwrap().len(), 239);
+        root.store(
+            &boundary,
+            &Secret::new(b"boundary-secret".to_vec()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            root.read(&boundary)
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"boundary-secret"
+        );
+        root.revoke(&boundary).unwrap();
+        let over = CredentialId {
+            profile: "cc".into(),
+            ..boundary
+        };
+        assert_eq!(over.file_name(), Err(CredentialError::InvalidIdentity));
         let too_long = CredentialId {
             provider: "a".repeat(64),
             connection: "b".repeat(64),
@@ -465,6 +540,174 @@ mod tests {
         assert_eq!(fs::read(&impostor).unwrap(), b"impostor-secret");
 
         fs::remove_dir_all(&pinned).unwrap();
+    }
+
+    #[test]
+    fn same_instance_rechecks_directory_and_file_permissions() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let secret = Secret::new(b"fixture-secret".to_vec()).unwrap();
+        root.store(&id("work"), &secret).unwrap();
+        let path = root.path(&id("work")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            root.read(&id("work")).unwrap_err(),
+            CredentialError::InsecureFile
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            root.read(&id("work")).unwrap_err(),
+            CredentialError::InsecureDirectory
+        );
+        assert_eq!(
+            root.store(&id("work"), &secret),
+            Err(CredentialError::InsecureDirectory)
+        );
+        assert_eq!(
+            root.revoke(&id("work")),
+            Err(CredentialError::InsecureDirectory)
+        );
+        assert_eq!(fs::read(path).unwrap(), b"fixture-secret");
+    }
+
+    #[test]
+    fn interrupted_writer_child() {
+        let Ok(path) = std::env::var("PHENIX_TEST_INTERRUPTED_VAULT") else {
+            return;
+        };
+        let stage = std::env::var("PHENIX_TEST_INTERRUPTED_STAGE").unwrap();
+        let root = CredentialFiles::open(path, true).unwrap();
+        root.store_with_hook(
+            &id("work"),
+            &Secret::new(b"interrupted-secret".to_vec()).unwrap(),
+            |at| {
+                if at == stage {
+                    std::process::exit(73);
+                }
+            },
+        )
+        .unwrap();
+        panic!("checkpoint not reached");
+    }
+
+    #[test]
+    fn interrupted_import_and_rotation_recover_without_plaintext_candidates() {
+        for stage in ["synced", "linked"] {
+            for rotating in [false, true] {
+                let fixture = Fixture::new();
+                let root = CredentialFiles::open(&fixture.0, true).unwrap();
+                if rotating {
+                    root.store(&id("work"), &Secret::new(b"old-secret".to_vec()).unwrap())
+                        .unwrap();
+                }
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "tests::interrupted_writer_child"])
+                    .env("PHENIX_TEST_INTERRUPTED_VAULT", &fixture.0)
+                    .env("PHENIX_TEST_INTERRUPTED_STAGE", stage)
+                    .status()
+                    .unwrap();
+                assert_eq!(status.code(), Some(73));
+                assert_eq!(fixture.0.join(PENDING).exists(), stage == "linked");
+                let reopened = CredentialFiles::open(&fixture.0, true).unwrap();
+                assert!(!fixture.0.join(PENDING).exists());
+                if rotating {
+                    assert_eq!(
+                        reopened
+                            .read(&id("work"))
+                            .unwrap()
+                            .expose_for_authorized_provider(),
+                        b"old-secret"
+                    );
+                    reopened.revoke(&id("work")).unwrap();
+                } else {
+                    assert_eq!(
+                        reopened.read(&id("work")).unwrap_err(),
+                        CredentialError::NotFound
+                    );
+                }
+                assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+                reopened
+                    .store(&id("work"), &Secret::new(b"new-secret".to_vec()).unwrap())
+                    .unwrap();
+                drop(reopened);
+                let restarted = CredentialFiles::open(&fixture.0, true).unwrap();
+                assert_eq!(
+                    restarted
+                        .read(&id("work"))
+                        .unwrap()
+                        .expose_for_authorized_provider(),
+                    b"new-secret"
+                );
+                restarted.revoke(&id("work")).unwrap();
+                assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_waits_for_live_writer_and_uses_pinned_directory() {
+        let fixture = Fixture::new();
+        let writer = CredentialFiles::open(&fixture.0, true).unwrap();
+        let reader = CredentialFiles::open(&fixture.0, true).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let writing = std::thread::spawn(move || {
+            writer
+                .store_with_hook(
+                    &id("work"),
+                    &Secret::new(b"live-secret".to_vec()).unwrap(),
+                    |stage| {
+                        if stage == "linked" {
+                            ready_tx.send(()).unwrap();
+                            resume_rx.recv().unwrap();
+                        }
+                    },
+                )
+                .unwrap();
+        });
+        ready_rx.recv().unwrap();
+        let pinned = fixture.0.with_extension("pinned");
+        fs::rename(&fixture.0, &pinned).unwrap();
+        fs::create_dir(&fixture.0).unwrap();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(fixture.0.join(PENDING), b"replacement-witness").unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reading = std::thread::spawn(move || {
+            let secret = reader.read(&id("work")).unwrap();
+            assert_eq!(secret.expose_for_authorized_provider(), b"live-secret");
+            done_tx.send(()).unwrap();
+        });
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err());
+        assert!(pinned.join(PENDING).exists());
+        resume_tx.send(()).unwrap();
+        writing.join().unwrap();
+        reading.join().unwrap();
+        assert!(!pinned.join(PENDING).exists());
+        assert_eq!(
+            fs::read(fixture.0.join(PENDING)).unwrap(),
+            b"replacement-witness"
+        );
+        fs::remove_dir_all(pinned).unwrap();
+    }
+
+    #[test]
+    fn candidate_collision_preserves_unowned_file() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let candidate = fixture.0.join(format!(
+            ".credential-{}-{}",
+            std::process::id(),
+            NONCE.load(Ordering::Relaxed)
+        ));
+        fs::write(&candidate, b"unowned-witness").unwrap();
+        let _ = root.store(
+            &id("work"),
+            &Secret::new(b"fixture-secret".to_vec()).unwrap(),
+        );
+        assert_eq!(fs::read(candidate).unwrap(), b"unowned-witness");
     }
 
     #[test]

@@ -405,6 +405,46 @@ ChatGPT Plus/Pro subscription access is **not interchangeable with OpenAI API-ke
 
 **Grill tracking and build order:** All **17 decisions are resolved; 0 open and 0 deferred**. [#891](https://github.com/matthis-k/phenix-ai/issues/891#provider-grill-decision-tree-and-first-frontier-2026-10-17) owns the accepted decision ledger, and this roadmap owns the behavior and functional acceptance. Provider contracts and reusable libraries are now integrated on `main`: [#948](https://github.com/matthis-k/phenix-ai/pull/948) (provider/auth/catalog definitions), [#949](https://github.com/matthis-k/phenix-ai/pull/949) (bounded model-list decoders), [#950](https://github.com/matthis-k/phenix-ai/pull/950) (secure endpoint and credential-origin validation), [#953](https://github.com/matthis-k/phenix-ai/pull/953) (opt-in `0600` credential-file backend, merge `de3f26f4`), [#954](https://github.com/matthis-k/phenix-ai/pull/954) (six provider registrations, merge `f0c89630`), [#964](https://github.com/matthis-k/phenix-ai/pull/964) (independently packaged base provider catalog/auth plugin, merge `86eb50cd`; re-lands the #955 work after its stale stacked base) and [#962](https://github.com/matthis-k/phenix-ai/pull/962) (fresh account-bound selection admission, merge `152f7a42`). This completes PV1 and the reusable metadata/credential-storage pieces. It does **not** make provider onboarding operational: the runtime still has to expose credential submission/revocation, bind discovered models and credentials to the selected HTTP transport, persist revision-checked model mutations and deliver the Neovim journey. The endpoint library validates configuration; network resolution, redirect behavior and credential grants remain runtime/transport obligations. Keep all later features in #891 rather than adding competing owners.
 
+**PV2 credential-store slice (implementation, not acceptance):**
+`phenix.provider.credentials@1` supplies separately granted import, resolve and
+revoke operations over one exact provider/connection/profile resource. The
+independently selected `phenix-plugin-provider-credential-files` reuses the
+existing explicit-consent file backend; it is not installed as a silent default.
+`PHENIX_CREDENTIAL_FILE_DIRECTORY` must name an existing absolute, owned `0700`
+directory, and `PHENIX_CREDENTIAL_FILE_CONSENT=1` explicitly enables the weaker
+plaintext fallback. Values have redacted Debug and no ordinary serde/config
+serialization. The `provider-credential-store` installed native check covers
+restart and rotation/restart, isolation, independent import/resolve/revoke grant
+denials with unchanged vault bytes, consent, revocation, identity boundaries and
+diagnostic redaction. Identities retain the existing 64-byte component limit and
+must total at most 113 bytes: their encoded file leaf is at most 239 bytes and
+their canonical resource at most 247 bytes (below the authority's 256-byte cap).
+The Linux fallback now requires filesystem `O_TMPFILE` support and `/proc/self/fd`;
+unsupported environments fail closed without a second persistence backend.
+Anonymous files hold uncommitted plaintext until sync. A reserved
+`.credential-pending` publish slot is linked and atomically renamed while holding
+an exclusive lock on the pinned directory. Open/read/store/revoke recover that
+slot under the same lock; they never scan arbitrary candidate names or delete a
+live cooperating writer's staging file. Existing committed filenames are
+unchanged; no migration or alternate backend is introduced. Backend subprocess
+tests interrupt imports and rotations after sync and after link, verify restart
+and revocation, and check live-writer exclusion, pinned-directory authority and
+same-instance directory/file permission revalidation. The unchanged production
+CLI performs only one invocation per loaded generation, so same-generation
+checks are library evidence, not claimed native CLI coverage.
+The secret-service backend, provider-auth profile metadata/revision management,
+non-journaled ACP management admission, selected HTTP resolution and end-to-end
+Neovim onboarding remain open under #891. Stored bytes alone do not prove
+provider authentication, model entitlement or PV2 completion. Credential writes
+and profile metadata mutations must be coordinated by that management owner;
+the low-level secret store is not another selection/revision authority.
+The kernel deliberately forbids changing an inherited root resource. These
+operations therefore run under a dedicated credential-resource root; importing
+`resolve` directly from a session-resource Model call cannot work. PV3 must
+first establish the trusted controller's existing credential admission/binding
+path without weakening that rule or putting a secret in `ModelRequest`. This
+slice does not claim that transport integration is solved.
+
 #### Provider implementation packets: current coding queue
 
 This is the coding handoff for #891. The accepted method/connection/model
