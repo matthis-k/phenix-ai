@@ -28,6 +28,23 @@ pub fn project_model_request(
     }
 }
 
+/// Fail closed during the first staged graph integration: a preparer may
+/// observe the Basic request but cannot rewrite *any* execution byte yet.
+/// Source-backed compaction requires journal/CAS/meter admission in the
+/// later selected Advanced graph contribution.
+pub fn verify_staged_model_candidate(
+    original: &ModelRequest,
+    candidate: &ModelRequest,
+) -> Result<(), phenix_basic_contracts::BasicError> {
+    if candidate != original {
+        return Err(phenix_basic_contracts::error(
+            phenix_basic_contracts::ErrorCode::Denied,
+            "prepared Model request differs from the authoritative Basic projection",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(not(feature = "staged-graph"))]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
@@ -50,16 +67,28 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "prepare",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.turn-prepare@1/prepare",
-        writes: &["phenix.basic.agent/pending_model_request"],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[
+        StaticGraphNode {
+            id: "model-advance",
+            triggers: &["state:phenix.basic.agent/prepared_model_request"],
+            after: &[],
+            selector: "",
+            operation: "phenix.basic.turn-advance@1/advance",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
+            id: "prepare",
+            triggers: &["phenix.basic.prompt"],
+            after: &[],
+            selector: "",
+            operation: "phenix.basic.turn-prepare@1/prepare",
+            writes: &["phenix.basic.agent/pending_model_request"],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 #[cfg(all(test, feature = "staged-graph"))]
@@ -71,6 +100,7 @@ mod staged_graph_tests;
     version = "1.0.0",
     provide(phenix_basic_contracts::BasicInput, slot = "Input"),
     provide(phenix_basic_contracts::BasicTurnPrepare, slot = "Prepare"),
+    provide(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     provide(phenix_basic_contracts::BasicOutput, slot = "Output"),
     require(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
@@ -86,11 +116,12 @@ mod staged_graph_tests;
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, BasicError, BasicInput, BasicOutput, BasicTurnPrepare, CatalogCursor, Context,
-        ErrorCode, Event, EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message,
-        Model, ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
-        RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion,
-        ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
+        error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
+        CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
+        GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope,
+        Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
+        ToolQuery, ToolRequest, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -119,6 +150,10 @@ mod plugin {
         #[set]
         #[watch]
         pending_model_request: Option<ModelRequest>,
+        #[get]
+        #[set]
+        #[watch]
+        prepared_model_request: Option<ModelRequest>,
     }
 
     fn event(
@@ -632,12 +667,154 @@ mod plugin {
         }
     }
 
+    // Opt-in two-wave admission: Basic has already published the canonical
+    // request. The only currently valid replacement is byte-for-byte equal
+    // to that projection. Checkpoints and altered history remain unadmitted
+    // until the selected Advanced graph verifier is composed.
+    #[pending(BasicTurnAdvance::advance)]
+    fn begin_model_advance(
+        state: &mut State,
+        host: &Host<'_>,
+        notice: GraphStateChange,
+    ) -> PendingResult<RunResult, BasicError> {
+        if notice.epoch == 0 || notice.properties != ["phenix.basic.agent/prepared_model_request"] {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "Model advance requires a committed prepared-request state change",
+            ))));
+        }
+        let source = match state.pending_model_request.read(host) {
+            Ok(snapshot) => snapshot.value.as_ref().clone(),
+            Err(failure) => {
+                return PendingResult::QuiescentFailure(Failure::new(
+                    Code::PluginFailed,
+                    failure.to_string(),
+                ));
+            }
+        };
+        let prepared = match state.prepared_model_request.read(host) {
+            Ok(snapshot) => snapshot.value.as_ref().clone(),
+            Err(failure) => {
+                return PendingResult::QuiescentFailure(Failure::new(
+                    Code::PluginFailed,
+                    failure.to_string(),
+                ));
+            }
+        };
+        let (Some(source), Some(prepared)) = (source, prepared) else {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "Model advance has no published Basic and prepared requests",
+            ))));
+        };
+        if let Err(error) = super::verify_staged_model_candidate(&source, &prepared) {
+            return PendingResult::Ready(Err(CallError::Domain(error)));
+        }
+        let Some(mut running) = state.active.take() else {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "Model advance has no authoritative Basic run",
+            ))));
+        };
+        if running.run != source.run
+            || running.input.session != source.session
+            || running.child.is_some()
+        {
+            state.active = Some(running);
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "prepared request is not the active Basic turn",
+            ))));
+        }
+        match host.begin::<Model::complete>("Model", &prepared) {
+            Ok(ImportCall::Ready(reply)) => {
+                let result = staged_reply(host, &mut running, reply);
+                finish(state, running, result)
+            }
+            Ok(ImportCall::Pending(child)) => {
+                running.child = Some(child);
+                state.active = Some(running);
+                PendingResult::Pending
+            }
+            Err(failure) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    // Intentionally fail closed on model-request iterations with tools.
+    // The next step must reenter the watched preparation graph after any
+    // tool result; executing them here would bypass the Advanced gate.
+    fn staged_reply(
+        host: &Host<'_>,
+        running: &mut Running,
+        reply: CallResult<phenix_basic_contracts::ModelReply, BasicError>,
+    ) -> CallResult<Advance, BasicError> {
+        if reply
+            .as_ref()
+            .is_ok_and(|response| !response.calls.is_empty())
+        {
+            let problem = error(
+                ErrorCode::Denied,
+                "staged Model tool continuation requires graph re-preparation",
+            );
+            stopped(host, running.session.clone(), &problem)?;
+            return Err(CallError::Domain(problem));
+        }
+        advance(host, running, Some(reply))
+    }
+
+    #[poll(BasicTurnAdvance::advance)]
+    fn poll_model_advance(
+        state: &mut State,
+        host: &Host<'_>,
+    ) -> PendingResult<RunResult, BasicError> {
+        let Some(mut running) = state.active.take() else {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "staged pending Basic run is missing",
+            ));
+        };
+        let Some(mut child) = running.child.take() else {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "staged pending Model child is missing",
+            ));
+        };
+        match child.poll(host) {
+            Ok(ImportPoll::Pending | ImportPoll::Draining) => {
+                running.child = Some(child);
+                state.active = Some(running);
+                PendingResult::Pending
+            }
+            Ok(ImportPoll::Ready(reply)) => {
+                let result = staged_reply(host, &mut running, reply);
+                finish(state, running, result)
+            }
+            Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
+                Code::ScopeRejected,
+                "staged Model child was cancelled",
+            )),
+            Err(failure) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    #[cancel(BasicTurnAdvance::advance)]
+    fn cancel_model_advance(state: &mut State) -> Result<bool, Failure> {
+        state.active = None;
+        Ok(true)
+    }
+
     #[pending(BasicInput::submit)]
     fn begin(
         state: &mut State,
         host: &Host<'_>,
         request: PromptSubmitted,
     ) -> PendingResult<RunResult, BasicError> {
+        if cfg!(feature = "staged-graph") {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "staged Basic requires the graph preparation admission path",
+            ))));
+        }
         if state.active.is_some() {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Conflict,

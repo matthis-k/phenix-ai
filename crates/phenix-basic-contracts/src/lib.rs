@@ -371,6 +371,28 @@ pub trait BasicTurnPrepare {
 #[property(owner = "phenix.basic.agent", id = "pending_model_request", get, watch)]
 pub type BasicPendingModelRequest = Option<ModelRequest>;
 
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphStateChange {
+    pub epoch: u64,
+    pub properties: Vec<String>,
+}
+
+/// A separately authorized continuation, activated only by a watched
+/// prepared-request property after the Basic preparation graph wave.
+#[contract(id = "phenix.basic.turn-advance@1")]
+pub trait BasicTurnAdvance {
+    fn advance(&self, notification: GraphStateChange) -> Result<RunResult, BasicError>;
+}
+
+#[property(
+    owner = "phenix.basic.agent",
+    id = "prepared_model_request",
+    get,
+    set,
+    watch
+)]
+pub type BasicPreparedModelRequest = Option<ModelRequest>;
+
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
     fn read(&self, request: JournalQuery) -> Result<EventPage, BasicError>;
@@ -407,6 +429,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(Storage),
     define(BasicInput),
     define(BasicTurnPrepare),
+    define(BasicTurnAdvance),
     define(BasicOutput),
     define(Frontend),
     graph(super::GRAPH)
@@ -461,7 +484,11 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 12);
+        assert_eq!(metadata.definitions.len(), 13);
+        assert!(metadata
+            .definitions
+            .iter()
+            .any(|definition| definition.contract == "phenix.basic.turn-advance@1"));
         assert!(metadata
             .definitions
             .iter()

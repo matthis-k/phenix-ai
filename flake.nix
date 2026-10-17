@@ -238,11 +238,47 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 12
+        assert len(report["definitions"]) == 13
+        assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
         assert report["plugin"] == "phenix.basic-contracts"
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
+      '';
+      providerBuiltinsPluginSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-builtins
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+      ]);
+      providerBuiltinsPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-builtins";
+        version = "0.1.0";
+        src = providerBuiltinsPluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-builtins" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-builtins" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_builtins.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" {
+        nativeBuildInputs = [ pkgs.jq ];
+      } ''
+        mkdir -p "$out"
+        test -s "${providerBuiltinsPlugin}/descriptor.bin"
+        test -s "${providerBuiltinsPlugin}/lib/plugin.so"
+        grep -aq 'phenix.provider.builtins' "${providerBuiltinsPlugin}/descriptor.bin"
+        jq -e '.format == "phenix.native-package.v2" and .artifact == "lib/plugin.so"' \
+          "${providerBuiltinsPlugin}/package.json"
+        touch "$out/verified"
       '';
       providerBuiltinsSource = subset (publicPaths ++ [
         ./crates/phenix-provider-builtins
@@ -1882,6 +1918,7 @@
         phenix-m1-release = release;
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
+        phenix-plugin-provider-builtins = providerBuiltinsPlugin;
         phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
@@ -1974,6 +2011,7 @@
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
         provider-builtins = providerBuiltinsCheck;
+        provider-builtins-plugin = providerBuiltinsPluginCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
