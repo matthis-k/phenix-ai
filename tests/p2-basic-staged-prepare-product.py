@@ -82,12 +82,12 @@ for grant in stage["grants"]:
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
 
-def submit(spec, database):
+def submit(spec, database, prompt="graph-boundary"):
     env = dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / database))
     process = subprocess.run(
         [runtime, "jsonl", str(spec)],
         input=json.dumps({
-            "type": "prompt", "session": "s1", "text": "graph-boundary",
+            "type": "prompt", "session": "s1", "text": prompt,
             "limits": {"model_tokens": 256},
         }) + "\n",
         text=True, capture_output=True, env=env, timeout=60,
@@ -187,6 +187,20 @@ if len(sys.argv) == 9:
             "AND name='event-journal.v1'"
         ).fetchone()
         assert row is not None and row[0] > 0
+
+    # An actual Model domain failure must terminate its durable Running
+    # checkpoint. A fresh launcher can then reuse the same session, without
+    # dropping history or spuriously repeating the failed Model effect.
+    failed, failure_events = submit(selected_path, "failed-then-retry.sqlite", "model-error")
+    assert failed.returncode == 0, (failed.stdout, failed.stderr)
+    assert any(event["kind"] == "Failure" for event in failure_events), failure_events
+    assert not any(event["kind"] == "Answer" for event in failure_events), failure_events
+    retry, retry_events = submit(selected_path, "failed-then-retry.sqlite", "after-failure")
+    assert retry.returncode == 0, (retry.stdout, retry.stderr)
+    assert [event["text"] for event in retry_events if event["kind"] == "Answer"] == [
+        "mock:after-failure"
+    ], retry_events
+    assert not any(event["kind"] == "ToolStarted" for event in retry_events)
 
     # Removing the separately selected advanced hook's effective write
     # authority must reject the whole graph before Basic journals any turn.
