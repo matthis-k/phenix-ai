@@ -317,6 +317,45 @@
       # Opt-in selected Model summarization; no hidden tools, journal writes
       # or checkpoint authority. Build/test it outside the public Advanced
       # preset until its provider and authority binding are selected.
+      # Verification-only selected state-change preparer. The witness
+      # feature is compiled only into the native test, not public presets.
+      p2AdvancedModelPreparer = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-model-preparer";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-advanced-model-preparer
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [
+          "-p" "phenix-plugin-advanced-model-preparer"
+          "--features" "witness"
+        ];
+        cargoTestFlags = [
+          "-p" "phenix-plugin-advanced-model-preparer"
+          "--features" "witness"
+        ];
+        doCheck = true;
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_model_preparer.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      p2AdvancedPrepareHookCheck = pkgs.runCommand
+        "phenix-p2-advanced-prepare-hook"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/p2-advanced-prepare-hook-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${basicAgent} ${basicStagedAgent} ${p2AdvancedModelPreparer} "$out"
+        test -s "$out/accepted.json"
+      '';
       p2SelectedModelSummarizer = rust.buildRustPackage {
         pname = "phenix-plugin-advanced-summarizer";
         version = "0.1.0";
@@ -374,7 +413,8 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 8, report
+        assert len(report["definitions"]) == 9, report
+        assert "phenix.advanced.model-preparation-trigger@1" in report["definitions"], report
         assert "phenix.advanced.model-preparation@1" in report["definitions"], report
         assert "phenix.advanced.compaction-summary@1" in report["definitions"], report
         (Path(sys.argv[2]) / "evidence.json").write_text(
@@ -1848,6 +1888,8 @@
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
         p2-basic-staged-plugin = basicStagedAgent;
+        p2-advanced-model-preparer = p2AdvancedModelPreparer;
+        p2-advanced-model-prepare-hook = p2AdvancedPrepareHookCheck;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
