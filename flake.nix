@@ -704,6 +704,39 @@
           ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out"
         test -s "$out/accepted.json"
       '';
+      # Separate selected Advanced graph hook: no default preset changes.
+      p2AdvancedGraphPreparer = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-graph-preparer";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-advanced-graph-preparer
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-graph-preparer" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-graph-preparer" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_graph_preparer.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+          test -s "$out/descriptor.bin"
+        '';
+      };
+      p2AdvancedGraphPreparerCheck = pkgs.runCommand "phenix-p2-advanced-graph-preparer"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/p2-advanced-graph-preparer-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${p2BasicStagedPrepareCheck}/staged-graph.json \
+          ${p2AdvancedGraphPreparer} "$out"
+        test -s "$out/accepted.json"
+      '';
       basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
@@ -1847,6 +1880,8 @@
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
+        p2-advanced-graph-preparer = p2AdvancedGraphPreparerCheck;
+        p2-advanced-graph-plugin = p2AdvancedGraphPreparer;
         p2-basic-staged-plugin = basicStagedAgent;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
