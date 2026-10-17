@@ -33,7 +33,9 @@ mod provider {
     pub struct State;
 
     #[provide(ModelPreparation::prepare)]
-    fn prepare(request: ModelPreparationInput) -> CallResult<ModelPreparationProposal, ModelPreparationError> {
+    fn prepare(
+        request: ModelPreparationInput,
+    ) -> CallResult<ModelPreparationProposal, ModelPreparationError> {
         unchanged_proposal(request).map_err(CallError::Domain)
     }
 }
