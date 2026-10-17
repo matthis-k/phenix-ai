@@ -313,6 +313,32 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
+      # Opt-in selected Model summarization; no hidden tools, journal writes
+      # or checkpoint authority. Build/test it outside the public Advanced
+      # preset until its provider and authority binding are selected.
+      p2SelectedModelSummarizer = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-summarizer";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-p2-compaction-replay
+          ./crates/phenix-plugin-advanced-summarizer
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_summarizer.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       compactionCheckpointStore = rust.buildRustPackage {
         pname = "phenix-plugin-compaction-checkpoints";
         version = "0.1.0";
@@ -1785,6 +1811,7 @@
         p2-evidence-contracts = advancedContractsCheck;
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
+        p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;
