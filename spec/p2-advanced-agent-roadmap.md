@@ -297,6 +297,20 @@ Default Advanced remains unchanged and the Basic graph still owns turns,
 tool execution and authoritative state. A future additive graph
 contribution and failure/restart acceptance remain required.
 
+P2-3ae confines the nested summary Model's visible source to the exact
+older completed-turn prefix that the existing canonical checkpoint planner
+would elide with the configured one-turn retention. The full pending
+authoritative journal remains source-authenticated by its original SHA-256
+envelope, but the nested Model prompt receives only the separate
+source-verified elided prefix and its digest. The newest retained completed
+turn, pending user text, tools and independent context do not enter that
+prompt. If the planner finds no eligible prefix or history/source verification
+fails, deny before invoking any summarization Model. The source-cited
+CompactionSummary response retains the original full journal citation so
+CAS publication and selected Model remeasurement still bind the complete
+authoritative request. Native pure unit tests guard the exclusion and
+no-eligible-prefix cases; no duplicate history parser or new storage is added.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership

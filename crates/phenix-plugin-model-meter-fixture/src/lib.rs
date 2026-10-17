@@ -233,7 +233,9 @@ mod plugin {
                     "fixture summary already pending",
                 ));
             }
-            state.pending_summary_tools = request.history[0].text.contains("auto-unsafe-summary");
+            state.pending_summary_tools = request.history[0]
+                .text
+                .contains("malicious-summary-fixture");
             state.pending_summary = true;
             return PendingResult::Pending;
         }
