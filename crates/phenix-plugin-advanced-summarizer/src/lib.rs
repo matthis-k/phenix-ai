@@ -40,13 +40,22 @@ pub fn prepare_model_request(
         .map_err(|_| invalid("invalid summary journal sequence or digest"))?;
     if canonical != input.source
         || input.request.session != input.journal[0].session
-        || input.journal.iter().any(|event| event.session != input.request.session)
+        || input
+            .journal
+            .iter()
+            .any(|event| event.session != input.request.session)
         || input.journal.last().is_none_or(|event| {
             event.kind != EventKind::ModelStarted || event.run != input.request.run
         })
-        || input.request.history.last().is_none_or(|message| message.role != Role::User)
+        || input
+            .request
+            .history
+            .last()
+            .is_none_or(|message| message.role != Role::User)
     {
-        return Err(invalid("summary source does not match the authoritative request"));
+        return Err(invalid(
+            "summary source does not match the authoritative request",
+        ));
     }
     let reserve = input
         .request
@@ -67,10 +76,7 @@ pub fn prepare_model_request(
          the pending current turn. Respond with summary text only, no tool calls.\n\
          SOURCE_SHA256={}\nSOURCE_SEQUENCES={}..={}\n\
          SOURCE_EVENTS_JSON:\n{}",
-        input.source.digest_sha256,
-        input.source.first_sequence,
-        input.source.last_sequence,
-        json,
+        input.source.digest_sha256, input.source.first_sequence, input.source.last_sequence, json,
     );
     Ok(ModelRequest {
         session: input.request.session.clone(),
@@ -104,7 +110,9 @@ pub fn verify_summary_reply(
     reply: &ModelReply,
 ) -> Result<CompactionSummary, CompactionSummaryError> {
     if !reply.calls.is_empty() || reply.text.len() > MAX_SUMMARY_BYTES {
-        return Err(failed("summary Model attempted tool calls or oversized reply"));
+        return Err(failed(
+            "summary Model attempted tool calls or oversized reply",
+        ));
     }
     let text = reply.text.trim();
     if text.is_empty() {
@@ -124,8 +132,8 @@ pub fn verify_summary_reply(
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        CompactionSummarizer, CompactionSummary, CompactionSummaryError,
-        CompactionSummaryProblem, CompactionSummaryRequest,
+        CompactionSummarizer, CompactionSummary, CompactionSummaryError, CompactionSummaryProblem,
+        CompactionSummaryRequest,
     };
     use phenix_basic_contracts::{BasicError, Model, ModelReply};
     use phenix_sdk::{
@@ -148,18 +156,18 @@ mod plugin {
                 super::verify_summary_reply(source, &reply).map_err(CallError::Domain),
             ),
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
-            Err(CallError::Domain(_)) => PendingResult::Ready(Err(CallError::Domain(
-                CompactionSummaryError {
+            Err(CallError::Domain(_)) => {
+                PendingResult::Ready(Err(CallError::Domain(CompactionSummaryError {
                     problem: CompactionSummaryProblem::ProviderFailed,
                     message: "selected summary Model failed".into(),
-                },
-            ))),
+                })))
+            }
         }
     }
 
-    fn ready_error(error: CallError<CompactionSummaryError>)
-        -> PendingResult<CompactionSummary, CompactionSummaryError>
-    {
+    fn ready_error(
+        error: CallError<CompactionSummaryError>,
+    ) -> PendingResult<CompactionSummary, CompactionSummaryError> {
         match error {
             CallError::Kernel(failure) => PendingResult::QuiescentFailure(failure),
             CallError::Domain(problem) => PendingResult::Ready(Err(CallError::Domain(problem))),
@@ -203,9 +211,10 @@ mod plugin {
     }
 
     #[poll(CompactionSummarizer::summarize)]
-    fn poll(state: &mut State, host: &Host<'_>)
-        -> PendingResult<CompactionSummary, CompactionSummaryError>
-    {
+    fn poll(
+        state: &mut State,
+        host: &Host<'_>,
+    ) -> PendingResult<CompactionSummary, CompactionSummaryError> {
         let Some(mut child) = state.pending.take() else {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
