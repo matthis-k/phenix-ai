@@ -263,6 +263,24 @@ Summarizer remains opt-in and first-stage policy is a fixed retained-turn
 count; independent graph contribution and production policy controls remain
 open.
 
+P2-3ac introduces a separately packageable, opt-in Model-backed
+CompactionSummarizer plugin. It accepts the existing typed source-cited
+summary request, verifies the exact journal digest, encodes bounded event
+data as an untrusted input to a separately selected Model, forbids tool
+calls, constrains output budget and response size, and returns only a
+proposed source-bound summary. No checkpoint write, Basic journal edit,
+session authority transfer or agent loop is introduced. The plugin
+supports pending selected Model imports and cancellation. Its pure prompt
+and reply controls are tested independently in the Nix matrix. Completing
+real live integration requires making the Advanced adapter's selected
+Summarizer import pending-aware: its current synchronous import can only
+consume immediately ready summary implementations, such as the existing
+deterministic verification fixture. Model providers that stream journal
+deltas into the active Basic source ledger must not be bound to the
+summarizer without a separate authorized scratch/isolated context.
+Until that coordination and native end-to-end gate exist, this production
+provider is opt-in and not part of the default Advanced composition.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
