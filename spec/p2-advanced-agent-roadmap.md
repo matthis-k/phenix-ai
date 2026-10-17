@@ -311,6 +311,18 @@ CAS publication and selected Model remeasurement still bind the complete
 authoritative request. Native pure unit tests guard the exclusion and
 no-eligible-prefix cases; no duplicate history parser or new storage is added.
 
+P2-3af adds native cancellation acceptance for the selected nested
+pending summary Model. The test seeds completed Basic turns, starts an
+authorized pending summary whose deterministic Model fixture records a
+test-only witness, cancels the actual running JSONL graph root after that
+witness, then verifies the durable Cancelled event, absence of a new CAS
+checkpoint, and absence of downstream Answer or ToolStarted events.
+The existing kernel owns cancellation propagation and pending-ticket
+draining; the Advanced adapter and summarizer clear pending state without
+introducing their own scheduler, autonomous worker or storage write. The
+test does not assert safe recovery from an external process kill, which
+remains a separate acceptance requirement.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
