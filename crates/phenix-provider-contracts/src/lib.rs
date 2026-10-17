@@ -363,10 +363,7 @@ mod tests {
             providers: vec![provider.clone()],
             revision: 2,
         };
-        assert_eq!(
-            ProviderPage::from_value(multi.to_value()).unwrap(),
-            multi
-        );
+        assert_eq!(ProviderPage::from_value(multi.to_value()).unwrap(), multi);
         let catalog = ModelPage {
             profile_id: Some("personal".into()),
             models: vec![ProviderModel {
