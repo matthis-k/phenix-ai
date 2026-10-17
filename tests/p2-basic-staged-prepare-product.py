@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 
-runtime, original_path, basic_agent, staged_agent, destination = sys.argv[1:]
+runtime, original_path, basic_agent, staged_agent, destination, *selected_args = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 source = json.loads(Path(original_path).read_text())
@@ -63,11 +63,22 @@ stage["authority"]["operations"].extend([
     prepared_property + "/watch",
 ])
 stage["authority"]["resources"].append(prepared_property[:-2])
+for grant in stage["grants"]:
+    if (grant["caller"] == "root"
+            and grant["interface"] == "phenix.basic.input@1"
+            and grant["operation"] == "submit"):
+        grant["resources"].append(prepared_property[:-2])
 stage["grants"].extend([
     {"caller": "phenix.basic.agent", "interface": prepared_property,
      "operation": operation, "resources": [scoped, prepared_property[:-2]]}
     for operation in ("get", "watch")
 ])
+for grant in stage["grants"]:
+    if (grant["caller"] == "phenix.basic.agent"
+            and grant["interface"] == "phenix.basic.turn-advance@1"):
+        grant["resources"].extend([
+            pending_property[:-2], prepared_property[:-2],
+        ])
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
 
@@ -137,20 +148,24 @@ if len(sys.argv) == 9:
     selected["grants"].extend([
         {"caller": "phenix.advanced.graph-preparer",
          "interface": "phenix.advanced.model-preparation-change@1",
-         "operation": "run", "resources": [scoped]},
+         "operation": "run",
+         "resources": [scoped, pending_property[:-2], prepared_property[:-2]]},
         {"caller": "phenix.advanced.graph-preparer",
          "interface": "phenix.advanced.model-preparation@1",
          "operation": "prepare", "resources": [scoped]},
+    ])
+    selected["grants"].extend([
         {"caller": "phenix.advanced.graph-preparer",
          "interface": pending_property, "operation": op,
          "resources": [scoped, pending_property[:-2]]}
         for op in ("get", "watch")
     ])
-    selected["grants"].append({
-        "caller": "phenix.advanced.graph-preparer",
-        "interface": prepared_property, "operation": "set",
-        "resources": [scoped, prepared_property[:-2]],
-    })
+    selected["grants"].extend([
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": prepared_property, "operation": operation,
+         "resources": [scoped, prepared_property[:-2]]}
+        for operation in ("get", "set")
+    ])
     selected["authority"]["operations"].extend([
         "phenix.advanced.model-preparation-change@1/run",
         "phenix.advanced.model-preparation@1/prepare",
