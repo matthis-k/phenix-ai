@@ -33,16 +33,27 @@ fn sqlite_default_name(name: Option<&str>) -> Result<&str, String> {
     }
 }
 
+fn sqlite_state_base(xdg: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
+    // XDG paths must be absolute. Empty or relative values are treated as
+    // unset, so a malformed optional XDG setting cannot break a valid HOME.
+    xdg.filter(|path| path.is_absolute())
+        .or_else(|| {
+            home.filter(|path| path.is_absolute())
+                .map(|path| path.join(".local/state"))
+        })
+        .ok_or_else(|| "Basic SQLite requires absolute XDG_STATE_HOME or HOME".into())
+}
+
 fn ensure_default_sqlite_path() -> Result<(), String> {
     let database = if let Some(explicit) = env::var_os("PHENIX_BASIC_SQLITE_PATH") {
         PathBuf::from(explicit)
     } else {
         let name = env::var("PHENIX_BASIC_SQLITE_DEFAULT_NAME").ok();
         let file_name = sqlite_default_name(name.as_deref())?;
-        let base = env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-            .ok_or("Basic SQLite requires XDG_STATE_HOME or HOME")?;
+        let base = sqlite_state_base(
+            env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+            env::var_os("HOME").map(PathBuf::from),
+        )?;
         base.join("phenix").join(file_name)
     };
     if !database.is_absolute() {
@@ -1018,11 +1029,34 @@ mod session_lock_tests {
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
-    use super::{scoped_composition, sqlite_default_name};
+    use super::{scoped_composition, sqlite_default_name, sqlite_state_base};
     use phenix_contract::Authority;
     use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
     use std::collections::BTreeSet;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn sqlite_state_base_obeys_xdg_precedence_and_unset_semantics() {
+        use std::path::PathBuf;
+        let home = Some(PathBuf::from("/home/user"));
+        assert_eq!(
+            sqlite_state_base(Some("/state".into()), home.clone()).unwrap(),
+            PathBuf::from("/state")
+        );
+        for xdg in [None, Some("".into()), Some("relative".into())] {
+            assert_eq!(
+                sqlite_state_base(xdg, home.clone()).unwrap(),
+                PathBuf::from("/home/user/.local/state")
+            );
+        }
+        for home in [None, Some("".into()), Some("relative".into())] {
+            assert!(sqlite_state_base(None, home.clone()).is_err());
+            assert_eq!(
+                sqlite_state_base(Some("/state".into()), home).unwrap(),
+                PathBuf::from("/state")
+            );
+        }
+    }
 
     #[test]
     fn sqlite_preset_identity_is_bounded_and_cannot_be_a_path() {
