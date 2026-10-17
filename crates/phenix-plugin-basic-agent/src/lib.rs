@@ -651,8 +651,27 @@ mod plugin {
         }
     }
 
+    // Preserve a terminal session checkpoint when a Model import fails at the
+    // kernel boundary. The journal and session owner must not disagree after
+    // the root fails. If cleanup fails, leave the durable state fail-closed.
+    fn reconcile_model_failure(
+        host: &Host<'_>,
+        running: &Running,
+        failure: Failure,
+    ) -> PendingResult<RunResult, BasicError> {
+        let problem = error(ErrorCode::ModelFailed, "Model execution failed");
+        match stopped(host, running.session.clone(), &problem) {
+            Ok(()) => PendingResult::QuiescentFailure(failure),
+            Err(CallError::Kernel(cleanup)) => PendingResult::QuiescentFailure(cleanup),
+            Err(CallError::Domain(cleanup)) => {
+                PendingResult::Ready(Err(CallError::Domain(cleanup)))
+            }
+        }
+    }
+
     fn finish(
         state: &mut State,
+        host: &Host<'_>,
         running: Running,
         value: CallResult<Advance, BasicError>,
     ) -> PendingResult<RunResult, BasicError> {
@@ -663,7 +682,7 @@ mod plugin {
             }
             Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
-            Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
+            Err(CallError::Kernel(failure)) => reconcile_model_failure(host, &running, failure),
         }
     }
 
@@ -729,14 +748,14 @@ mod plugin {
         match host.begin::<Model::complete>("Model", &prepared) {
             Ok(ImportCall::Ready(reply)) => {
                 let result = staged_reply(host, &mut running, reply);
-                finish(state, running, result)
+                finish(state, host, running, result)
             }
             Ok(ImportCall::Pending(child)) => {
                 running.child = Some(child);
                 state.active = Some(running);
                 PendingResult::Pending
             }
-            Err(failure) => PendingResult::QuiescentFailure(failure),
+            Err(failure) => reconcile_model_failure(host, &running, failure),
         }
     }
 
@@ -787,13 +806,13 @@ mod plugin {
             }
             Ok(ImportPoll::Ready(reply)) => {
                 let result = staged_reply(host, &mut running, reply);
-                finish(state, running, result)
+                finish(state, host, running, result)
             }
             Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
                 Code::ScopeRejected,
                 "staged Model child was cancelled",
             )),
-            Err(failure) => PendingResult::QuiescentFailure(failure),
+            Err(failure) => reconcile_model_failure(host, &running, failure),
         }
     }
 
@@ -824,7 +843,7 @@ mod plugin {
         match prepare(host, request) {
             Ok(mut running) => {
                 let value = advance(host, &mut running, None);
-                finish(state, running, value)
+                finish(state, host, running, value)
             }
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
@@ -853,13 +872,13 @@ mod plugin {
             }
             Ok(ImportPoll::Ready(reply)) => {
                 let result = advance(host, &mut running, Some(reply));
-                finish(state, running, result)
+                finish(state, host, running, result)
             }
             Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
                 Code::ScopeRejected,
                 "Basic Model import was cancelled",
             )),
-            Err(failure) => PendingResult::QuiescentFailure(failure),
+            Err(failure) => reconcile_model_failure(host, &running, failure),
         }
     }
 

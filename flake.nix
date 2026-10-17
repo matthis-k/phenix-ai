@@ -900,7 +900,8 @@
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
           ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out" \
-          ${basicGraphPreparerPlugin} ${basicNoopPreparerPlugin} ${advancedDefinitions}
+          ${basicGraphPreparerPlugin} ${basicNoopPreparerPlugin} ${advancedDefinitions} \
+          ${p2ModelMeterFixtureCheck}
         test -s "$out/accepted.json"
       '';
       basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
