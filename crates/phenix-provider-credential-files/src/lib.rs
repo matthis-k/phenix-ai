@@ -14,7 +14,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_SECRET_BYTES: usize = 64 * 1024;
@@ -108,6 +110,7 @@ impl CredentialId {
 pub struct CredentialFiles {
     // Kept for display and test inspection only. All security-sensitive file
     // operations are relative to the pinned directory descriptor below.
+    #[cfg(test)]
     root: PathBuf,
     directory: File,
 }
@@ -127,11 +130,13 @@ impl CredentialFiles {
             .map_err(|_| CredentialError::InsecureDirectory)?;
         validate_directory(&directory)?;
         Ok(Self {
+            #[cfg(test)]
             root: path,
             directory,
         })
     }
 
+    #[cfg(test)]
     fn path(&self, id: &CredentialId) -> Result<PathBuf, CredentialError> {
         Ok(self.root.join(id.file_name()?))
     }
