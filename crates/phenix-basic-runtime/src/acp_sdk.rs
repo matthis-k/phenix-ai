@@ -8,7 +8,8 @@ use acp::schema::{
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
         SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        StopReason,
     },
     ProtocolVersion,
 };
@@ -31,7 +32,10 @@ enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
     Load(LoadSessionRequest, Reply<LoadSessionResponse>, Peer),
-    SetConfig(SetSessionConfigOptionRequest, Reply<SetSessionConfigOptionResponse>),
+    SetConfig(
+        SetSessionConfigOptionRequest,
+        Reply<SetSessionConfigOptionResponse>,
+    ),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
