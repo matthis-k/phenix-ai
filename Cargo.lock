@@ -1083,6 +1083,7 @@ dependencies = [
  "phenix-contract",
  "phenix-kernel",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1162,6 +1163,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-event-journal"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-evidence-journal"
 version = "0.1.0"
 dependencies = [
@@ -1181,11 +1190,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-event-journal"
+name = "phenix-plugin-model-history-test"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
+ "serde_json",
 ]
 
 [[package]]
@@ -1198,15 +1208,6 @@ dependencies = [
  "serde_json",
  "sse-parse",
  "url",
-]
-
-[[package]]
-name = "phenix-plugin-model-history-test"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
- "serde_json",
 ]
 
 [[package]]
@@ -1228,14 +1229,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-storage-fixture"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
-]
-
-[[package]]
 name = "phenix-plugin-project-storage-sqlite"
 version = "0.1.0"
 dependencies = [
@@ -1245,12 +1238,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-storage-fixture"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-storage-sqlite"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-provider-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
 ]
 
 [[package]]
