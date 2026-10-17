@@ -336,6 +336,20 @@ run/session identity and caller limits. Both immediate and pending Model
 paths must consume the same value without state mutation. This refactor
 does **not** yet claim to move compaction out of the Model adapter.
 
+**P2-3ah: source-bound preparation contract (non-authorizing).** A new
+versioned `phenix.advanced.model-preparation@1` contract accepts the exact
+Basic ModelRequest and its canonical domain-separated digest. Selected
+preparers return a proposed candidate with the same source digest, session,
+run, tools, skills and limits. Any changed history/context requires a
+structurally valid checkpoint citation, but a citation is never sufficient
+to execute Model or grant a tool effect: the actual caller must independently
+source-verify complete EventJournal bytes, CAS/readback the checkpoint,
+remeasure the final selected Model request, and require effective graph/node
+authority. Pure native denial probes cover stale digests, foreign sessions,
+changed run identities, changed tool/skill permissions, output budgets and
+unproven history/context edits. This remains a **contract boundary**; it does
+not yet make Basic submit asynchronous across two graph waves.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
