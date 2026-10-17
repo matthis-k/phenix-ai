@@ -235,17 +235,20 @@ mod plugin {
                 }
                 let measurement = selected_measurement(host, &compacted)?;
                 let pressure =
-                    checkpoint_pressure(&compacted, &measurement, &measurement.model, 80)
-                        .map_err(|reason| {
+                    checkpoint_pressure(&compacted, &measurement, &measurement.model, 80).map_err(
+                        |reason| {
                             CallError::Domain(error(
-                                if reason == PressureProblem::Measurement(ModelTokenProblem::OverBudget) {
+                                if reason
+                                    == PressureProblem::Measurement(ModelTokenProblem::OverBudget)
+                                {
                                     ErrorCode::TurnLimit
                                 } else {
                                     ErrorCode::InvalidReply
                                 },
                                 "selected compacted request pressure measurement rejected",
                             ))
-                        })?;
+                        },
+                    )?;
                 if pressure == CheckpointPressure::EnoughHeadroom {
                     return Ok(compacted);
                 }
