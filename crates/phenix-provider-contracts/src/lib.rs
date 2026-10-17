@@ -100,18 +100,24 @@ pub struct AuthenticationStatus {
 }
 
 impl AuthenticationStatus {
-    /// A connection with no declared methods needs no credentials.
-    /// A protected connection is ready when any supported method is valid.
-    pub fn ready(&self, descriptor: &ConnectionDescriptor) -> bool {
-        if self.connection_id != descriptor.id {
+    /// Display readiness only. The runtime must separately authorize inference
+    /// for the chosen connection and specific credential context.
+    pub fn ready_for(&self, provider_id: &str, descriptor: &ConnectionDescriptor) -> bool {
+        if self.provider_id != provider_id || self.connection_id != descriptor.id {
             return false;
         }
         descriptor.auth_methods.is_empty()
-            || descriptor.auth_methods.iter().any(|method| {
-                self.methods
-                    .iter()
-                    .any(|status| status.method_id == method.id && status.valid)
-            })
+            || descriptor
+                .auth_methods
+                .iter()
+                .any(|method| self.method_is_valid(&method.id))
+    }
+
+    /// Ignore undeclared method IDs and conflicting status records.
+    fn method_is_valid(&self, id: &str) -> bool {
+        let mut matching = self.methods.iter().filter(|status| status.method_id == id);
+        matches!(matching.next(), Some(MethodStatus { valid: true, .. }))
+            && matching.next().is_none()
     }
 }
 
@@ -232,10 +238,10 @@ mod tests {
             connection_id: "api".into(),
             methods: vec![],
         };
-        assert!(state.ready(&descriptor(vec![])));
+        assert!(state.ready_for("example", &descriptor(vec![])));
         let mut other = descriptor(vec![]);
         other.id = "unrelated-connection".into();
-        assert!(!state.ready(&other));
+        assert!(!state.ready_for("example", &other));
         let key = method("key", AuthenticationKind::ApiKey);
         let oauth = method("oauth", AuthenticationKind::OAuthAuthorizationCode);
         assert!(!state.ready(&descriptor(vec![key.clone()])));
