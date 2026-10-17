@@ -281,7 +281,10 @@ mod tests {
             CredentialError::NotFound
         );
         assert_eq!(
-            reopened.read(&id("work")).unwrap().expose_for_authorized_provider(),
+            reopened
+                .read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"beta"
         );
     }
