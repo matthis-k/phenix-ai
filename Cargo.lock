@@ -1274,6 +1274,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-provider-credential-files"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "phenix-provider-discovery"
 version = "0.1.0"
 dependencies = [
