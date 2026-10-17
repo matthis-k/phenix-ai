@@ -3,6 +3,126 @@
 
 use super::*;
 
+/// Non-secret identity that a caller asks the authoritative runtime to commit.
+/// The runtime must validate its own scope/authority and fresh entitlement;
+/// this value by itself never grants Model execution or credential access.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ModelSelection {
+    pub provider_id: String,
+    pub connection_id: String,
+    pub profile_id: Option<String>,
+    pub model_id: String,
+    pub protocol_id: String,
+    pub endpoint_id: String,
+    pub catalog_revision: u64,
+}
+
+fn selection_error(code: ProviderErrorCode, message: &str) -> ProviderError {
+    ProviderError {
+        code,
+        message: message.into(),
+    }
+}
+
+/// Verify a concrete model choice against the *runtime-provided* provider,
+/// authentication status and catalog page. Never accept a frontend-supplied
+/// provider descriptor, profile validity or freshness flag as evidence.
+///
+/// Callers must separately check scope, grant, endpoint origin and the current
+/// provider entitlement before admission, and persist the resulting selection
+/// with revision CAS. This helper is only the pure identity/admission policy.
+pub fn validate_model_selection(
+    provider: &ProviderDescriptor,
+    authentication: &AuthenticationStatus,
+    page: &ModelPage,
+    requested: &ModelSelection,
+    runtime_catalog_is_fresh: bool,
+) -> Result<ProviderModel, ProviderError> {
+    if !runtime_catalog_is_fresh || page.revision == 0 {
+        return Err(selection_error(
+            ProviderErrorCode::Unavailable,
+            "current model catalog evidence is required",
+        ));
+    }
+    if requested.catalog_revision != page.revision {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "model catalog revision changed",
+        ));
+    }
+    if provider.id != requested.provider_id || provider.id.is_empty() {
+        return Err(selection_error(
+            ProviderErrorCode::Denied,
+            "provider identity mismatch",
+        ));
+    }
+    let connection = provider
+        .connections
+        .iter()
+        .find(|connection| connection.id == requested.connection_id)
+        .ok_or_else(|| {
+            selection_error(
+                ProviderErrorCode::NotFound,
+                "connection not registered for selected provider",
+            )
+        })?;
+    if authentication.provider_id != requested.provider_id
+        || authentication.connection_id != requested.connection_id
+        || page.profile_id != requested.profile_id
+    {
+        return Err(selection_error(
+            ProviderErrorCode::Denied,
+            "catalog or authentication belongs to another connection or account",
+        ));
+    }
+    if connection.auth_methods.is_empty() {
+        if requested.profile_id.is_some() {
+            return Err(selection_error(
+                ProviderErrorCode::Denied,
+                "no-auth connection must not adopt an account profile",
+            ));
+        }
+    } else if !requested.profile_id.as_deref().is_some_and(|profile| {
+        authentication.profile_is_valid_for(&provider.id, connection, profile)
+    }) {
+        return Err(selection_error(
+            ProviderErrorCode::AuthenticationRequired,
+            "selected credential profile is not authenticated",
+        ));
+    }
+
+    // A model ID may have several explicitly distinct protocol bindings, but
+    // an ambiguous duplicate of the same complete binding is never admitted.
+    let mut matches = page.models.iter().filter(|model| {
+        model.id == requested.model_id
+            && model.connection_id == requested.connection_id
+            && model.protocol_id == requested.protocol_id
+            && model.endpoint_id == requested.endpoint_id
+    });
+    let selected = matches.next().ok_or_else(|| {
+        selection_error(
+            ProviderErrorCode::NotFound,
+            "requested model binding is not in current catalog",
+        )
+    })?;
+    if matches.next().is_some() {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "duplicate model binding in current catalog",
+        ));
+    }
+    if !selected.selectable
+        || selected.endpoint_id.is_empty()
+        || !connection.protocols.contains(&selected.protocol_id)
+    {
+        return Err(selection_error(
+            ProviderErrorCode::Denied,
+            "model is not selectable through the installed protocol",
+        ));
+    }
+    Ok(selected.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
