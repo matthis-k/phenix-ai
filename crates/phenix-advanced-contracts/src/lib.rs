@@ -409,7 +409,10 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 6);
+        assert_eq!(metadata.definitions.len(), 7);
+        assert!(metadata.definitions.iter().any(|definition| {
+            definition.id == "phenix.advanced.compaction-summary@1"
+        }));
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert!(graph.nodes.is_empty());
         assert!(graph.events.is_empty());
