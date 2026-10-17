@@ -1239,7 +1239,7 @@
         mkdir -p "$out"
         python ${./tests/p2-metered-model-adapter-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${advancedComposition} ${p2ModelMeterFixtureCheck} \
+          ${advancedComposition} ${p2ModelMeterFixtureCheck} ${p2SelectedModelSummarizer} \
           ${p2CompactionProductRunner}/bin/phenix-p2-compaction-product \
           ${compactionCheckpointStore} ${eventJournal} ${storageSqlite} \
           ${basicDefinitions} ${advancedDefinitions} "$out"
