@@ -262,6 +262,39 @@ mod tests {
     }
 
     #[test]
+    fn readiness_never_accepts_foreign_provider_or_ambiguous_method_state() {
+        let connection = descriptor(vec![
+            method("key", AuthenticationKind::ApiKey),
+            method("oauth", AuthenticationKind::OAuthAuthorizationCode),
+        ]);
+        let mut state = AuthenticationStatus {
+            provider_id: "openai".into(),
+            connection_id: "api".into(),
+            methods: vec![MethodStatus {
+                method_id: "key".into(),
+                valid: true,
+                reason: None,
+            }],
+        };
+        assert!(state.ready_for("openai", &connection));
+        assert!(!state.ready_for("anthropic", &connection));
+
+        // A duplicate status entry cannot silently authorize a conflicting key.
+        state.methods.push(MethodStatus {
+            method_id: "key".into(),
+            valid: false,
+            reason: Some("revoked".into()),
+        });
+        assert!(!state.ready_for("openai", &connection));
+        state.methods.push(MethodStatus {
+            method_id: "oauth".into(),
+            valid: true,
+            reason: None,
+        });
+        assert!(state.ready_for("openai", &connection));
+    }
+
+    #[test]
     fn discovery_metadata_and_provider_identity_roundtrip() {
         let provider = ProviderDescriptor {
             id: "openai".into(),
