@@ -5,13 +5,16 @@
 //! authentication or model entitlement until an authorized credentials and
 //! discovery implementation is installed. It is not a mock successful login.
 
+use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
-use phenix_provider_builtins::registrations;
 
 fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
-    ProviderError { code, message: message.into() }
+    ProviderError {
+        code,
+        message: message.into(),
+    }
 }
 
 fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
@@ -41,7 +44,7 @@ fn connection(provider_id: &str, connection_id: &str) -> Result<bool, ProviderEr
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthQuery, AuthStart, AuthChallenge, ModelQuery, ProviderAuth, ProviderCatalog,
+        AuthChallenge, AuthQuery, AuthStart, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderDetailsQuery, ProviderPage, ProviderQuery,
     };
     use phenix_sdk::{CallError, CallResult, Host};
@@ -52,7 +55,9 @@ mod plugin {
     fn check(host: &Host<'_>, scope: &str) -> CallResult<(), ProviderError> {
         if scope.is_empty()
             || scope.len() > 128
-            || !scope.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-' || c == b'_')
+            || !scope
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-' || c == b'_')
         {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::InvalidInput,
@@ -76,7 +81,10 @@ mod plugin {
         request: ProviderQuery,
     ) -> CallResult<ProviderPage, ProviderError> {
         check(host, &request.scope)?;
-        Ok(ProviderPage { providers: registrations(), revision: 1 })
+        Ok(ProviderPage {
+            providers: registrations(),
+            revision: 1,
+        })
     }
 
     #[provide(ProviderCatalog::describe)]
@@ -129,13 +137,21 @@ mod plugin {
     ) -> CallResult<AuthChallenge, ProviderError> {
         check(host, &request.scope)?;
         let provider = provider(&request.provider_id).map_err(CallError::Domain)?;
-        let chosen = provider.connections.iter()
+        let chosen = provider
+            .connections
+            .iter()
             .find(|item| item.id == request.connection_id)
-            .ok_or_else(|| CallError::Domain(error(
-                ProviderErrorCode::NotFound,
-                "unknown provider connection",
-            )))?;
-        if !chosen.auth_methods.iter().any(|method| method.id == request.method_id) {
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ProviderErrorCode::NotFound,
+                    "unknown provider connection",
+                ))
+            })?;
+        if !chosen
+            .auth_methods
+            .iter()
+            .any(|method| method.id == request.method_id)
+        {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::InvalidInput,
                 "authentication method not offered",
