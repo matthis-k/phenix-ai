@@ -55,7 +55,12 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     let input_tokens = if (prompt == Some("auto-compact-again") && request.history.len() > 3)
         || (matches!(
             prompt,
-            Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation" | "auto-unsafe-summary")
+            Some(
+                "inspect-original-overwindow"
+                    | "auto-compact"
+                    | "auto-invalid-citation"
+                    | "auto-unsafe-summary"
+            )
         ) && !compacted)
     {
         CONTEXT_WINDOW
