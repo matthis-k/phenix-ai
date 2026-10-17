@@ -1,7 +1,7 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
 Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. The Advanced product and P2 release gates remain unaccepted.
-Updated: 2026-10-16
+Updated: 2026-10-17
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
 P1 evidence and CI gate: [P1 release acceptance](p1-release-acceptance.md) and [post-P1 CI cutover PR #879](https://github.com/matthis-k/phenix-ai/pull/879).
