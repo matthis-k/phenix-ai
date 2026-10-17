@@ -53,6 +53,33 @@ pub trait ModelPreparation {
     ) -> Result<ModelPreparationProposal, ModelPreparationError>;
 }
 
+/// Matches M1's built-in state-trigger payload schema. The graph kernel
+/// determines actual activation and supplies the committed epoch/property IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphPreparationChange {
+    pub epoch: u64,
+    pub properties: Vec<String>,
+}
+
+/// A graph-owned preparation step, separate from selected Model preparation
+/// and from Basic's eventual Model advance. Never executes a Model itself.
+#[phenix_sdk::contract(id = "phenix.advanced.graph-preparation@1")]
+pub trait GraphPreparationHook {
+    fn run(
+        &self,
+        change: GraphPreparationChange,
+    ) -> Result<ModelPreparationProposal, ModelPreparationError>;
+}
+
+/// Import-only typed reference for Basic's future advance stage.
+#[phenix_sdk::property(
+    owner = "phenix.advanced.graph-preparation",
+    id = "prepared",
+    get,
+    watch
+)]
+pub type PreparedModelProposal = Option<ModelPreparationProposal>;
+
 /// Structural fail-closed check. This does NOT authorize a graph transition.
 /// The caller must also verify live session ownership, original journal
 /// bytes, checkpoint CAS/readback and exact final token measurement before
