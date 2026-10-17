@@ -19,6 +19,7 @@
     // A selected Model consumer need not import this Advanced-only schema.
     define(phenix_advanced_contracts::ModelTokenMeter),
     define(phenix_advanced_contracts::CompactionStore),
+    define(phenix_advanced_contracts::CompactionSummarizer),
     provide(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::Model, slot = "Upstream"),
     require(phenix_advanced_contracts::ModelTokenMeter, slot = "Meter", optional),
@@ -26,20 +27,24 @@
     // When selected, this records the complete tool-call message before any
     // Basic tool execution and never supplies its own persistence provider.
     require(phenix_basic_contracts::EventJournal, slot = "Transcript", optional),
-    require(phenix_advanced_contracts::CompactionStore, slot = "Checkpoints", optional)
+    require(phenix_advanced_contracts::CompactionStore, slot = "Checkpoints", optional),
+    require(phenix_advanced_contracts::CompactionSummarizer, slot = "Summarizer", optional)
 )]
 mod plugin {
     use phenix_advanced_contracts::{
         validate_model_token_measurement, CheckpointStoreProblem, CompactionStore,
-        ModelTokenMeasurement, ModelTokenMeter, ModelTokenProblem,
+        CompactionSummarizer, CompactionSummaryRequest, ModelTokenMeasurement, ModelTokenMeter,
+        ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
         Message, Model, ModelReply, ModelRequest, Role, Scope,
     };
     use phenix_p2_compaction_replay::{
-        assemble_verified_tail_request, checkpoint_pressure, validate_compacted_meter_transition,
-        CompactedMeterProblem, PressureProblem,
+        admit_compaction, assemble_verified_tail_request, checkpoint_pressure, span_for_events,
+        validate_compacted_meter_transition, CheckpointPlan, CheckpointPressure,
+        CheckpointPublishProblem, CompactedAdmissionProblem, CompactedMeterProblem,
+        CompactionAdmissionInput, CompactionAdmissionProblem, PressureProblem,
     };
     use phenix_sdk::{
         CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -123,6 +128,12 @@ mod plugin {
         source: &ModelRequest,
     ) -> CallResult<ModelRequest, BasicError> {
         if host.slot_count("Checkpoints").map_err(CallError::Kernel)? == 0 {
+            if host.slot_count("Summarizer").map_err(CallError::Kernel)? != 0 {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction requires a selected checkpoint store",
+                )));
+            }
             return Ok(source.clone());
         }
         if host.slot_count("Meter").map_err(CallError::Kernel)? == 0
@@ -143,7 +154,7 @@ mod plugin {
             Err(CallError::Domain(failure))
                 if failure.problem == CheckpointStoreProblem::NotFound =>
             {
-                return Ok(source.clone());
+                return prepare_automatic_checkpoint(host, source);
             }
             Err(CallError::Domain(_)) => {
                 return Err(CallError::Domain(error(
@@ -256,6 +267,194 @@ mod plugin {
             ErrorCode::InvalidReply,
             "compaction journal pagination exceeded its bounded page count",
         )))
+    }
+
+    /// An opt-in verifier may automatically publish a checkpoint only at
+    /// measured pressure, through the same selected source, CAS and Model
+    /// bindings. Default public Advanced has no Summarizer and is unchanged.
+    fn prepare_automatic_checkpoint(
+        host: &Host<'_>,
+        source: &ModelRequest,
+    ) -> CallResult<ModelRequest, BasicError> {
+        if host.slot_count("Summarizer").map_err(CallError::Kernel)? == 0 {
+            return Ok(source.clone());
+        }
+        let measurement = selected_measurement(host, source)?;
+        let pressure = checkpoint_pressure(source, &measurement, &measurement.model, 80).map_err(
+            |reason| {
+                CallError::Domain(error(
+                    if reason == PressureProblem::Measurement(ModelTokenProblem::OverBudget) {
+                        ErrorCode::TurnLimit
+                    } else {
+                        ErrorCode::InvalidReply
+                    },
+                    "automatic compaction pressure measurement rejected",
+                ))
+            },
+        )?;
+        if pressure == CheckpointPressure::EnoughHeadroom {
+            return Ok(source.clone());
+        }
+        const PAGE_EVENTS: u64 = 128;
+        const MAX_SOURCE_EVENTS: usize = 1024;
+        let mut after = 0_u64;
+        let mut journal = Vec::<Event>::new();
+        loop {
+            let page = host.invoke::<EventJournal::read>(
+                "Transcript",
+                &JournalQuery {
+                    session: source.session.clone(),
+                    after,
+                    limit: PAGE_EVENTS,
+                },
+            )?;
+            if page.events.is_empty() {
+                if page.next != after || journal.is_empty() {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "automatic compaction source ended at an invalid cursor",
+                    )));
+                }
+                break;
+            }
+            if page.events.len() > PAGE_EVENTS as usize {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction source page exceeded its limit",
+                )));
+            }
+            let mut next = after;
+            for event in &page.events {
+                next = next.checked_add(1).ok_or_else(|| {
+                    CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "automatic compaction source sequence overflow",
+                    ))
+                })?;
+                if event.sequence != next || event.session != source.session {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "automatic compaction source contains a gap or foreign session",
+                    )));
+                }
+            }
+            if page.next != next {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction source advanced invalid cursor",
+                )));
+            }
+            journal.extend(page.events);
+            if journal.len() > MAX_SOURCE_EVENTS {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction source exceeds bounded capacity",
+                )));
+            }
+            after = next;
+        }
+        let span = span_for_events(&journal).map_err(|_| {
+            CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "automatic compaction source digest rejected",
+            ))
+        })?;
+        let proposed = match host.invoke::<CompactionSummarizer::summarize>(
+            "Summarizer",
+            &CompactionSummaryRequest {
+                request: source.clone(),
+                journal: journal.clone(),
+                source: span.clone(),
+            },
+        ) {
+            Ok(summary) => summary,
+            Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
+            Err(CallError::Domain(_)) => {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "selected summarizer refused the source",
+                )));
+            }
+        };
+        if proposed.source != span
+            || proposed.text.trim().is_empty()
+            || proposed.text.len() > 65_536
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "selected summarizer returned an invalid source citation",
+            )));
+        }
+        let id = format!("cp-auto-{}", span.digest_sha256);
+        let candidate = admit_compaction(
+            CompactionAdmissionInput {
+                request: source,
+                original_measurement: &measurement,
+                selected_model: &measurement.model,
+                high_water_percent: 80,
+                journal: &journal,
+                previous: None,
+                policy: CheckpointPlan {
+                    id: &id,
+                    revision: 1,
+                    parent_checkpoint: None,
+                    summary: &proposed.text,
+                    retain_completed_turns: 1,
+                },
+            },
+            || match host.invoke::<CompactionStore::latest>(
+                "Checkpoints",
+                &Scope {
+                    session: source.session.clone(),
+                },
+            ) {
+                Ok(latest) => Ok(Some(latest)),
+                Err(CallError::Domain(failure))
+                    if failure.problem == CheckpointStoreProblem::NotFound =>
+                {
+                    Ok(None)
+                }
+                Err(CallError::Domain(_)) => Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "checkpoint source rejected",
+                ))),
+                Err(CallError::Kernel(failure)) => Err(CallError::Kernel(failure)),
+            },
+            |candidate| {
+                host.invoke::<CompactionStore::put>("Checkpoints", candidate)
+                    .map_err(|failure| match failure {
+                        CallError::Kernel(kernel) => CallError::Kernel(kernel),
+                        CallError::Domain(_) => CallError::Domain(error(
+                            ErrorCode::InvalidReply,
+                            "checkpoint CAS publication rejected",
+                        )),
+                    })
+            },
+            |rebuilt| selected_measurement(host, rebuilt),
+        )
+        .map_err(|problem| match problem {
+            CompactionAdmissionProblem::Publication(CheckpointPublishProblem::Store(failure))
+            | CompactionAdmissionProblem::Remeasure(CompactedAdmissionProblem::Meter(failure)) => {
+                failure
+            }
+            CompactionAdmissionProblem::Remeasure(
+                CompactedAdmissionProblem::CandidateMeasurement(ModelTokenProblem::OverBudget),
+            ) => CallError::Domain(error(
+                ErrorCode::TurnLimit,
+                "compacted Model request still exceeds context window",
+            )),
+            _ => CallError::Domain(error(
+                ErrorCode::InvalidReply,
+                "automatic checkpoint verification or CAS failed",
+            )),
+        })?;
+        if candidate.checkpoint.is_none() {
+            return Err(CallError::Domain(error(
+                ErrorCode::TurnLimit,
+                "automatic compaction had no source-verified completed turns",
+            )));
+        }
+        Ok(candidate.request)
     }
 
     /// Measure the exact request through the same pinned provider selected

@@ -227,6 +227,24 @@ Deterministic tests cover all paths. The real graph contribution, selected
 summary quality, provider wiring and native live acceptance for automatic
 checkpoint creation remain open.
 
+P2-3aa introduces an opt-in selected CompactionSummarizer typed contract
+and connects the complete pressure→journal→summary→verified checkpoint plan
+→CompactionStore CAS/readback→selected Model remeasurement transaction to
+the existing Advanced Model adapter. The Basic agent still owns the Model
+request, graph turn, session state, tools and streaming. When the optional
+Summarizer is unbound, the public Advanced composition behaves as before.
+The selected summary must cite the exact bounded journal source span; its
+contents are subject to the existing independently verified Basic snapshot
+alignment and checkpoint source hashing. Automatic compaction currently
+targets a first checkpoint with one retained completed turn and no
+existing checkpoint; continuation through a persisted checkpoint remains
+source verified. This is a stage-one selected Model-boundary trigger, not
+yet a separate additive graph node or dynamic checkpoint replanning.
+Native verification creates a checkpoint on pressure, checks the compacted
+Model request, and proves restart does not create duplicate CAS revisions.
+Further graph composition and configurable summarization policy remain
+required before P2-3 acceptance.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
