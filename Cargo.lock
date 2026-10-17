@@ -1246,6 +1246,7 @@ dependencies = [
  "phenix-advanced-contracts",
  "phenix-sdk",
  "rusqlite",
+ "sha2",
 ]
 
 [[package]]
@@ -1263,6 +1264,14 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-provider-builtins"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-contracts",
+ "phenix-provider-protocols",
 ]
 
 [[package]]
