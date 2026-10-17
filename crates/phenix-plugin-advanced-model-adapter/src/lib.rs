@@ -5,8 +5,8 @@
 //! through M1 pending imports. The Basic graph owns tool progression,
 //! durable sessions, journal effects and turn boundaries. The optional
 //! Meter slot is an opt-in preflight for provider-specific token accounting.
-//! Until source-backed compaction admission exists, the original request is
-//! submitted unchanged. Without a Meter binding, forwarding is unchanged.
+//! Opted-in checkpoint reads are source-verified and selected-model metered.
+//! Without a Meter binding, the public Advanced preset remains pass-through.
 #[phenix_sdk::plugin(
     id = "phenix.advanced.model-adapter",
     version = "1.0.0",
@@ -150,33 +150,9 @@ mod plugin {
             }
             Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
         };
-        const MAX_READ_EVENTS: u64 = 2048;
-        let page = host.invoke::<EventJournal::read>(
-            "Transcript",
-            &JournalQuery {
-                session: source.session.clone(),
-                after: checkpoint
-                    .input
-                    .first_sequence
-                    .checked_sub(1)
-                    .ok_or_else(|| {
-                        CallError::Domain(error(
-                            ErrorCode::InvalidReply,
-                            "invalid checkpoint start",
-                        ))
-                    })?,
-                limit: MAX_READ_EVENTS,
-            },
-        )?;
-        // The existing journal's paginated read does not certify EOF.
-        // A full page might omit newer events; reject it rather than
-        // compact from an incomplete snapshot.
-        if page.events.is_empty() || page.events.len() >= MAX_READ_EVENTS as usize {
-            return Err(CallError::Domain(error(
-                ErrorCode::InvalidReply,
-                "compaction journal read was empty or incomplete",
-            )));
-        }
+        const PAGE_EVENTS: u64 = 128;
+        const MAX_READ_EVENTS: usize = 2048;
+        const MAX_PAGES: usize = 32;
         let original_count = checkpoint
             .input
             .last_sequence
@@ -189,22 +165,94 @@ mod plugin {
                     "invalid checkpoint source count",
                 ))
             })?;
-        let (original, appended) =
-            page.events
-                .split_at_checked(original_count)
-                .ok_or_else(|| {
+        let mut after = checkpoint
+            .input
+            .first_sequence
+            .checked_sub(1)
+            .ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::InvalidReply, "invalid checkpoint start"))
+            })?;
+        let mut events = Vec::<Event>::new();
+        // A full journal page does not certify EOF. Read through the first
+        // empty page, with a fixed upper bound on both events and import
+        // invocations. Every page must advance an exact contiguous cursor.
+        for _ in 0..MAX_PAGES {
+            let page = host.invoke::<EventJournal::read>(
+                "Transcript",
+                &JournalQuery {
+                    session: source.session.clone(),
+                    after,
+                    limit: PAGE_EVENTS,
+                },
+            )?;
+            if page.events.is_empty() {
+                if page.next != after || events.is_empty() {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "compaction journal ended at an invalid cursor",
+                    )));
+                }
+                let (original, appended) =
+                    events.split_at_checked(original_count).ok_or_else(|| {
+                        CallError::Domain(error(
+                            ErrorCode::InvalidReply,
+                            "checkpoint source events missing",
+                        ))
+                    })?;
+                return assemble_verified_tail_request(
+                    source,
+                    &checkpoint,
+                    original,
+                    appended,
+                    8 * 1024 * 1024,
+                )
+                .map_err(|_| {
                     CallError::Domain(error(
                         ErrorCode::InvalidReply,
-                        "checkpoint source events missing",
+                        "compaction source history did not match the authoritative session",
+                    ))
+                });
+            }
+            if page.events.len() > PAGE_EVENTS as usize {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "compaction journal page exceeded its limit",
+                )));
+            }
+            let mut next = after;
+            for event in &page.events {
+                next = next.checked_add(1).ok_or_else(|| {
+                    CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "compaction journal sequence overflow",
                     ))
                 })?;
-        assemble_verified_tail_request(source, &checkpoint, original, appended, 8 * 1024 * 1024)
-            .map_err(|_| {
-                CallError::Domain(error(
+                if event.sequence != next || event.session != source.session {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "compaction journal contains a gap or foreign session",
+                    )));
+                }
+            }
+            if page.next != next {
+                return Err(CallError::Domain(error(
                     ErrorCode::InvalidReply,
-                    "compaction source history did not match the authoritative session",
-                ))
-            })
+                    "compaction journal advanced an invalid cursor",
+                )));
+            }
+            events.extend(page.events);
+            if events.len() > MAX_READ_EVENTS {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "compaction journal exceeds bounded read capacity",
+                )));
+            }
+            after = next;
+        }
+        Err(CallError::Domain(error(
+            ErrorCode::InvalidReply,
+            "compaction journal pagination exceeded its bounded page count",
+        )))
     }
 
     fn preflight_meter(host: &Host<'_>, request: &ModelRequest) -> CallResult<(), BasicError> {

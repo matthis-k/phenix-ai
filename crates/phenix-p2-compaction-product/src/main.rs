@@ -90,21 +90,47 @@ impl Fixture {
     }
 
     fn journal(&self) -> EventPage {
-        let result = self.invoke(
-            "phenix.basic.journal@1",
-            "read",
-            "phenix.basic.event-journal",
-            JournalQuery {
-                session: SESSION.into(),
-                after: 0,
-                limit: 128,
+        // Read source data from the real selected journal. The 128-event
+        // boundary is not an end-of-stream signal; verify every cursor.
+        const PAGE_EVENTS: u64 = 128;
+        const MAX_EVENTS: usize = 1024;
+        let mut after = 0_u64;
+        let mut events = Vec::new();
+        loop {
+            let result = self.invoke(
+                "phenix.basic.journal@1",
+                "read",
+                "phenix.basic.event-journal",
+                JournalQuery {
+                    session: SESSION.into(),
+                    after,
+                    limit: PAGE_EVENTS,
+                }
+                .to_value(),
+            );
+            let Outcome::Success(value) = result else {
+                panic!("source journal missing: {result:?}");
+            };
+            let page = EventPage::from_value(value).unwrap();
+            assert!(page.events.len() <= PAGE_EVENTS as usize);
+            if page.events.is_empty() {
+                assert_eq!(page.next, after, "empty journal page advanced cursor");
+                return EventPage {
+                    events,
+                    next: after,
+                };
             }
-            .to_value(),
-        );
-        let Outcome::Success(value) = result else {
-            panic!("source journal missing: {result:?}");
-        };
-        EventPage::from_value(value).unwrap()
+            let mut next = after;
+            for event in &page.events {
+                next = next.checked_add(1).expect("journal cursor overflow");
+                assert_eq!(event.sequence, next, "noncontiguous source journal");
+                assert_eq!(event.session, SESSION, "foreign session in journal");
+            }
+            assert_eq!(page.next, next, "invalid journal page cursor");
+            events.extend(page.events);
+            assert!(events.len() <= MAX_EVENTS, "source exceeds checkpoint cap");
+            after = next;
+        }
     }
 
     fn checkpoint(&self, operation: &str, input: Value) -> Outcome {

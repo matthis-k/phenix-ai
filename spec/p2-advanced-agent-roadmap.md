@@ -112,6 +112,22 @@ This does not enable automatic checkpoint creation, dynamic model policy,
 crash-atomic journal/session reconciliation or production HTTP tokenization.
 P2-3 remains unaccepted.
 
+P2-3r [#930](https://github.com/matthis-k/phenix-ai/pull/930) adds native
+SQLite restart controls for missing checkpoint or journal grants, a missing
+selected token meter and a corrupt checkpoint ledger. Failures must not
+silently forward unverified original requests or modify the good session.
+
+P2-3s adds bounded paginated source reads to the already opted-in Advanced
+Model adapter using only the selected EventJournal interface. Each returned
+page must contain strictly contiguous events for the selected session, an
+exact cursor and a bounded count. Read through the first empty page; neither
+a full nor a short nonempty page proves the end of the journal. Deny before
+Model execution on missing data, invalid cursors, foreign sessions or total
+capacity overflow. A packaged native SQLite test seeds and checkpoints more
+than one 128-event page, then verifies the exact compacted Model request.
+Automatic checkpoint policy, production tokenizer parity and crash-atomic
+checkpoint/session reconciliation remain unaccepted.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership

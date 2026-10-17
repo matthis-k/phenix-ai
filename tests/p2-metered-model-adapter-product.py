@@ -340,6 +340,38 @@ assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
     "fixture:history:5:compaction:true"
 ], continued
 
+# P2-3s RED: the checkpoint spans more than a single 128-event
+# journal page. A native checkpoint writer and the selected Model adapter
+# must both read all contiguous source pages, never truncate at page one.
+page_turns = 36
+page_prompts = [prompt("seed-one")] + [
+    prompt(f"page-{n:02d}") for n in range(1, page_turns)
+]
+page_database = "paginated-checkpoint.sqlite"
+page_events = run(
+    page_prompts, composition=live_path, database=page_database,
+)
+assert len([e for e in page_events if e["kind"] == "Answer"]) == page_turns
+assert len(page_events) > 128, len(page_events)
+page_seed_folder = out / "paginated-checkpoint-seed"
+page_seed = subprocess.run(
+    [checkpoint_runner, checkpoint_provider, journal_provider, storage_provider,
+     basic_definitions, advanced_definitions, "live-seed", str(page_seed_folder)],
+    capture_output=True, text=True, timeout=90,
+    env=dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / page_database)),
+)
+assert page_seed.returncode == 0, (page_seed.stdout, page_seed.stderr)
+assert json.loads((page_seed_folder / "compaction-product.json").read_text())[
+    "live_checkpoint"
+] == "cp-live"
+page_continuation = run(
+    [prompt("inspect-compaction")], composition=live_path,
+    database=page_database,
+)
+assert [event["text"] for event in page_continuation if event["kind"] == "Answer"] == [
+    f"fixture:history:{2 * (page_turns - 1) + 1}:compaction:true"
+], page_continuation
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -362,5 +394,6 @@ assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
         "selected-meter-removal-denies-live-compaction",
         "corrupt-checkpoint-ledger-denies-without-model-fallback",
         "independent-denial-does-not-change-authoritative-session",
+        "multi-page-checkpoint-source-and-live-continuation",
     ],
 }, indent=2, sort_keys=True))
