@@ -9,11 +9,13 @@ use phenix_basic_contracts::Event;
 use phenix_sdk::Portable;
 use sha2::{Digest, Sha256};
 
+pub mod budget;
 pub mod history;
 pub mod model;
 pub mod plan;
 pub mod tail;
 pub mod view;
+pub use budget::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 pub use history::{assemble_verified_basic_request, TranscriptProblem};
 pub use model::{select_model_view, ModelSelectionError, SelectedModelView};
 pub use plan::{plan_verified_checkpoint, CheckpointPlan, PlanProblem};
