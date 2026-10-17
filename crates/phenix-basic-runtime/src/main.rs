@@ -159,9 +159,9 @@ fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
     // by the trusted composition. Never pass unrelated session/project
     // resources into this root. The kernel still checks the exact property's
     // set/get/watch grants and its selected owner on every state effect.
-    authority.resources.retain(|granted| {
-        granted == &resource || granted.contains(".property.")
-    });
+    authority
+        .resources
+        .retain(|granted| granted == &resource || granted.contains(".property."));
     authority.resources.insert(resource.clone());
     ScopedRequest {
         authority,
