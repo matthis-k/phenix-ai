@@ -156,6 +156,7 @@ mod plugin {
         pending_summary: bool,
         pending_summary_tools: bool,
         pending_summary_hold: bool,
+        pending_test_model_error: bool,
     }
 
     #[provide(ModelTokenMeter::measure)]
@@ -227,6 +228,23 @@ mod plugin {
                 CallError::Domain(domain) => PendingResult::Ready(Err(CallError::Domain(domain))),
             };
         }
+        // Verification-only Model failures exercise the Basic graph's
+        // kernel failure reconciliation before and after pending admission.
+        let latest = request
+            .history
+            .iter()
+            .rev()
+            .find(|message| message.role == phenix_basic_contracts::Role::User);
+        if latest.is_some_and(|message| message.text == "kernel-error-begin") {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "fixture Model failed before pending admission",
+            ));
+        }
+        if latest.is_some_and(|message| message.text == "kernel-error-poll") {
+            state.pending_test_model_error = true;
+            return PendingResult::Pending;
+        }
         if request.history.len() == 1 && request.history[0].text.contains("SOURCE_EVENTS_JSON:") {
             if state.pending_summary {
                 return PendingResult::QuiescentFailure(Failure::new(
@@ -260,6 +278,12 @@ mod plugin {
 
     #[poll(Model::complete)]
     fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<ModelReply, BasicError> {
+        if std::mem::take(&mut state.pending_test_model_error) {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "fixture pending Model failed on poll",
+            ));
+        }
         if state.pending_summary_hold && state.pending_summary {
             return PendingResult::Pending;
         }
