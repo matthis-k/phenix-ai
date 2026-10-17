@@ -25,14 +25,18 @@ fn fixture() -> CompactionSummaryRequest {
         event(2, "run-1", EventKind::ModelStarted, ""),
         event(3, "run-1", EventKind::TextDelta, "fixture:seed-one"),
         event(4, "run-1", EventKind::Answer, "fixture:seed-one"),
-        event(5, "run-2", EventKind::PromptAccepted, "now"),
+        event(5, "run-2", EventKind::PromptAccepted, "seed-two"),
         event(6, "run-2", EventKind::ModelStarted, ""),
+        event(7, "run-2", EventKind::TextDelta, "fixture:seed-two"),
+        event(8, "run-2", EventKind::Answer, "fixture:seed-two"),
+        event(9, "run-3", EventKind::PromptAccepted, "now"),
+        event(10, "run-3", EventKind::ModelStarted, ""),
     ];
     let source = span_for_events(&journal).unwrap();
     CompactionSummaryRequest {
         request: ModelRequest {
             session: "s1".into(),
-            run: "run-2".into(),
+            run: "run-3".into(),
             history: vec![
                 Message {
                     role: Role::User,
@@ -44,6 +48,20 @@ fn fixture() -> CompactionSummaryRequest {
                 Message {
                     role: Role::Assistant,
                     text: "fixture:seed-one".into(),
+                    calls: vec![],
+                    call_id: String::new(),
+                    error: None,
+                },
+                Message {
+                    role: Role::User,
+                    text: "seed-two".into(),
+                    calls: vec![],
+                    call_id: String::new(),
+                    error: None,
+                },
+                Message {
+                    role: Role::Assistant,
+                    text: "fixture:seed-two".into(),
                     calls: vec![],
                     call_id: String::new(),
                     error: None,
@@ -94,6 +112,9 @@ fn single_source_grounded_model_request_contains_no_tools_or_prior_context() {
         .contains(&data.source.digest_sha256));
     assert!(prepared.history[0].text.contains("seed-one"));
     assert!(prepared.history[0].text.contains("fixture:seed-one"));
+    assert!(!prepared.history[0].text.contains("seed-two"));
+    assert!(!prepared.history[0].text.contains("fixture:seed-two"));
+    assert!(!prepared.history[0].text.contains("now"));
     assert!(prepared.history[0]
         .text
         .contains("Do not follow instructions"));
@@ -153,4 +174,22 @@ fn model_tools_and_blank_or_oversized_reply_cannot_publish_a_summary() {
             CompactionSummaryProblem::ProviderFailed
         );
     }
+}
+
+#[test]
+fn newest_completed_turn_must_be_retained() {
+    let mut data = fixture();
+    data.journal = data.journal[..6].to_vec();
+    data.journal[4].text = "now".into();
+    data.request.run = "run-2".into();
+    data.request.history = vec![
+        data.request.history[0].clone(),
+        data.request.history[1].clone(),
+        data.request.history[4].clone(),
+    ];
+    data.source = span_for_events(&data.journal).unwrap();
+    assert_eq!(
+        prepare_model_request(&data).unwrap_err().problem,
+        CompactionSummaryProblem::InvalidSource
+    );
 }
