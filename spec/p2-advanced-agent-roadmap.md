@@ -372,6 +372,28 @@ Model advance node, including multi-turn tool continuations. Do not ship
 the prepare-only composition as an agent, and do not model a state-hook
 as able to interrupt an already-pending Basic submit node.
 
+**P2-3aj: opt-in Advanced graph preparation node.** A separate
+`phenix-plugin-advanced-graph-preparation` contributes a state-change
+trigger on `phenix.basic.agent/pending_model_request`. It reads the exact
+Basic-owned typed value through a selected property import, checks the
+session scope and source-bound digest, optionally begins a separately selected
+`ModelPreparation::prepare` provider, and can await its existing M1 pending
+ticket. On completion, it validates the proposed source/run/session and
+unchanged tool/skill/limit ceilings, then commits a watched
+`phenix.advanced.graph-preparation/prepared` proposal for Basic advance.
+A missing selected preparer explicitly produces a validated no-compaction
+pass-through proposal. It never executes Model or tools and does not
+publish compaction checkpoints; any history/context replacement still requires
+independent journal verification, checkpoint CAS/readback and final Model
+metering at the eventual Basic advance admission boundary.
+
+Native Rust tests verify graph declarations and untrusted proposal source
+binding, and Nix builds the native provider as an opt-in verification plugin.
+This is *not* complete P2 functionality: no opt-in composition is enabled
+for the combined Basic prepare → Advanced prepare → Basic advance path,
+so end-to-end graph admission/cancellation and async nested provider tests
+remain blocked until the Basic advance node is implemented.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
