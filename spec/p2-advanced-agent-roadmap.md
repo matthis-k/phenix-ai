@@ -350,6 +350,28 @@ changed run identities, changed tool/skill permissions, output budgets and
 unproven history/context edits. This remains a **contract boundary**; it does
 not yet make Basic submit asynchronous across two graph waves.
 
+**P2-3ai: first real Basic graph preparation node (opt-in).**
+The same Basic agent is packaged in a separate `staged-graph` feature
+variant. Its graph contributes a standalone `prepare` node triggered by
+`phenix.basic.prompt`, declared as the writer of
+`phenix.basic.agent/pending_model_request`. It shares the existing
+session admission, selected tools/skills/context, turn limit and ModelStarted
+journal boundary with the production Basic turn logic. It retains the
+authoritative in-process Running state and publishes exactly one typed
+ModelRequest snapshot through M1 watched state before the graph wave
+finishes. The prepare operation does **not** invoke Model and no Advanced
+hook is invoked in this slice. A feature-specific graph declaration test
+and Nix-built native plugin establish the ABI and metadata; the default
+P1 Basic graph and product composition are unchanged.
+
+The staged binary is not user-facing or P2 accepted: its Running session
+has intentionally not yet reached a terminal answer. The next selected
+Advanced prepare node must read and source-check this watched request,
+publish an authorized candidate, and unblock a separately staged Basic
+Model advance node, including multi-turn tool continuations. Do not ship
+the prepare-only composition as an agent, and do not model a state-hook
+as able to interrupt an already-pending Basic submit node.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
