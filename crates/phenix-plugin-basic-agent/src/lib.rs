@@ -65,7 +65,7 @@ mod plugin {
     use phenix_basic_contracts::{
         error, BasicError, BasicInput, BasicOutput, CatalogCursor, Context, ErrorCode, Event,
         EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message, Model,
-        ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
         RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion,
         ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
     };
