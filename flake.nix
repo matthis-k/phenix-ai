@@ -669,19 +669,12 @@
             ${pkgs.python3}/bin/python ${recordWriter} $out
           '';
         };
-      # Every user-facing Basic wrapper must supply the same absolute
-      # file-backed Storage path before any ACP, terminal or JSONL request.
-      # The SQLite plugin stays provider-owned; launchers own filesystem setup.
+      # The Rust product host resolves the state directory once. Wrappers
+      # select only the allowed Basic preset file and a private creation mask.
+      # PHENIX_BASIC_SQLITE_PATH remains an explicit user override.
       basicSqliteEnvironment = fileName: ''
         umask 077
-        if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
-          export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/${fileName}"
-        fi
-        case "$PHENIX_BASIC_SQLITE_PATH" in
-          /*) ;;
-          *) echo "Phenix: PHENIX_BASIC_SQLITE_PATH must be absolute" >&2; exit 2 ;;
-        esac
-        mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+        export PHENIX_BASIC_SQLITE_DEFAULT_NAME="${fileName}"
       '';
       scriptedModel = basicNativePlugin
         "phenix-plugin-model-scripted"
