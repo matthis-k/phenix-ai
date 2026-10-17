@@ -89,19 +89,41 @@ fn ensure_schema(conn: &mut Connection) -> Result<(), BasicError> {
 struct Db(Connection);
 impl Db {
     fn open() -> Result<Self, BasicError> {
-        let name = env::var("PHENIX_BASIC_SQLITE_PATH").map_err(|_| failed())?;
-        if name.is_empty() || name == ":memory:" || name.starts_with("file:") {
-            return Err(failed());
+        let name = env::var("PHENIX_BASIC_SQLITE_PATH").map_err(|_| {
+            error(
+                ErrorCode::StorageFailed,
+                "SQLite path is not configured: PHENIX_BASIC_SQLITE_PATH",
+            )
+        })?;
+        if name.is_empty()
+            || name == ":memory:"
+            || name.starts_with("file:")
+            || !std::path::Path::new(&name).is_absolute()
+        {
+            return Err(error(
+                ErrorCode::StorageFailed,
+                "SQLite path must be an absolute file path",
+            ));
         }
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
-        let mut conn = Connection::open_with_flags(name, flags).map_err(|_| failed())?;
+        let mut conn = Connection::open_with_flags(&name, flags).map_err(|_| {
+            error(
+                ErrorCode::StorageFailed,
+                "SQLite database cannot be opened; check its parent directory and permissions",
+            )
+        })?;
         conn.busy_timeout(Duration::from_secs(5))
             .map_err(|_| failed())?;
         conn.execute_batch("PRAGMA synchronous = FULL")
             .map_err(|_| failed())?;
-        ensure_schema(&mut conn)?;
+        ensure_schema(&mut conn).map_err(|_| {
+            error(
+                ErrorCode::StorageFailed,
+                "SQLite schema is incompatible, corrupt or could not be migrated",
+            )
+        })?;
         Ok(Self(conn))
     }
 
