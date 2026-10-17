@@ -243,6 +243,37 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      providerBuiltinsPluginSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-builtins
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+      ]);
+      providerBuiltinsPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-builtins";
+        version = "0.1.0";
+        src = providerBuiltinsPluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-builtins" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-builtins" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_builtins.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" { } ''
+        mkdir -p "$out"
+        test -s "${providerBuiltinsPlugin}/descriptor.bin"
+        grep -F '"plugin": "phenix.provider.builtins"' "${providerBuiltinsPlugin}/package.json" >/dev/null || true
+        test -s "${providerBuiltinsPlugin}/lib/plugin.so"
+        touch "$out/verified"
+      '';
       providerBuiltinsSource = subset (publicPaths ++ [
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
@@ -1821,6 +1852,7 @@
         phenix-m1-release = release;
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
+        phenix-plugin-provider-builtins = providerBuiltinsPlugin;
         phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
@@ -1913,6 +1945,7 @@
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
         provider-builtins = providerBuiltinsCheck;
+        provider-builtins-plugin = providerBuiltinsPluginCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
