@@ -1268,6 +1268,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-provider-builtins"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-contracts",
+ "phenix-provider-protocols",
+]
+
+[[package]]
 name = "phenix-provider-credential-files"
 version = "0.1.0"
 dependencies = [
