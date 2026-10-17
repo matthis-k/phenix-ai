@@ -128,6 +128,21 @@ than one 128-event page, then verifies the exact compacted Model request.
 Automatic checkpoint policy, production tokenizer parity and crash-atomic
 checkpoint/session reconciliation remain unaccepted.
 
+P2-3t adds a **pure proposal** for source-verified checkpoint boundaries.
+The chosen policy retains the last N completed turns and the active Model
+continuation, and summarizes only whole older turns. It first verifies
+the complete authoritative SessionSnapshot against original Basic journal
+bytes with all events retained, then validates any proposed elision against
+the same historical evidence and typed AssistantReply receipts. Gaps,
+foreign sessions, forged history, incomplete/failed turns, unsupported
+tool-call elision, stale parent ancestry and invalid checkpoint lineage
+reject. Not enough completed history returns no proposal without writes.
+A separately selected summarizer must provide factual summary content;
+the structural planner cannot attest semantic faithfulness. The Advanced
+graph still owns token thresholds, authorized journal reads, selected
+summarization, checkpoint-store CAS and publication. This slice neither
+performs a Model request nor creates durable checkpoints on its own.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
