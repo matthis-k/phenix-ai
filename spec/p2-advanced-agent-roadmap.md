@@ -253,8 +253,12 @@ previous source-validated checkpoint and next linear revision to the existing
 P2-3z transaction, and CAS-publishes a fresh candidate before independently
 metering the new compacted request. No checkpoint or source journal is erased
 or rewritten, and a failed replan cannot fall back to a rejected, over-window
-Model input. A native SQLite restart acceptance case verifies revision 1→2
-and prevents an unnecessary revision 3 on repeated prompts. The selected
+Model input. Native SQLite acceptance verifies successive authorized
+turns advancing revisions 1→2→3 under renewed measured pressure. A newly
+submitted turn is not an exact CAS retry: even when the prompt text repeats,
+the authoritative session has grown. The same-candidate ambiguous-write
+recovery test independently verifies restart idempotence without an
+extra revision. The selected
 Summarizer remains opt-in and first-stage policy is a fixed retained-turn
 count; independent graph contribution and production policy controls remain
 open.
