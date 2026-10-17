@@ -156,6 +156,19 @@ deny; u128 arithmetic prevents token/percentage overflow. This policy
 only classifies and does not automatically summarize, commit, grant
 journal reads or execute a Model. The Advanced graph must integrate it.
 
+P2-3v joins the selected Model's measured context pressure to the existing
+source-verified completed-turn checkpoint planner. Below the configured
+high-water mark, the original budget-admissible request continues without
+requiring journal reads. At the high-water mark, a complete and verified
+candidate is proposed if one exists; otherwise the original request may
+continue while it still fits. An over-context-window request must produce a
+verified candidate or be denied before Model admission. Invalid measurements,
+changed source evidence and incomplete turns fail closed. This is a pure
+decision, not an automatic checkpoint write. The Advanced graph must select
+the summarizer, authorize journal and store access, commit with CAS and
+remeasure the rebuilt request through the same selected Model before execution.
+It cannot fall back to an over-window original after a failed compaction.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
