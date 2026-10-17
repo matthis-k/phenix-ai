@@ -233,3 +233,61 @@ Thin adapters are the default for providers. The kernel's graph/authority
 mechanisms and the Basic agent's turn policy remain Phenix-specific code.
 Avoid installing a framework solely to wrap a dozen lines of Rust collections
 or a typed domain transition.
+
+
+## Provider protocol and authentication audit (17 October 2026)
+
+[Runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891) owns the feature and the [M1 roadmap](m1-roadmap.md) owns the accepted runtime behavior. This section records **library and protocol selection**, not a second contract or release tracker.
+
+### Protocol coverage
+
+Inference wire formats are not interchangeable. Match a model to the protocol and endpoint advertised by its provider. Use three initial adapters:
+
+| Adapter | Wire protocol | Built-in providers and notes |
+| --- | --- | --- |
+| `openai-chat` | OpenAI Chat Completions, `POST /chat/completions`, streaming SSE | OpenAI API legacy/compatible, OpenRouter, OpenCode Zen/Go chat models, Z.ai standard/Coding Plan, custom OpenAI-compatible endpoints |
+| `openai-responses` | OpenAI Responses, `POST /responses`, typed SSE events | OpenAI API, **ChatGPT-plan SIWC**, OpenRouter, OpenCode Zen/Go responses models, Z.ai Coding Plan, custom compatible endpoints |
+| `anthropic-messages` | Anthropic Messages, `POST /messages`, Anthropic event stream | Anthropic API, OpenCode Zen/Go messages models, Z.ai Coding Plan, custom Anthropic-compatible endpoints |
+
+The three are portable Model implementations or reusable codec modules. **Do not** add a transport per commercial provider. A provider owns connection identity, authorization, base URL, required protocol-specific headers, per-model protocol/endpoint mapping, discovery, catalog metadata and availability. Model execution must select a ready `provider + connection + auth context + model + protocol`, not merely a model name. External plugins can contribute a new provider, or add a new protocol handler identified by an explicit ID; the selected composition and runtime authority resolve both. Vendor-specific features remain opt-in extensions and do not weaken the canonical Basic `Model` contract.
+
+Documented endpoints and account boundaries:
+
+| Provider/group | Auth | Dynamic catalog | Supported protocol notes |
+| --- | --- | --- | --- |
+| OpenAI API | API key | `GET https://api.openai.com/v1/models` | Chat Completions and Responses; account/API billing |
+| OpenAI ChatGPT-plan | Official Sign in with ChatGPT OAuth for open-source clients | Same `/v1/models` **URL** but a different **OAuth-specific response shape** with `models[].slug`, `display_name` and `visibility` | Responses only; OAuth access token + required scopes; use `store:false`, `stream:true`, full `input` array and the published parameter restrictions. Subscription usage is distinct from API billing |
+| OpenRouter | API key | `GET https://openrouter.ai/api/v1/models` | Chat Completions and Responses. Catalog includes gateway-specific capabilities and routing metadata |
+| OpenCode Zen | API key | `GET https://opencode.ai/zen/v1/models` | Per-model Chat Completions, Responses or Anthropic Messages, plus possible unsupported specialty protocols. Filter or explicitly extend |
+| OpenCode Go | API key | `GET https://opencode.ai/zen/go/v1/models` | Same three main protocols. Client should identify itself with its own User-Agent and stable `x-opencode-session` per session as the provider requests |
+| Anthropic | API key | `GET https://api.anthropic.com/v1/models` with pagination | Anthropic Messages. Send provider-required `x-api-key` and `anthropic-version` headers |
+| Z.ai | API key | Plugin-owned discovery if an authorized compatible endpoint is documented; otherwise declared static model list | Standard `https://api.z.ai/api/paas/v4` (Chat Completions). Coding Plan advertises `https://api.z.ai/api/coding/paas/v4` (Chat), `https://api.z.ai/api/v1` (Responses), and `https://api.z.ai/api/anthropic` (Messages). Plan keys are separate from standard API keys. Coding Plan access is restricted to officially supported tools, so do not advertise a working Phenix subscription connection until authorized |
+
+References: [OpenCode Zen](https://docs.opencode.ai/docs/zen/), [OpenCode Go](https://docs.opencode.ai/docs/go/), [OpenRouter models](https://openrouter.ai/docs/api/api-reference/models/get-models), [OpenRouter Responses](https://openrouter.ai/docs/api/api-reference/responses/create-responses), [Anthropic models](https://platform.claude.com/docs/en/api/models/list), [Z.ai standard API](https://docs.z.ai/api-reference/introduction), [Z.ai Coding Plan protocols and restrictions](https://docs.z.ai/devpack/quick-start), [SIWC registration](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [SIWC model list and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [SIWC preview restrictions](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
+### Crates and reuse decision
+
+| Concern | Chosen crate or mechanism | Decision |
+| --- | --- | --- |
+| HTTP, HTTPS and cancellation | Existing `curl` 0.4 worker | Reuse one libcurl/TLS stack with bounded redirection, timeouts and physical cancellation. Keep the host/graph threading contract |
+| SSE parsing | Existing `sse-parse` 0.1 | Reuse framing. The selected protocol adapter validates event grammar, deltas, tool calls and terminal success/failure |
+| URL parsing, JSON | Existing `url` 2.5 and `serde_json` | Reuse strict URL validation and tagged request/response structures |
+| OpenAI request/response types | `async-openai` with `default-features = false` and **type-only** features | Audit compatibility against existing `ModelRequest` and provider variants before adopting. Reuse stable generated OpenAI types, not its separate `reqwest` transport/async runtime. Use thin `serde` compatibility DTOs only for gateway differences |
+| Anthropic typed request/events | Audit `anthropic-types` or a maintained SDK's type modules | Do not add a second async HTTP stack. Adopt types if they cover streaming tools and headers; otherwise small `serde` DTOs validated by fixture. The available community `anthropic-rs-sdk` documents non-streaming-only coverage and is not a suitable full transport |
+| OAuth2 PKCE, refresh, revocation, device flow | `oauth2` 5 with `default-features=false`, `features=["curl"]` | Reuse its synchronous `CurlHttpClient` and existing worker; no new HTTP implementation |
+| OIDC identity and ID-token checks | `openidconnect` 4, feature-limited | Verify signature against provider JWKS, issuer, audience, nonce, expiry and required scopes. Use a transport adapter for existing libcurl if required. Do not parse/accept unverified JWT identity claims |
+| Persistent OS credentials | Existing runtime-selected credential store, with optional `keyring-core` plus Linux Secret Service backend | Credential persistence stays in an authorized plugin. Select a tested backend and clear headless fallback; never serialize keys/tokens into ordinary Session/Journal, Nix store, model events or terminal output |
+| Host-client management | Existing official `agent-client-protocol` SDK + typed authorized extension when ACP v1 lacks an operation | Reuse standard transport, capability negotiation, runtime revision/CAS and session ownership. No new front-end protocol or Neovim credential authority |
+
+The `oauth2` crate documents a first-party curl sync client: https://docs.rs/oauth2/latest/oauth2/. The `openidconnect` crate implements ID token validation: https://docs.rs/openidconnect/latest/openidconnect/. OpenAI's type-only crate mode: https://docs.rs/async-openai/latest/async_openai/. Keyring storage options: https://docs.rs/keyring/latest/keyring/. Native app OAuth follows [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252), [PKCE RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), [OAuth device authorization RFC 8628](https://www.rfc-editor.org/rfc/rfc8628) only when provider-supported, and [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html). Model discovery is provider-specific, **not** a universal `/models` schema. Optional external model databases such as [models.dev](https://models.dev/) may enrich display metadata, never prove authentication or model entitlement.
+
+### Library and plugin split
+
+- **`phenix-provider-contracts`**: New definition-only M1 SDK package. Typed `ProviderDescriptor`, `ConnectionDescriptor`, `AuthMethod`, `AuthStatus`, `ModelDescriptor` with provenance/protocol identity, and scoped discovery/query/auth-selection contracts. Require no agent logic, direct HTTP calls or kernel dependency. Reuse the existing canonical `Model`, Session/Journal/Storage, capability and authority contracts. Credential values pass only via a separately authorized, non-journaled secret-input operation.
+- **`phenix-provider-protocols`**: Optional reusable Rust library for the three inference codecs, common `curl` worker and generic OAuth/OIDC library use. Ordinary code library, not a runtime dispatcher, model router or second network stack. Providers can select or supply a codec through the existing typed plugin import/binding mechanism.
+- **`phenix-provider-common`**: Optional composition of provider plugins. Initial registrations: OpenAI API + SIWC connection, OpenRouter, OpenCode Zen, OpenCode Go, Anthropic and Z.ai API; every provider owns only its URL/protocol/model mapping, method metadata, headers and supported discovery. Keep provider plugins separately replaceable and installable; a convenient base set is a Nix composition, not a mandatory monolithic plugin.
+- **`phenix-ai.nvim`**: Use `:Phenix auth` and `:Phenix model` backed by runtime queries and actions; zero/one/both method choice, account selection, status, model provenance and effective selection. Neovim holds no credential or model truth. `phenix-nvim` only pins and configures the client.
+
+For the official OpenAI OSS SIWC OAuth flow, implement the provider's dynamic `client_id=dynamic_agent_client` registration and stable `ext_agent_host_id` in a **thin** adapter around `oauth2`/OIDC: bind a `127.0.0.1` callback, issue fresh state/nonce/PKCE, retain the issued client ID, verify ID token and granted `chatgpt.tokens.use.direct` scope, rotate refresh tokens atomically, and preserve account/workspace identity. The documented OAuth `/models` format differs from API-key results. A successful `/models` read is not an inference entitlement test. Model-specific request limits are provider config, and inference must complete with the standard `response.completed` event.
+
+**Implementation order with RED tests:** (1) definition-only contracts, provider/connection/auth statuses, selection identity; (2) generic codecs and deterministic SSE transport tests for each of three protocols; (3) OpenAI API, OpenRouter, Anthropic, OpenCode Zen/Go, Z.ai standard API fixtures and discovery; (4) OAuth PKCE/OIDC, SIWC integration and secret vault, including revocation/failure cases; (5) runtime-authorized mutable catalog/selection and Neovim UI; (6) packaged Basic and Advanced real-model products with exact-head CI and separate manual paid-provider validation. Providers and protocol adapters must compile as independent third-party packages against only the public SDK. Do not gate CI on live API credentials.
