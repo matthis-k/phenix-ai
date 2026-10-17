@@ -103,13 +103,15 @@ impl AuthenticationStatus {
     /// A connection with no declared methods needs no credentials.
     /// A protected connection is ready when any supported method is valid.
     pub fn ready(&self, descriptor: &ConnectionDescriptor) -> bool {
-        self.connection_id == descriptor.id
-            && (descriptor.auth_methods.is_empty()
-                || descriptor.auth_methods.iter().any(|method| {
+        if self.connection_id != descriptor.id {
+            return false;
+        }
+        descriptor.auth_methods.is_empty()
+            || descriptor.auth_methods.iter().any(|method| {
                 self.methods
                     .iter()
                     .any(|status| status.method_id == method.id && status.valid)
-                }))
+            })
     }
 }
 
