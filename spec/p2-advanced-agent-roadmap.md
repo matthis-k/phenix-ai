@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. The Advanced product and P2 release gates remain unaccepted.
+Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3ak are integrated, but the no-compaction graph handoff and all P2 release gates remain unaccepted.
 Updated: 2026-10-17
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
@@ -72,12 +72,13 @@ release acceptance.
 | P2-3ah | [#951](https://github.com/matthis-k/phenix-ai/pull/951) | `633bfdfb` | Source-bound Advanced preparation contract and denial gates |
 | P2-3ai | [#952](https://github.com/matthis-k/phenix-ai/pull/952) | `21c480be` | Opt-in Basic prepare node publishing a watched request |
 | P2-3aj | [#956](https://github.com/matthis-k/phenix-ai/pull/956) | `6f7f81a5` | Basic Model-advance node gates on the watched prepared request |
+| P2-3ak | [#957](https://github.com/matthis-k/phenix-ai/pull/957) | `f919c35f` | Selected Advanced preparer writes the watched Basic request; packaged JSONL/SQLite prepare→advance→answer proof |
 
 P2-3 is **not accepted**: changed candidates still require verified compaction
-admission, multi-turn tool continuations must be re-prepared through the graph,
+admission, the Advanced preparer currently forwards only the exact original
+request, multi-turn tool continuations must be re-prepared through the graph,
 and crash-atomic journal/session reconciliation plus production tokenizer
-parity remain open. The no-compaction graph handoff is limited to the exact
-original request.
+parity remain open.
 
 P2-2b has three integrated slices: [#906](https://github.com/matthis-k/phenix-ai/pull/906) authenticates durable project membership, [#907](https://github.com/matthis-k/phenix-ai/pull/907) revalidates project-record sources, and [#908](https://github.com/matthis-k/phenix-ai/pull/908) provides packaged cross-session EvidenceStore retrieval (merged at `340b2ac2`). [#910](https://github.com/matthis-k/phenix-ai/pull/910) verifies denial after revocation of an already-admitted root (merged at `8ea04017`). Trusted runtime session/project admission and cancellation of active work remain tracked in [#891](https://github.com/matthis-k/phenix-ai/issues/891); P2-2b is not accepted yet.
 
