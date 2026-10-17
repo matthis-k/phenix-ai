@@ -489,6 +489,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let initialize = tx.clone();
     let new = tx.clone();
     let load = tx.clone();
+    let set_config = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -512,6 +513,12 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .on_receive_request(
             async move |request: LoadSessionRequest, reply, peer| {
                 submit(&load, Command::Load(request, reply, peer))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: SetSessionConfigOptionRequest, reply, _peer| {
+                submit(&set_config, Command::SetConfig(request, reply))
             },
             acp::on_receive_request!(),
         )
