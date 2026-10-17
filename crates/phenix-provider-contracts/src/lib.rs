@@ -2,10 +2,16 @@
 //!
 //! Providers implement these operations independently. Existing Phenix Model,
 //! Session, Journal, Storage and authority contracts remain the execution path.
-//! Secret values are intentionally absent: credential import and OAuth callback
-//! settlement require a separate authorized, non-journaled runtime operation.
+//! Discovery values contain no secrets. The separate ProviderCredentials
+//! contract is reserved for authorized, non-journaled credential-provider calls;
+//! it is never a Model tool or ordinary configuration serialization.
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
+
+pub mod credentials;
+pub use credentials::{
+    CredentialIdentity, CredentialImport, CredentialSecret, ProviderCredentials,
+};
 
 pub mod selection;
 pub use selection::{validate_model_selection, ModelSelection};
@@ -248,7 +254,8 @@ pub trait ProviderAuth {
     version = "1.0.0",
     profile = "definitions",
     define(ProviderCatalog),
-    define(ProviderAuth)
+    define(ProviderAuth),
+    define(ProviderCredentials)
 )]
 pub mod definitions {
     use super::*;
@@ -389,6 +396,6 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 2);
+        assert_eq!(metadata.definitions.len(), 3);
     }
 }
