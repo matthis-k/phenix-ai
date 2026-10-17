@@ -166,7 +166,8 @@ impl CredentialFiles {
 
     fn rename_relative(&self, source: &str, destination: &str) -> Result<(), CredentialError> {
         let source = CString::new(source).map_err(|_| CredentialError::InvalidIdentity)?;
-        let destination = CString::new(destination).map_err(|_| CredentialError::InvalidIdentity)?;
+        let destination =
+            CString::new(destination).map_err(|_| CredentialError::InvalidIdentity)?;
         // SAFETY: both names are validated leaf components, and the pinned
         // directory descriptor is live. No symlink traversal of parent paths.
         let status = unsafe {
