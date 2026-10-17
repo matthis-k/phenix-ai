@@ -8,7 +8,7 @@ use phenix_advanced_contracts::{
     CompactionSummary, CompactionSummaryError, CompactionSummaryProblem, CompactionSummaryRequest,
 };
 use phenix_basic_contracts::{EventKind, Limits, Message, ModelReply, ModelRequest, Role};
-use phenix_p2_compaction_replay::span_for_events;
+use phenix_p2_compaction_replay::{plan_verified_checkpoint, span_for_events, CheckpointPlan};
 
 const MAX_JOURNAL_EVENTS: usize = 1024;
 const MAX_SOURCE_JSON_BYTES: usize = 512 * 1024;
@@ -63,8 +63,42 @@ pub fn prepare_model_request(
         .model_tokens
         .filter(|tokens| *tokens > 0)
         .ok_or_else(|| invalid("summarization requires an explicit completion budget"))?;
-    let json = serde_json::to_string(&input.journal)
-        .map_err(|_| invalid("journal cannot be serialized"))?;
+    // The complete envelope authenticates the pending Basic request, but
+    // only the older completed turns selected for elision may be sent to the
+    // nested Model. Reuse the canonical planner instead of duplicating its
+    // turn-boundary or source/history verification policy.
+    let candidate = plan_verified_checkpoint(
+        &input.request,
+        &input.journal,
+        None,
+        CheckpointPlan {
+            id: "p2-summary-projection",
+            revision: 1,
+            parent_checkpoint: None,
+            summary: "verified source proposal; no checkpoint committed",
+            retain_completed_turns: 1,
+        },
+    )
+    .map_err(|_| invalid("journal and Basic history cannot be summarized safely"))?
+    .ok_or_else(|| invalid("no eligible older completed turns to summarize"))?;
+    let [elided] = candidate.summarized.as_slice() else {
+        return Err(invalid("summary planner did not produce one source span"));
+    };
+    let end = elided
+        .last_sequence
+        .checked_sub(input.source.first_sequence)
+        .and_then(|offset| offset.checked_add(1))
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or_else(|| invalid("summary prefix range overflow"))?;
+    let eligible = input
+        .journal
+        .get(..end)
+        .ok_or_else(|| invalid("summary prefix range exceeds source"))?;
+    if span_for_events(eligible).ok().as_ref() != Some(elided) {
+        return Err(invalid("summary prefix has a different digest"));
+    }
+    let json =
+        serde_json::to_string(eligible).map_err(|_| invalid("journal cannot be serialized"))?;
     if json.len() > MAX_SOURCE_JSON_BYTES {
         return Err(invalid("summary source exceeds bounded Model prompt"));
     }
@@ -75,8 +109,15 @@ pub fn prepare_model_request(
          unresolved tasks and provenance; do not invent content. Do not summarize \
          the pending current turn. Respond with summary text only, no tool calls.\n\
          SOURCE_SHA256={}\nSOURCE_SEQUENCES={}..={}\n\
+         ELIDED_SHA256={}\nELIDED_SEQUENCES={}..={}\n\
          SOURCE_EVENTS_JSON:\n{}",
-        input.source.digest_sha256, input.source.first_sequence, input.source.last_sequence, json,
+        input.source.digest_sha256,
+        input.source.first_sequence,
+        input.source.last_sequence,
+        elided.digest_sha256,
+        elided.first_sequence,
+        elided.last_sequence,
+        json,
     );
     Ok(ModelRequest {
         session: input.request.session.clone(),
