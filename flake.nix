@@ -317,6 +317,41 @@
       # Opt-in selected Model summarization; no hidden tools, journal writes
       # or checkpoint authority. Build/test it outside the public Advanced
       # preset until its provider and authority binding are selected.
+      # M1 graph-owned preparation is deliberately separate from the
+      # user-facing Advanced Model adapter until Basic advance is accepted.
+      p2AdvancedGraphPreparation = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-graph-preparation";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-advanced-graph-preparation
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-graph-preparation" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-graph-preparation" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_graph_preparation.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+          test -s "$out/descriptor.bin"
+        '';
+      };
+      p2AdvancedGraphPreparationCheck = pkgs.runCommand
+        "phenix-p2-advanced-graph-preparation-native"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/p2-advanced-graph-preparation-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${basicAgent} ${basicStagedAgent} \
+          ${p2AdvancedGraphPreparation} "$out"
+        test -s "$out/evidence.json"
+      '';
       p2SelectedModelSummarizer = rust.buildRustPackage {
         pname = "phenix-plugin-advanced-summarizer";
         version = "0.1.0";
@@ -374,7 +409,8 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 8, report
+        assert len(report["definitions"]) == 9, report
+        assert "phenix.advanced.graph-preparation@1" in report["definitions"], report
         assert "phenix.advanced.model-preparation@1" in report["definitions"], report
         assert "phenix.advanced.compaction-summary@1" in report["definitions"], report
         (Path(sys.argv[2]) / "evidence.json").write_text(
@@ -1846,6 +1882,8 @@
         p2-compaction-replay = p2CompactionReplayCheck;
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
+        p2-advanced-graph-preparation = p2AdvancedGraphPreparationCheck;
+        p2-advanced-graph-preparation-plugin = p2AdvancedGraphPreparation;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
         p2-basic-staged-plugin = basicStagedAgent;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
