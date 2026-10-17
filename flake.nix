@@ -243,6 +243,21 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      providerCredentialFilesSource = subset (publicPaths ++ [ ./crates/phenix-provider-credential-files ]);
+      providerCredentialFilesCheck = rust.buildRustPackage {
+        pname = "phenix-provider-credential-files";
+        version = "0.1.0";
+        src = providerCredentialFilesSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-credential-files" ];
+        cargoTestFlags = [ "-p" "phenix-provider-credential-files" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out
+          touch $out/verified
+        '';
+      };
       providerProtocolsSource = subset (publicPaths ++ [ ./crates/phenix-provider-protocols ]);
       providerProtocolsCheck = rust.buildRustPackage {
         pname = "phenix-provider-protocols";
@@ -1877,6 +1892,7 @@
         provider-contracts = providerContractsCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
+        provider-credential-files = providerCredentialFilesCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
