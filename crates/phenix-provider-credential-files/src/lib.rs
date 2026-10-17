@@ -235,7 +235,7 @@ impl CredentialFiles {
 
     pub fn read(&self, id: &CredentialId) -> Result<Secret, CredentialError> {
         validate_directory(&self.directory)?;
-        let mut input = self
+        let input = self
             .open_relative(&id.file_name()?, libc::O_RDONLY | libc::O_NONBLOCK, 0)
             .map_err(|err| {
                 if err.kind() == io::ErrorKind::NotFound {
