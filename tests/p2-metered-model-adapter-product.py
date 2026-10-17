@@ -548,6 +548,55 @@ with sqlite3.connect(out / tool_summary_db) as connection:
         "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
     ).fetchone() == (0,), "tool-bearing pending summary published a checkpoint"
 
+# P2-3af RED: assert that kernel graph cancellation propagates into the
+# nested pending summarizer BEFORE any checkpoint CAS or primary Model call.
+# A verification-only fixture writes a witness when its summary child begins;
+# it then remains pending until the real graph root is cancelled by JSONL.
+cancel_db = "cancel-pending-summary.sqlite"
+seed_cancel = run(
+    [prompt("hold-summary-fixture"), prompt("seed-two"), prompt("seed-three")],
+    composition=pending_summary_path, database=cancel_db,
+)
+assert len([e for e in seed_cancel if e["kind"] == "Answer"]) == 3, seed_cancel
+witness = out / "held-summary.started"
+env = dict(
+    os.environ,
+    PHENIX_BASIC_SQLITE_PATH=str(out / cancel_db),
+    PHENIX_P2_HOLD_SUMMARY_WITNESS=str(witness),
+)
+with subprocess.Popen(
+    [runtime, "jsonl", str(pending_summary_path)],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    text=True, env=env,
+) as proc:
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps(prompt("auto-compact")) + "\n")
+    proc.stdin.flush()
+    # The witness is emitted after the selected nested Model's begin call.
+    # Do not issue cancellation before that point: this test must exercise
+    # a genuinely outstanding transitive pending ticket.
+    import time
+    deadline = time.monotonic() + 30
+    while not witness.exists() and proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert witness.exists(), "selected nested summary Model never became pending"
+    proc.stdin.write(json.dumps({"type": "cancel", "session": "s1"}) + "\n")
+    proc.stdin.flush()
+    proc.stdin.close()
+    proc.stdin = None
+    cancel_stdout, cancel_stderr = proc.communicate(timeout=30)
+    assert proc.returncode == 0, (cancel_stdout, cancel_stderr)
+cancel_events = [json.loads(line) for line in cancel_stdout.splitlines()]
+assert [e["kind"] for e in cancel_events if e["run"] == "run-4" and
+        e["kind"] in ("Cancelled", "Answer", "ToolStarted")] == [
+    "Cancelled"
+], cancel_events
+with sqlite3.connect(out / cancel_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "cancelled pending summary published a checkpoint"
+
 # A nested pending Model must not gain authority solely because the outer
 # agent has selected the summarizer provider and original Model.
 missing_nested_grant = json.loads(json.dumps(pending_summary))
@@ -689,6 +738,8 @@ assert before_incremental is not None
         "pending-summarizer-nested-model-requires-explicit-grant",
         "pending-summarizer-restart-reuses-durable-checkpoint",
         "tool-bearing-pending-summary-denied-before-CAS",
+        "cancel-nested-pending-summary-before-checkpoint-CAS",
+        "kernel-cancel-propagates-to-transitive-summary-model",
         "automatic-second-checkpoint-CAS-under-repeat-pressure",
         "new-pressured-turn-after-restart-advances-checkpoint-lineage",
     ],
