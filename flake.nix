@@ -1279,9 +1279,11 @@
         });
       # A complete immutable composition, rather than a runtime that asks
       # users to supply the composition JSON on every invocation.
-      basicPreset = name: composition: pkgs.writeShellApplication {
+      basicPreset = name: composition: sqliteDefaultName: pkgs.writeShellApplication {
         inherit name;
         text = ''
+          umask 077
+          export PHENIX_BASIC_SQLITE_DEFAULT_NAME="${sqliteDefaultName}"
           if [ "$#" -eq 0 ]; then
             mode=terminal
           else
@@ -1303,11 +1305,12 @@
       # original preset and its exported composition unchanged.
       overridablePreset = pkgs.lib.makeOverridable (
         { name, compositionName, format, entry, artifacts, definitions, slots,
-          grants, excluded, substitutions, authority, resource }:
+          grants, excluded, substitutions, authority, resource,
+          sqliteDefaultName ? "basic.sqlite" }:
         basicPreset name (pkgs.writeText compositionName (builtins.toJSON {
           inherit format entry artifacts definitions slots grants excluded
             substitutions authority resource;
-        }))
+        })) sqliteDefaultName
       );
       basicBinary = overridablePreset (basicCompositionSpec // {
         name = "phenix-basic";
@@ -1316,6 +1319,7 @@
       basicHttpBinary = overridablePreset (basicHttpCompositionSpec // {
         name = "phenix-basic-http";
         compositionName = "phenix-basic-http-composition.json";
+        sqliteDefaultName = "basic-http.sqlite";
       });
       historyVerificationBinary = overridablePreset (historyVerificationCompositionSpec // {
         name = "phenix-basic-verification";
