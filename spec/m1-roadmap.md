@@ -730,7 +730,12 @@ transport to save compile time.
     typed Basic cancellation action. It tests authorized and cross-session
     cancellation, invalid payloads and stable-v1 coexistence.
     `.github/workflows/r1-acp-v2-frontend.yml` keeps both feature modes
-    under `cargo test --locked` and checks the host compile. This tests the
+    under `cargo test --locked` and `cargo clippy --locked --all-targets
+    -- -D warnings`, then checks the host compile. The official SDK
+    interoperability workflow no longer sets the obsolete
+    `PHENIX_BASIC_USE_ACP_SDK` environment switch. The sole host remains
+    selected unconditionally on R1-ACP3; neither workflow enables v2
+    protocol routing. This tests the
     native Frontend contract only; no v2 session controller or wire endpoint
     is advertised. Accept only after feature-gated unit, native ABI and
     exact-head checks.
