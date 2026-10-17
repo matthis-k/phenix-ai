@@ -1148,10 +1148,12 @@ compaction and MCP remain later plugin work.
 `impl/m1-basic-storage-sqlite` is stacked on the Session provider. The new
 `phenix-plugin-storage-sqlite` implements the existing public Storage contract.
 It uses SQLite transactions and a revision check under `BEGIN IMMEDIATE`.
-The provider keeps no process-local record map. The product launcher sets
-`PHENIX_BASIC_SQLITE_PATH` to the database file; a missing path fails rather
-than creating an implicit in-memory store. This is a file-backed provider, not
-an OS sandbox or a kernel persistence mechanism.
+The provider keeps no process-local record map. The runtime resolves
+`PHENIX_BASIC_SQLITE_PATH` from the environment, defaulting to
+`$XDG_STATE_HOME/phenix/basic.sqlite` (`$HOME/.local/state/phenix/basic.sqlite`)
+and creating its parent directory; it never creates an implicit in-memory store.
+An explicit value still wins, and a file-backed path remains required. This is a
+file-backed provider, not an OS sandbox or a kernel persistence mechanism.
 
 The `phenix-b2-sqlite` conformance gate executes two separate processes against
 the same database. The first checkpoints a Running session with two pending

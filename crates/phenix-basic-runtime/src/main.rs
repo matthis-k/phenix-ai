@@ -17,10 +17,33 @@ use std::{
     collections::{BTreeMap, VecDeque},
     env,
     io::{self, BufRead, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     time::Duration,
 };
+
+/// Durable Basic session database used when the caller does not set
+/// `PHENIX_BASIC_SQLITE_PATH`. The explicit environment value always wins so
+/// component launchers can select their own file. The default follows the XDG
+/// base-directory convention: `$XDG_STATE_HOME/phenix/basic.sqlite`, falling
+/// back to `$HOME/.local/state/phenix/basic.sqlite`. When neither a state nor a
+/// home directory exists the requirement still fails closed.
+fn ensure_default_sqlite_path() {
+    if env::var_os("PHENIX_BASIC_SQLITE_PATH").is_some() {
+        return;
+    }
+    let Some(base) = env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+    else {
+        return;
+    };
+    let database = base.join("phenix").join("basic.sqlite");
+    if let Some(parent) = database.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    env::set_var("PHENIX_BASIC_SQLITE_PATH", database);
+}
 
 fn invoke<T: Portable>(
     kernel: &Kernel,
@@ -932,6 +955,7 @@ fn run() -> Result<(), String> {
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
         return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION for terminal]".into());
     }
+    ensure_default_sqlite_path();
     let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
         args[4].as_str()
     } else if args.len() == 3 {

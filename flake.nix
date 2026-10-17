@@ -1552,7 +1552,14 @@
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
-        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
+        # A caller that sets neither the explicit variable nor HOME must still
+        # resolve the XDG state default instead of failing session ownership.
+        unset PHENIX_BASIC_SQLITE_PATH
+        export XDG_STATE_HOME="$TMPDIR/xdg-state"
+        printf 'hello\n' | ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} > $out/terminal-default.txt
+        grep -F 'answer: mock:hello' $out/terminal-default.txt
+        test -s "$XDG_STATE_HOME/phenix/basic.sqlite"
+        echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"default_state_path":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
       '';
       basicPendingHttpProductCheck = pkgs.runCommand "phenix-basic-pending-http-product" {
         nativeBuildInputs = [ pkgs.python3 ];
