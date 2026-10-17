@@ -5,8 +5,8 @@
 //! revalidate and authorize every selected account and model.
 
 use phenix_provider_contracts::{
-    AuthenticationKind, AuthenticationMethod, ConnectionDescriptor,
-    DiscoveryKind, DiscoverySource, ProviderDescriptor,
+    AuthenticationKind, AuthenticationMethod, ConnectionDescriptor, DiscoveryKind, DiscoverySource,
+    ProviderDescriptor,
 };
 use phenix_provider_protocols::{validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
@@ -30,7 +30,11 @@ fn api_key() -> Vec<AuthenticationMethod> {
 fn source(endpoint: Option<&str>, id: &str) -> DiscoverySource {
     DiscoverySource {
         id: id.into(),
-        kind: if endpoint.is_some() { DiscoveryKind::Dynamic } else { DiscoveryKind::Declared },
+        kind: if endpoint.is_some() {
+            DiscoveryKind::Dynamic
+        } else {
+            DiscoveryKind::Declared
+        },
         endpoint: endpoint.map(str::to_string),
     }
 }
@@ -54,7 +58,11 @@ fn connection(
 }
 
 fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> ProviderDescriptor {
-    ProviderDescriptor { id: id.into(), label: label.into(), connections }
+    ProviderDescriptor {
+        id: id.into(),
+        label: label.into(),
+        connections,
+    }
 }
 
 /// Registration is offline and does not imply account entitlement or model
@@ -166,8 +174,12 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
             if !seen_connections.insert(connection.id.as_str()) || connection.protocols.is_empty() {
                 return Err("invalid provider connection");
             }
-            let base = connection.base_url.as_deref().ok_or("missing provider endpoint")?;
-            validate_endpoint(base, EndpointMode::Remote).map_err(|_| "unsafe provider endpoint")?;
+            let base = connection
+                .base_url
+                .as_deref()
+                .ok_or("missing provider endpoint")?;
+            validate_endpoint(base, EndpointMode::Remote)
+                .map_err(|_| "unsafe provider endpoint")?;
             let mut method_ids = BTreeSet::new();
             for method in &connection.auth_methods {
                 if !method_ids.insert(method.id.as_str()) || method.id.is_empty() {
@@ -212,12 +224,16 @@ mod tests {
     #[test]
     fn each_provider_uses_an_explicit_protocol_and_safe_endpoint() {
         let all = registrations();
-        assert!(all.iter().all(|provider| provider.connections.iter().all(
-            |connection| !connection.protocols.is_empty() && connection.base_url.is_some()
-        )));
+        assert!(all.iter().all(|provider| provider
+            .connections
+            .iter()
+            .all(|connection| !connection.protocols.is_empty() && connection.base_url.is_some())));
         assert_eq!(
-            all.iter().find(|provider| provider.id == "anthropic").unwrap()
-                .connections[0].protocols,
+            all.iter()
+                .find(|provider| provider.id == "anthropic")
+                .unwrap()
+                .connections[0]
+                .protocols,
             vec![ANTHROPIC_MESSAGES]
         );
         validate_registrations(&all).unwrap();
@@ -227,10 +243,16 @@ mod tests {
     fn reject_duplicate_provider_and_unsafe_registered_endpoint() {
         let mut providers = registrations();
         providers.push(providers[0].clone());
-        assert_eq!(validate_registrations(&providers), Err("duplicate or empty provider identity"));
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty provider identity")
+        );
         let mut providers = registrations();
         providers[0].connections[0].base_url = Some("http://external.test/v1".into());
-        assert_eq!(validate_registrations(&providers), Err("unsafe provider endpoint"));
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("unsafe provider endpoint")
+        );
     }
 
     #[test]
@@ -238,8 +260,13 @@ mod tests {
         let providers = registrations();
         let json = format!("{providers:?}");
         assert!(!json.contains("secret="));
-        assert!(providers.iter().all(|provider| provider.connections.iter().all(
-            |connection| connection.auth_methods.iter().all(|method| !method.id.is_empty())
-        )));
+        assert!(providers
+            .iter()
+            .all(
+                |provider| provider.connections.iter().all(|connection| connection
+                    .auth_methods
+                    .iter()
+                    .all(|method| !method.id.is_empty()))
+            ));
     }
 }
