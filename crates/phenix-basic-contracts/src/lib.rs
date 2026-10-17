@@ -360,6 +360,17 @@ pub trait Storage {
 pub trait BasicInput {
     fn submit(&self, request: PromptSubmitted) -> Result<RunResult, BasicError>;
 }
+/// Opt-in graph preparation stage. Produces exactly one authoritative
+/// ModelRequest and publishes the watched Basic request cell. It never
+/// performs Model::complete or a tool effect.
+#[contract(id = "phenix.basic.turn-prepare@1")]
+pub trait BasicTurnPrepare {
+    fn prepare(&self, request: PromptSubmitted) -> Result<ModelRequest, BasicError>;
+}
+
+#[property(owner = "phenix.basic.agent", id = "pending_model_request", get, watch)]
+pub type BasicPendingModelRequest = Option<ModelRequest>;
+
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
     fn read(&self, request: JournalQuery) -> Result<EventPage, BasicError>;
@@ -395,6 +406,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(EventJournal),
     define(Storage),
     define(BasicInput),
+    define(BasicTurnPrepare),
     define(BasicOutput),
     define(Frontend),
     graph(super::GRAPH)
@@ -449,7 +461,11 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 11);
+        assert_eq!(metadata.definitions.len(), 12);
+        assert!(metadata
+            .definitions
+            .iter()
+            .any(|definition| definition.contract == "phenix.basic.turn-prepare@1"));
         let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
         assert_eq!(graph.actions[0].id, "phenix.basic.submit");
         assert_eq!(
