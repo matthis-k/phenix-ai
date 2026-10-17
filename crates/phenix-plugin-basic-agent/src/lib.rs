@@ -1,6 +1,32 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
+
+/// Pure snapshot projection for the authoritative Basic-to-Model boundary.
+///
+/// A future graph-managed prepare node must consume this exact typed value;
+/// it must not reconstruct history, tools or scopes independently. This
+/// function neither initiates a Model call nor changes Basic session state.
+pub fn project_model_request(
+    session: &str,
+    run: &str,
+    history: &[Message],
+    tools: &[ToolInfo],
+    skills: &[Skill],
+    context: &[ContextItem],
+    limits: &Limits,
+) -> ModelRequest {
+    ModelRequest {
+        session: session.into(),
+        run: run.into(),
+        history: history.to_vec(),
+        tools: tools.to_vec(),
+        skills: skills.to_vec(),
+        context: context.to_vec(),
+        limits: limits.clone(),
+    }
+}
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
@@ -496,15 +522,15 @@ mod plugin {
                 String::new(),
                 "",
             )?;
-            let request = ModelRequest {
-                session: running.input.session.clone(),
-                run: running.run.clone(),
-                history: running.session.history.clone(),
-                tools: running.tools.clone(),
-                skills: running.skills.clone(),
-                context: running.context.clone(),
-                limits: running.input.limits.clone(),
-            };
+            let request = super::project_model_request(
+                &running.input.session,
+                &running.run,
+                &running.session.history,
+                &running.tools,
+                &running.skills,
+                &running.context,
+                &running.input.limits,
+            );
             match host
                 .begin::<Model::complete>("Model", &request)
                 .map_err(CallError::Kernel)?
