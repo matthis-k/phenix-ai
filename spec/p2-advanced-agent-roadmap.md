@@ -277,6 +277,22 @@ summarizer without a separate authorized scratch/isolated context.
 Until that coordination and native end-to-end gate exist, this production
 provider is opt-in and not part of the default Advanced composition.
 
+P2-3ad makes the existing Advanced Model provider's pending lifecycle
+aware of a separately selected pending CompactionSummarizer. Preparation
+produces either a ready ModelRequest or a source-bound summary proposal.
+The same M1 pending ticket awaits the selected summary child, with no
+checkpoint write and no primary Model call while it is unresolved. The
+completed summary is independently checked against exact source bytes,
+submitted through the existing checkpoint CAS/readback transaction and
+remeasured before starting the original Upstream Model. Cancellation
+releases either pending child and clears source state. A dedicated native
+composition binds the actual Model-backed summary plugin to a fixture
+Model that deliberately replies only after poll; it also verifies denial
+of the nested summarizer->Model grant before any checkpoint CAS.
+Default Advanced remains unchanged and the Basic graph still owns turns,
+tool execution and authoritative state. A future additive graph
+contribution and failure/restart acceptance remain required.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership
