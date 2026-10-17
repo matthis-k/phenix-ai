@@ -68,7 +68,8 @@ pub struct CredentialId {
 fn component(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_PROFILE_COMPONENT
-        && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
 impl CredentialId {
@@ -76,7 +77,21 @@ impl CredentialId {
         if !component(&self.provider) || !component(&self.connection) || !component(&self.profile) {
             return Err(CredentialError::InvalidIdentity);
         }
-        Ok(format!("{}__{}__{}.credential", self.provider, self.connection, self.profile))
+        // Hex-encode components before joining. Plain "__" separators
+        // collide when user-chosen IDs contain underscores.
+        fn encode(value: &str) -> String {
+            value
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        }
+        Ok(format!(
+            "{}-{}-{}.credential",
+            encode(&self.provider),
+            encode(&self.connection),
+            encode(&self.profile)
+        ))
     }
 }
 
@@ -156,7 +171,9 @@ impl CredentialFiles {
             return Err(CredentialError::InsecureFile);
         }
         let mut bytes = Vec::new();
-        input.read_to_end(&mut bytes).map_err(|_| CredentialError::Io)?;
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| CredentialError::Io)?;
         Secret::new(bytes)
     }
 
@@ -247,31 +264,65 @@ mod tests {
         root.store(&id("work"), &Secret::new(b"beta".to_vec()).unwrap())
             .unwrap();
         assert_eq!(
-            fs::metadata(root.path(&id("personal")).unwrap()).unwrap().permissions().mode() & 0o777,
+            fs::metadata(root.path(&id("personal")).unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o600
         );
         let reopened = CredentialFiles::open(&fixture.0, true).unwrap();
         assert_eq!(
-            reopened.read(&id("personal")).unwrap().expose_for_authorized_provider(),
+            reopened
+                .read(&id("personal"))
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"alpha"
         );
         assert_eq!(
-            reopened.read(&id("work")).unwrap().expose_for_authorized_provider(),
+            reopened
+                .read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"beta"
         );
         reopened.revoke(&id("personal")).unwrap();
-        assert_eq!(reopened.read(&id("personal")).unwrap_err(), CredentialError::NotFound);
         assert_eq!(
-            reopened.read(&id("work")).unwrap().expose_for_authorized_provider(),
+            reopened.read(&id("personal")).unwrap_err(),
+            CredentialError::NotFound
+        );
+        assert_eq!(
+            reopened
+                .read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"beta"
         );
+    }
+
+    #[test]
+    fn distinct_component_tuples_never_alias_credential_files() {
+        let first = CredentialId {
+            provider: "a__b".into(),
+            connection: "c".into(),
+            profile: "d".into(),
+        };
+        let second = CredentialId {
+            provider: "a".into(),
+            connection: "b__c".into(),
+            profile: "d".into(),
+        };
+        assert_ne!(first.file_name().unwrap(), second.file_name().unwrap());
     }
 
     #[test]
     fn path_traversal_and_symlink_secret_reads_are_denied() {
         let fixture = Fixture::new();
         let root = CredentialFiles::open(&fixture.0, true).unwrap();
-        assert_eq!(root.path(&id("../secret")), Err(CredentialError::InvalidIdentity));
+        assert_eq!(
+            root.path(&id("../secret")),
+            Err(CredentialError::InvalidIdentity)
+        );
         let outside = fixture.0.join("outside");
         fs::write(&outside, b"unsafe").unwrap();
         let destination = root.path(&id("linked")).unwrap();
