@@ -669,6 +669,20 @@
             ${pkgs.python3}/bin/python ${recordWriter} $out
           '';
         };
+      # Every user-facing Basic wrapper must supply the same absolute
+      # file-backed Storage path before any ACP, terminal or JSONL request.
+      # The SQLite plugin stays provider-owned; launchers own filesystem setup.
+      basicSqliteEnvironment = fileName: ''
+        umask 077
+        if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
+          export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/${fileName}"
+        fi
+        case "$PHENIX_BASIC_SQLITE_PATH" in
+          /*) ;;
+          *) echo "Phenix: PHENIX_BASIC_SQLITE_PATH must be absolute" >&2; exit 2 ;;
+        esac
+        mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+      '';
       scriptedModel = basicNativePlugin
         "phenix-plugin-model-scripted"
         "phenix_plugin_model_scripted"
@@ -693,6 +707,11 @@
         "phenix-plugin-model-http"
         "phenix_plugin_model_http"
         ./crates/phenix-plugin-model-http).overrideAttrs (old: {
+          src = subset (publicPaths ++ [
+            ./crates/phenix-basic-contracts
+            ./crates/phenix-provider-protocols
+            ./crates/phenix-plugin-model-http
+          ]);
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
         });
@@ -1326,6 +1345,12 @@
         mkdir -p "$out"
         python ${./tests/basic-http-preset-product.py} ${basicHttpBinary}/bin/phenix-basic-http ${basicHttpComposition} "$out"
         test -s "$out/passed.json"
+      '';
+      basicLauncherDefaultCheck = pkgs.runCommand "phenix-basic-launcher-default-state"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        python ${./tests/basic-launcher-default-product.py} ${self.packages.${system}.phenix-basic-acp}/bin/phenix-basic-acp "$out"
+        test -s "$out/accepted.json"
       '';
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -2015,11 +2040,17 @@
         phenix-p2-composition-foundation-manifest = p2CompositionFoundationManifest;
         phenix-basic-terminal = pkgs.writeShellApplication {
           name = "phenix-basic-terminal";
-          text = "exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition}";
+          text = ''
+            ${basicSqliteEnvironment "basic.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} "$@"
+          '';
         };
         phenix-basic-acp = pkgs.writeShellApplication {
           name = "phenix-basic-acp";
-          text = "exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition}";
+          text = ''
+            ${basicSqliteEnvironment "basic.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} "$@"
+          '';
         };
         # The executable reads credentials only at invocation. Nothing secret
         # enters the Nix expression or store; OPENAI_API_KEY is an optional
@@ -2033,16 +2064,16 @@
             fi
             export PHENIX_MODEL_HTTP_ENDPOINT="''${PHENIX_MODEL_HTTP_ENDPOINT:-https://api.openai.com/v1/chat/completions}"
             export PHENIX_MODEL_HTTP_MODEL="''${PHENIX_MODEL_HTTP_MODEL:-gpt-4.1-mini}"
-            if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
-              export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/basic-http.sqlite"
-            fi
-            mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+            ${basicSqliteEnvironment "basic-http.sqlite"}
             exec ${basicHttpBinary}/bin/phenix-basic-http acp "$@"
           '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
-          text = "exec ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition}";
+          text = ''
+            ${basicSqliteEnvironment "basic.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} "$@"
+          '';
         };
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
@@ -2089,6 +2120,7 @@
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
         basic-http-product = basicHttpProductCheck;
+        basic-launcher-default-state = basicLauncherDefaultCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-model-adapter-product = p2ModelAdapterProductCheck;
         p2-model-adapter-pending-http = p2ModelAdapterPendingHttpCheck;

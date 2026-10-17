@@ -121,6 +121,9 @@ endpoint = f"http://127.0.0.1:{http.server_port}/completions"
 for mode in ["denied", "zero", "stream", "multi", "cancel", "status", "redirect", "malformed", "truncated", "no-usage", "limit", "timeout"]:
     run(mode, endpoint)
 run("bad-config", "file:///tmp/forbidden-model")
+# A credentialed Model must reject non-loopback plaintext before transport.
+run("bad-config", "http://192.0.2.42/completions")
+run("bad-config", "http://localhost:8800/completions")
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)

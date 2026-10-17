@@ -9,22 +9,21 @@ pub(crate) struct Config {
     pub credential: Option<String>,
     pub ca_file: Option<String>,
 }
-// Normalize with the same parsed URL that libcurl receives. This avoids
-// accepting an authority under one parser and connecting to another host.
+// Reuse provider-owned URL and credential-origin policy before libcurl sees
+// an endpoint. This legacy explicit HTTP preset allows literal loopback
+// addresses; remote requests require HTTPS. Never normalize away userinfo.
 pub(crate) fn endpoint_url(input: &str) -> Result<String, BasicError> {
-    let malformed = || error(ErrorCode::InvalidInput, "invalid HTTP model configuration");
-    if input != input.trim() || input.chars().any(char::is_control) || input.contains('#') {
-        return Err(malformed());
-    }
-    let parsed = url::Url::parse(input).map_err(|_| malformed())?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || !parsed.has_host()
-        || !parsed[url::Position::BeforeUsername..url::Position::BeforeHost].is_empty()
-        || parsed.fragment().is_some()
-    {
-        return Err(malformed());
-    }
-    Ok(parsed.to_string())
+    phenix_provider_protocols::validate_endpoint(
+        input,
+        phenix_provider_protocols::EndpointMode::LocalLoopback,
+    )
+    .map(|endpoint| endpoint.url)
+    .map_err(|_| {
+        error(
+            ErrorCode::InvalidInput,
+            "invalid or insecure HTTP model endpoint",
+        )
+    })
 }
 
 impl Config {

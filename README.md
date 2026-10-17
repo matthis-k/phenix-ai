@@ -70,6 +70,25 @@ It defaults to the OpenAI chat-completions endpoint, chooses the model from
 `PHENIX_BASIC_SQLITE_PATH` overrides it. The transport reads a credential
 only at execution. `OPENAI_API_KEY` is an alias supported by the launcher.
 
+The installed `phenix-basic-acp`, `phenix-basic-terminal` and
+`phenix-basic-jsonl` launchers use
+`$XDG_STATE_HOME/phenix/basic.sqlite` (or
+`$HOME/.local/state/phenix/basic.sqlite`) by default. All installed
+launchers create missing parent directories and honor an explicit
+**absolute** `PHENIX_BASIC_SQLITE_PATH`. The Basic scripted-model and
+HTTP-model defaults are intentionally separate databases. Neovim does not
+choose a database path; the launched Phenix process does. A relative or
+non-file SQLite path is rejected with a diagnostic instead of depending on
+Neovim's current working directory.
+
+For credential-bearing model connections the HTTP Model now requires
+HTTPS for remote hosts. Explicit loopback HTTP with a literal
+`127.0.0.1` or `[::1]` address remains available for local servers and
+deterministic fixtures. Plaintext remote URLs and credentials embedded in
+URLs are rejected before transport. This legacy preset still uses an
+environment-supplied API key; interactive account selection and OAuth
+remain tracked in [runtime management #891](https://github.com/matthis-k/phenix-ai/issues/891).
+
 The `basic-http-product` check drives the installed Basic HTTP composition
 against a local streaming HTTP fixture. That deterministic check has no
 external network calls or paid model dependency. Live-provider behavior and

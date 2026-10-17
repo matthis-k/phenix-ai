@@ -217,18 +217,20 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         "https://[::1]:9443/completions?stream=1"
     );
     assert_eq!(
-        request::endpoint_url("http://localhost:8800").unwrap(),
-        "http://localhost:8800/"
+        request::endpoint_url("http://127.0.0.1:8800").unwrap(),
+        "http://127.0.0.1:8800/"
     );
     assert_eq!(
         request::endpoint_url("https://example.org/@scope?mention=@alice").unwrap(),
         "https://example.org/@scope?mention=@alice"
     );
-    // The standard parser strips empty userinfo. Libcurl receives only the
-    // normalized, credential-free endpoint, not the original input string.
+    // A URL parser can normalize empty userinfo away, but credentials
+    // must never be sent to an endpoint with explicit userinfo.
     assert_eq!(
-        request::endpoint_url("http://@localhost/completions").unwrap(),
-        "http://localhost/completions"
+        request::endpoint_url("http://@localhost/completions")
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
     );
     for bad in [
         "",
@@ -236,6 +238,10 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         "file:///etc/passwd",
         "ftp://localhost/file",
         "http://",
+        "http://localhost:8800",
+        "http://192.0.2.42/completions",
+        "http://10.0.0.8/completions",
+        "http://0.0.0.0:8080/completions",
         "http://user@localhost/completions",
         "http://%40@localhost/completions",
         "https://user:password@localhost/completions",
