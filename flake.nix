@@ -245,6 +245,59 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      providerProtocolsSource = subset (publicPaths ++ [ ./crates/phenix-provider-protocols ]);
+      providerProtocolsCheck = rust.buildRustPackage {
+        pname = "phenix-provider-protocols";
+        version = "0.1.0";
+        src = providerProtocolsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-protocols" ];
+        cargoTestFlags = [ "-p" "phenix-provider-protocols" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out
+          touch $out/verified
+        '';
+      };
+      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ]);
+      providerDiscoveryCheck = rust.buildRustPackage {
+        pname = "phenix-provider-discovery";
+        version = "0.1.0";
+        src = providerDiscoverySource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-discovery" ];
+        cargoTestFlags = [ "-p" "phenix-provider-discovery" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out
+          touch $out/verified
+        '';
+      };
+      providerContractsSource = subset (publicPaths ++ [ ./crates/phenix-provider-contracts ]);
+      providerContractsBinary = rust.buildRustPackage {
+        pname = "phenix-provider-contracts";
+        version = "0.1.0";
+        src = providerContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-provider-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-provider-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts" false;
+      providerContractsCheck = pkgs.runCommand "phenix-provider-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p $out
+        python - "${providerDefinitions}/inspection.json" "$out" <<'PY'
+        import json, sys
+        from pathlib import Path
+        report = json.load(open(sys.argv[1]))
+        assert len(report["definitions"]) == 2
+        assert report["plugin"] == "phenix.provider-contracts"
+        (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+        PY
+      '';
       advancedContractsSource = subset (publicPaths ++ [
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -895,6 +948,29 @@
       };
       basicComposition = pkgs.writeText "phenix-basic-composition.json"
         (builtins.toJSON basicCompositionSpec);
+      # Opt-in real-provider Basic preset. Change only the selected Model and
+      # its journal grant; retain the P1 agent graph, tools and storage.
+      basicHttpCompositionSpec = basicCompositionSpec // {
+        artifacts =
+          builtins.filter (item: item != "${scriptedModel}") basicCompositionSpec.artifacts
+          ++ [ "${httpModel}" ];
+        slots = map (binding:
+          if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
+          then binding // { provider = "phenix.model.http"; }
+          else binding
+        ) basicCompositionSpec.slots ++ [
+          (basicBinding "phenix.model.http" "Journal" "phenix.basic.event-journal" "Journal")
+        ];
+        grants = basicCompositionSpec.grants ++ [
+          { caller = "phenix.model.http";
+            interface = "phenix.basic.journal@1";
+            operation = "append";
+            resources = [ "phenix.session.s1" ];
+          }
+        ];
+      };
+      basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
+        (builtins.toJSON basicHttpCompositionSpec);
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
       historyVerificationCompositionSpec = basicCompositionSpec // {
@@ -1156,6 +1232,10 @@
         name = "phenix-basic";
         compositionName = "phenix-basic-composition.json";
       });
+      basicHttpBinary = overridablePreset (basicHttpCompositionSpec // {
+        name = "phenix-basic-http";
+        compositionName = "phenix-basic-http-composition.json";
+      });
       historyVerificationBinary = overridablePreset (historyVerificationCompositionSpec // {
         name = "phenix-basic-verification";
         compositionName = "phenix-basic-history-verification.json";
@@ -1171,6 +1251,13 @@
       basicBinaryClosure = pkgs.closureInfo {
         rootPaths = [ basicBinary ];
       };
+      basicHttpProductCheck = pkgs.runCommand "phenix-basic-http-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-http-preset-product.py} ${basicHttpBinary}/bin/phenix-basic-http ${basicHttpComposition} "$out"
+        test -s "$out/passed.json"
+      '';
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1819,6 +1906,7 @@
         phenix-m1-release = release;
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
+        phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
         phenix-plugin-basic-tools = basicTools;
@@ -1833,6 +1921,8 @@
         phenix-basic-runtime = basicRuntime;
         phenix-basic-composition = basicComposition;
         phenix-basic = basicBinary;
+        phenix-basic-http = basicHttpBinary;
+        phenix-basic-http-composition = basicHttpComposition;
         phenix-basic-verification-composition = historyVerificationComposition;
         # Explicit opt-in test binary: Basic runtime plus a history-only Model.
         phenix-basic-verification = historyVerificationBinary;
@@ -1853,6 +1943,25 @@
         phenix-basic-acp = pkgs.writeShellApplication {
           name = "phenix-basic-acp";
           text = "exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition}";
+        };
+        # The executable reads credentials only at invocation. Nothing secret
+        # enters the Nix expression or store; OPENAI_API_KEY is an optional
+        # compatibility alias for the HTTP plugin's credential variable.
+        phenix-basic-http-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-http-acp";
+          text = ''
+            set -eu
+            if [ -z "''${PHENIX_MODEL_HTTP_API_KEY:-}" ] && [ -n "''${OPENAI_API_KEY:-}" ]; then
+              export PHENIX_MODEL_HTTP_API_KEY="$OPENAI_API_KEY"
+            fi
+            export PHENIX_MODEL_HTTP_ENDPOINT="''${PHENIX_MODEL_HTTP_ENDPOINT:-https://api.openai.com/v1/chat/completions}"
+            export PHENIX_MODEL_HTTP_MODEL="''${PHENIX_MODEL_HTTP_MODEL:-gpt-4.1-mini}"
+            if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
+              export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/basic-http.sqlite"
+            fi
+            mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+            exec ${basicHttpBinary}/bin/phenix-basic-http acp "$@"
+          '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
@@ -1884,6 +1993,9 @@
         m1-native-authoring = authoringCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
+        provider-contracts = providerContractsCheck;
+        provider-discovery = providerDiscoveryCheck;
+        provider-protocols = providerProtocolsCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
@@ -1896,6 +2008,7 @@
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
+        basic-http-product = basicHttpProductCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;
         p2-model-adapter-product = p2ModelAdapterProductCheck;
         p2-model-adapter-pending-http = p2ModelAdapterPendingHttpCheck;
