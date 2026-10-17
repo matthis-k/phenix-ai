@@ -114,6 +114,82 @@ P2-3 remains unaccepted.
 
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
+## Implementation handoff: code-sized P2 slices
+
+The stage table above owns scope and release status. Use this section when assigning
+implementation to a fresh-session coding agent. Each packet is a **starting path**,
+not a mandatory internal Rust design. The actual checked-in contract types, package
+descriptors and tests take precedence over file names or examples written here.
+Finish one observable vertical slice per PR; do not implement an entire P2 stage
+from a single prompt.
+
+### Working rule for a coding agent
+
+1. Read this stage's acceptance row, the linked contract/ADR, the actual selected
+   provider descriptor and the current implementation. Identify the exact upstream
+   commit and overlapping open PRs. Prefer extending one accepted implementation.
+2. Add a RED test through the relevant existing contract or packaged product.
+   Include a counterfactual that denies a grant, changes a revision, removes a
+   required provider, or interrupts a live operation.
+3. Implement the smallest slice on the current M1 SDK, provider imports and graph.
+   Make local choices about data layouts, helper functions, internal modules and
+   maintained third-party crates. Record an unusual trade-off in the PR, not a
+   new architecture document by default.
+4. Run focused Rust tests, `cargo fmt --all --check`, applicable real native/JSONL/
+   ACP/SQLite product tests, then the exact-head canonical Nix checks. Link the
+   commands, SHA and passing evidence. A unit-only result is not stage completion.
+5. Stop and raise a specific blocker when the slice would require changing the
+   authority owner, inventing a transport/protocol, introducing a competing
+   persistent registry or agent loop, widening grants, or resolving conflicting
+   published contract identities. Do not make those choices implicitly.
+
+Local implementation is flexible; the accepted user-facing semantics, contract
+ownership, immutable graph generations and denial behavior are the constraints.
+A path listed below is an inspection entry point. Add a new crate only when a
+separate provider or public contract is necessary; the exact private module
+layout is a coding choice. Keep Basic product tests green throughout.
+
+### Packets with entry points and first executable proof
+
+| Stage / first PR | Inspect and change | Implement first | RED proof before expansion |
+| --- | --- | --- | --- |
+| **P2-2b: runtime project admission** | Existing `EvidenceStore`, project membership provider, `phenix-basic-runtime` session/control admission; #891 | At authenticated new/resume, resolve stable project identity and existing membership. Propagate the selected, scoped project grant to retrieval. Deny revoked access on an *already executing* root, then cancel it through the existing lifecycle. | Packaged two-session SQLite scenario: allowed cross-session recall; forged project/session selector and revoked in-flight root yield zero project reads/writes. Repeat after restart. Do not count #906–#910 provider tests alone as runtime admission. |
+| **P2-3: selected prompt preparation** | `crates/phenix-plugin-basic-agent/src/lib.rs`, `crates/phenix-plugin-advanced-model-adapter`, `phenix-advanced-contracts`, `tests/p2-model-adapter-product.py`, pending P2-3aj PRs | Select **one** compatible graph-preparation contract/contribution from the overlapping #959/#960/#961 work before changing code. Wire Basic's watched pending Model request to selected Advanced preparation and independently checked Basic Model admission. Keep the Basic graph as the only turn executor. Start with byte-exact no-compaction forwarding, then a verified compacted candidate. | Opt-in packaged JSONL/SQLite sequence `Basic prepare -> Advanced proposal -> Basic advance -> Model -> optional tool continuation`. Remove the proposal-read grant or alter its digest: no Model/tool effect. Verify cancellation and restart. Do not combine alternate P2-3aj plugin IDs or claim that a preparation-only witness executes the agent. |
+| **P2-3: durable compaction gate** | Existing `CompactionStore`, `EventJournal`, `SessionSnapshot`, selected `ModelRequest` meter/assembler and `tests/p2-model-adapter-product.py` | From authorized current source, validate complete older tool-call receipts and checkpoint ancestors; assemble the **exact** candidate request, meter with the selected Model provider and reserve output before calling that provider. Commit a checkpoint only under existing CAS and journal rules. | Force a small selected context budget: the actual Model input contains bounded, cited old context and exact recent turns. Corrupt an ancestor, change Model identity, inject an incomplete tool call or crash before checkpoint commit: deny/reconcile without duplicate execution. A scripted byte-token meter proves only fixture semantics. |
+| **P2-4: code observations** | `phenix-sdk` contracts, existing Storage/Workspace source revisions and oldmain code-entity semantics; use maintained Tree-sitter and LSP libraries | Add a selectable Rust-language observation provider producing bounded definitions/references/diagnostics tied to exact content hashes and provider epochs. Store evidence plus unresolved/stale state before exposing current relations. Add lineage only after the revision check works. | Native isolated Rust fixture: current definition/references match source; edit, rename, missed watcher change or provider restart invalidates prior-current output. Two same-named symbols must not be merged by heuristic. |
+| **P2-4 + P2-6: edit reconciliation** | Code observation provider, proposed Workspace read/write operations, Session/Storage revision/CAS mechanisms | Validate expected bytes/revisions before writes. After a successful OS write, re-read content and publish verified observations. Persist `needs-validation` when index publishing fails; repair on restart. | Write conflict produces no overwrite. Inject failure between successful file write and index publish: on restart the file stays changed, but queries cannot claim the index is current until revalidation. |
+| **P2-5: contribution replacement** | `phenix-kernel` resolver/graph generation and leases, `phenix-sdk` graph contribution descriptors, current native reload tests | Load a versioned plugin candidate and compile its **complete** graph with existing validation; atomically select it only after validation and state migration. Keep old roots pinned to old generation/leases. | Version A executes 3 nodes; B executes 5 for new roots. An old root completes A. Denied schema/grant or failed migration preserves A, without constructing denied plugin code. |
+| **P2-6: Workspace I/O** | Existing M1 Tool/Workspace candidate imports, root resource admission, `phenix-plugin-basic-tools` as a contract example, packaged Advanced composition | Start with authorized read and one revision-checked write in a disposable Git worktree. Then add diff, move and bounded process execution with cancellation using maintained OS/Git libraries. Return typed receipts rather than implicit mutation. | Independent Model makes a real read/edit/diff call. A symlink escape, stale hash or denied execute grant changes no forbidden file or process. Streaming/cancel tests check final process state. |
+| **P2-6A: architecture memory** | P2-2b evidence, P2-4 source refs, P2-6 Git/Workspace, existing Skills/Context and ADR conventions | Persist a reviewed Git decision with exact project/commit/source identity; retrieve it in another authorized session. Add optional proposal/review hooks only after source-backed recall works. | Restart and recall exact accepted decision; outdated source marks it for review. A model-generated conflicting proposal cannot promote itself over an accepted ADR; a denied project cannot read it. |
+| **P2-7: durable job** | Existing Session/Journal/Storage CAS, Workspace/process provider and selected generic kernel cancellation | Store job ID, owner, operation key, generation, cursor and recovery state before starting one effect. Add attach/detach/cancel and reconcile unknown external effects on restart. Keep process execution in the process provider. | Detach, reconnect and restart an actual packaged job. Repeated admission gives one job/effect; crash after admission but before observable completion reports `indeterminate` unless verified, never blind rerun. |
+| **P2-8: child session** | Existing Basic Session/Journal and root admission, P2-7 lifetime/leases, `phenix-advanced-verification` composition | Spawn one real child through typed Session admission with an attenuated grant and separate journal; then add second child, bounded budgets, await/aggregate and restart reconciliation. Parent stores child IDs/evidence refs rather than flattened transcript. | Scripted parent gets two distinct child Model requests; a child with denied Tool scope cannot call it, and cancelling one child preserves sibling policy. Restart retains child identities. |
+| **P2-9: inspect/evaluate** | M1 generic event stream, selected Journal/Storage and proposed optional observer plugins | Start with authorized inspect-by-root and trace correlation across model, tool and child events; then add bounded cursors, redaction and measured usage. Control mutations use separate authorized operations. | Independent observer reconstructs transitions across restart. Denied cross-session query returns no data; blocked/slow observer cannot block an agent root. |
+| **P2-10: product closure** | `flake.nix`, `tests/p2-model-adapter-product.py`, AV-01–AV-45 and P1 tests | Wire each accepted plugin into `phenix-advanced`, fixture variants only into verification; keep external `.override` working. Use the real selected provider/graph, not a direct unit-test entry point. | All five packages inspect/launch, actual JSONL and independent ACP tests pass, no fixture plugin enters public closure, P1 behavior unchanged, exact-head Nix CI and final integrated-main SHA are green. |
+
+### Preferred slice size and handoff record
+
+A useful PR changes one owner or an interface plus its immediate consumer and proves
+one complete behavior. Wide changes are appropriate only when they cannot leave
+an independently valid composition; use expand/migrate/contract commits with a
+single end-to-end proof. Every PR body should give:
+
+```text
+Stage and owning roadmap row:
+Base SHA / selected upstream PR:
+Contract imports and existing provider reused:
+Files actually changed (the table above is only a starting point):
+RED command and counterfactual:
+Implementation choice left local and why:
+Packaged command, results and exact SHA:
+Remaining blocker or next independently testable slice:
+```
+
+If code differs from a suggested path while preserving the selected contract,
+update the handoff pointer in the same PR. Do not fossilize a temporary helper
+name as a new architectural rule. Implementation agents must not reinterpret
+a stage's existing acceptance tests as evidence that all its earlier slices
+are merged or complete.
+
 ## Advanced graph topology and contract ownership
 
 Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composition. It contributes typed graph nodes and event handlers around the selected Basic agent; it does not fork the Basic model/tool loop or implement a second scheduler.
