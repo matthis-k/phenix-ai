@@ -328,10 +328,7 @@ mod tests {
             connection: "b".repeat(64),
             profile: "c".repeat(64),
         };
-        assert_eq!(
-            too_long.file_name(),
-            Err(CredentialError::InvalidIdentity)
-        );
+        assert_eq!(too_long.file_name(), Err(CredentialError::InvalidIdentity));
     }
 
     #[test]
