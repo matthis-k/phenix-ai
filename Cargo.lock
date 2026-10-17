@@ -1083,6 +1083,7 @@ dependencies = [
  "phenix-contract",
  "phenix-kernel",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1162,6 +1163,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-event-journal"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-evidence-journal"
 version = "0.1.0"
 dependencies = [
@@ -1181,11 +1190,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-event-journal"
+name = "phenix-plugin-model-history-test"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
+ "serde_json",
 ]
 
 [[package]]
@@ -1198,15 +1208,6 @@ dependencies = [
  "serde_json",
  "sse-parse",
  "url",
-]
-
-[[package]]
-name = "phenix-plugin-model-history-test"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
- "serde_json",
 ]
 
 [[package]]
@@ -1228,20 +1229,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-storage-fixture"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
-]
-
-[[package]]
 name = "phenix-plugin-project-storage-sqlite"
 version = "0.1.0"
 dependencies = [
  "phenix-advanced-contracts",
  "phenix-sdk",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-plugin-storage-fixture"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
 ]
 
 [[package]]
@@ -1254,25 +1255,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-provider-protocols"
-version = "0.1.0"
-dependencies = [
- "url",
-]
-
-[[package]]
-name = "phenix-provider-discovery"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "phenix-provider-builtins"
 version = "0.1.0"
 dependencies = [
  "phenix-provider-contracts",
  "phenix-provider-protocols",
+]
+
+[[package]]
+name = "phenix-provider-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -1283,11 +1278,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-provider-contracts"
+name = "phenix-provider-discovery"
 version = "0.1.0"
 dependencies = [
- "phenix-sdk",
- "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "phenix-provider-protocols"
+version = "0.1.0"
+dependencies = [
+ "url",
 ]
 
 [[package]]
@@ -1430,12 +1431,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc-hash"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
-
-[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1443,6 +1438,12 @@ checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustversion"
