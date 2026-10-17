@@ -15,6 +15,14 @@ impl CredentialIdentity {
     /// Exact credential resource; a provider-list/session grant is insufficient.
     /// Encoding each component avoids collisions between dotted/underscored IDs.
     pub fn resource(&self) -> Result<String, ProviderError> {
+        // The file backend's hex leaf (two separators + ".credential") is
+        // limited to 240 bytes. This also fits canonical 256-byte resources.
+        if self.provider_id.len() + self.connection_id.len() + self.profile_id.len() > 113 {
+            return Err(ProviderError {
+                code: ProviderErrorCode::InvalidInput,
+                message: "invalid credential identity".into(),
+            });
+        }
         let mut encoded = Vec::new();
         for item in [&self.provider_id, &self.connection_id, &self.profile_id] {
             if item.is_empty()
@@ -125,6 +133,31 @@ mod tests {
         );
         for invalid in ["", "../secret", "a.b", "a/b"] {
             assert!(identity("a", "api", invalid).resource().is_err());
+        }
+    }
+
+    #[test]
+    fn identity_boundaries_fit_authority_and_file_backend() {
+        // 113 input bytes produce a 239-byte backend leaf and 247-byte resource.
+        assert_eq!(
+            identity(&"a".repeat(64), &"b".repeat(48), "c")
+                .resource()
+                .unwrap()
+                .len(),
+            247
+        );
+        for sizes in [(64, 49, 1), (38, 38, 38), (64, 64, 64), (65, 1, 1)] {
+            assert_eq!(
+                identity(
+                    &"a".repeat(sizes.0),
+                    &"b".repeat(sizes.1),
+                    &"c".repeat(sizes.2)
+                )
+                .resource()
+                .unwrap_err()
+                .code,
+                ProviderErrorCode::InvalidInput
+            );
         }
     }
 

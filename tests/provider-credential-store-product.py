@@ -55,6 +55,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     second = identity("work")
     first_secret = secrets.token_hex(32).encode()
     second_secret = secrets.token_hex(32).encode()
+    rotated_secret = secrets.token_hex(32).encode()
 
     def invoke(operation, request, *, granted=None, authorized=True, environment=None):
         selected = resource(first) if granted is None else granted
@@ -62,10 +63,11 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
             format="phenix.composition.v2",
             entry=dict(interface=contract, operation=operation, provider=provider),
             artifacts=[plugin], definitions=[definitions], slots=[],
-            grants=[dict(caller="root", interface=contract, operation=operation,
-                         resources=[selected])] if authorized else [],
+            grants=[dict(caller="root", interface=contract, operation=item,
+                         resources=[selected]) for item in ("import", "resolve", "revoke")
+                    if authorized or item != operation],
             excluded=[], substitutions=[],
-            authority=dict(operations=[contract + "/" + operation], resources=[selected]),
+            authority=dict(operations=[contract + "/" + item for item in ("import", "resolve", "revoke")], resources=[selected]),
             resource=selected,
         )
         composition = root / "composition.json"
@@ -81,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
         outcome = report.pop("outcome", None)
         if outcome is None and report.get("last_failure"):
             outcome = dict(kind="kernel_failure", failure=report["last_failure"])
-        for secret in [first_secret, second_secret]:
+        for secret in [first_secret, second_secret, rotated_secret]:
             assert secret.decode() not in json.dumps(report)
             assert secret.decode() not in proc.stderr
             assert json.dumps(list(secret)) not in json.dumps(report)
@@ -105,6 +107,19 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
            environment=relative_directory)
     assert not list(vault.iterdir())
 
+    boundary = dict(provider_id="a" * 64, connection_id="b" * 48, profile_id="c")
+    result, status = invoke("import", dict(identity=boundary, secret=first_secret),
+                            granted=resource(boundary))
+    assert status == 0 and result == dict(kind="success", value={})
+    result, status = invoke("resolve", boundary, granted=resource(boundary))
+    assert status == 0 and result == dict(kind="success", value=dict(bytes=list(first_secret)))
+    result, status = invoke("revoke", boundary, granted=resource(boundary))
+    assert status == 0 and result == dict(kind="success", value={})
+    for size in [38, 64]:
+        oversized = dict(provider_id="a" * size, connection_id="b" * size, profile_id="c" * size)
+        domain("import", dict(identity=oversized, secret=first_secret), "InvalidInput")
+    assert not list(vault.iterdir())
+
     result, status = invoke("import", dict(identity=first, secret=first_secret))
     assert status == 0 and result == dict(kind="success", value={})
     result, status = invoke("import", dict(identity=second, secret=second_secret),
@@ -122,10 +137,22 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     domain("revoke", second, "Denied")
     domain("resolve", identity(connection="chatgpt"), "Denied")
     domain("resolve", first, "Denied", granted="phenix.session.foreign")
-    result, status = invoke("resolve", first, authorized=False)
-    assert status != 0 and result["kind"] == "kernel_failure"
-    failure = result["failure"]
-    assert (failure["code"] if isinstance(failure, dict) else failure) == "Denied"
+    # Omit only the operation under test, retaining both independent grants.
+    # Check bytes and names too: denied import/revoke must have no effect.
+    for operation, request in [("import", dict(identity=first, secret=rotated_secret)),
+                               ("resolve", first), ("revoke", first)]:
+        before = {path.name: path.read_bytes() for path in vault.iterdir()}
+        result, status = invoke(operation, request, authorized=False)
+        assert status != 0 and result["kind"] == "kernel_failure"
+        failure = result["failure"]
+        assert (failure["code"] if isinstance(failure, dict) else failure) == "Denied"
+        assert before == {path.name: path.read_bytes() for path in vault.iterdir()}
+
+    result, status = invoke("import", dict(identity=first, secret=rotated_secret))
+    assert status == 0 and result == dict(kind="success", value={})
+    result, status = invoke("resolve", first)
+    assert status == 0 and result == dict(kind="success", value=dict(bytes=list(rotated_secret)))
+    assert len(list(vault.iterdir())) == 2
 
     result, status = invoke("revoke", first)
     assert status == 0 and result == dict(kind="success", value={})
@@ -137,7 +164,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
 
 (out / "accepted.json").write_text(json.dumps(dict(
     format="phenix.provider.credential-store.v1", accepted=True,
-    cases=["explicit-consent", "explicit-absolute-directory", "private-files", "restart", "profile-isolation",
-           "connection-isolation", "session-resource-denial", "operation-grant-denial",
+    cases=["explicit-consent", "explicit-absolute-directory", "identity-boundaries", "private-files", "restart", "profile-isolation",
+           "connection-isolation", "session-resource-denial", "import-grant-denial",
+           "resolve-grant-denial", "revoke-grant-denial", "rotation-restart",
            "revoke-without-fallback", "insecure-vault-denial", "nonsecret-diagnostics"],
 ), indent=2))

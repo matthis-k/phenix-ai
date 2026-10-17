@@ -414,7 +414,24 @@ existing explicit-consent file backend; it is not installed as a silent default.
 directory, and `PHENIX_CREDENTIAL_FILE_CONSENT=1` explicitly enables the weaker
 plaintext fallback. Values have redacted Debug and no ordinary serde/config
 serialization. The `provider-credential-store` installed native check covers
-restart, isolation, missing grants, consent, revocation and diagnostic redaction.
+restart and rotation/restart, isolation, independent import/resolve/revoke grant
+denials with unchanged vault bytes, consent, revocation, identity boundaries and
+diagnostic redaction. Identities retain the existing 64-byte component limit and
+must total at most 113 bytes: their encoded file leaf is at most 239 bytes and
+their canonical resource at most 247 bytes (below the authority's 256-byte cap).
+The Linux fallback now requires filesystem `O_TMPFILE` support and `/proc/self/fd`;
+unsupported environments fail closed without a second persistence backend.
+Anonymous files hold uncommitted plaintext until sync. A reserved
+`.credential-pending` publish slot is linked and atomically renamed while holding
+an exclusive lock on the pinned directory. Open/read/store/revoke recover that
+slot under the same lock; they never scan arbitrary candidate names or delete a
+live cooperating writer's staging file. Existing committed filenames are
+unchanged; no migration or alternate backend is introduced. Backend subprocess
+tests interrupt imports and rotations after sync and after link, verify restart
+and revocation, and check live-writer exclusion, pinned-directory authority and
+same-instance directory/file permission revalidation. The unchanged production
+CLI performs only one invocation per loaded generation, so same-generation
+checks are library evidence, not claimed native CLI coverage.
 The secret-service backend, provider-auth profile metadata/revision management,
 non-journaled ACP management admission, selected HTTP resolution and end-to-end
 Neovim onboarding remain open under #891. Stored bytes alone do not prove
