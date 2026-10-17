@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3ak are integrated, but the no-compaction graph handoff and all P2 release gates remain unaccepted.
+Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3ak are integrated, but the no-compaction graph handoff and all P2 release gates remain unaccepted. Provider catalog/credential metadata is integrated; runtime credential submission, model discovery, revision-checked selection mutation and the Neovim journey remain PV2–PV7.
 Updated: 2026-10-17
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
