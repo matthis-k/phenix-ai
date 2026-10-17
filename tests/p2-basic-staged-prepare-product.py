@@ -108,9 +108,88 @@ assert not [e for e in bad_events if e["kind"] in (
     "PromptAccepted", "ModelStarted", "Answer", "ToolStarted"
 )], bad_events
 
+# Optional selected Advanced graph contribution. Reuse this exact staged
+# composition builder rather than duplicating grant/origin logic in tests.
+if len(sys.argv) == 9:
+    graph_plugin, noop_plugin, advanced_definitions = sys.argv[6:]
+    selected = json.loads(json.dumps(stage))
+    selected["artifacts"].extend([graph_plugin, noop_plugin])
+    selected["definitions"].append(advanced_definitions)
+    selected["slots"].extend([
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Source",
+         "index": 0, "provider": "phenix.basic.agent",
+         "export": "property.pending_model_request"},
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Prepared",
+         "index": 0, "provider": "phenix.basic.agent",
+         "export": "property.prepared_model_request"},
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Preparer",
+         "index": 0, "provider": "phenix.advanced.preparer-noop",
+         "export": "Prepare"},
+    ])
+    selected["grants"].extend([
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": "phenix.advanced.model-preparation-change@1",
+         "operation": "run", "resources": [scoped]},
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": "phenix.advanced.model-preparation@1",
+         "operation": "prepare", "resources": [scoped]},
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": pending_property, "operation": op,
+         "resources": [scoped, pending_property[:-2]]}
+        for op in ("get", "watch")
+    ])
+    selected["grants"].append({
+        "caller": "phenix.advanced.graph-preparer",
+        "interface": prepared_property, "operation": "set",
+        "resources": [scoped, prepared_property[:-2]],
+    })
+    selected["authority"]["operations"].extend([
+        "phenix.advanced.model-preparation-change@1/run",
+        "phenix.advanced.model-preparation@1/prepare",
+        pending_property + "/watch",
+        prepared_property + "/set",
+    ])
+    selected_path = out / "selected-graph.json"
+    selected_path.write_text(json.dumps(selected))
+    complete, complete_events = submit(selected_path, "selected.sqlite")
+    assert complete.returncode == 0, (complete.stdout, complete.stderr)
+    answers = [event["text"] for event in complete_events if event["kind"] == "Answer"]
+    assert answers == ["mock:graph-boundary"], complete_events
+    assert len([event for event in complete_events if event["kind"] == "PromptAccepted"]) == 1
+    assert len([event for event in complete_events if event["kind"] == "ModelStarted"]) == 1
+    assert not [event for event in complete_events if event["kind"] == "ToolStarted"]
+    with sqlite3.connect(out / "selected.sqlite") as db:
+        row = db.execute(
+            "SELECT length(data) FROM basic_records WHERE session='s1' "
+            "AND name='event-journal.v1'"
+        ).fetchone()
+        assert row is not None and row[0] > 0
+
+    # Removing the separately selected advanced hook's effective write
+    # authority must reject the whole graph before Basic journals any turn.
+    denied_selected = json.loads(json.dumps(selected))
+    denied_selected["grants"] = [
+        grant for grant in denied_selected["grants"]
+        if not (grant["caller"] == "phenix.advanced.graph-preparer"
+                and grant["interface"] == prepared_property
+                and grant["operation"] == "set")
+    ]
+    denied_selected_path = out / "selected-no-write-grant.json"
+    denied_selected_path.write_text(json.dumps(denied_selected))
+    denied_result, denied_events = submit(
+        denied_selected_path, "selected-denied.sqlite",
+    )
+    assert denied_result.returncode != 0, (
+        denied_result.stdout, denied_result.stderr,
+    )
+    assert not [event for event in denied_events if event["kind"] in (
+        "PromptAccepted", "ModelStarted", "Answer", "ToolStarted"
+    )], denied_events
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.basic-staged-prepare.v1",
     "accepted": True,
+    "selected_advanced_graph_tested": len(sys.argv) == 9,
     "cases": [
         "authorized-basic-prepare-publishes-model-request-without-model-execution",
         "missing-prepare-grant-denies-without-journal-effects",
