@@ -111,10 +111,17 @@ impl CatalogCache {
                 if ttl > MAX_DYNAMIC_TTL_SECONDS {
                     return Err(CacheError::InvalidPolicy);
                 }
-                Some(checked_at.checked_add(ttl).ok_or(CacheError::InvalidPolicy)?)
+                Some(
+                    checked_at
+                        .checked_add(ttl)
+                        .ok_or(CacheError::InvalidPolicy)?,
+                )
             }
         };
-        let revision = self.next_revision.checked_add(1).ok_or(CacheError::RevisionOverflow)?;
+        let revision = self
+            .next_revision
+            .checked_add(1)
+            .ok_or(CacheError::RevisionOverflow)?;
         self.next_revision = revision;
         self.entries.insert(
             key,
@@ -140,7 +147,11 @@ impl CatalogCache {
             page: entry.page.clone(),
             checked_at: entry.checked_at,
             revision: entry.revision,
-            freshness: if fresh { Freshness::Fresh } else { Freshness::Stale },
+            freshness: if fresh {
+                Freshness::Fresh
+            } else {
+                Freshness::Stale
+            },
         })
     }
 
@@ -186,7 +197,14 @@ mod tests {
     #[test]
     fn dynamic_default_expires_at_fifteen_minutes_exactly() {
         let mut cache = CatalogCache::default();
-        cache.put(key(Some("work")), 100, 3, CachePolicy::Dynamic { ttl_seconds: 0 }, catalog("a"))
+        cache
+            .put(
+                key(Some("work")),
+                100,
+                3,
+                CachePolicy::Dynamic { ttl_seconds: 0 },
+                catalog("a"),
+            )
             .unwrap();
         assert_eq!(
             cache.view(&key(Some("work")), 999, 3).unwrap().freshness,
@@ -201,13 +219,35 @@ mod tests {
     #[test]
     fn account_generation_change_never_reuses_another_accounts_entitlement() {
         let mut cache = CatalogCache::default();
-        cache.put(key(Some("work")), 100, 3, CachePolicy::Dynamic { ttl_seconds: 30 }, catalog("work"))
+        cache
+            .put(
+                key(Some("work")),
+                100,
+                3,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                catalog("work"),
+            )
             .unwrap();
-        cache.put(key(Some("personal")), 100, 8, CachePolicy::Dynamic { ttl_seconds: 30 }, catalog("personal"))
+        cache
+            .put(
+                key(Some("personal")),
+                100,
+                8,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                catalog("personal"),
+            )
             .unwrap();
-        assert_eq!(cache.view(&key(Some("work")), 101, 4).unwrap().freshness, Freshness::Stale);
         assert_eq!(
-            cache.view(&key(Some("personal")), 101, 8).unwrap().page.models[0].id,
+            cache.view(&key(Some("work")), 101, 4).unwrap().freshness,
+            Freshness::Stale
+        );
+        assert_eq!(
+            cache
+                .view(&key(Some("personal")), 101, 8)
+                .unwrap()
+                .page
+                .models[0]
+                .id,
             "personal"
         );
         let mut foreign = key(Some("work"));
@@ -219,12 +259,26 @@ mod tests {
     #[test]
     fn refresh_error_preserves_inspection_and_revision_changes_after_success() {
         let mut cache = CatalogCache::default();
-        let first = cache.put(key(Some("work")), 10, 1, CachePolicy::Dynamic { ttl_seconds: 1 }, catalog("old"))
+        let first = cache
+            .put(
+                key(Some("work")),
+                10,
+                1,
+                CachePolicy::Dynamic { ttl_seconds: 1 },
+                catalog("old"),
+            )
             .unwrap();
         let snapshot = cache.view(&key(Some("work")), 12, 1).unwrap();
         assert_eq!(snapshot.freshness, Freshness::Stale);
         assert_eq!(snapshot.page.models[0].id, "old");
-        let second = cache.put(key(Some("work")), 12, 1, CachePolicy::Dynamic { ttl_seconds: 1 }, catalog("new"))
+        let second = cache
+            .put(
+                key(Some("work")),
+                12,
+                1,
+                CachePolicy::Dynamic { ttl_seconds: 1 },
+                catalog("new"),
+            )
             .unwrap();
         assert!(second > first);
         assert_eq!(
@@ -236,14 +290,28 @@ mod tests {
     #[test]
     fn offline_declared_no_auth_catalog_has_no_network_ttl() {
         let mut cache = CatalogCache::default();
-        cache.put(key(None), 1, 0, CachePolicy::LocalDeclared, catalog("local"))
+        cache
+            .put(
+                key(None),
+                1,
+                0,
+                CachePolicy::LocalDeclared,
+                catalog("local"),
+            )
             .unwrap();
         assert_eq!(
             cache.view(&key(None), u64::MAX, 0).unwrap().freshness,
             Freshness::Fresh
         );
         assert_eq!(
-            cache.put(key(Some("api")), 1, 0, CachePolicy::LocalDeclared, catalog("no"))
+            cache
+                .put(
+                    key(Some("api")),
+                    1,
+                    0,
+                    CachePolicy::LocalDeclared,
+                    catalog("no")
+                )
                 .unwrap_err(),
             CacheError::InvalidPolicy
         );
@@ -256,13 +324,25 @@ mod tests {
         let mut invalid = key(Some("work"));
         invalid.connection_id.clear();
         assert_eq!(
-            cache.put(invalid, 0, 0, CachePolicy::Dynamic { ttl_seconds: 0 }, catalog("bad")),
+            cache.put(
+                invalid,
+                0,
+                0,
+                CachePolicy::Dynamic { ttl_seconds: 0 },
+                catalog("bad")
+            ),
             Err(CacheError::InvalidIdentity)
         );
         assert_eq!(
-            cache.put(key(Some("work")), 0, 0, CachePolicy::Dynamic {
-                ttl_seconds: 24 * 60 * 60 + 1,
-            }, catalog("bad")),
+            cache.put(
+                key(Some("work")),
+                0,
+                0,
+                CachePolicy::Dynamic {
+                    ttl_seconds: 24 * 60 * 60 + 1,
+                },
+                catalog("bad")
+            ),
             Err(CacheError::InvalidPolicy)
         );
         assert!(cache.is_empty());
