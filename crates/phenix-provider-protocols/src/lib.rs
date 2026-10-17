@@ -109,7 +109,8 @@ mod tests {
 
     #[test]
     fn default_remote_requires_https() {
-        let remote = validate_endpoint("https://api.example.test/v1", EndpointMode::Remote).unwrap();
+        let remote =
+            validate_endpoint("https://api.example.test/v1", EndpointMode::Remote).unwrap();
         assert_eq!(remote.origin, "https://api.example.test");
         assert_eq!(remote.url, "https://api.example.test/v1");
         assert!(!remote.is_loopback_http);
@@ -158,13 +159,17 @@ mod tests {
             validate_endpoint("https://example.test/v1#token", EndpointMode::Remote),
             Err(EndpointProblem::Fragment)
         );
-        assert!(validate_endpoint("https://example.test/@user?q=@other", EndpointMode::Remote).is_ok());
+        assert!(
+            validate_endpoint("https://example.test/@user?q=@other", EndpointMode::Remote).is_ok()
+        );
     }
 
     #[test]
     fn credential_origin_cannot_be_switched() {
-        let source = validate_endpoint("https://api.example.test/v1", EndpointMode::Remote).unwrap();
-        let same = validate_endpoint("https://api.example.test/v1/models", EndpointMode::Remote).unwrap();
+        let source =
+            validate_endpoint("https://api.example.test/v1", EndpointMode::Remote).unwrap();
+        let same =
+            validate_endpoint("https://api.example.test/v1/models", EndpointMode::Remote).unwrap();
         let foreign = validate_endpoint("https://malicious.test/v1", EndpointMode::Remote).unwrap();
         assert!(same_credential_origin(&source, &same));
         assert!(!same_credential_origin(&source, &foreign));
