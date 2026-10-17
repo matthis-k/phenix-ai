@@ -182,7 +182,7 @@ pub struct ModelQuery {
     /// A specific named account, required where the connection needs auth.
     pub profile_id: Option<String>,
     pub cursor: Option<String>,
-    pub limit: u32,
+    pub limit: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
