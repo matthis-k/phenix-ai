@@ -505,6 +505,65 @@ with sqlite3.connect(out / auto_db) as connection:
         "AND name = 'compaction-checkpoints.v1'"
     ).fetchone() == (1,), "restart must not create a duplicate checkpoint"
 
+# P2-3ab RED: the next selected-model pressure may require a second
+# checkpoint revision. It must verify the prior checkpoint ancestry,
+# preserve the full original journal and publish a monotone CAS revision.
+incremental_db = out / "auto-incremental-restart.sqlite"
+with sqlite3.connect(out / auto_db) as source, sqlite3.connect(incremental_db) as target:
+    source.backup(target)
+before_incremental = None
+with sqlite3.connect(incremental_db) as connection:
+    before_incremental = connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()
+incremental_events = run(
+    [prompt("auto-compact-again")], composition=auto_path,
+    database=incremental_db.name,
+)
+assert [e["text"] for e in incremental_events if e["kind"] == "Answer"] == [
+    "fixture:auto2:history:3:compaction:true"
+], incremental_events
+with sqlite3.connect(incremental_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (2,), "second pressure did not advance checkpoint CAS"
+    checkpoint_v2 = connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()[0]
+    journal_size_v2 = connection.execute(
+        "SELECT length(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()[0]
+
+# This is a distinct submitted user turn after a native restart. Its
+# expanded retained history again exceeds the deterministic fixture limit,
+# so revision 3 is legitimate. Exact same-candidate CAS retry idempotence is
+# proved separately by the CompactionStore publication tests.
+incremental_restart = run(
+    [prompt("auto-compact-again")], composition=auto_path,
+    database=incremental_db.name,
+)
+assert [e["text"] for e in incremental_restart if e["kind"] == "Answer"] == [
+    "fixture:auto2:history:3:compaction:true"
+], incremental_restart
+with sqlite3.connect(incremental_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (3,), "new pressured turn must advance the linear checkpoint CAS"
+    assert connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()[0] != checkpoint_v2
+    assert connection.execute(
+        "SELECT length(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()[0] > journal_size_v2
+assert before_incremental is not None
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -536,5 +595,7 @@ with sqlite3.connect(out / auto_db) as connection:
         "missing-summary-grant-denies-before-model",
         "missing-checkpoint-write-grant-denies-before-model",
         "forged-summary-source-citation-denies-before-CAS",
+        "automatic-second-checkpoint-CAS-under-repeat-pressure",
+        "new-pressured-turn-after-restart-advances-checkpoint-lineage",
     ],
 }, indent=2, sort_keys=True))

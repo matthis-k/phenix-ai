@@ -52,10 +52,11 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     }
     // The original request intentionally exceeds the fixture window. The
     // compacted request keeps the real byte-token count and must still fit.
-    let input_tokens = if matches!(
-        prompt,
-        Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
-    ) && !compacted
+    let input_tokens = if (prompt == Some("auto-compact-again") && request.history.len() > 3)
+        || (matches!(
+            prompt,
+            Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
+        ) && !compacted)
     {
         CONTEXT_WINDOW
     } else {
@@ -87,7 +88,17 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     // Native acceptance probes the exact request that survived source
     // verification and selected-provider metering. This branch exists only
     // in the verification Model, never in production Model adapters.
-    let text = if prompt.text == "auto-compact" {
+    let text = if prompt.text == "auto-compact-again" {
+        let cited = request
+            .context
+            .iter()
+            .any(|part| part.id.starts_with("compaction:cp-auto-"));
+        format!(
+            "fixture:auto2:history:{}:compaction:{}",
+            request.history.len(),
+            cited,
+        )
+    } else if prompt.text == "auto-compact" {
         let cited = request
             .context
             .iter()
@@ -172,8 +183,11 @@ mod plugin {
             }
         })?;
         let last = input.request.history.last();
-        if last.is_none_or(|msg| msg.text != "auto-compact" && msg.text != "auto-invalid-citation")
-            || input.journal.len() < 10
+        if last.is_none_or(|msg| {
+            msg.text != "auto-compact"
+                && msg.text != "auto-invalid-citation"
+                && msg.text != "auto-compact-again"
+        }) || input.journal.len() < 10
             || input.journal[0].text != "seed-one"
             || input.journal[4].text != "seed-two"
         {

@@ -154,7 +154,7 @@ mod plugin {
             Err(CallError::Domain(failure))
                 if failure.problem == CheckpointStoreProblem::NotFound =>
             {
-                return prepare_automatic_checkpoint(host, source);
+                return prepare_automatic_checkpoint(host, source, None);
             }
             Err(CallError::Domain(_)) => {
                 return Err(CallError::Domain(error(
@@ -213,7 +213,7 @@ mod plugin {
                             "checkpoint source events missing",
                         ))
                     })?;
-                return assemble_verified_tail_request(
+                let compacted = assemble_verified_tail_request(
                     source,
                     &checkpoint,
                     original,
@@ -225,7 +225,34 @@ mod plugin {
                         ErrorCode::InvalidReply,
                         "compaction source history did not match the authoritative session",
                     ))
-                });
+                })?;
+                // Subsequent pressure is evaluated against the *selected*
+                // compacted request. Only a selected Summarizer can propose
+                // a new revision; otherwise the canonical preflight rejects
+                // any over-window request as before.
+                if host.slot_count("Summarizer").map_err(CallError::Kernel)? == 0 {
+                    return Ok(compacted);
+                }
+                let measurement = selected_measurement(host, &compacted)?;
+                let pressure =
+                    checkpoint_pressure(&compacted, &measurement, &measurement.model, 80).map_err(
+                        |reason| {
+                            CallError::Domain(error(
+                                if reason
+                                    == PressureProblem::Measurement(ModelTokenProblem::OverBudget)
+                                {
+                                    ErrorCode::TurnLimit
+                                } else {
+                                    ErrorCode::InvalidReply
+                                },
+                                "selected compacted request pressure measurement rejected",
+                            ))
+                        },
+                    )?;
+                if pressure == CheckpointPressure::EnoughHeadroom {
+                    return Ok(compacted);
+                }
+                return prepare_automatic_checkpoint(host, source, Some(&checkpoint));
             }
             if page.events.len() > PAGE_EVENTS as usize {
                 return Err(CallError::Domain(error(
@@ -275,6 +302,7 @@ mod plugin {
     fn prepare_automatic_checkpoint(
         host: &Host<'_>,
         source: &ModelRequest,
+        previous: Option<&phenix_advanced_contracts::CompactionCheckpoint>,
     ) -> CallResult<ModelRequest, BasicError> {
         if host.slot_count("Summarizer").map_err(CallError::Kernel)? == 0 {
             return Ok(source.clone());
@@ -386,6 +414,15 @@ mod plugin {
             )));
         }
         let id = format!("cp-auto-{}", span.digest_sha256);
+        let revision = previous
+            .map(|checkpoint| checkpoint.revision.checked_add(1))
+            .unwrap_or(Some(1))
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "automatic compaction revision overflow",
+                ))
+            })?;
         let candidate = admit_compaction(
             CompactionAdmissionInput {
                 request: source,
@@ -393,11 +430,11 @@ mod plugin {
                 selected_model: &measurement.model,
                 high_water_percent: 80,
                 journal: &journal,
-                previous: None,
+                previous,
                 policy: CheckpointPlan {
                     id: &id,
-                    revision: 1,
-                    parent_checkpoint: None,
+                    revision,
+                    parent_checkpoint: previous.map(|checkpoint| checkpoint.id.as_str()),
                     summary: &proposed.text,
                     retain_completed_turns: 1,
                 },
