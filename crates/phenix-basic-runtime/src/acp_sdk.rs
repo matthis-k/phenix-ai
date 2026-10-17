@@ -31,6 +31,7 @@ enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
     Load(LoadSessionRequest, Reply<LoadSessionResponse>, Peer),
+    SetConfig(SetSessionConfigOptionRequest, Reply<SetSessionConfigOptionResponse>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -41,6 +42,7 @@ impl Command {
             Self::Initialize(_, reply) => reply.respond_with_error(error),
             Self::New(_, reply) => reply.respond_with_error(error),
             Self::Load(_, reply, _) => reply.respond_with_error(error),
+            Self::SetConfig(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
