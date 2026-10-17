@@ -52,12 +52,11 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     }
     // The original request intentionally exceeds the fixture window. The
     // compacted request keeps the real byte-token count and must still fit.
-    let input_tokens = if prompt == Some("auto-compact-again") && request.history.len() > 3 {
-        CONTEXT_WINDOW
-    } else if matches!(
-        prompt,
-        Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
-    ) && !compacted
+    let input_tokens = if (prompt == Some("auto-compact-again") && request.history.len() > 3)
+        || (matches!(
+            prompt,
+            Some("inspect-original-overwindow" | "auto-compact" | "auto-invalid-citation")
+        ) && !compacted)
     {
         CONTEXT_WINDOW
     } else {
