@@ -1,7 +1,7 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
 Status: P1 integrated product accepted at 68f46f63; C4 authoritative CI accepted on main at b7017042; post-P1 work resumed
-Updated: 2026-10-15
+Updated: 2026-10-17
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
