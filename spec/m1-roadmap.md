@@ -725,7 +725,15 @@ transport to save compile time.
     unsupported optional media never gains automatic I/O authority.
     The existing v1 tag remains supported when the feature is enabled.
     This is implementation-in-progress, **not** v2 wire/runtime support.
-    Accept only after feature-gated unit, native ABI and exact-head checks.
+    The follow-up `impl/m1-r1-acp-v2-cancel-frontend` decodes the official
+    `v2::CancelSessionNotification` with the same session authorization and
+    typed Basic cancellation action. It tests authorized and cross-session
+    cancellation, invalid payloads and stable-v1 coexistence.
+    `.github/workflows/r1-acp-v2-frontend.yml` keeps both feature modes
+    under `cargo test --locked` and checks the host compile. This tests the
+    native Frontend contract only; no v2 session controller or wire endpoint
+    is advertised. Accept only after feature-gated unit, native ABI and
+    exact-head checks.
   - [ ] **R1-ACP5b — v2 SDK host lifecycle.** Use `Agent.v2()` handlers,
     typed `v2::Session*Request` and the existing Phenix single-thread
     graph controller. Return `session/prompt` acceptance immediately;

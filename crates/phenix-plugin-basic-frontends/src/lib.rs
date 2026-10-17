@@ -222,6 +222,8 @@ enum AcpInput {
     Cancel(agent_client_protocol_schema::v1::CancelNotification),
     #[cfg(feature = "acp_v2")]
     PromptV2(agent_client_protocol_schema::v2::PromptRequest),
+    #[cfg(feature = "acp_v2")]
+    CancelV2(agent_client_protocol_schema::v2::CancelSessionNotification),
 }
 
 #[cfg(feature = "acp")]
@@ -239,6 +241,13 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
         .map_err(|_| error(ErrorCode::InvalidInput, "invalid typed ACP input"))?;
     match packet {
         AcpInput::Cancel(cancel) => {
+            if cancel.session_id.to_string() != request.session {
+                return Err(error(ErrorCode::Denied, "ACP session mismatch"));
+            }
+            Ok(cancellation())
+        }
+        #[cfg(feature = "acp_v2")]
+        AcpInput::CancelV2(cancel) => {
             if cancel.session_id.to_string() != request.session {
                 return Err(error(ErrorCode::Denied, "ACP session mismatch"));
             }
@@ -541,7 +550,36 @@ mod tests {
             assert_eq!(decode(payload).unwrap_err().code, ErrorCode::InvalidInput);
         }
 
-        // The v1 tag remains available in the dual-schema build.
+        // v2 cancellation is a typed, session-scoped SDK notification.
+        // The native adapter never handles the JSON-RPC envelope.
+        let cancelled = decode(serde_json::json!({
+            "cancel_v2": {"sessionId": "s1"}
+        }))
+        .unwrap();
+        assert!(cancelled.cancel);
+        assert_eq!(cancelled.action, "phenix.basic.submit");
+        assert_eq!(
+            decode(serde_json::json!({
+                "cancel_v2": {"sessionId": "s2"}
+            }))
+            .unwrap_err()
+            .code,
+            ErrorCode::Denied
+        );
+        for malformed in [
+            serde_json::json!({"cancel_v2": {}}),
+            serde_json::json!({"cancel_v2": {"sessionId": 3}}),
+            serde_json::json!({"cancel_v2": {"sessionId": "s1", "prompt": []}, "prompt": {}}),
+        ] {
+            assert_eq!(decode(malformed).unwrap_err().code, ErrorCode::InvalidInput);
+        }
+
+        // Stable-v1 prompt and cancellation remain available in the dual-schema build.
+        let v1_cancelled = decode(serde_json::json!({
+            "cancel": {"sessionId": "s1"}
+        }))
+        .unwrap();
+        assert!(v1_cancelled.cancel);
         assert_eq!(
             decode(serde_json::json!({
                 "prompt": {
