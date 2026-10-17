@@ -183,6 +183,21 @@ This helper neither commits a checkpoint nor authenticates provider co-binding.
 The Advanced graph still owns selected journal access, summarizer, CAS commit,
 provider generation and Model execution. P2-3 release remains unaccepted.
 
+P2-3x applies the same selected-model measurement rule to the actual
+opt-in Advanced Model adapter after a durable checkpoint. The adapter
+continues to read checkpoint ancestry through CompactionStore and exact
+journal bytes through its selected Transcript import. When that read
+changes the ModelRequest, it measures the original authoritative request
+and then the source-rebuilt request through the same authenticated pinned
+Model/ModelTokenMeter provider. A valid original over the context window
+may enter this compaction path, but only a rebuilt request that fits the
+window may reach Model execution. Changed original digest, tokenizer
+revision, model context window, and malformed rebuilt measurements reject.
+The tests use separate SQLite restart forks and fault-injected selected
+fixture measurements. Public Basic and unmetered Advanced presets stay
+unchanged. This is admission of already committed checkpoints, not
+automatic graph-triggered summarization or checkpoint writes.
+
 Each stage must use existing M1 typed values and native descriptor validation. New plugin contracts are versioned where required. Search for maintained crates and evaluate fit, license, maintenance, dependency weight and Nix/ABI support before writing a parser, vector index, database or protocol. Keep the [R1 library audit](m1-r1-library-audit.md) current when a library is selected.
 
 ## Advanced graph topology and contract ownership

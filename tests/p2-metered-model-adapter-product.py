@@ -287,6 +287,36 @@ denied_read = run(
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
 
+# P2-3x positive control: the un-compacted request cannot fit the
+# selected Model window, but the cited, rebuilt request can. This must
+# continue through the real Advanced adapter rather than denying early.
+capacity_fork = fork_live_database("dual-meter-overwindow")
+capacity_events = run(
+    [prompt("inspect-original-overwindow")], composition=live_path,
+    database=capacity_fork,
+)
+assert [e["text"] for e in capacity_events if e["kind"] == "Answer"] == [
+    "fixture:inspect-original-overwindow"
+], capacity_events
+
+# P2-3x RED: the same selected Model must measure both the original
+# authoritative request and its source-rebuilt compacted counterpart.
+# These fault probes act only inside the verification provider and use
+# independent SQLite forks. The direct Model would otherwise answer them.
+original_meter_fork = fork_live_database("dual-meter-original-stale")
+original_invalid = run(
+    [prompt("inspect-original-stale")], composition=live_path,
+    database=original_meter_fork, expected_error="InvalidReply",
+)
+assert not [e for e in original_invalid if e["kind"] == "Answer"], original_invalid
+
+configuration_fork = fork_live_database("dual-meter-config-drift")
+changed_configuration = run(
+    [prompt("inspect-config-drift")], composition=live_path,
+    database=configuration_fork, expected_error="InvalidReply",
+)
+assert not [e for e in changed_configuration if e["kind"] == "Answer"], changed_configuration
+
 # P2-3r: an already persisted checkpoint cannot become optional because
 # its provider denies the selected caller or its durable blob is corrupt.
 # Fork the same SQLite state so every failure is observed on an independent
@@ -389,6 +419,9 @@ assert [event["text"] for event in page_continuation if event["kind"] == "Answer
         "journal-receipt-survives-sqlite-restart-without-duplicate",
         "missing-journal-grant-denies-before-tool-effect",
         "live-checkpoint-and-tail-model-request-is-metered",
+        "overwindow-original-enters-compaction-and-fitted-request-succeeds",
+        "original-uncompacted-model-measurement-must-be-source-authentic",
+        "selected-tokenizer-drift-between-original-and-compact-denied",
         "live-checkpoint-read-requires-explicit-grant",
         "missing-checkpoint-grant-denies-after-sqlite-restart",
         "selected-meter-removal-denies-live-compaction",

@@ -35,6 +35,33 @@ pub enum CompactedAdmissionProblem<E> {
     CandidateMeasurement(ModelTokenProblem),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactedMeterProblem {
+    ModelConfigurationChanged,
+    CandidateMeasurement(ModelTokenProblem),
+}
+
+/// Verify that the same selected Model configuration measured the source
+/// request and the exact compacted request. The caller separately checks
+/// original pressure and authenticates the two Model/meter slot bindings.
+/// This accepts no fallback to the original request after compaction fails.
+pub fn validate_compacted_meter_transition(
+    original: &ModelRequest,
+    rebuilt: &ModelRequest,
+    original_measurement: &ModelTokenMeasurement,
+    rebuilt_measurement: &ModelTokenMeasurement,
+    selected_model: &str,
+) -> Result<(), CompactedMeterProblem> {
+    if rebuilt_measurement.tokenizer_revision != original_measurement.tokenizer_revision
+        || rebuilt_measurement.context_window_tokens != original_measurement.context_window_tokens
+    {
+        return Err(CompactedMeterProblem::ModelConfigurationChanged);
+    }
+    let reserve = original.limits.model_tokens.unwrap_or(0);
+    validate_model_token_measurement(rebuilt, rebuilt_measurement, selected_model, reserve)
+        .map_err(CompactedMeterProblem::CandidateMeasurement)
+}
+
 /// The original and rebuilt requests must use one pinned Model configuration.
 ///
 /// The original measurement must come from the authenticated selected provider.
@@ -70,17 +97,21 @@ pub fn remeasure_verified_checkpoint<E>(
     }
 
     let measurement = measure(&request).map_err(CompactedAdmissionProblem::Meter)?;
-    // A mid-turn configuration change invalidates both token counts even if
-    // the provider string did not change. The graph must select a fresh root,
-    // not submit a request measured under a different tokenizer or window.
-    if measurement.tokenizer_revision != original_measurement.tokenizer_revision
-        || measurement.context_window_tokens != original_measurement.context_window_tokens
-    {
-        return Err(CompactedAdmissionProblem::ModelConfigurationChanged);
-    }
-    let reserve = original.limits.model_tokens.unwrap_or(0);
-    validate_model_token_measurement(&request, &measurement, selected_model, reserve)
-        .map_err(CompactedAdmissionProblem::CandidateMeasurement)?;
+    validate_compacted_meter_transition(
+        original,
+        &request,
+        original_measurement,
+        &measurement,
+        selected_model,
+    )
+    .map_err(|problem| match problem {
+        CompactedMeterProblem::ModelConfigurationChanged => {
+            CompactedAdmissionProblem::ModelConfigurationChanged
+        }
+        CompactedMeterProblem::CandidateMeasurement(reason) => {
+            CompactedAdmissionProblem::CandidateMeasurement(reason)
+        }
+    })?;
     Ok(MeasuredCompactedRequest {
         request,
         measurement,

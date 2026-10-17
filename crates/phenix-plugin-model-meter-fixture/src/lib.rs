@@ -34,9 +34,37 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     {
         fingerprint = "0".repeat(64);
     }
+    // P2-3x verification-only faults: the selected adapter must meter the
+    // original authoritative request as well as its compacted successor.
+    // Only the compacted request carries the checkpoint context citation.
+    let prompt = request
+        .history
+        .iter()
+        .rev()
+        .find(|message| message.role == Role::User)
+        .map(|message| message.text.as_str());
+    let compacted = request
+        .context
+        .iter()
+        .any(|item| item.id.starts_with("compaction:"));
+    if prompt == Some("inspect-original-stale") && !compacted {
+        fingerprint = "0".repeat(64);
+    }
+    // The original request intentionally exceeds the fixture window. The
+    // compacted request keeps the real byte-token count and must still fit.
+    let input_tokens = if prompt == Some("inspect-original-overwindow") && !compacted {
+        CONTEXT_WINDOW
+    } else {
+        input_tokens
+    };
+    let tokenizer_revision = if prompt == Some("inspect-config-drift") && compacted {
+        "portable-byte-fixture-v2"
+    } else {
+        "portable-byte-fixture-v1"
+    };
     Ok(ModelTokenMeasurement {
         model: MODEL_ID.into(),
-        tokenizer_revision: "portable-byte-fixture-v1".into(),
+        tokenizer_revision: tokenizer_revision.into(),
         request_sha256: fingerprint,
         input_tokens,
         context_window_tokens: CONTEXT_WINDOW,
