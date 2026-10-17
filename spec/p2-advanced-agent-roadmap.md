@@ -448,6 +448,33 @@ Model advance node, including multi-turn tool continuations. Do not ship
 the prepare-only composition as an agent, and do not model a state-hook
 as able to interrupt an already-pending Basic submit node.
 
+**P2-3aj: Basic pending-capable Model admission as a separate graph wave.**
+The staged-only Basic graph now declares a second node
+`model-advance`, subscribed to the watched
+`phenix.basic.agent/prepared_model_request` property. It exposes a typed
+`phenix.basic.turn-advance@1/advance` operation and a separate
+`BasicPreparedModelRequest` property. This second operation resumes the
+same authoritative in-process Running/session/run value, not a new agent
+loop. It checks the observed committed state epoch, exact source request,
+selected candidate equality, active run identity and the absence of an
+already pending Model; then uses the normal selected Model pending
+begin/poll/cancel lifecycle. For this slice changed requests are denied
+even with an untrusted checkpoint citation; only the original exact
+request can enter Model. Tool-bearing Model replies fail closed before
+any tool effect until the next graph-iteration handoff is implemented.
+The staged BasicInput direct submit provider is denied so callers cannot
+bypass the mandatory preparation wave by invoking it directly.
+
+The advanced graph preparer that watches Basic's pending request and
+publishes the independently selected prepared candidate is the **next**
+slice: this second Basic graph node alone cannot activate without an
+explicit prepared-request write and correct M1 property grants. Neither
+the plain Basic preset nor the existing Advanced adapter composition
+changes. Native tests validate graph declaration, stale/cross-run
+candidate denial and a prepare-only black-box behavior. Full prepared
+node activation, pending Model and tool-iteration acceptance remain
+unaccepted pending a selected Advanced graph preparer.
+
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
 hooks are admitted after a graph wave settles, not inside this pending
