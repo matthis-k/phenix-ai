@@ -462,7 +462,8 @@
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
         assert report["plugin"] == "phenix.advanced-contracts"
-        assert len(report["definitions"]) == 8, report
+        assert len(report["definitions"]) == 9, report
+        assert "phenix.advanced.model-preparation-change@1" in report["definitions"], report
         assert "phenix.advanced.model-preparation@1" in report["definitions"], report
         assert "phenix.advanced.compaction-summary@1" in report["definitions"], report
         (Path(sys.argv[2]) / "evidence.json").write_text(
@@ -790,6 +791,62 @@
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
           ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out"
+        test -s "$out/accepted.json"
+      '';
+      # Test-only selected graph preparation, with a replaceable no-op
+      # ModelPreparation provider. These are independently packaged M1 plugins.
+      basicGraphPreparerPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-preparer-graph";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-advanced-preparer-graph
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-preparer-graph" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-preparer-graph" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_preparer_graph.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      basicNoopPreparerPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-advanced-preparer-noop";
+        version = "0.1.0";
+        src = subset (publicPaths ++ [
+          ./crates/phenix-basic-contracts
+          ./crates/phenix-advanced-contracts
+          ./crates/phenix-plugin-advanced-preparer-noop
+        ]);
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-advanced-preparer-noop" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-advanced-preparer-noop" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p "$out/lib"
+          cp target/*/release/libphenix_plugin_advanced_preparer_noop.so "$out/lib/plugin.so"
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      basicSelectedGraphPrepareCheck = pkgs.runCommand
+        "phenix-p2-selected-graph-preparer"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out" \
+          ${basicGraphPreparerPlugin} ${basicNoopPreparerPlugin} ${advancedDefinitions}
         test -s "$out/accepted.json"
       '';
       basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
@@ -1998,6 +2055,9 @@
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
         p2-basic-staged-plugin = basicStagedAgent;
+        p2-selected-graph-preparer = basicSelectedGraphPrepareCheck;
+        p2-graph-preparer-plugin = basicGraphPreparerPlugin;
+        p2-noop-preparer-plugin = basicNoopPreparerPlugin;
         p2-model-token-meter-product = p2ModelMeterProductCheck;
         p2-metered-model-adapter-product = p2MeteredAdapterProductCheck;
         p2-compaction-checkpoints = compactionCheckpointStore;

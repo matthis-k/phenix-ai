@@ -1109,6 +1109,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-advanced-preparer-graph"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "phenix-plugin-advanced-preparer-noop"
+version = "0.1.0"
+dependencies = [
+ "phenix-advanced-contracts",
+ "phenix-basic-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-advanced-summarizer"
 version = "0.1.0"
 dependencies = [

@@ -398,6 +398,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(CompactionSummarizer),
     define(ModelTokenMeter),
     define(ModelPreparation),
+    define(ModelPreparationChange),
     graph(super::GRAPH)
 )]
 pub mod definitions {
@@ -412,7 +413,11 @@ mod tests {
     fn definition_package_remains_inert_and_separate_from_basic() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 8);
+        assert_eq!(metadata.definitions.len(), 9);
+        assert!(metadata
+            .definitions
+            .iter()
+            .any(|definition| definition.contract == "phenix.advanced.model-preparation-change@1"));
         assert!(metadata
             .definitions
             .iter()

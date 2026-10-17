@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 
-runtime, original_path, basic_agent, staged_agent, destination = sys.argv[1:]
+runtime, original_path, basic_agent, staged_agent, destination, *selected_args = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 source = json.loads(Path(original_path).read_text())
@@ -63,11 +63,22 @@ stage["authority"]["operations"].extend([
     prepared_property + "/watch",
 ])
 stage["authority"]["resources"].append(prepared_property[:-2])
+for grant in stage["grants"]:
+    if (grant["caller"] == "root"
+            and grant["interface"] == "phenix.basic.input@1"
+            and grant["operation"] == "submit"):
+        grant["resources"].append(prepared_property[:-2])
 stage["grants"].extend([
     {"caller": "phenix.basic.agent", "interface": prepared_property,
      "operation": operation, "resources": [scoped, prepared_property[:-2]]}
     for operation in ("get", "watch")
 ])
+for grant in stage["grants"]:
+    if (grant["caller"] == "phenix.basic.agent"
+            and grant["interface"] == "phenix.basic.turn-advance@1"):
+        grant["resources"].extend([
+            pending_property[:-2], prepared_property[:-2],
+        ])
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
 
@@ -116,9 +127,92 @@ assert not [e for e in bad_events if e["kind"] in (
     "PromptAccepted", "ModelStarted", "Answer", "ToolStarted"
 )], bad_events
 
+# Optional selected Advanced graph contribution. Reuse this exact staged
+# composition builder rather than duplicating grant/origin logic in tests.
+if len(sys.argv) == 9:
+    graph_plugin, noop_plugin, advanced_definitions = sys.argv[6:]
+    selected = json.loads(json.dumps(stage))
+    selected["artifacts"].extend([graph_plugin, noop_plugin])
+    selected["definitions"].append(advanced_definitions)
+    selected["slots"].extend([
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Source",
+         "index": 0, "provider": "phenix.basic.agent",
+         "export": "property.pending_model_request"},
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Prepared",
+         "index": 0, "provider": "phenix.basic.agent",
+         "export": "property.prepared_model_request"},
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Preparer",
+         "index": 0, "provider": "phenix.advanced.preparer-noop",
+         "export": "Prepare"},
+    ])
+    selected["grants"].extend([
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": "phenix.advanced.model-preparation-change@1",
+         "operation": "run",
+         "resources": [scoped, pending_property[:-2], prepared_property[:-2]]},
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": "phenix.advanced.model-preparation@1",
+         "operation": "prepare", "resources": [scoped]},
+    ])
+    selected["grants"].extend([
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": pending_property, "operation": op,
+         "resources": [scoped, pending_property[:-2]]}
+        for op in ("get", "watch")
+    ])
+    selected["grants"].extend([
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": prepared_property, "operation": operation,
+         "resources": [scoped, prepared_property[:-2]]}
+        for operation in ("get", "set")
+    ])
+    selected["authority"]["operations"].extend([
+        "phenix.advanced.model-preparation-change@1/run",
+        "phenix.advanced.model-preparation@1/prepare",
+        pending_property + "/watch",
+        prepared_property + "/set",
+    ])
+    selected_path = out / "selected-graph.json"
+    selected_path.write_text(json.dumps(selected))
+    complete, complete_events = submit(selected_path, "selected.sqlite")
+    assert complete.returncode == 0, (complete.stdout, complete.stderr)
+    answers = [event["text"] for event in complete_events if event["kind"] == "Answer"]
+    assert answers == ["mock:graph-boundary"], complete_events
+    assert len([event for event in complete_events if event["kind"] == "PromptAccepted"]) == 1
+    assert len([event for event in complete_events if event["kind"] == "ModelStarted"]) == 1
+    assert not [event for event in complete_events if event["kind"] == "ToolStarted"]
+    with sqlite3.connect(out / "selected.sqlite") as db:
+        row = db.execute(
+            "SELECT length(data) FROM basic_records WHERE session='s1' "
+            "AND name='event-journal.v1'"
+        ).fetchone()
+        assert row is not None and row[0] > 0
+
+    # Removing the separately selected advanced hook's effective write
+    # authority must reject the whole graph before Basic journals any turn.
+    denied_selected = json.loads(json.dumps(selected))
+    denied_selected["grants"] = [
+        grant for grant in denied_selected["grants"]
+        if not (grant["caller"] == "phenix.advanced.graph-preparer"
+                and grant["interface"] == prepared_property
+                and grant["operation"] == "set")
+    ]
+    denied_selected_path = out / "selected-no-write-grant.json"
+    denied_selected_path.write_text(json.dumps(denied_selected))
+    denied_result, denied_events = submit(
+        denied_selected_path, "selected-denied.sqlite",
+    )
+    assert denied_result.returncode != 0, (
+        denied_result.stdout, denied_result.stderr,
+    )
+    assert not [event for event in denied_events if event["kind"] in (
+        "PromptAccepted", "ModelStarted", "Answer", "ToolStarted"
+    )], denied_events
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.basic-staged-prepare.v1",
     "accepted": True,
+    "selected_advanced_graph_tested": len(sys.argv) == 9,
     "cases": [
         "authorized-basic-prepare-publishes-model-request-without-model-execution",
         "missing-prepare-grant-denies-without-journal-effects",
