@@ -970,6 +970,51 @@ mod session_lock_tests {
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
+    use super::scoped_composition;
+    use phenix_contract::Authority;
+    use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn session_root_preserves_explicit_property_grants_but_never_foreign_sessions() {
+        let session = "phenix.session.s1";
+        let foreign = "phenix.session.s2";
+        let property = "phenix.basic.agent.property.pending_model_request";
+        let grant = ScopedGrant {
+            caller: "root".into(),
+            interface: "phenix.basic.input@1".into(),
+            operation: "submit".into(),
+            resources: [session.into(), foreign.into(), property.into()].into(),
+        };
+        let original = Composition {
+            format: "phenix.composition.v2".into(),
+            artifacts: vec![],
+            definitions: vec![],
+            entry: Selection {
+                provider: "phenix.basic.agent".into(),
+                interface: "phenix.basic.input@1".into(),
+                operation: "submit".into(),
+            },
+            slots: vec![],
+            grants: vec![grant],
+            excluded: BTreeSet::new(),
+            substitutions: vec![],
+            authority: Authority {
+                operations: ["phenix.basic.input@1/submit".into()].into(),
+                resources: [session.into(), foreign.into(), property.into()].into(),
+            },
+            resource: Some(session.into()),
+        };
+        let scoped = scoped_composition(&original, session);
+        assert_eq!(scoped.authority.resources, [session.into(), property.into()].into());
+        assert_eq!(scoped.grants[0].resources, [session.into(), property.into()].into());
+        assert!(!scoped.authority.resources.contains(foreign));
+        let foreign_scoped = scoped_composition(&original, foreign);
+        assert_eq!(foreign_scoped.authority.resources, [foreign.into(), property.into()].into());
+        assert!(!foreign_scoped.authority.resources.contains(session));
+        assert_eq!(original.grants[0].resources.len(), 3, "original immutable");
+    }
+
 
     #[test]
     fn recovery_requires_matching_versioned_run_marker() {
