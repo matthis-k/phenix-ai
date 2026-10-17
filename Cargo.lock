@@ -1254,6 +1254,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-provider-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
+]
+
+[[package]]
 name = "phenix-sdk"
 version = "0.1.0"
 dependencies = [
