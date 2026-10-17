@@ -68,25 +68,28 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "prepare",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.turn-prepare@1/prepare",
-        writes: &["phenix.basic.agent/pending_model_request"],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }, StaticGraphNode {
-        id: "model-advance",
-        triggers: &["state:phenix.basic.agent/prepared_model_request"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.turn-advance@1/advance",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[
+        StaticGraphNode {
+            id: "prepare",
+            triggers: &["phenix.basic.prompt"],
+            after: &[],
+            selector: "",
+            operation: "phenix.basic.turn-prepare@1/prepare",
+            writes: &["phenix.basic.agent/pending_model_request"],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
+            id: "model-advance",
+            triggers: &["state:phenix.basic.agent/prepared_model_request"],
+            after: &[],
+            selector: "",
+            operation: "phenix.basic.turn-advance@1/advance",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 #[cfg(all(test, feature = "staged-graph"))]
@@ -114,11 +117,12 @@ mod staged_graph_tests;
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare, CatalogCursor, Context,
-        ErrorCode, Event, EventJournal, EventKind, EventPage, JournalAppend, JournalQuery, Message,
-        GraphStateChange, Model, ModelRequest, ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult,
-        RunStatus, Scope, Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion,
-        ToolExecute, ToolInfo, ToolQuery, ToolRequest, Usage,
+        error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
+        CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
+        GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope,
+        Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
+        ToolQuery, ToolRequest, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -668,9 +672,7 @@ mod plugin {
         host: &Host<'_>,
         notice: GraphStateChange,
     ) -> PendingResult<RunResult, BasicError> {
-        if notice.epoch == 0
-            || notice.properties != ["phenix.basic.agent/prepared_model_request"]
-        {
+        if notice.epoch == 0 || notice.properties != ["phenix.basic.agent/prepared_model_request"] {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
                 "Model advance requires a committed prepared-request state change",
@@ -709,7 +711,10 @@ mod plugin {
                 "Model advance has no authoritative Basic run",
             ))));
         };
-        if running.run != source.run || running.input.session != source.session || running.child.is_some() {
+        if running.run != source.run
+            || running.input.session != source.session
+            || running.child.is_some()
+        {
             state.active = Some(running);
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
@@ -753,7 +758,10 @@ mod plugin {
     }
 
     #[poll(BasicTurnAdvance::advance)]
-    fn poll_model_advance(state: &mut State, host: &Host<'_>) -> PendingResult<RunResult, BasicError> {
+    fn poll_model_advance(
+        state: &mut State,
+        host: &Host<'_>,
+    ) -> PendingResult<RunResult, BasicError> {
         let Some(mut running) = state.active.take() else {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
