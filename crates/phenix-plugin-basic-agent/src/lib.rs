@@ -470,13 +470,19 @@ mod plugin {
         // Model::complete is NOT invoked by this operation. A later graph
         // contribution will validate a selected replacement and resume the
         // same run, without re-creating a new Basic agent loop.
-        let mut edit = state
-            .pending_model_request
-            .edit(host)
-            .map_err(|err| Failure::new(Code::PluginFailed, err.to_string()))?;
+        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property read: {err}"),
+            )
+        })?;
         *edit = Some(projected.clone());
-        edit.commit(host)
-            .map_err(|err| Failure::new(Code::PluginFailed, err.to_string()))?;
+        edit.commit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property CAS: {err}"),
+            )
+        })?;
         state.active = Some(running);
         Ok(projected)
     }

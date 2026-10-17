@@ -7,7 +7,9 @@ use acp::schema::{
         AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
-        SessionConfigOptionCategory, SessionConfigSelectOption, SessionNotification, StopReason,
+        SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        StopReason,
     },
     ProtocolVersion,
 };
@@ -30,6 +32,10 @@ enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
     Load(LoadSessionRequest, Reply<LoadSessionResponse>, Peer),
+    SetConfig(
+        SetSessionConfigOptionRequest,
+        Reply<SetSessionConfigOptionResponse>,
+    ),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -40,6 +46,7 @@ impl Command {
             Self::Initialize(_, reply) => reply.respond_with_error(error),
             Self::New(_, reply) => reply.respond_with_error(error),
             Self::Load(_, reply, _) => reply.respond_with_error(error),
+            Self::SetConfig(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
@@ -223,6 +230,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::SetConfig(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.set_config_option(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -263,6 +278,31 @@ impl Controller {
                 .category(SessionConfigOptionCategory::Model)
             })
             .collect()
+    }
+
+    fn set_config_option(
+        &mut self,
+        request: SetSessionConfigOptionRequest,
+    ) -> acp::Result<SetSessionConfigOptionResponse> {
+        if !self.sessions.contains_key(&request.session_id.to_string()) {
+            return Err(invalid("unknown ACP session"));
+        }
+        let chosen = match request.value {
+            SessionConfigOptionValue::ValueId { value } => value.to_string(),
+            _ => return Err(invalid("unsupported model configuration value")),
+        };
+        let admitted = self.composition.slots.iter().any(|binding| {
+            binding.caller == "phenix.basic.agent"
+                && binding.slot == "Model"
+                && binding.index == 0
+                && binding.provider == chosen
+        });
+        if request.config_id.to_string() != "model" || !admitted {
+            return Err(invalid("unavailable or unauthorized model"));
+        }
+        // Until dynamic graph routing is installed, selection of the
+        // already admitted model is idempotent. A different model is denied.
+        Ok(SetSessionConfigOptionResponse::new(self.model_options()))
     }
 
     fn new_session(&mut self, request: NewSessionRequest) -> acp::Result<NewSessionResponse> {
@@ -453,6 +493,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let initialize = tx.clone();
     let new = tx.clone();
     let load = tx.clone();
+    let set_config = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -476,6 +517,12 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .on_receive_request(
             async move |request: LoadSessionRequest, reply, peer| {
                 submit(&load, Command::Load(request, reply, peer))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: SetSessionConfigOptionRequest, reply, _peer| {
+                submit(&set_config, Command::SetConfig(request, reply))
             },
             acp::on_receive_request!(),
         )
