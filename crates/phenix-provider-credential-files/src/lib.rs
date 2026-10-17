@@ -86,12 +86,18 @@ impl CredentialId {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
         }
-        Ok(format!(
+        let file = format!(
             "{}-{}-{}.credential",
             encode(&self.provider),
             encode(&self.connection),
             encode(&self.profile)
-        ))
+        );
+        // Linux filesystems commonly cap one filename at 255 bytes. Reject
+        // oversized identities explicitly rather than leaking an I/O error.
+        if file.len() > 240 {
+            return Err(CredentialError::InvalidIdentity);
+        }
+        Ok(file)
     }
 }
 
@@ -313,6 +319,19 @@ mod tests {
             profile: "d".into(),
         };
         assert_ne!(first.file_name().unwrap(), second.file_name().unwrap());
+    }
+
+    #[test]
+    fn a_long_combined_identity_cannot_exceed_filename_limits() {
+        let too_long = CredentialId {
+            provider: "a".repeat(64),
+            connection: "b".repeat(64),
+            profile: "c".repeat(64),
+        };
+        assert_eq!(
+            too_long.file_name(),
+            Err(CredentialError::InvalidIdentity)
+        );
     }
 
     #[test]
