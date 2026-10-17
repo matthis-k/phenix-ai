@@ -155,6 +155,7 @@ mod plugin {
     pub struct State {
         pending_summary: bool,
         pending_summary_tools: bool,
+        pending_summary_hold: bool,
     }
 
     #[provide(ModelTokenMeter::measure)]
@@ -236,6 +237,21 @@ mod plugin {
             state.pending_summary_tools = request.history[0]
                 .text
                 .contains("malicious-summary-fixture");
+            state.pending_summary_hold = request.history[0].text.contains("hold-summary-fixture");
+            if state.pending_summary_hold {
+                // Verification fixture only: native acceptance observes that
+                // the selected child is genuinely pending before it cancels
+                // the enclosing kernel graph root. No Basic journal event or
+                // checkpoint is ever written by this diagnostic.
+                if let Some(witness) = std::env::var_os("PHENIX_P2_HOLD_SUMMARY_WITNESS") {
+                    if let Err(err) = std::fs::write(witness, b"selected summary Model pending") {
+                        return PendingResult::QuiescentFailure(Failure::new(
+                            Code::PluginFailed,
+                            format!("pending witness could not be recorded: {err}"),
+                        ));
+                    }
+                }
+            }
             state.pending_summary = true;
             return PendingResult::Pending;
         }
@@ -244,6 +260,9 @@ mod plugin {
 
     #[poll(Model::complete)]
     fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<ModelReply, BasicError> {
+        if state.pending_summary_hold && state.pending_summary {
+            return PendingResult::Pending;
+        }
         if !std::mem::take(&mut state.pending_summary) {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
@@ -270,6 +289,7 @@ mod plugin {
     fn cancel(state: &mut State) -> Result<bool, Failure> {
         state.pending_summary = false;
         state.pending_summary_tools = false;
+        state.pending_summary_hold = false;
         Ok(true)
     }
 }
