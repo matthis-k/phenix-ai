@@ -146,6 +146,19 @@ new_session = request(first, 2, "session/new", {
 assert_model_options(new_session)
 session = new_session["sessionId"]
 assert session
+
+# ACP v1 model settings use the standard session configuration method.
+# The only installed binding may be reselected; an uninstalled provider
+# must fail without altering the running graph or journal.
+assert_model_options(request(first, 105, "session/set_config_option", {
+    "sessionId": session, "configId": "model", "value": "phenix.model.scripted",
+}))
+for number, params in enumerate([
+    {"sessionId": session, "configId": "model", "value": "phenix.model.http"},
+    {"sessionId": session, "configId": "unknown", "value": "phenix.model.scripted"},
+    {"sessionId": "unknown", "configId": "model", "value": "phenix.model.scripted"},
+], start=106):
+    request_error(first, number, "session/set_config_option", params, -32602)
 # Invalid prompt content is a client parameter error. These cases must
 # leave the session idle, with no output or Model admission.
 for number, params in enumerate([

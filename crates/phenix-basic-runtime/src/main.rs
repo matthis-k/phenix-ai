@@ -154,7 +154,15 @@ fn render_new(
 fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
     let resource = format!("phenix.session.{session}");
     let mut authority = composition.authority.clone();
-    authority.resources = [resource.clone()].into();
+    // A Basic prompt is confined to its authenticated session, but graph
+    // contributions also need the M1 property identities explicitly granted
+    // by the trusted composition. Never pass unrelated session/project
+    // resources into this root. The kernel still checks the exact property's
+    // set/get/watch grants and its selected owner on every state effect.
+    authority
+        .resources
+        .retain(|granted| granted == &resource || granted.contains(".property."));
+    authority.resources.insert(resource.clone());
     ScopedRequest {
         authority,
         resource: Some(resource),
@@ -885,16 +893,34 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
 
 /// ACP connection controller. Each session owns a fresh M1 kernel admission
 /// with the requested resource scope. Artifacts and resolver stay unchanged.
-fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
-    phenix_basic_contracts::session_resource(session)
-        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
-    let resource = format!("phenix.session.{session}");
+fn scoped_composition(composition: &Composition, resource: &str) -> Composition {
     let mut spec = composition.clone();
-    spec.resource = Some(resource.clone());
-    spec.authority.resources = [resource.clone()].into();
+    spec.resource = Some(resource.into());
+    // Retain only property resources already declared by the trusted
+    // composition. A session root must never inherit another session's
+    // grants, but reactive graph nodes still need their separately granted
+    // M1 property identities within this same pinned generation.
+    let property_resources: std::collections::BTreeSet<_> = spec
+        .authority
+        .resources
+        .iter()
+        .filter(|name| name.contains(".property."))
+        .cloned()
+        .collect();
+    spec.authority.resources = property_resources.clone();
+    spec.authority.resources.insert(resource.into());
     for grant in &mut spec.grants {
-        grant.resources = [resource.clone()].into();
+        let retained = grant.resources.intersection(&property_resources).cloned();
+        grant.resources = retained.collect();
+        grant.resources.insert(resource.into());
     }
+    spec
+}
+
+fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
+    let resource = phenix_basic_contracts::session_resource(session)
+        .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
+    let spec = scoped_composition(composition, &resource);
     Prepared::prepare(spec)
         .map_err(|e| format!("{e:?}"))?
         .load()
@@ -939,11 +965,64 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
+    use super::scoped_composition;
     use super::{
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
+    use phenix_contract::Authority;
+    use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
+    use std::collections::BTreeSet;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn session_root_preserves_explicit_property_grants_but_never_foreign_sessions() {
+        let session = "phenix.session.s1";
+        let foreign = "phenix.session.s2";
+        let property = "phenix.basic.agent.property.pending_model_request";
+        let grant = ScopedGrant {
+            caller: "root".into(),
+            interface: "phenix.basic.input@1".into(),
+            operation: "submit".into(),
+            resources: [session.into(), foreign.into(), property.into()].into(),
+        };
+        let original = Composition {
+            format: "phenix.composition.v2".into(),
+            artifacts: vec![],
+            definitions: vec![],
+            entry: Selection {
+                provider: "phenix.basic.agent".into(),
+                interface: "phenix.basic.input@1".into(),
+                operation: "submit".into(),
+            },
+            slots: vec![],
+            grants: vec![grant],
+            excluded: BTreeSet::new(),
+            substitutions: vec![],
+            authority: Authority {
+                operations: ["phenix.basic.input@1/submit".into()].into(),
+                resources: [session.into(), foreign.into(), property.into()].into(),
+            },
+            resource: Some(session.into()),
+        };
+        let scoped = scoped_composition(&original, session);
+        assert_eq!(
+            scoped.authority.resources,
+            [session.into(), property.into()].into()
+        );
+        assert_eq!(
+            scoped.grants[0].resources,
+            [session.into(), property.into()].into()
+        );
+        assert!(!scoped.authority.resources.contains(foreign));
+        let foreign_scoped = scoped_composition(&original, foreign);
+        assert_eq!(
+            foreign_scoped.authority.resources,
+            [foreign.into(), property.into()].into()
+        );
+        assert!(!foreign_scoped.authority.resources.contains(session));
+        assert_eq!(original.grants[0].resources.len(), 3, "original immutable");
+    }
 
     #[test]
     fn recovery_requires_matching_versioned_run_marker() {

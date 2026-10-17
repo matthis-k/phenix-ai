@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 (
-    runtime, advanced_json, meter_provider, checkpoint_runner,
+    runtime, advanced_json, meter_provider, summary_provider, checkpoint_runner,
     checkpoint_provider, journal_provider, storage_provider,
     basic_definitions, advanced_definitions, destination,
 ) = sys.argv[1:]
@@ -287,6 +287,36 @@ denied_read = run(
 )
 assert not [event for event in denied_read if event["kind"] == "Answer"], denied_read
 
+# P2-3x positive control: the un-compacted request cannot fit the
+# selected Model window, but the cited, rebuilt request can. This must
+# continue through the real Advanced adapter rather than denying early.
+capacity_fork = fork_live_database("dual-meter-overwindow")
+capacity_events = run(
+    [prompt("inspect-original-overwindow")], composition=live_path,
+    database=capacity_fork,
+)
+assert [e["text"] for e in capacity_events if e["kind"] == "Answer"] == [
+    "fixture:inspect-original-overwindow"
+], capacity_events
+
+# P2-3x RED: the same selected Model must measure both the original
+# authoritative request and its source-rebuilt compacted counterpart.
+# These fault probes act only inside the verification provider and use
+# independent SQLite forks. The direct Model would otherwise answer them.
+original_meter_fork = fork_live_database("dual-meter-original-stale")
+original_invalid = run(
+    [prompt("inspect-original-stale")], composition=live_path,
+    database=original_meter_fork, expected_error="InvalidReply",
+)
+assert not [e for e in original_invalid if e["kind"] == "Answer"], original_invalid
+
+configuration_fork = fork_live_database("dual-meter-config-drift")
+changed_configuration = run(
+    [prompt("inspect-config-drift")], composition=live_path,
+    database=configuration_fork, expected_error="InvalidReply",
+)
+assert not [e for e in changed_configuration if e["kind"] == "Answer"], changed_configuration
+
 # P2-3r: an already persisted checkpoint cannot become optional because
 # its provider denies the selected caller or its durable blob is corrupt.
 # Fork the same SQLite state so every failure is observed on an independent
@@ -340,6 +370,339 @@ assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
     "fixture:history:5:compaction:true"
 ], continued
 
+# P2-3s RED: the checkpoint spans more than a single 128-event
+# journal page. A native checkpoint writer and the selected Model adapter
+# must both read all contiguous source pages, never truncate at page one.
+page_turns = 36
+page_prompts = [prompt("seed-one")] + [
+    prompt(f"page-{n:02d}") for n in range(1, page_turns)
+]
+page_database = "paginated-checkpoint.sqlite"
+page_events = run(
+    page_prompts, composition=live_path, database=page_database,
+)
+assert len([e for e in page_events if e["kind"] == "Answer"]) == page_turns
+assert len(page_events) > 128, len(page_events)
+page_seed_folder = out / "paginated-checkpoint-seed"
+page_seed = subprocess.run(
+    [checkpoint_runner, checkpoint_provider, journal_provider, storage_provider,
+     basic_definitions, advanced_definitions, "live-seed", str(page_seed_folder)],
+    capture_output=True, text=True, timeout=90,
+    env=dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(out / page_database)),
+)
+assert page_seed.returncode == 0, (page_seed.stdout, page_seed.stderr)
+assert json.loads((page_seed_folder / "compaction-product.json").read_text())[
+    "live_checkpoint"
+] == "cp-live"
+page_continuation = run(
+    [prompt("inspect-compaction")], composition=live_path,
+    database=page_database,
+)
+assert [event["text"] for event in page_continuation if event["kind"] == "Answer"] == [
+    f"fixture:history:{2 * (page_turns - 1) + 1}:compaction:true"
+], page_continuation
+
+# P2-3aa RED: the existing Basic Model graph call may use an opt-in
+# selected summarizer to create a source-backed CAS checkpoint, remeasure
+# the exact compacted request and continue through the selected Model.
+# No model/tool loop is added, and the default Advanced preset stays unchanged.
+automatic = json.loads(json.dumps(live))
+automatic["slots"].append({
+    "caller": adapter, "slot": "Summarizer", "index": 0,
+    "provider": model, "export": "Summarizer",
+})
+automatic["grants"] += [
+    {"caller": adapter, "interface": "phenix.advanced.compaction-summary@1",
+     "operation": "summarize", "resources": [scoped]},
+    {"caller": adapter, "interface": "phenix.advanced.compaction-checkpoints@1",
+     "operation": "put", "resources": [scoped]},
+]
+automatic["authority"]["operations"] += [
+    "phenix.advanced.compaction-summary@1/summarize",
+    "phenix.advanced.compaction-checkpoints@1/put",
+]
+auto_path = out / "live-automatic-compaction-composition.json"
+auto_path.write_text(json.dumps(automatic))
+auto_db = "live-automatic-compaction.sqlite"
+auto_seed = run(
+    [prompt("seed-one"), prompt("seed-two"), prompt("seed-three")],
+    composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_seed if e["kind"] == "Answer"] == [
+    "fixture:seed-one", "fixture:seed-two", "fixture:seed-three"
+], auto_seed
+# Denied imports must not create a checkpoint or execute the selected
+# Model. Each test starts from the identical completed source turns.
+def fork_auto_source(name):
+    destination = out / f"{name}.sqlite"
+    with sqlite3.connect(out / auto_db) as source, sqlite3.connect(destination) as target:
+        source.backup(target)
+    return destination.name
+
+no_summary_grant = json.loads(json.dumps(automatic))
+no_summary_grant["grants"] = [g for g in no_summary_grant["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.advanced.compaction-summary@1"
+    and g["operation"] == "summarize"
+)]
+no_summary_path = out / "auto-summary-grant-denied.json"
+no_summary_path.write_text(json.dumps(no_summary_grant))
+no_summary_events = run(
+    [prompt("auto-compact")], composition=no_summary_path,
+    database=fork_auto_source("auto-summary-grant-denied"),
+    expected_error="has no effective grant",
+)
+assert not [e for e in no_summary_events if e["kind"] == "Answer"], no_summary_events
+
+no_put_grant = json.loads(json.dumps(automatic))
+no_put_grant["grants"] = [g for g in no_put_grant["grants"] if not (
+    g["caller"] == adapter
+    and g["interface"] == "phenix.advanced.compaction-checkpoints@1"
+    and g["operation"] == "put"
+)]
+no_put_path = out / "auto-put-grant-denied.json"
+no_put_path.write_text(json.dumps(no_put_grant))
+no_put_events = run(
+    [prompt("auto-compact")], composition=no_put_path,
+    database=fork_auto_source("auto-put-grant-denied"),
+    expected_error="has no effective grant",
+)
+assert not [e for e in no_put_events if e["kind"] == "Answer"], no_put_events
+
+bad_summary_db = fork_auto_source("auto-summary-citation-forged")
+bad_summary_events = run(
+    [prompt("auto-invalid-citation")], composition=auto_path,
+    database=bad_summary_db, expected_error="InvalidReply",
+)
+assert not [e for e in bad_summary_events if e["kind"] == "Answer"], bad_summary_events
+with sqlite3.connect(out / bad_summary_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "forged citation created checkpoint"
+
+# P2-3ad RED: the real Model-backed summarizer is pending before a
+# checkpoint can be committed. The parent Basic run must not start the
+# selected upstream Model until the summary child has completed and CAS
+# readback plus exact selected-token remeasurement have succeeded.
+pending_summary = json.loads(json.dumps(automatic))
+pending_summary["artifacts"].append(summary_provider)
+for binding in pending_summary["slots"]:
+    if binding["caller"] == adapter and binding["slot"] == "Summarizer":
+        binding["provider"] = "phenix.advanced.summarizer"
+pending_summary["slots"].append({
+    "caller": "phenix.advanced.summarizer", "slot": "Upstream",
+    "index": 0, "provider": model, "export": "Model",
+})
+pending_summary["grants"].append({
+    "caller": "phenix.advanced.summarizer",
+    "interface": "phenix.basic.model@1",
+    "operation": "complete",
+    "resources": [scoped],
+})
+pending_summary_path = out / "live-pending-summary-composition.json"
+pending_summary_path.write_text(json.dumps(pending_summary))
+pending_db = fork_auto_source("pending-summary-model")
+pending_events = run(
+    [prompt("auto-compact")], composition=pending_summary_path, database=pending_db,
+)
+assert [e["text"] for e in pending_events if e["kind"] == "Answer"] == [
+    "fixture:auto:history:3:compaction:true"
+], pending_events
+with sqlite3.connect(out / pending_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "pending summary must commit a single CAS revision"
+pending_restart = run(
+    [prompt("auto-compact")], composition=pending_summary_path, database=pending_db,
+)
+assert [e["text"] for e in pending_restart if e["kind"] == "Answer"] == [
+    "fixture:auto:history:5:compaction:true"
+], pending_restart
+with sqlite3.connect(out / pending_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "pending summary restart duplicated a checkpoint"
+
+# A selected summarizer must never proxy a Model reply containing tools into
+# a summary proposal. Reject a deliberately pending tool-bearing response.
+# The pending prompt is intentionally excluded from the nested Model
+# view. Inject the adversarial fixture marker into an *older*, eligible
+# completed turn instead, and verify that a tool-bearing summary still fails.
+tool_summary_db = "pending-summary-tool-reply.sqlite"
+malicious_seed = run(
+    [prompt("malicious-summary-fixture"), prompt("seed-two"), prompt("seed-three")],
+    composition=pending_summary_path, database=tool_summary_db,
+)
+assert len([e for e in malicious_seed if e["kind"] == "Answer"]) == 3, malicious_seed
+tool_summary = run(
+    [prompt("auto-compact")], composition=pending_summary_path,
+    database=tool_summary_db, expected_error="InvalidReply",
+)
+assert not [e for e in tool_summary if e["kind"] == "Answer"], tool_summary
+with sqlite3.connect(out / tool_summary_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "tool-bearing pending summary published a checkpoint"
+
+# P2-3af RED: assert that kernel graph cancellation propagates into the
+# nested pending summarizer BEFORE any checkpoint CAS or primary Model call.
+# A verification-only fixture writes a witness when its summary child begins;
+# it then remains pending until the real graph root is cancelled by JSONL.
+cancel_db = "cancel-pending-summary.sqlite"
+seed_cancel = run(
+    [prompt("hold-summary-fixture"), prompt("seed-two"), prompt("seed-three")],
+    composition=pending_summary_path, database=cancel_db,
+)
+assert len([e for e in seed_cancel if e["kind"] == "Answer"]) == 3, seed_cancel
+witness = out / "held-summary.started"
+env = dict(
+    os.environ,
+    PHENIX_BASIC_SQLITE_PATH=str(out / cancel_db),
+    PHENIX_P2_HOLD_SUMMARY_WITNESS=str(witness),
+)
+with subprocess.Popen(
+    [runtime, "jsonl", str(pending_summary_path)],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    text=True, env=env,
+) as proc:
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps(prompt("auto-compact")) + "\n")
+    proc.stdin.flush()
+    # The witness is emitted after the selected nested Model's begin call.
+    # Do not issue cancellation before that point: this test must exercise
+    # a genuinely outstanding transitive pending ticket.
+    import time
+    deadline = time.monotonic() + 30
+    while not witness.exists() and proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert witness.exists(), "selected nested summary Model never became pending"
+    proc.stdin.write(json.dumps({"type": "cancel", "session": "s1"}) + "\n")
+    proc.stdin.flush()
+    proc.stdin.close()
+    proc.stdin = None
+    cancel_stdout, cancel_stderr = proc.communicate(timeout=30)
+    assert proc.returncode == 0, (cancel_stdout, cancel_stderr)
+cancel_events = [json.loads(line) for line in cancel_stdout.splitlines()]
+assert [e["kind"] for e in cancel_events if e["run"] == "run-4" and
+        e["kind"] in ("Cancelled", "Answer", "ToolStarted")] == [
+    "Cancelled"
+], cancel_events
+with sqlite3.connect(out / cancel_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "cancelled pending summary published a checkpoint"
+
+# A nested pending Model must not gain authority solely because the outer
+# agent has selected the summarizer provider and original Model.
+missing_nested_grant = json.loads(json.dumps(pending_summary))
+missing_nested_grant["grants"] = [
+    g for g in missing_nested_grant["grants"]
+    if not (g["caller"] == "phenix.advanced.summarizer"
+            and g["interface"] == "phenix.basic.model@1"
+            and g["operation"] == "complete")
+]
+missing_nested_path = out / "pending-summary-model-grant-denied.json"
+missing_nested_path.write_text(json.dumps(missing_nested_grant))
+nested_denied_db = fork_auto_source("pending-summary-denied")
+nested_denied = run(
+    [prompt("auto-compact")], composition=missing_nested_path,
+    database=nested_denied_db, expected_error="has no effective grant",
+)
+assert not [e for e in nested_denied if e["kind"] == "Answer"], nested_denied
+with sqlite3.connect(out / nested_denied_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "failed nested Model grant published a checkpoint"
+
+auto_events = run(
+    [prompt("auto-compact")], composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_events if e["kind"] == "Answer"] == [
+    "fixture:auto:history:3:compaction:true"
+], auto_events
+with sqlite3.connect(out / auto_db) as connection:
+    checkpoint_rev = connection.execute(
+        "SELECT revision FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()
+    assert checkpoint_rev == (1,), checkpoint_rev
+auto_restart = run(
+    [prompt("auto-compact")], composition=auto_path, database=auto_db,
+)
+assert [e["text"] for e in auto_restart if e["kind"] == "Answer"] == [
+    "fixture:auto:history:5:compaction:true"
+], auto_restart
+with sqlite3.connect(out / auto_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records WHERE session = 's1' "
+        "AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "restart must not create a duplicate checkpoint"
+
+# P2-3ab RED: the next selected-model pressure may require a second
+# checkpoint revision. It must verify the prior checkpoint ancestry,
+# preserve the full original journal and publish a monotone CAS revision.
+incremental_db = out / "auto-incremental-restart.sqlite"
+with sqlite3.connect(out / auto_db) as source, sqlite3.connect(incremental_db) as target:
+    source.backup(target)
+before_incremental = None
+with sqlite3.connect(incremental_db) as connection:
+    before_incremental = connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()
+incremental_events = run(
+    [prompt("auto-compact-again")], composition=auto_path,
+    database=incremental_db.name,
+)
+assert [e["text"] for e in incremental_events if e["kind"] == "Answer"] == [
+    "fixture:auto2:history:3:compaction:true"
+], incremental_events
+with sqlite3.connect(incremental_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (2,), "second pressure did not advance checkpoint CAS"
+    checkpoint_v2 = connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()[0]
+    journal_size_v2 = connection.execute(
+        "SELECT length(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()[0]
+
+# This is a distinct submitted user turn after a native restart. Its
+# expanded retained history again exceeds the deterministic fixture limit,
+# so revision 3 is legitimate. Exact same-candidate CAS retry idempotence is
+# proved separately by the CompactionStore publication tests.
+incremental_restart = run(
+    [prompt("auto-compact-again")], composition=auto_path,
+    database=incremental_db.name,
+)
+assert [e["text"] for e in incremental_restart if e["kind"] == "Answer"] == [
+    "fixture:auto2:history:3:compaction:true"
+], incremental_restart
+with sqlite3.connect(incremental_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (3,), "new pressured turn must advance the linear checkpoint CAS"
+    assert connection.execute(
+        "SELECT hex(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone()[0] != checkpoint_v2
+    assert connection.execute(
+        "SELECT length(data) FROM basic_records "
+        "WHERE session = 's1' AND name = 'event-journal.v1'"
+    ).fetchone()[0] > journal_size_v2
+assert before_incremental is not None
+
 (out / "accepted.json").write_text(json.dumps({
     "format": "phenix.p2.metered-model-adapter.v1",
     "accepted": True,
@@ -357,10 +720,27 @@ assert [e["text"] for e in continued if e["kind"] == "Answer"] == [
         "journal-receipt-survives-sqlite-restart-without-duplicate",
         "missing-journal-grant-denies-before-tool-effect",
         "live-checkpoint-and-tail-model-request-is-metered",
+        "overwindow-original-enters-compaction-and-fitted-request-succeeds",
+        "original-uncompacted-model-measurement-must-be-source-authentic",
+        "selected-tokenizer-drift-between-original-and-compact-denied",
         "live-checkpoint-read-requires-explicit-grant",
         "missing-checkpoint-grant-denies-after-sqlite-restart",
         "selected-meter-removal-denies-live-compaction",
         "corrupt-checkpoint-ledger-denies-without-model-fallback",
         "independent-denial-does-not-change-authoritative-session",
+        "multi-page-checkpoint-source-and-live-continuation",
+        "opt-in-selected-summarizer-creates-native-checkpoint-at-pressure",
+        "automatic-cas-creates-one-revision-and-reuses-after-native-restart",
+        "missing-summary-grant-denies-before-model",
+        "missing-checkpoint-write-grant-denies-before-model",
+        "forged-summary-source-citation-denies-before-CAS",
+        "pending-selected-summarizer-completes-before-CAS-and-main-Model",
+        "pending-summarizer-nested-model-requires-explicit-grant",
+        "pending-summarizer-restart-reuses-durable-checkpoint",
+        "tool-bearing-pending-summary-denied-before-CAS",
+        "cancel-nested-pending-summary-before-checkpoint-CAS",
+        "kernel-cancel-propagates-to-transitive-summary-model",
+        "automatic-second-checkpoint-CAS-under-repeat-pressure",
+        "new-pressured-turn-after-restart-advances-checkpoint-lineage",
     ],
 }, indent=2, sort_keys=True))

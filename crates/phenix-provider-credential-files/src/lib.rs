@@ -9,10 +9,14 @@
 
 #![cfg(target_os = "linux")]
 
+use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_SECRET_BYTES: usize = 64 * 1024;
@@ -104,7 +108,11 @@ impl CredentialId {
 /// File fallback only; the default credential-store plugin should prefer a
 /// supported OS secret store. `consent` must originate from runtime policy.
 pub struct CredentialFiles {
+    // Kept for display and test inspection only. All security-sensitive file
+    // operations are relative to the pinned directory descriptor below.
+    #[cfg(test)]
     root: PathBuf,
+    directory: File,
 }
 
 impl CredentialFiles {
@@ -113,53 +121,122 @@ impl CredentialFiles {
             return Err(CredentialError::ConsentRequired);
         }
         let path = root.as_ref().to_path_buf();
-        validate_directory(&path)?;
-        Ok(Self { root: path })
+        // Do not resolve a final symlink. A subsequent rename or replacement
+        // of `path` cannot silently redirect operations away from this fd.
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)
+            .map_err(|_| CredentialError::InsecureDirectory)?;
+        validate_directory(&directory)?;
+        Ok(Self {
+            #[cfg(test)]
+            root: path,
+            directory,
+        })
     }
 
+    #[cfg(test)]
     fn path(&self, id: &CredentialId) -> Result<PathBuf, CredentialError> {
         Ok(self.root.join(id.file_name()?))
     }
 
+    /// Resolve a validated leaf name relative to the originally approved
+    /// directory, rather than re-resolving a potentially replaced path.
+    fn open_relative(&self, name: &str, flags: i32, mode: libc::mode_t) -> io::Result<File> {
+        let name = CString::new(name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid leaf name"))?;
+        // SAFETY: the directory fd and CString are valid for the duration of
+        // openat. On success, ownership of the returned fd transfers to File.
+        let fd = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                mode,
+            )
+        };
+        if fd < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            // SAFETY: openat returned a new, owned, nonnegative descriptor.
+            Ok(unsafe { File::from_raw_fd(fd) })
+        }
+    }
+
+    fn rename_relative(&self, source: &str, destination: &str) -> Result<(), CredentialError> {
+        let source = CString::new(source).map_err(|_| CredentialError::InvalidIdentity)?;
+        let destination =
+            CString::new(destination).map_err(|_| CredentialError::InvalidIdentity)?;
+        // SAFETY: both names are validated leaf components, and the pinned
+        // directory descriptor is live. No symlink traversal of parent paths.
+        let status = unsafe {
+            libc::renameat(
+                self.directory.as_raw_fd(),
+                source.as_ptr(),
+                self.directory.as_raw_fd(),
+                destination.as_ptr(),
+            )
+        };
+        if status != 0 {
+            return Err(CredentialError::Io);
+        }
+        Ok(())
+    }
+
+    fn unlink_relative(&self, name: &str) -> Result<(), CredentialError> {
+        let name = CString::new(name).map_err(|_| CredentialError::InvalidIdentity)?;
+        // SAFETY: only a single leaf path is resolved under the pinned fd.
+        let status = unsafe { libc::unlinkat(self.directory.as_raw_fd(), name.as_ptr(), 0) };
+        if status != 0 {
+            let err = io::Error::last_os_error();
+            return Err(if err.kind() == io::ErrorKind::NotFound {
+                CredentialError::NotFound
+            } else {
+                CredentialError::Io
+            });
+        }
+        Ok(())
+    }
+
     pub fn store(&self, id: &CredentialId, secret: &Secret) -> Result<(), CredentialError> {
-        validate_directory(&self.root)?;
-        let destination = self.path(id)?;
-        let candidate = self.root.join(format!(
+        validate_directory(&self.directory)?;
+        let destination = id.file_name()?;
+        let candidate = format!(
             ".credential-{}-{}",
             std::process::id(),
             NONCE.fetch_add(1, Ordering::Relaxed)
-        ));
+        );
         let result = (|| -> Result<(), CredentialError> {
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&candidate)
+            let mut output = self
+                .open_relative(
+                    &candidate,
+                    libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+                    0o600,
+                )
+                .map_err(|_| CredentialError::Io)?;
+            // A restrictive umask must not produce an unreadable stored secret.
+            output
+                .set_permissions(fs::Permissions::from_mode(0o600))
                 .map_err(|_| CredentialError::Io)?;
             output
                 .write_all(secret.expose_for_authorized_provider())
                 .map_err(|_| CredentialError::Io)?;
             output.sync_all().map_err(|_| CredentialError::Io)?;
-            fs::rename(&candidate, destination).map_err(|_| CredentialError::Io)?;
-            File::open(&self.root)
-                .and_then(|dir| dir.sync_all())
-                .map_err(|_| CredentialError::Io)?;
+            self.rename_relative(&candidate, &destination)?;
+            self.directory.sync_all().map_err(|_| CredentialError::Io)?;
             Ok(())
         })();
         if result.is_err() {
-            let _ = fs::remove_file(candidate);
+            let _ = self.unlink_relative(&candidate);
         }
         result
     }
 
     pub fn read(&self, id: &CredentialId) -> Result<Secret, CredentialError> {
-        validate_directory(&self.root)?;
-        let path = self.path(id)?;
-        // Linux open(2): O_NOFOLLOW protects against a final-component symlink.
-        let mut input = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)
+        validate_directory(&self.directory)?;
+        let input = self
+            .open_relative(&id.file_name()?, libc::O_RDONLY | libc::O_NONBLOCK, 0)
             .map_err(|err| {
                 if err.kind() == io::ErrorKind::NotFound {
                     CredentialError::NotFound
@@ -177,32 +254,31 @@ impl CredentialFiles {
             return Err(CredentialError::InsecureFile);
         }
         let mut bytes = Vec::new();
+        // A concurrent writer may enlarge a file after fstat: never allow
+        // unbounded secret allocation even if the initial length was valid.
         input
+            .take(MAX_SECRET_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| CredentialError::Io)?;
+        if bytes.len() > MAX_SECRET_BYTES {
+            bytes.fill(0);
+            return Err(CredentialError::InsecureFile);
+        }
         Secret::new(bytes)
     }
 
     pub fn revoke(&self, id: &CredentialId) -> Result<(), CredentialError> {
-        validate_directory(&self.root)?;
-        fs::remove_file(self.path(id)?).map_err(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                CredentialError::NotFound
-            } else {
-                CredentialError::Io
-            }
-        })?;
-        File::open(&self.root)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|_| CredentialError::Io)
+        validate_directory(&self.directory)?;
+        self.unlink_relative(&id.file_name()?)?;
+        self.directory.sync_all().map_err(|_| CredentialError::Io)
     }
 }
 
-fn validate_directory(path: &Path) -> Result<(), CredentialError> {
-    // symlink_metadata does not follow a final-component symlink.
-    let metadata = fs::symlink_metadata(path).map_err(|_| CredentialError::InsecureDirectory)?;
+fn validate_directory(directory: &File) -> Result<(), CredentialError> {
+    let metadata = directory
+        .metadata()
+        .map_err(|_| CredentialError::InsecureDirectory)?;
     if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
         || metadata.mode() & 0o777 != 0o700
         || metadata.uid() != unsafe { libc::geteuid() }
     {
@@ -351,6 +427,44 @@ mod tests {
             Err(CredentialError::InsecureDirectory)
         ));
         fs::remove_file(linked_dir).unwrap();
+    }
+
+    #[test]
+    fn replacing_the_configured_path_cannot_redirect_open_vault_operations() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let original = Secret::new(b"original-secret".to_vec()).unwrap();
+        root.store(&id("work"), &original).unwrap();
+
+        // A validated path is not a stable authority boundary: the parent
+        // can replace it after the vault opens, without using a symlink.
+        let pinned = fixture.0.with_extension("original");
+        fs::rename(&fixture.0, &pinned).unwrap();
+        fs::create_dir(&fixture.0).unwrap();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
+        let filename = id("work").file_name().unwrap();
+        let impostor = fixture.0.join(&filename);
+        fs::write(&impostor, b"impostor-secret").unwrap();
+        fs::set_permissions(&impostor, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(
+            root.read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"original-secret"
+        );
+        root.store(
+            &id("work"),
+            &Secret::new(b"updated-secret".to_vec()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(pinned.join(&filename)).unwrap(), b"updated-secret");
+        assert_eq!(fs::read(&impostor).unwrap(), b"impostor-secret");
+        root.revoke(&id("work")).unwrap();
+        assert!(!pinned.join(&filename).exists());
+        assert_eq!(fs::read(&impostor).unwrap(), b"impostor-secret");
+
+        fs::remove_dir_all(&pinned).unwrap();
     }
 
     #[test]
