@@ -22,27 +22,52 @@ use std::{
     time::Duration,
 };
 
-/// Durable Basic session database used when the caller does not set
-/// `PHENIX_BASIC_SQLITE_PATH`. The explicit environment value always wins so
-/// component launchers can select their own file. The default follows the XDG
-/// base-directory convention: `$XDG_STATE_HOME/phenix/basic.sqlite`, falling
-/// back to `$HOME/.local/state/phenix/basic.sqlite`. When neither a state nor a
-/// home directory exists the requirement still fails closed.
-fn ensure_default_sqlite_path() {
-    if env::var_os("PHENIX_BASIC_SQLITE_PATH").is_some() {
-        return;
+/// The product host owns the XDG session database path. Nix wrappers only
+/// select the preset's file name; the Storage plugin owns its schema and I/O.
+/// An explicit absolute PHENIX_BASIC_SQLITE_PATH always overrides the preset.
+fn sqlite_default_name(name: Option<&str>) -> Result<&str, String> {
+    match name.unwrap_or("basic.sqlite") {
+        "basic.sqlite" => Ok("basic.sqlite"),
+        "basic-http.sqlite" => Ok("basic-http.sqlite"),
+        _ => Err("invalid Basic SQLite preset name".into()),
     }
-    let Some(base) = env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-    else {
-        return;
+}
+
+fn ensure_default_sqlite_path() -> Result<(), String> {
+    let database = if let Some(explicit) = env::var_os("PHENIX_BASIC_SQLITE_PATH") {
+        PathBuf::from(explicit)
+    } else {
+        let name = env::var("PHENIX_BASIC_SQLITE_DEFAULT_NAME").ok();
+        let file_name = sqlite_default_name(name.as_deref())?;
+        let base = env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+            .ok_or("Basic SQLite requires XDG_STATE_HOME or HOME")?;
+        base.join("phenix").join(file_name)
     };
-    let database = base.join("phenix").join("basic.sqlite");
-    if let Some(parent) = database.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if !database.is_absolute() {
+        return Err("PHENIX_BASIC_SQLITE_PATH must be absolute".into());
     }
+    let parent = database
+        .parent()
+        .ok_or("PHENIX_BASIC_SQLITE_PATH must name a file")?;
+    // The wrapper uses umask 077. A direct runtime launch also creates newly
+    // needed state directories privately, without changing existing owners
+    // or permissions on the caller's parent directories.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        builder.mode(0o700);
+        builder
+            .create(parent)
+            .map_err(|err| format!("SQLite state directory: {err}"))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(parent).map_err(|err| format!("SQLite state directory: {err}"))?;
     env::set_var("PHENIX_BASIC_SQLITE_PATH", database);
+    Ok(())
 }
 
 fn invoke<T: Portable>(
@@ -955,7 +980,7 @@ fn run() -> Result<(), String> {
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
         return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION for terminal]".into());
     }
-    ensure_default_sqlite_path();
+    ensure_default_sqlite_path()?;
     let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
         args[4].as_str()
     } else if args.len() == 3 {
@@ -989,15 +1014,36 @@ fn main() {
 
 #[cfg(test)]
 mod session_lock_tests {
-    use super::scoped_composition;
     use super::{
         lock_session_file, owner_marker, set_marker, set_owner_marker, verified_owner,
         verified_recovery, OWNER_MARKER, RECOVERY_MARKER,
     };
+    use super::{scoped_composition, sqlite_default_name};
     use phenix_contract::Authority;
     use phenix_kernel::resolve::{Composition, ScopedGrant, Selection};
     use std::collections::BTreeSet;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn sqlite_preset_identity_is_bounded_and_cannot_be_a_path() {
+        assert_eq!(sqlite_default_name(None).unwrap(), "basic.sqlite");
+        assert_eq!(
+            sqlite_default_name(Some("basic.sqlite")).unwrap(),
+            "basic.sqlite"
+        );
+        assert_eq!(
+            sqlite_default_name(Some("basic-http.sqlite")).unwrap(),
+            "basic-http.sqlite"
+        );
+        for invalid in [
+            "",
+            "../other.sqlite",
+            "/tmp/other.sqlite",
+            "basic-other.sqlite",
+        ] {
+            assert!(sqlite_default_name(Some(invalid)).is_err());
+        }
+    }
 
     #[test]
     fn session_root_preserves_explicit_property_grants_but_never_foreign_sessions() {

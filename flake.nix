@@ -669,19 +669,12 @@
             ${pkgs.python3}/bin/python ${recordWriter} $out
           '';
         };
-      # Every user-facing Basic wrapper must supply the same absolute
-      # file-backed Storage path before any ACP, terminal or JSONL request.
-      # The SQLite plugin stays provider-owned; launchers own filesystem setup.
+      # The Rust product host resolves the state directory once. Wrappers
+      # select only the allowed Basic preset file and a private creation mask.
+      # PHENIX_BASIC_SQLITE_PATH remains an explicit user override.
       basicSqliteEnvironment = fileName: ''
         umask 077
-        if [ -z "''${PHENIX_BASIC_SQLITE_PATH:-}" ]; then
-          export PHENIX_BASIC_SQLITE_PATH="''${XDG_STATE_HOME:-$HOME/.local/state}/phenix/${fileName}"
-        fi
-        case "$PHENIX_BASIC_SQLITE_PATH" in
-          /*) ;;
-          *) echo "Phenix: PHENIX_BASIC_SQLITE_PATH must be absolute" >&2; exit 2 ;;
-        esac
-        mkdir -p "$(dirname "$PHENIX_BASIC_SQLITE_PATH")"
+        export PHENIX_BASIC_SQLITE_DEFAULT_NAME="${fileName}"
       '';
       scriptedModel = basicNativePlugin
         "phenix-plugin-model-scripted"
@@ -1287,9 +1280,11 @@
         });
       # A complete immutable composition, rather than a runtime that asks
       # users to supply the composition JSON on every invocation.
-      basicPreset = name: composition: pkgs.writeShellApplication {
+      basicPreset = name: composition: sqliteDefaultName: pkgs.writeShellApplication {
         inherit name;
         text = ''
+          umask 077
+          export PHENIX_BASIC_SQLITE_DEFAULT_NAME="${sqliteDefaultName}"
           if [ "$#" -eq 0 ]; then
             mode=terminal
           else
@@ -1311,11 +1306,12 @@
       # original preset and its exported composition unchanged.
       overridablePreset = pkgs.lib.makeOverridable (
         { name, compositionName, format, entry, artifacts, definitions, slots,
-          grants, excluded, substitutions, authority, resource }:
+          grants, excluded, substitutions, authority, resource,
+          sqliteDefaultName ? "basic.sqlite" }:
         basicPreset name (pkgs.writeText compositionName (builtins.toJSON {
           inherit format entry artifacts definitions slots grants excluded
             substitutions authority resource;
-        }))
+        })) sqliteDefaultName
       );
       basicBinary = overridablePreset (basicCompositionSpec // {
         name = "phenix-basic";
@@ -1324,6 +1320,7 @@
       basicHttpBinary = overridablePreset (basicHttpCompositionSpec // {
         name = "phenix-basic-http";
         compositionName = "phenix-basic-http-composition.json";
+        sqliteDefaultName = "basic-http.sqlite";
       });
       historyVerificationBinary = overridablePreset (historyVerificationCompositionSpec // {
         name = "phenix-basic-verification";

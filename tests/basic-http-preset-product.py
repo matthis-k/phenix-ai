@@ -70,10 +70,32 @@ try:
         "real-http-provider"
     ], events
     assert (out / "live-fixture.sqlite").exists()
+
+    # The direct user-facing HTTP preset must be isolated from the scripted
+    # Basic database even without the dedicated ACP wrapper.
+    direct_env = dict(env, XDG_STATE_HOME=str(out / "direct-state"),
+                      HOME=str(out / "direct-home"))
+    direct_env.pop("PHENIX_BASIC_SQLITE_PATH")
+    direct = subprocess.run(
+        [binary, "jsonl"], input=json.dumps(message) + "\n",
+        text=True, capture_output=True, env=direct_env, timeout=40
+    )
+    assert direct.returncode == 0, (direct.stdout, direct.stderr)
+    direct_events = [json.loads(line) for line in direct.stdout.splitlines()]
+    assert [event["text"] for event in direct_events if event["kind"] == "Answer"] == [
+        "real-http-provider"
+    ], direct_events
+    database = out / "direct-state" / "phenix" / "basic-http.sqlite"
+    assert database.is_file() and not database.with_name("basic.sqlite").exists()
+    import stat
+    assert stat.S_IMODE(database.stat().st_mode) == 0o600
+    assert len(requests) == 2, requests
+
     (out / "passed.json").write_text(json.dumps({
         "selected_model": "phenix.model.http",
         "http_requests": len(requests),
         "answer": "real-http-provider",
+        "isolated_http_default": True,
         "live_credentials_required_in_ci": False
     }))
 finally:
