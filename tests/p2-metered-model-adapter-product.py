@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 (
-    runtime, advanced_json, meter_provider, checkpoint_runner,
+    runtime, advanced_json, meter_provider, summary_provider, checkpoint_runner,
     checkpoint_provider, journal_provider, storage_provider,
     basic_definitions, advanced_definitions, destination,
 ) = sys.argv[1:]
@@ -481,6 +481,88 @@ with sqlite3.connect(out / bad_summary_db) as connection:
         "AND name = 'compaction-checkpoints.v1'"
     ).fetchone() == (0,), "forged citation created checkpoint"
 
+# P2-3ad RED: the real Model-backed summarizer is pending before a
+# checkpoint can be committed. The parent Basic run must not start the
+# selected upstream Model until the summary child has completed and CAS
+# readback plus exact selected-token remeasurement have succeeded.
+pending_summary = json.loads(json.dumps(automatic))
+pending_summary["artifacts"].append(summary_provider)
+for binding in pending_summary["slots"]:
+    if binding["caller"] == adapter and binding["slot"] == "Summarizer":
+        binding["provider"] = "phenix.advanced.summarizer"
+pending_summary["slots"].append({
+    "caller": "phenix.advanced.summarizer", "slot": "Upstream",
+    "index": 0, "provider": model, "export": "Model",
+})
+pending_summary["grants"].append({
+    "caller": "phenix.advanced.summarizer",
+    "interface": "phenix.basic.model@1",
+    "operation": "complete",
+    "resources": [scoped],
+})
+pending_summary_path = out / "live-pending-summary-composition.json"
+pending_summary_path.write_text(json.dumps(pending_summary))
+pending_db = fork_auto_source("pending-summary-model")
+pending_events = run(
+    [prompt("auto-compact")], composition=pending_summary_path, database=pending_db,
+)
+assert [e["text"] for e in pending_events if e["kind"] == "Answer"] == [
+    "fixture:auto:history:3:compaction:true"
+], pending_events
+with sqlite3.connect(out / pending_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "pending summary must commit a single CAS revision"
+pending_restart = run(
+    [prompt("auto-compact")], composition=pending_summary_path, database=pending_db,
+)
+assert [e["text"] for e in pending_restart if e["kind"] == "Answer"] == [
+    "fixture:auto:history:5:compaction:true"
+], pending_restart
+with sqlite3.connect(out / pending_db) as connection:
+    assert connection.execute(
+        "SELECT revision FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (1,), "pending summary restart duplicated a checkpoint"
+
+# A selected summarizer must never proxy a Model reply containing tools into
+# a summary proposal. Reject a deliberately pending tool-bearing response.
+tool_summary_db = fork_auto_source("pending-summary-tool-reply")
+tool_summary = run(
+    [prompt("auto-unsafe-summary")], composition=pending_summary_path,
+    database=tool_summary_db, expected_error="InvalidReply",
+)
+assert not [e for e in tool_summary if e["kind"] == "Answer"], tool_summary
+with sqlite3.connect(out / tool_summary_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "tool-bearing pending summary published a checkpoint"
+
+# A nested pending Model must not gain authority solely because the outer
+# agent has selected the summarizer provider and original Model.
+missing_nested_grant = json.loads(json.dumps(pending_summary))
+missing_nested_grant["grants"] = [
+    g for g in missing_nested_grant["grants"]
+    if not (g["caller"] == "phenix.advanced.summarizer"
+            and g["interface"] == "phenix.basic.model@1"
+            and g["operation"] == "complete")
+]
+missing_nested_path = out / "pending-summary-model-grant-denied.json"
+missing_nested_path.write_text(json.dumps(missing_nested_grant))
+nested_denied_db = fork_auto_source("pending-summary-denied")
+nested_denied = run(
+    [prompt("auto-compact")], composition=missing_nested_path,
+    database=nested_denied_db, expected_error="has no effective grant",
+)
+assert not [e for e in nested_denied if e["kind"] == "Answer"], nested_denied
+with sqlite3.connect(out / nested_denied_db) as connection:
+    assert connection.execute(
+        "SELECT count(*) FROM basic_records "
+        "WHERE session = 's1' AND name = 'compaction-checkpoints.v1'"
+    ).fetchone() == (0,), "failed nested Model grant published a checkpoint"
+
 auto_events = run(
     [prompt("auto-compact")], composition=auto_path, database=auto_db,
 )
@@ -595,6 +677,10 @@ assert before_incremental is not None
         "missing-summary-grant-denies-before-model",
         "missing-checkpoint-write-grant-denies-before-model",
         "forged-summary-source-citation-denies-before-CAS",
+        "pending-selected-summarizer-completes-before-CAS-and-main-Model",
+        "pending-summarizer-nested-model-requires-explicit-grant",
+        "pending-summarizer-restart-reuses-durable-checkpoint",
+        "tool-bearing-pending-summary-denied-before-CAS",
         "automatic-second-checkpoint-CAS-under-repeat-pressure",
         "new-pressured-turn-after-restart-advances-checkpoint-lineage",
     ],

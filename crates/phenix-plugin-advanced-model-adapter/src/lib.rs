@@ -32,9 +32,9 @@
 )]
 mod plugin {
     use phenix_advanced_contracts::{
-        validate_model_token_measurement, CheckpointStoreProblem, CompactionStore,
-        CompactionSummarizer, CompactionSummaryRequest, ModelTokenMeasurement, ModelTokenMeter,
-        ModelTokenProblem,
+        validate_model_token_measurement, CheckpointStoreProblem, CompactionCheckpoint,
+        CompactionStore, CompactionSummarizer, CompactionSummary, CompactionSummaryRequest,
+        JournalSpan, ModelTokenMeasurement, ModelTokenMeter, ModelTokenProblem,
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
@@ -51,10 +51,25 @@ mod plugin {
         PendingResult,
     };
 
+    struct AutomaticSummaryInput {
+        source: ModelRequest,
+        previous: Option<CompactionCheckpoint>,
+        measurement: ModelTokenMeasurement,
+        journal: Vec<Event>,
+        span: JournalSpan,
+    }
+
+    enum PreparedRequest {
+        Ready(ModelRequest),
+        Summarize(Box<AutomaticSummaryInput>),
+    }
+
     #[derive(Default)]
     pub struct State {
         pending: Option<PendingImport<Model::complete>>,
         pending_run: Option<(String, String)>,
+        pending_summary: Option<PendingImport<CompactionSummarizer::summarize>>,
+        summary_input: Option<AutomaticSummaryInput>,
     }
 
     fn finish(result: CallResult<ModelReply, BasicError>) -> PendingResult<ModelReply, BasicError> {
@@ -126,7 +141,7 @@ mod plugin {
     fn prepare_request(
         host: &Host<'_>,
         source: &ModelRequest,
-    ) -> CallResult<ModelRequest, BasicError> {
+    ) -> CallResult<PreparedRequest, BasicError> {
         if host.slot_count("Checkpoints").map_err(CallError::Kernel)? == 0 {
             if host.slot_count("Summarizer").map_err(CallError::Kernel)? != 0 {
                 return Err(CallError::Domain(error(
@@ -134,7 +149,7 @@ mod plugin {
                     "automatic compaction requires a selected checkpoint store",
                 )));
             }
-            return Ok(source.clone());
+            return Ok(PreparedRequest::Ready(source.clone()));
         }
         if host.slot_count("Meter").map_err(CallError::Kernel)? == 0
             || host.slot_count("Transcript").map_err(CallError::Kernel)? == 0
@@ -231,7 +246,7 @@ mod plugin {
                 // a new revision; otherwise the canonical preflight rejects
                 // any over-window request as before.
                 if host.slot_count("Summarizer").map_err(CallError::Kernel)? == 0 {
-                    return Ok(compacted);
+                    return Ok(PreparedRequest::Ready(compacted));
                 }
                 let measurement = selected_measurement(host, &compacted)?;
                 let pressure =
@@ -250,7 +265,7 @@ mod plugin {
                         },
                     )?;
                 if pressure == CheckpointPressure::EnoughHeadroom {
-                    return Ok(compacted);
+                    return Ok(PreparedRequest::Ready(compacted));
                 }
                 return prepare_automatic_checkpoint(host, source, Some(&checkpoint));
             }
@@ -302,10 +317,10 @@ mod plugin {
     fn prepare_automatic_checkpoint(
         host: &Host<'_>,
         source: &ModelRequest,
-        previous: Option<&phenix_advanced_contracts::CompactionCheckpoint>,
-    ) -> CallResult<ModelRequest, BasicError> {
+        previous: Option<&CompactionCheckpoint>,
+    ) -> CallResult<PreparedRequest, BasicError> {
         if host.slot_count("Summarizer").map_err(CallError::Kernel)? == 0 {
-            return Ok(source.clone());
+            return Ok(PreparedRequest::Ready(source.clone()));
         }
         let measurement = selected_measurement(host, source)?;
         let pressure = checkpoint_pressure(source, &measurement, &measurement.model, 80).map_err(
@@ -321,7 +336,7 @@ mod plugin {
             },
         )?;
         if pressure == CheckpointPressure::EnoughHeadroom {
-            return Ok(source.clone());
+            return Ok(PreparedRequest::Ready(source.clone()));
         }
         const PAGE_EVENTS: u64 = 128;
         const MAX_SOURCE_EVENTS: usize = 1024;
@@ -387,24 +402,28 @@ mod plugin {
                 "automatic compaction source digest rejected",
             ))
         })?;
-        let proposed = match host.invoke::<CompactionSummarizer::summarize>(
-            "Summarizer",
-            &CompactionSummaryRequest {
-                request: source.clone(),
-                journal: journal.clone(),
-                source: span.clone(),
+        Ok(PreparedRequest::Summarize(Box::new(
+            AutomaticSummaryInput {
+                source: source.clone(),
+                previous: previous.cloned(),
+                measurement,
+                journal,
+                span,
             },
-        ) {
-            Ok(summary) => summary,
-            Err(CallError::Kernel(failure)) => return Err(CallError::Kernel(failure)),
-            Err(CallError::Domain(_)) => {
-                return Err(CallError::Domain(error(
-                    ErrorCode::InvalidReply,
-                    "selected summarizer refused the source",
-                )));
-            }
-        };
-        if proposed.source != span
+        )))
+    }
+
+    fn finish_automatic_checkpoint(
+        host: &Host<'_>,
+        input: &AutomaticSummaryInput,
+        proposed: CompactionSummary,
+    ) -> CallResult<ModelRequest, BasicError> {
+        let source = &input.source;
+        let previous = input.previous.as_ref();
+        let measurement = &input.measurement;
+        let journal = &input.journal;
+        let span = &input.span;
+        if proposed.source != *span
             || proposed.text.trim().is_empty()
             || proposed.text.len() > 65_536
         {
@@ -426,10 +445,10 @@ mod plugin {
         let candidate = admit_compaction(
             CompactionAdmissionInput {
                 request: source,
-                original_measurement: &measurement,
+                original_measurement: measurement,
                 selected_model: &measurement.model,
                 high_water_percent: 80,
-                journal: &journal,
+                journal,
                 previous,
                 policy: CheckpointPlan {
                     id: &id,
@@ -493,7 +512,6 @@ mod plugin {
         }
         Ok(candidate.request)
     }
-
     /// Measure the exact request through the same pinned provider selected
     /// for upstream Model execution. Selection does not confer a grant.
     fn selected_measurement(
@@ -599,33 +617,16 @@ mod plugin {
         })
     }
 
-    #[pending(Model::complete)]
-    fn begin(
+    fn begin_upstream(
         state: &mut State,
         host: &Host<'_>,
+        source: &ModelRequest,
         request: ModelRequest,
     ) -> PendingResult<ModelReply, BasicError> {
-        if let Err(failure) = phenix_basic_contracts::check_session(host, &request.session) {
-            return finish(Err(failure));
-        }
-        if state.pending.is_some() {
-            return finish(Err(CallError::Domain(error(
-                ErrorCode::Conflict,
-                "Advanced Model is already awaiting its selected upstream",
-            ))));
-        }
-        // A source-verified request is metered exactly as sent. When a
-        // checkpoint changes the request, independently measure the original
-        // and rebuilt requests under one selected Model configuration.
-        let source = request;
-        let request = match prepare_request(host, &source) {
-            Ok(request) => request,
-            Err(failure) => return finish(Err(failure)),
-        };
-        let checked = if request == source {
+        let checked = if request == *source {
             preflight_meter(host, &request)
         } else {
-            preflight_compacted(host, &source, &request)
+            preflight_compacted(host, source, &request)
         };
         if let Err(failure) = checked {
             return finish(Err(failure));
@@ -643,8 +644,103 @@ mod plugin {
         }
     }
 
+    fn complete_summary(
+        state: &mut State,
+        host: &Host<'_>,
+        source: AutomaticSummaryInput,
+        result: CallResult<CompactionSummary, phenix_advanced_contracts::CompactionSummaryError>,
+    ) -> PendingResult<ModelReply, BasicError> {
+        let reply = match result {
+            Ok(reply) => reply,
+            Err(CallError::Kernel(failure)) => return PendingResult::QuiescentFailure(failure),
+            Err(CallError::Domain(_)) => {
+                return finish(Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "selected summarizer refused the authenticated source",
+                ))));
+            }
+        };
+        let request = match finish_automatic_checkpoint(host, &source, reply) {
+            Ok(request) => request,
+            Err(failure) => return finish(Err(failure)),
+        };
+        begin_upstream(state, host, &source.source, request)
+    }
+
+    fn begin_summary(
+        state: &mut State,
+        host: &Host<'_>,
+        source: AutomaticSummaryInput,
+    ) -> PendingResult<ModelReply, BasicError> {
+        let request = CompactionSummaryRequest {
+            request: source.source.clone(),
+            journal: source.journal.clone(),
+            source: source.span.clone(),
+        };
+        match host.begin::<CompactionSummarizer::summarize>("Summarizer", &request) {
+            Ok(ImportCall::Ready(result)) => complete_summary(state, host, source, result),
+            Ok(ImportCall::Pending(child)) => {
+                state.pending_summary = Some(child);
+                state.summary_input = Some(source);
+                PendingResult::Pending
+            }
+            Err(failure) => PendingResult::QuiescentFailure(failure),
+        }
+    }
+
+    #[pending(Model::complete)]
+    fn begin(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ModelRequest,
+    ) -> PendingResult<ModelReply, BasicError> {
+        if let Err(failure) = phenix_basic_contracts::check_session(host, &request.session) {
+            return finish(Err(failure));
+        }
+        if state.pending.is_some() || state.pending_summary.is_some() {
+            return finish(Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "Advanced Model is already awaiting a selected child",
+            ))));
+        }
+        let source = request;
+        match prepare_request(host, &source) {
+            Ok(PreparedRequest::Ready(request)) => begin_upstream(state, host, &source, request),
+            Ok(PreparedRequest::Summarize(input)) => begin_summary(state, host, *input),
+            Err(failure) => finish(Err(failure)),
+        }
+    }
+
     #[poll(Model::complete)]
     fn poll(state: &mut State, host: &Host<'_>) -> PendingResult<ModelReply, BasicError> {
+        if let Some(mut child) = state.pending_summary.take() {
+            return match child.poll(host) {
+                Ok(ImportPoll::Pending | ImportPoll::Draining) => {
+                    state.pending_summary = Some(child);
+                    PendingResult::Pending
+                }
+                Ok(ImportPoll::Ready(result)) => {
+                    let Some(input) = state.summary_input.take() else {
+                        return PendingResult::QuiescentFailure(Failure::new(
+                            Code::PluginFailed,
+                            "Advanced Model lost pending summary source",
+                        ));
+                    };
+                    complete_summary(state, host, input, result)
+                }
+                Ok(ImportPoll::Cancelled) => {
+                    state.summary_input = None;
+                    PendingResult::QuiescentFailure(Failure::new(
+                        Code::ScopeRejected,
+                        "Advanced Model selected summarizer cancelled",
+                    ))
+                }
+                Err(failure) => {
+                    state.summary_input = None;
+                    PendingResult::QuiescentFailure(failure)
+                }
+            };
+        }
         let Some(mut child) = state.pending.take() else {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
@@ -679,6 +775,8 @@ mod plugin {
         // This provider never detaches a model worker or replays an effect.
         state.pending = None;
         state.pending_run = None;
+        state.pending_summary = None;
+        state.summary_input = None;
         Ok(true)
     }
 }
