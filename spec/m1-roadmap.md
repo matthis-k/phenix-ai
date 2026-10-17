@@ -716,6 +716,38 @@ transport to save compile time.
   imply draft v2 acceptance.
 
 
+  - [ ] **R1-ACP5a — SDK v2 typed Frontend bridge.** Branch
+    `impl/m1-r1-acp-v2-typed-frontend` adds optional `acp_v2` to the
+    existing native ACP Frontend. It consumes the official SDK schema's
+    `v2::PromptRequest`, maps mandatory Text/ResourceLink to the same
+    Basic `Submission` as stable v1, and preserves session denial.
+    Unknown extension content is ignored by this non-proxy adapter;
+    unsupported optional media never gains automatic I/O authority.
+    The existing v1 tag remains supported when the feature is enabled.
+    This is implementation-in-progress, **not** v2 wire/runtime support.
+    The follow-up `impl/m1-r1-acp-v2-cancel-frontend` decodes the official
+    `v2::CancelSessionNotification` with the same session authorization and
+    typed Basic cancellation action. It tests authorized and cross-session
+    cancellation, invalid payloads and stable-v1 coexistence.
+    `.github/workflows/r1-acp-v2-frontend.yml` keeps both feature modes
+    under `cargo test --locked` and checks the host compile. This tests the
+    native Frontend contract only; no v2 session controller or wire endpoint
+    is advertised. Accept only after feature-gated unit, native ABI and
+    exact-head checks.
+  - [ ] **R1-ACP5b — v2 SDK host lifecycle.** Use `Agent.v2()` handlers,
+    typed `v2::Session*Request` and the existing Phenix single-thread
+    graph controller. Return `session/prompt` acceptance immediately;
+    publish `running` before model progress and `idle` with a stop
+    reason after durable graph completion. Implement new/list/resume/
+    close/cancel; do not pretend v1's final `PromptResponse` represents
+    the v2 lifecycle. Preserve persistence, authority and bounded input.
+  - [ ] **R1-ACP5c — version routing and independent acceptance.** Route
+    negotiated v1/v2 using the *same official crate*, without a second
+    JSON-RPC parser. Run independent v2 SDK client tests for interleaved
+    updates, replay cursors, cancellation, session close/reopen and
+    v1/v2 version mismatches. Only then advertise draft v2 support.
+
+
 ### CI performance and flake-aware planning
 
 **15 October CI quality update — part of AI-CI1 through AI-CI4, FC1 through FC4; no new parallel milestone track.** [The current CI quality assessment and historical matrix evidence](m1-ci-matrix.md) specify measured baselines, execution surfaces and detailed acceptance. This roadmap owns the implementation priority and exit criteria below. PR [#900](https://github.com/matthis-k/phenix-ai/pull/900) introduces this guidance only; it does not claim a build-time speedup or change executable CI.
