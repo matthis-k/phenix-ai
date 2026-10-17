@@ -384,9 +384,14 @@ pub trait BasicTurnAdvance {
     fn advance(&self, notification: GraphStateChange) -> Result<RunResult, BasicError>;
 }
 
-#[property(owner = "phenix.basic.agent", id = "prepared_model_request", get, set, watch)]
+#[property(
+    owner = "phenix.basic.agent",
+    id = "prepared_model_request",
+    get,
+    set,
+    watch
+)]
 pub type BasicPreparedModelRequest = Option<ModelRequest>;
-
 
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
