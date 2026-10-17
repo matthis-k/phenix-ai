@@ -77,9 +77,20 @@ impl CredentialId {
         if !component(&self.provider) || !component(&self.connection) || !component(&self.profile) {
             return Err(CredentialError::InvalidIdentity);
         }
+        // Hex-encode components before joining. Plain "__" separators
+        // collide when user-chosen IDs contain underscores.
+        fn encode(value: &str) -> String {
+            value
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        }
         Ok(format!(
-            "{}__{}__{}.credential",
-            self.provider, self.connection, self.profile
+            "{}-{}-{}.credential",
+            encode(&self.provider),
+            encode(&self.connection),
+            encode(&self.profile)
         ))
     }
 }
@@ -287,6 +298,21 @@ mod tests {
                 .expose_for_authorized_provider(),
             b"beta"
         );
+    }
+
+    #[test]
+    fn distinct_component_tuples_never_alias_credential_files() {
+        let first = CredentialId {
+            provider: "a__b".into(),
+            connection: "c".into(),
+            profile: "d".into(),
+        };
+        let second = CredentialId {
+            provider: "a".into(),
+            connection: "b__c".into(),
+            profile: "d".into(),
+        };
+        assert_ne!(first.file_name().unwrap(), second.file_name().unwrap());
     }
 
     #[test]
