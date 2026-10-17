@@ -53,6 +53,24 @@ pub trait ModelPreparation {
     ) -> Result<ModelPreparationProposal, ModelPreparationError>;
 }
 
+/// The M1 scheduler emits this exact commit-epoch change notice. This
+/// wire shape intentionally matches existing state-change graph hooks.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ModelPreparationChange {
+    pub epoch: u64,
+    pub properties: Vec<String>,
+}
+
+/// Reactively prepare an authorized request. The kernel, not the plugin,
+/// admits the state-change trigger and orders its graph successors.
+#[phenix_sdk::contract(id = "phenix.advanced.model-preparation-trigger@1")]
+pub trait ModelPreparationTrigger {
+    fn on_change(
+        &self,
+        change: ModelPreparationChange,
+    ) -> Result<ModelPreparationProposal, ModelPreparationError>;
+}
+
 /// Structural fail-closed check. This does NOT authorize a graph transition.
 /// The caller must also verify live session ownership, original journal
 /// bytes, checkpoint CAS/readback and exact final token measurement before
