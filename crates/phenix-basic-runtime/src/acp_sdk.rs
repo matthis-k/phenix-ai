@@ -78,6 +78,17 @@ fn signal_cancel(pending: &PendingPrompts, session: &str) -> acp::Result<()> {
 fn internal(error: impl ToString) -> acp::Error {
     acp::Error::internal_error().data(error.to_string())
 }
+
+// Preserve the canonical BasicError code at the standard JSON-RPC error.data
+// boundary. Clients can handle this exact typed value without inspecting
+// provider text or matching unstable human-readable diagnostics.
+fn internal_basic(problem: BasicError) -> acp::Error {
+    acp::Error::internal_error().data(serde_json::json!({
+        "format": "phenix.basic.error.v1",
+        "code": problem.code,
+        "message": problem.message,
+    }))
+}
 fn invalid(message: &str) -> acp::Error {
     acp::Error::invalid_params().data(message)
 }
@@ -342,15 +353,18 @@ impl Controller {
         phenix_basic_contracts::session_resource(&session)
             .map_err(|_| invalid("invalid ACP session ID"))?;
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
-        let snapshot: SessionSnapshot = completed(invoke(
+        let snapshot: SessionSnapshot = match invoke(
             &kernel,
             "phenix.basic.session",
             "phenix.basic.session@1/open",
             Scope {
                 session: session.clone(),
             },
-        ))
-        .map_err(internal)?;
+        ) {
+            Ok(Ok(snapshot)) => snapshot,
+            Ok(Err(problem)) => return Err(internal_basic(problem)),
+            Err(failure) => return Err(internal(failure)),
+        };
         if snapshot.revision == 0 && !self.sessions.contains_key(&session) {
             kernel.shutdown().map_err(internal)?;
             return Err(invalid("unknown persisted ACP session"));
@@ -393,7 +407,7 @@ impl Controller {
             if cause.code == ErrorCode::InvalidInput {
                 invalid(&cause.message)
             } else {
-                internal(format!("{:?}: {}", cause.code, cause.message))
+                internal_basic(cause)
             }
         })?;
         let mut owner = session_lock(&session).map_err(internal)?;
