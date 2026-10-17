@@ -327,6 +327,43 @@ Each stage must use existing M1 typed values and native descriptor validation. N
 
 ## Advanced graph topology and contract ownership
 
+**P2-3ag: typed Basic request projection (preparatory, not a graph hook).**
+Extract the exact request snapshot from the existing Basic agent's pre-Model
+boundary into one pure, typed and independently tested
+`project_model_request` function. Include the complete journal-derived
+history (tool call arguments/results), selected tools and skills, context,
+run/session identity and caller limits. Both immediate and pending Model
+paths must consume the same value without state mutation. This refactor
+does **not** yet claim to move compaction out of the Model adapter.
+
+**Mandatory graph split for P2-3ah onward.** The current Basic submit graph
+node remains pending while it invokes and polls the Model. M1 state-triggered
+hooks are admitted after a graph wave settles, not inside this pending
+node. A merely parallel Advanced node cannot see or gate the final
+authoritative ModelRequest. Implement the next slice as separate
+**Basic prepare → selected Advanced prepare → Basic Model advance** graph
+operations: Basic prepares the exact typed request and ends its graph
+wave; a watched, scoped kernel-owned property causes the selected
+Advanced prepare node to compute a verified, budgeted replacement; then
+a Basic advance node resumes the same durable session/run from an
+authorized prepared-request property. Subsequent Model/tool iterations
+must preserve this handoff, including their pending tickets and failure
+semantics. Use the existing M1 state-change triggers, selected imports,
+typed values, grants and graph scheduler. Do not add an Agent::run entry,
+manual event bus, protocol or a second scheduling engine.
+
+**Required native acceptance before switching defaults:** the Advanced
+node is actually activated and blocks Model admission; a denied or
+tampered prepared-request write never invokes Model; a no-compaction
+composition yields identical Basic multi-turn/tool results; a pending
+summarizer blocks the Model advance graph node; cancellation, restart,
+generation replacement and concurrent clients retain authoritative
+session identity and physical leases. During migration, the current
+Advanced Model adapter remains the working opt-in fallback. Only remove
+its compaction-preparation path after these checks pass on the integrated
+exact head.
+
+
 Provide an additive phenix-plugin-advanced-agent plugin for the Advanced composition. It contributes typed graph nodes and event handlers around the selected Basic agent; it does not fork the Basic model/tool loop or implement a second scheduler.
 
 - On prompt admission: resolve authorized memory/context anchors, check code/source revisions, retrieve budgeted evidence and choose a checkpoint/current-view policy before the Model request is prepared.
