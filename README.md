@@ -34,6 +34,16 @@ have M1 tests. The transition passed exact-head CI at `367420e33b`.
 [PR #781](https://github.com/matthis-k/phenix-ai/pull/781) completes S3b at
 `75a255b9`, with full CI and verified release evidence.
 
+## Durable session state
+
+Basic, verification and Advanced presets persist their SQLite session state in
+`$XDG_STATE_HOME/phenix/basic.sqlite`, falling back to
+`$HOME/.local/state/phenix/basic.sqlite`. The runtime creates the parent
+directory and exports the resolved path to its in-process storage plugins, so
+packaged launchers and direct invocations work without extra configuration.
+Set `PHENIX_BASIC_SQLITE_PATH` to override it; component-specific launchers such
+as `phenix-basic-http-acp` select their own database file.
+
 ## Opt-in P1 HTTP model
 
 `phenix-basic-http-acp` runs the accepted Basic agent with the existing

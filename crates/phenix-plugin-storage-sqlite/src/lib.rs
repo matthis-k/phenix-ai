@@ -1,8 +1,9 @@
 //! SQLite-backed Basic Storage. Session and journal semantics stay in their
 //! own plugins. SQLite serializes CAS transactions across provider processes.
 //!
-//! PHENIX_BASIC_SQLITE_PATH is set by the product launcher. No default database
-//! is created in the current directory, and a missing setting fails closed.
+//! PHENIX_BASIC_SQLITE_PATH is supplied by the runtime, which resolves the
+//! XDG state default when the caller does not set it. No database is created in
+//! the current directory; a missing file-backed path fails closed.
 use phenix_basic_contracts::{
     error, BasicError, ErrorCode, RecordKey, StorageEdit, StorageTransaction, StoredRecord,
 };
