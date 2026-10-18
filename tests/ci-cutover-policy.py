@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_SOURCE_PIN = '1a733ae1daae2cb99989b735b171bc5dedd80d63'
+EXPECTED_SOURCE_PIN = 'e91cc8de2e10d0c4592b950e442f73ff6ea9efa3'
 
 
 def require(condition, message):
