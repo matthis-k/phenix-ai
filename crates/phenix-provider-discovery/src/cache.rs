@@ -70,6 +70,7 @@ struct Snapshot {
     expires_at: Option<u64>,
     credential_revision: u64,
     revision: u64,
+    invalidated: bool,
 }
 
 /// A provider plugin may persist these snapshots in its authorized storage.
@@ -131,6 +132,7 @@ impl CatalogCache {
                 expires_at,
                 credential_revision,
                 revision,
+                invalidated: false,
             },
         );
         Ok(revision)
@@ -140,7 +142,8 @@ impl CatalogCache {
     /// runtime-owned credential generation, never a value from a model.
     pub fn view(&self, key: &CacheKey, now: u64, credential_revision: u64) -> Option<CatalogView> {
         let entry = self.entries.get(key)?;
-        let fresh = credential_revision == entry.credential_revision
+        let fresh = !entry.invalidated
+            && credential_revision == entry.credential_revision
             && now >= entry.checked_at
             && entry.expires_at.is_none_or(|expires_at| now < expires_at);
         Some(CatalogView {
@@ -155,8 +158,18 @@ impl CatalogCache {
         })
     }
 
-    /// A refresh failure leaves the last-known snapshot unchanged, for
-    /// inspection only once its time or credential revision is stale.
+    /// A failed refresh or revoked auth invalidates freshness immediately,
+    /// even if the cached TTL has not expired. Keep the snapshot readable for
+    /// inspection. Only a subsequent successful put() can restore freshness.
+    pub fn mark_stale(&mut self, key: &CacheKey) -> bool {
+        let Some(entry) = self.entries.get_mut(key) else {
+            return false;
+        };
+        entry.invalidated = true;
+        true
+    }
+
+    /// Remove the last-known snapshot, including its inspection data.
     pub fn purge(&mut self, key: &CacheKey) -> bool {
         self.entries.remove(key).is_some()
     }
@@ -284,6 +297,49 @@ mod tests {
         assert_eq!(
             cache.view(&key(Some("work")), 12, 1).unwrap().page.models[0].id,
             "new"
+        );
+    }
+
+    #[test]
+    fn failed_refresh_marks_snapshot_stale_before_ttl_expires() {
+        let mut cache = CatalogCache::default();
+        let account = key(Some("work"));
+        let previous = cache
+            .put(
+                account.clone(),
+                100,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 600 },
+                catalog("known"),
+            )
+            .unwrap();
+        assert_eq!(
+            cache.view(&account, 101, 7).unwrap().freshness,
+            Freshness::Fresh
+        );
+
+        // A failed network/auth refresh must not leave the cached result
+        // selectable for the remaining TTL, but retains inspection details.
+        assert!(cache.mark_stale(&account));
+        let old = cache.view(&account, 101, 7).unwrap();
+        assert_eq!(old.freshness, Freshness::Stale);
+        assert_eq!(old.page.models[0].id, "known");
+        assert_eq!(old.revision, previous);
+        assert!(!cache.mark_stale(&key(Some("unknown"))));
+
+        let next = cache
+            .put(
+                account.clone(),
+                102,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 600 },
+                catalog("new"),
+            )
+            .unwrap();
+        assert!(next > previous);
+        assert_eq!(
+            cache.view(&account, 102, 7).unwrap().freshness,
+            Freshness::Fresh
         );
     }
 
