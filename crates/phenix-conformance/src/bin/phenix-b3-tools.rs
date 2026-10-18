@@ -48,7 +48,7 @@ fn main() {
     let resource = "phenix.session.s1";
     let resource_set = BTreeSet::from([resource.to_owned()]);
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![args[1].clone()],
         definitions: vec![args[2].clone()],
         entry: selection(catalog),
