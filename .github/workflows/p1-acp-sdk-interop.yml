@@ -30,8 +30,23 @@ jobs:
           workspaces: tests/acp-sdk-client
       - name: Validate independent ACP client formatting
         run: cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml --all -- --check
-      - name: Build the packaged Phenix ACP host
-        run: nix build .#phenix-basic-acp -L --out-link result-acp
+      # SDK and packaged Nix host builds are independent. Compile in
+      # parallel and require *both* exits before interoperability checks.
+      - name: Build ACP host and independent SDK client concurrently
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path tests/acp-sdk-client/Cargo.toml --release > "$RUNNER_TEMP/acp-client-build.log" 2>&1 &
+          sdk_pid=$!
+          trap 'kill "$sdk_pid" 2>/dev/null || true' EXIT
+          host_rc=0
+          nix build .#phenix-basic-acp -L --out-link result-acp || host_rc=$?
+          sdk_rc=0
+          wait "$sdk_pid" || sdk_rc=$?
+          cat "$RUNNER_TEMP/acp-client-build.log"
+          test "$host_rc" -eq 0
+          test "$sdk_rc" -eq 0
       - name: Exercise host through official stable-v1 SDK
         timeout-minutes: 3
         env:
@@ -39,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           export PHENIX_BASIC_SQLITE_PATH="$RUNNER_TEMP/phenix-p1-official-acp.db"
-          cargo run --locked --manifest-path tests/acp-sdk-client/Cargo.toml --release -- \
+          tests/acp-sdk-client/target/release/phenix-p1-acp-client-check \
             "$PWD/result-acp/bin/phenix-basic-acp"
       - name: Require bounded SDK stdio input
         timeout-minutes: 2
