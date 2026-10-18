@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     def invoke(operation, request, *, granted=None, authorized=True, environment=None):
         selected = resource(first) if granted is None else granted
         policy = dict(
-            format="phenix.composition.v2",
+            format="phenix.composition.v3",
             entry=dict(interface=contract, operation=operation, provider=provider),
             artifacts=[plugin], definitions=[definitions], slots=[],
             grants=[dict(caller="root", interface=contract, operation=item,
