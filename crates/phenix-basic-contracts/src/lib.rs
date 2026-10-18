@@ -146,6 +146,16 @@ pub struct RunResult {
     pub usage: Usage,
 }
 
+/// Internal staged graph wave outcome, distinct from a completed Basic turn.
+/// A re-preparation commits a watched request and allows the kernel's existing
+/// graph scheduling to trigger another Model wave; it is not an Answer.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct TurnAdvanceOutcome {
+    /// None signals a committed re-preparation wave, not a terminal answer.
+    /// Some carries the completed, authoritative Basic turn result.
+    pub completed: Option<RunResult>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct CatalogCursor {
     pub query: String,
@@ -381,7 +391,7 @@ pub struct GraphStateChange {
 /// prepared-request property after the Basic preparation graph wave.
 #[contract(id = "phenix.basic.turn-advance@1")]
 pub trait BasicTurnAdvance {
-    fn advance(&self, notification: GraphStateChange) -> Result<RunResult, BasicError>;
+    fn advance(&self, notification: GraphStateChange) -> Result<TurnAdvanceOutcome, BasicError>;
 }
 
 #[property(
@@ -441,6 +451,30 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn internal_reprepare_is_distinct_from_a_completed_turn() {
+        let reprepare = TurnAdvanceOutcome { completed: None };
+        assert_eq!(
+            decode::<TurnAdvanceOutcome>(&encode(&reprepare).unwrap()).unwrap(),
+            reprepare
+        );
+        let complete = TurnAdvanceOutcome {
+            completed: Some(RunResult {
+                session: "s1".into(),
+                run: "run-1".into(),
+                answer: String::new(),
+                model_turns: 1,
+                tool_calls: 0,
+                usage: Usage::default(),
+            }),
+        };
+        assert_ne!(reprepare, complete);
+        assert_eq!(
+            decode::<TurnAdvanceOutcome>(&encode(&complete).unwrap()).unwrap(),
+            complete
+        );
+    }
+
     #[test]
     fn complete_transcript_and_definition_package_use_canonical_types() {
         let request = ModelRequest {
