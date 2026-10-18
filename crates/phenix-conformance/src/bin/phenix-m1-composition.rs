@@ -51,7 +51,7 @@ fn main() {
     let choice = "example.choice@1/run";
     let other = "example.other@1/run";
     let mut c = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(choice, "example.choice"),
@@ -191,7 +191,7 @@ fn main() {
     drop(kernel);
     let cycle = "example.cycle@1/run";
     let cycle_policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: vec![args[8].clone()],
         entry: selection(cycle, "example.cycle"),
@@ -218,7 +218,7 @@ fn main() {
     let bump = "example.resource.bump@1/bump";
     let read = "example.resource.count@1/count";
     let scoped = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[5..8].to_vec(),
         entry: selection(run, "example.restricted"),
