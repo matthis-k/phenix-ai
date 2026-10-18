@@ -14,9 +14,9 @@ ci.mkFlakeCheckConfig {
       ".#phenix-describe"
       ".#phenix-m1-conformance-runner"
       ".#phenix-core-example-plugins"
-      ".#phenix-basic-agent-batch"
-      ".#phenix-basic-state-batch"
-      # These exact store derivations appeared in multiple independent shards.
+      # Keep only actual shared dependencies in the prebuild hotset.
+      # Per-plugin packages are intentionally isolated, not batch-prebuilt.
+      # These store derivations appeared in multiple independent shards.
       # Share only the observed hotset, not every check dependency: broad
       # prebuilding would serialize the critical path and bloat the cache.
       ".#phenix-basic-contracts"

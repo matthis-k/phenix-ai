@@ -665,79 +665,13 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
-      # Keep independent source closures for feature-variant and system-linked
-      # plugins. Compatible, default-feature plugins compile in small cohesive
-      # Cargo groups, so changes do not invalidate the entire Rust workspace.
-      basicPluginBatches = [
-        {
-          id = "agent";
-          names = [
-            "phenix-plugin-model-scripted"
-            "phenix-plugin-basic-tools"
-            "phenix-plugin-basic-agent"
-          ];
-          paths = [
-            ./crates/phenix-plugin-model-scripted
-            ./crates/phenix-plugin-basic-tools
-            ./crates/phenix-plugin-basic-agent
-          ];
-        }
-        {
-          id = "state";
-          names = [
-            "phenix-plugin-event-journal"
-            "phenix-plugin-basic-session"
-            "phenix-plugin-basic-memory"
-          ];
-          paths = [
-            ./crates/phenix-plugin-event-journal
-            ./crates/phenix-plugin-basic-session
-            ./crates/phenix-plugin-basic-memory
-          ];
-        }
-      ];
-      basicPluginBatch = group:
-        rust.buildRustPackage {
-          pname = "phenix-basic-${group.id}-plugins";
-          version = "0.1.0";
-          src = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ] ++ group.paths);
-          cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = pkgs.lib.concatMap (name: [ "-p" name ]) group.names;
-          preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-          doCheck = false;
-          installPhase = ''
-            mkdir -p "$out/lib"
-            ${pkgs.lib.concatMapStringsSep "\n" (name: ''
-              cp target/*/release/lib${builtins.replaceStrings [ "-" ] [ "_" ] name}.so "$out/lib/"
-            '') group.names}
-          '';
-        };
-      basicAgentBatch = basicPluginBatch (builtins.elemAt basicPluginBatches 0);
-      basicStateBatch = basicPluginBatch (builtins.elemAt basicPluginBatches 1);
-      basicBatchFor = name:
-        let
-          matches = builtins.filter (g: builtins.elem name g.names) basicPluginBatches;
-        in
-        if matches == [] then null
-        else if (builtins.head matches).id == "agent" then basicAgentBatch
-        else basicStateBatch;
-      # The output contract is identical to independently built native plugins.
-      # runCommand's script must generate the descriptor and package metadata;
-      # unlike buildRustPackage, it does not run postFixup.
+      # Keep the native artifact/package ABI unchanged, but isolate each Basic
+      # plugin's Rust sources in its own Nix derivation. A change to one plugin
+      # must not rebuild the other default-feature plugins merely because they
+      # previously shared a Cargo batch. Common SDK/contracts remain shared
+      # source dependencies, so changes to them legitimately rebuild consumers.
+      # Example fixture plugins may still be batch-built for conformance speed.
       basicNativePlugin = name: library: pluginPath:
-        let batch = basicBatchFor name;
-        in
-        if batch != null then
-          pkgs.runCommand "${name}-native-package" { } ''
-            mkdir -p "$out/lib"
-            cp ${batch}/lib/lib${library}.so "$out/lib/plugin.so"
-            ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
-            ${pkgs.python3}/bin/python ${recordWriter} "$out"
-            test -s "$out/lib/plugin.so"
-            test -s "$out/descriptor.bin"
-            test -s "$out/package.json"
-          ''
-        else
         rust.buildRustPackage {
           pname = name;
           version = "0.1.0";
@@ -2099,8 +2033,6 @@
         phenix-kernel = kernel;
         # Shared Cargo output for Nix CI prebuild; plugins remain independent packages.
         phenix-core-example-plugins = coreExamplesBuild;
-        phenix-basic-agent-batch = basicAgentBatch;
-        phenix-basic-state-batch = basicStateBatch;
         phenix-describe = describe;
         example-provider = provider;
         example-consumer = consumer;
