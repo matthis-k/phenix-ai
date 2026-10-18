@@ -393,7 +393,7 @@ or claim real-model/live-provider verification.
 | Capability | Deterministic coverage | Status |
 | --- | --- | --- |
 | fresh session + prompt | `jsonl-multisession-product.py`, `terminal-sessions-product.py`, `acp-stdio-product.py`, `basic-history-verification-product.py` | covered |
-| assistant text streaming | `basic-streaming-product.py` (ordered `TextDelta` before `Answer`) | covered (new fixture) |
+| assistant text / streaming | `basic-streaming-product.py` (synchronous TextDelta projection); `basic-pending-http-product.py` (incremental pending HTTP stream) | partial across separate gates; synchronous fixture is not live streaming |
 | single and multiple tool calls | `basic-history-verification-product.py` (one call), `jsonl-multisession-product.py`, `acp-stdio-product.py` (two calls) | covered |
 | tool-call argument validation | `phenix-plugin-basic-tools` and `phenix-plugin-model-scripted` unit tests (invalid JSON, unavailable tool) | covered (unit) |
 | tool-result continuation | `basic-history-verification-product.py`, `jsonl-multisession-product.py` | covered |
@@ -407,11 +407,17 @@ or claim real-model/live-provider verification.
 | usage reporting and limits | limits: `basic-history-verification-product.py`, `jsonl-multisession-product.py`; usage: `phenix-b5-agent` | covered (limits product / usage native) |
 | cancellation and effect revocation | idle cancel: `basic-history-verification-product.py`; active cancel/revocation: `basic-pending-http-product.py` | partial (active path is HTTP-only) |
 | persisted restart/replay | `basic-history-verification-product.py`, `jsonl-multisession-product.py`, `observer-product.py` | covered |
-| multiple observer cursors | `observer-product.py`, `basic-history-verification-product.py` | covered |
+| multiple observer cursors | `observer-product.py` (independent Terminal/JSONL checkpoints and failed delivery replay), `basic-history-verification-product.py` | covered by observer products, not basic-streaming |
 | cross-session authority isolation | `jsonl-multisession-product.py`, `basic-history-verification-product.py`, `terminal-sessions-product.py` | covered |
 | conflicting state revisions | `phenix-plugin-storage-sqlite` CAS, `phenix-b2-sqlite` injected fault; owner-marker conflict in `basic-pending-http-product.py` | covered (native) |
 | invalid/unavailable operations | invalid session identity, unavailable model/provider (`acp-stdio-product.py`), `model-error` | covered |
 | ACP error propagation | `acp-stdio-product.py`, `basic-history-verification-acp.py` | covered |
+
+The synchronous `basic-streaming-product.py` proves journal event order, not
+incremental token emission, partial-response observability, or independent
+observer replay. Those are separate pending-HTTP and observer product gates.
+Never infer a live-stream or cross-cursor guarantee from an ordered
+`TextDelta` emitted after a synchronous Model has returned.
 
 Remaining deterministic gaps (by design, not addable with the synchronous
 scripted/history Model): active mid-stream cancellation/effect revocation,
