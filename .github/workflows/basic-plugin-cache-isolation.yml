@@ -1,0 +1,30 @@
+name: Basic plugin cache-isolation regression
+on:
+  pull_request:
+    paths:
+      - flake.nix
+      - ci/flake-check-config.nix
+      - .github/scripts/test-basic-plugin-cache-isolation.sh
+      - .github/workflows/basic-plugin-cache-isolation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolation:
+    name: Native plugin derivation isolation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Verify changed plugin and dependent composition only
+        run: bash .github/scripts/test-basic-plugin-cache-isolation.sh
