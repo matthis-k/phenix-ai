@@ -91,9 +91,13 @@
         record = dict(format=profile, artifact="lib/plugin.so", descriptor="descriptor.bin", target="x86_64-unknown-linux-gnu", **json.load(open("digests.json")))
         (out / "package.json").write_text(json.dumps(record, sort_keys=True))
       '';
-      # Compatible example cdylibs share one Cargo compilation. Each package
-      # below still has its own descriptor and native package metadata. Keep
-      # linker/profile variants on independent Rust derivations.
+      # Compatible, default-feature example cdylibs share one Cargo
+      # compilation instead of recompiling the workspace in each Nix check
+      # shard. Keep feature-variant sources (pending, reactive-provider) on
+      # individual Rust derivations so ABI/LTO/security-negative fixtures
+      # continue to test the actual distinct binaries.
+      # Packaging stays per-plugin with a descriptor and digest of the final
+      # copied shared library, preserving native path-based loading.
       coreExamples = [
         "example-provider"
         "example-consumer"
@@ -106,6 +110,24 @@
         "example-resource-provider"
         "example-lifecycle-provider"
         "example-lifecycle-consumer"
+        "example-agent"
+        "example-agent-alternate"
+        "example-agent-model"
+        "example-agent-tool"
+        "example-authoring-client"
+        "example-authoring-field"
+        "example-authoring-provider"
+        "example-graph-a"
+        "example-graph-b"
+        "example-graph-c"
+        "example-pending-consumer"
+        "example-pending-immediate"
+        "example-pending-security"
+        "example-reactive-client"
+        "example-revision-a"
+        "example-revision-b"
+        "example-value-client"
+        "example-value-provider"
       ];
       exampleLibraryName =
         name:
