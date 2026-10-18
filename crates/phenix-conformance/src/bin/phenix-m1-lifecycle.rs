@@ -54,7 +54,7 @@ fn main() {
     let trace = output.join("trace");
     let s = selection(SERVICE, PROVIDER);
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, CONSUMER),
