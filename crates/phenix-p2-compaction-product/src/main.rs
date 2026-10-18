@@ -58,7 +58,7 @@ impl Fixture {
             ),
         ];
         let composition = Composition {
-            format: "phenix.composition.v2".into(),
+            format: "phenix.composition.v3".into(),
             artifacts: self.artifacts.clone(),
             definitions: self.definitions.clone(),
             entry: Selection {

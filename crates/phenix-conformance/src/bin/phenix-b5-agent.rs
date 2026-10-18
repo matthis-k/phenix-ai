@@ -197,7 +197,7 @@ fn main() {
         })
         .collect();
     let composition = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: paths,
         definitions: vec![defs],
         entry: selection("phenix.basic.input@1/submit", "phenix.basic.agent"),

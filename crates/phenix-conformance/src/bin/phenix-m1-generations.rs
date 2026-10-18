@@ -13,7 +13,7 @@ fn selection() -> Selection {
 }
 fn policy(path: &str) -> Composition {
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: vec![path.into()],
         entry: selection(),

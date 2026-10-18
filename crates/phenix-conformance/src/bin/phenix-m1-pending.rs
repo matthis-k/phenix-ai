@@ -46,7 +46,7 @@ fn main() {
     fs::create_dir_all(output).unwrap();
     let s = selection(SERVICE, "example.provider");
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[1..3].to_vec(),
         entry: selection(RUN, "example.pending"),

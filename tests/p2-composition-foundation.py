@@ -32,7 +32,7 @@ for binary in (kernel_exe, basic_exe, basic_test_exe, advanced_exe, advanced_tes
     assert os.access(binary, os.X_OK), binary
 
 for spec in (basic, basic_test, advanced, advanced_test):
-    assert spec["format"] == "phenix.composition.v2"
+    assert spec["format"] == "phenix.composition.v3"
     assert spec["entry"] == basic["entry"]
     assert len(spec["artifacts"]) == len(set(spec["artifacts"]))
     assert len(spec["definitions"]) == len(set(spec["definitions"]))

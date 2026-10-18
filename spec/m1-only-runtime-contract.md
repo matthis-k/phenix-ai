@@ -18,7 +18,7 @@ contains `provider`, either Null or that identity. Generated require declaration
 accept `provider = "id"`; preparation rejects substitutions or selections that
 violate it. This retains the proven exact-import guarantee in M1 metadata.
 
-Composition is a flat phenix.composition.v2 document with artifacts, definitions,
+Composition is a flat phenix.composition.v3 document with artifacts, definitions,
 entry, slots, grants, excluded, substitutions, authority and optional resource.
 Every provider selection is explicit. Required One/Many selections impose native
 lifecycle dependencies. Optional slots retain their optional lifecycle semantics

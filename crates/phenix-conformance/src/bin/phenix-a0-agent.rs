@@ -65,7 +65,7 @@ fn main() {
     let tool = "example.tool.execute@1/execute";
     let audit = "example.tool.count@1/count";
     let composition = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[1..5].to_vec(),
         entry: selection(run, "example.agent"),

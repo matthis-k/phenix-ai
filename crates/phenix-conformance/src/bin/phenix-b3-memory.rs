@@ -66,7 +66,7 @@ fn main() {
     })
     .collect();
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: args[2..4].to_vec(),
         definitions: vec![args[4].clone()],
         entry: selection(skill_list),

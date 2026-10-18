@@ -97,7 +97,7 @@ fn main() {
         }
     }
     let kernel = Prepared::prepare(Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: args[2..4].to_vec(),
         definitions: vec![args[4].clone()],
         entry: selection("phenix.basic.journal@1/read", "phenix.basic.event-journal"),

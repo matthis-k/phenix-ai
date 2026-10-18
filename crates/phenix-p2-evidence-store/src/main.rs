@@ -115,7 +115,7 @@ impl Packages {
             grant.resources = BTreeSet::from([self.resource.clone()]);
         }
         let composition = Composition {
-            format: "phenix.composition.v2".into(),
+            format: "phenix.composition.v3".into(),
             artifacts: self.artifacts.clone(),
             definitions: self.definitions.clone(),
             entry: selection(interface, operation, provider),
