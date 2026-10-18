@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@430d2abd51bf13110c8b26852a4f5f8ca347756c
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
     with:
       config: ci/flake-check-config.nix
-      library_ref: 430d2abd51bf13110c8b26852a4f5f8ca347756c
+      library_ref: e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
