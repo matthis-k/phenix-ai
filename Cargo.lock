@@ -1631,7 +1631,6 @@ dependencies = [
  "phenix-provider-protocols",
  "phenix-sdk",
  "serde_json",
- "sse-parse",
 ]
 
 [[package]]
@@ -1741,6 +1740,10 @@ dependencies = [
 name = "phenix-provider-protocols"
 version = "0.1.0"
 dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "serde_json",
+ "sse-parse",
  "url",
 ]
 

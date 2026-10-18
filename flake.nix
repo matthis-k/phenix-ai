@@ -250,6 +250,7 @@
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerBuiltinsPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-provider-builtins";
@@ -284,6 +285,7 @@
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerBuiltinsCheck = rust.buildRustPackage {
         pname = "phenix-provider-builtins";
@@ -378,14 +380,14 @@
           touch $out/verified
         '';
       };
-      providerProtocolsSource = subset (publicPaths ++ [ ./crates/phenix-provider-protocols ]);
+      providerProtocolsSource = subset (publicPaths ++ [ ./crates/phenix-provider-protocols ./crates/phenix-basic-contracts ]);
       providerProtocolsCheck = rust.buildRustPackage {
         pname = "phenix-provider-protocols";
         version = "0.1.0";
         src = providerProtocolsSource;
         cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-provider-protocols" ];
-        cargoTestFlags = [ "-p" "phenix-provider-protocols" ];
+        cargoBuildFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs" ];
+        cargoTestFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs" ];
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
         installPhase = ''
@@ -777,8 +779,11 @@
         nativeBuildInputs = [ pkgs.python3 pkgs.openssl ];
       } ''
         mkdir -p $out
+        export PYTHONPATH=${./tests}
         python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
         test -s "$out/http-model.json"
+        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out/responses
+        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out/anthropic
       '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
@@ -1653,8 +1658,11 @@
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
         mkdir -p $out
+        export PYTHONPATH=${./tests}
         python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
         test -s "$out/pending-basic-http.json"
+        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/responses
+        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/anthropic
         python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
         test -s "$out/acp-pending-http.json"
       '';

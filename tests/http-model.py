@@ -9,12 +9,16 @@ import sys
 import tempfile
 import threading
 import time
+from model_protocol_fixture import AnthropicWire, ResponsesWire, anthropic_view, chat_view
 
 binary, model, journal, storage, definitions, output_dir = sys.argv[1:]
 output = Path(output_dir)
 output.mkdir(parents=True, exist_ok=True)
 requests = []
 lock = threading.Lock()
+protocol = os.environ.get("PHENIX_MODEL_HTTP_PROTOCOL", "openai-chat")
+responses = protocol == "openai-responses"
+anthropic = protocol == "anthropic-messages"
 
 
 def frame(delta, finish=None):
@@ -35,6 +39,9 @@ class Server(BaseHTTPRequestHandler):
         pass
 
     def chunk(self, value):
+        if responses or anthropic:
+            self.wire.chunk(value)
+            return
         data = f"data: {json.dumps(value, ensure_ascii=False)}\r\n\r\n".encode()
         # Split even multibyte UTF-8 into distinct writes.
         for offset in range(0, len(data), 3):
@@ -43,10 +50,20 @@ class Server(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if responses:
+            body = chat_view(body)
+            self.wire = ResponsesWire(self.fragment)
+        elif anthropic:
+            body = anthropic_view(body)
+            self.wire = AnthropicWire(self.fragment)
         mode = body["messages"][-1]["content"]
         with lock:
             requests.append(mode)
-        assert self.headers.get("Authorization") == "Bearer fixture-token"
+        if anthropic:
+            assert self.headers.get("x-api-key") == "fixture-token"
+            assert self.headers.get("anthropic-version") == "2023-06-01"
+        else:
+            assert self.headers.get("Authorization") == "Bearer fixture-token"
         assert body["model"] == "fixture-model" and body["stream"] is True
         assert body["stream_options"]["include_usage"] is True
         assert body["max_completion_tokens"] == (1 if mode == "limit" else 32)
@@ -69,6 +86,14 @@ class Server(BaseHTTPRequestHandler):
                 time.sleep(0.3); return
             if mode == "malformed":
                 self.write_chunk(b"data: invalid-json\n\n"); self.end_chunks(); return
+            if mode == "provider-error":
+                if anthropic:
+                    self.write_chunk(b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"secret upstream details"}}\n\n')
+                elif responses:
+                    self.write_chunk(b'event: error\ndata: {"type":"error","message":"secret upstream details"}\n\n')
+                else:
+                    self.chunk({"error": {"message": "secret upstream details"}})
+                self.end_chunks(); return
             if mode == "multi":
                 self.chunk(frame({"tool_calls": [
                     {"index": 1, "id": "c2", "type": "function", "function": {"name": "length", "arguments": '{"value":'}},
@@ -92,10 +117,18 @@ class Server(BaseHTTPRequestHandler):
                 return
             if mode != "no-usage":
                 self.chunk({"choices": [], "usage": {"prompt_tokens": 27, "completion_tokens": 7}})
-            self.write_chunk(b"data: [DONE]\r\n\r\n")
+            if responses or anthropic:
+                self.wire.done()
+            else:
+                self.write_chunk(b"data: [DONE]\r\n\r\n")
             self.end_chunks()
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
             pass
+
+    def fragment(self, data):
+        for offset in range(0, len(data), 3):
+            self.write_chunk(data[offset:offset + 3])
+        self.wfile.flush()
 
 
 http = ThreadingHTTPServer(("127.0.0.1", 0), Server)
@@ -118,7 +151,7 @@ def run(mode, endpoint, ca=None):
 
 
 endpoint = f"http://127.0.0.1:{http.server_port}/completions"
-for mode in ["denied", "zero", "stream", "multi", "cancel", "status", "redirect", "malformed", "truncated", "no-usage", "limit", "timeout"]:
+for mode in ["denied", "zero", "stream", "multi", "cancel", "status", "redirect", "provider-error", "malformed", "truncated", "no-usage", "limit", "timeout"]:
     run(mode, endpoint)
 run("bad-config", "file:///tmp/forbidden-model")
 # A credentialed Model must reject non-loopback plaintext before transport.

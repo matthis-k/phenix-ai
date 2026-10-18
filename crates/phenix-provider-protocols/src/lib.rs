@@ -7,6 +7,46 @@
 use std::net::IpAddr;
 use url::Url;
 
+#[cfg(feature = "model-codecs")]
+pub mod request;
+#[cfg(feature = "model-codecs")]
+pub mod stream;
+
+#[cfg(feature = "model-codecs")]
+use phenix_basic_contracts::{error, BasicError, ErrorCode};
+
+#[cfg(feature = "model-codecs")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    OpenaiChat,
+    OpenaiResponses,
+    AnthropicMessages,
+}
+
+#[cfg(feature = "model-codecs")]
+impl Protocol {
+    pub fn parse(id: &str) -> Result<Self, BasicError> {
+        match id {
+            "openai-chat" => Ok(Self::OpenaiChat),
+            "openai-responses" => Ok(Self::OpenaiResponses),
+            "anthropic-messages" => Ok(Self::AnthropicMessages),
+            _ => Err(error(
+                ErrorCode::InvalidInput,
+                "unsupported HTTP model protocol",
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "model-codecs")]
+fn invalid(message: &str) -> BasicError {
+    error(ErrorCode::InvalidReply, message)
+}
+#[cfg(feature = "model-codecs")]
+fn failed(message: &str) -> BasicError {
+    error(ErrorCode::ModelFailed, message)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointProblem {
     Malformed,

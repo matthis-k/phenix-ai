@@ -6,7 +6,13 @@ use phenix_sdk::Portable;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) struct Stream {
+mod anthropic;
+mod responses;
+
+pub struct Stream {
+    protocol: crate::Protocol,
+    responses: responses::State,
+    anthropic: anthropic::State,
     parser: sse_parse::SseParser,
     incomplete_utf8: Vec<u8>,
     text: String,
@@ -19,6 +25,9 @@ pub(crate) struct Stream {
 impl Default for Stream {
     fn default() -> Self {
         Self {
+            protocol: crate::Protocol::OpenaiChat,
+            responses: responses::State::default(),
+            anthropic: anthropic::State::default(),
             parser: sse_parse::SseParser::new().max_buffer(phenix_sdk::MAX_BYTES),
             incomplete_utf8: Vec::new(),
             text: String::new(),
@@ -31,6 +40,12 @@ impl Default for Stream {
     }
 }
 impl Stream {
+    pub fn new(protocol: crate::Protocol) -> Self {
+        Self {
+            protocol,
+            ..Self::default()
+        }
+    }
     pub fn feed(&mut self, bytes: &[u8]) -> Result<String, BasicError> {
         if bytes.len() > phenix_sdk::MAX_BYTES {
             return Err(invalid("SSE transport chunk exceeds portable bounds"));
@@ -52,7 +67,11 @@ impl Stream {
         }
         let mut progress = String::new();
         while let Some(event) = self.parser.next_event() {
-            progress.push_str(&self.frame(&event.data)?);
+            progress.push_str(&match self.protocol {
+                crate::Protocol::OpenaiChat => self.frame(&event.data)?,
+                crate::Protocol::OpenaiResponses => self.responses_frame(&event.data)?,
+                crate::Protocol::AnthropicMessages => self.anthropic_frame(&event.data)?,
+            });
         }
         Ok(progress)
     }

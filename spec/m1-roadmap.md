@@ -481,6 +481,21 @@ of this packet.
 
 #### Provider implementation packets: current coding queue
 
+**Reusable inference codec packet (Responses + Anthropic, #974).** The shared
+`phenix-provider-protocols` library now carries all three R1 inference wire
+codecs — `openai-chat` (unchanged default), `openai-responses` and
+`anthropic-messages` — as pure request/stream codecs over the existing
+`curl`/`sse-parse`/`url` transport and the canonical `Model` contract. The
+`phenix-plugin-model-http` transport selects an explicit protocol
+(`PHENIX_MODEL_HTTP_PROTOCOL`) with `openai-chat` preserved as the default, so
+accepted P1 behavior is unchanged; the Anthropic path sends `x-api-key` and
+`anthropic-version`. The real local HTTP/SSE fixtures (`tests/http-model.py`,
+`tests/basic-pending-http-product.py`, `tests/model_protocol_fixture.py`) drive
+valid text, multiple tool calls plus continuation, malformed replies, usage
+reporting, error and cancellation drain for every protocol. This is the audit's
+"generic codecs" step, not credential-bound model selection: PV2/PV3 identity,
+binding and PV4-PV7 remain OPEN, and no live provider or onboarding is claimed.
+
 This is the coding handoff for #891. The accepted method/connection/model
 semantics above remain the behavior source. The [R1 audit](m1-r1-library-audit.md)
 owns standards and library selection; do not duplicate its provider matrix.
