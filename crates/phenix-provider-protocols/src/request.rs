@@ -22,11 +22,36 @@ pub fn encode_protocol(
     model: &str,
     protocol: crate::Protocol,
 ) -> Result<Vec<u8>, BasicError> {
+    encode_protocol_with_max_tokens(request, model, protocol, None)
+}
+
+/// Encode for the selected protocol, using an optional provider-configured
+/// request maximum. This is a wire requirement, not a new caller limit.
+/// A caller's lower explicit limit always takes precedence.
+pub fn encode_protocol_with_max_tokens(
+    request: &ModelRequest,
+    model: &str,
+    protocol: crate::Protocol,
+    provider_max_tokens: Option<u64>,
+) -> Result<Vec<u8>, BasicError> {
+    if provider_max_tokens == Some(0) {
+        return Err(bad("invalid HTTP provider output-token maximum"));
+    }
     let (messages, tools) = prepare(request)?;
+    let output_tokens = match (request.limits.model_tokens, provider_max_tokens) {
+        (Some(caller), Some(provider)) => Some(caller.min(provider)),
+        (Some(caller), None) => Some(caller),
+        (None, Some(provider)) => Some(provider),
+        (None, None) => None,
+    };
     let body = match protocol {
         crate::Protocol::OpenaiChat => chat_body(request, model, &messages, &tools),
         crate::Protocol::OpenaiResponses => responses_body(request, model, &messages, &tools),
-        crate::Protocol::AnthropicMessages => anthropic_body(request, model, &messages, &tools),
+        crate::Protocol::AnthropicMessages => {
+            let tokens = output_tokens
+                .ok_or_else(|| bad("Anthropic Messages requires configured max_tokens"))?;
+            anthropic_body(request, model, &messages, &tools, tokens)
+        }
     };
     let bytes = serde_json::to_vec(&body).map_err(|_| invalid("request encoding failed"))?;
     if bytes.len() > phenix_sdk::MAX_BYTES {
@@ -274,6 +299,7 @@ fn anthropic_body(
     model: &str,
     messages: &[PreparedMessage],
     tools: &[Tool],
+    max_tokens: u64,
 ) -> Value {
     let system = system(request).map(|developer| {
         developer["content"]
@@ -304,12 +330,28 @@ fn anthropic_body(
                 let content = error
                     .as_ref()
                     .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                let mut blocks =
-                    vec![json!({"type":"tool_result","tool_use_id":call_id,"content":content})];
+                let mut block =
+                    json!({"type":"tool_result","tool_use_id":call_id,"content":content});
                 if error.is_some() {
-                    blocks[0]["is_error"] = json!(true);
+                    block["is_error"] = json!(true);
                 }
-                msgs.push(json!({"role":"user", "content":blocks}));
+                // All results for the preceding assistant tool-use batch must
+                // share one user turn. Do not manufacture intervening turns.
+                if let Some(last) = msgs.last_mut() {
+                    if last["role"] == "user"
+                        && last["content"].as_array().is_some_and(|blocks| {
+                            !blocks.is_empty()
+                                && blocks.iter().all(|entry| entry["type"] == "tool_result")
+                        })
+                    {
+                        last["content"]
+                            .as_array_mut()
+                            .expect("checked array")
+                            .push(block);
+                        continue;
+                    }
+                }
+                msgs.push(json!({"role":"user", "content":[block]}));
             }
         }
     }
@@ -327,8 +369,6 @@ fn anthropic_body(
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
-    if let Some(tokens) = request.limits.model_tokens {
-        body["max_tokens"] = json!(tokens);
-    }
+    body["max_tokens"] = json!(max_tokens);
     body
 }

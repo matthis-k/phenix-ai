@@ -63,10 +63,11 @@ mod plugin {
             )));
         }
         let config = super::request::Config::load().map_err(CallError::Domain)?;
-        let body = phenix_provider_protocols::request::encode_protocol(
+        let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &request,
             &config.model,
             config.protocol,
+            config.provider_max_tokens,
         )
         .map_err(CallError::Domain)?;
         let session = request.session.clone();
