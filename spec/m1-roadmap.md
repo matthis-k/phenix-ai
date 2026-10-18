@@ -1041,7 +1041,15 @@ transport to save compile time.
     Clippy, canonical conformance and SDK v1 regression before acceptance.
   - [ ] **R1-ACP5c — version routing and independent acceptance.** Route
     negotiated v1/v2 using the *same official crate*, without a second
-    JSON-RPC parser. Run independent v2 SDK client tests for interleaved
+    JSON-RPC parser.
+    The `impl/m1-r1-acp-v2-sdk-router-preview` slice introduces a
+    disabled-by-default `acp_v2_preview` Cargo feature. When explicitly
+    enabled, the official SDK `Agent.protocol_router()` handles v1 and
+    v2 initialize requests, with v2 session capabilities unadvertised.
+    The default production build retains the tested SDK v1 host and its
+    version rejection behavior. The preview has no v2 session handlers and
+    is not release support. Native `cargo check --locked` is required for
+    the opt-in feature before an independent v2-client handshake test. Run independent v2 SDK client tests for interleaved
     updates, replay cursors, cancellation, session close/reopen and
     v1/v2 version mismatches. Only then advertise draft v2 support.
 

@@ -13,6 +13,8 @@ use acp::schema::{
     },
     ProtocolVersion,
 };
+#[cfg(feature = "acp_v2_preview")]
+use acp::ConnectTo;
 use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
@@ -584,6 +586,31 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
             let _ = on_close.try_send(Command::Closed);
             Ok(())
         });
+    // The official router is deliberately opt-in while R1-ACP5b is incomplete.
+    // This preview accepts v2 initialization without advertising sessions or
+    // exposing a partial v2 prompt lifecycle. Production keeps the tested
+    // stable-v1 host and its unchanged protocol-version rejection behavior.
+    #[cfg(feature = "acp_v2_preview")]
+    let connection = Agent.protocol_router().with_v1(connection).with_v2(
+        Agent
+            .v2()
+            .name("phenix-basic-v2-preview")
+            .on_receive_request(
+                async |request: acp::schema::v2::InitializeRequest,
+                       reply: Responder<acp::schema::v2::InitializeResponse>,
+                       _peer: acp::V2ConnectionTo<Client>| {
+                    if request.protocol_version != ProtocolVersion::V2 {
+                        return reply.respond_with_error(invalid("unsupported ACP v2 version"));
+                    }
+                    reply.respond(acp::schema::v2::InitializeResponse::new(
+                        ProtocolVersion::V2,
+                        acp::schema::v2::Implementation::new("phenix-basic", "0.1.0"),
+                    ))
+                },
+                acp::on_receive_request!(),
+            ),
+    );
+
     let rejected = Arc::new(AtomicBool::new(false));
     let transport_rejected = Arc::clone(&rejected);
     let transport_closed = Arc::clone(&closed);

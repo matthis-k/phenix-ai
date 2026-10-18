@@ -43,3 +43,5 @@ jobs:
         run: cargo clippy --locked -p phenix-plugin-basic-frontends --no-default-features --features acp --all-targets -- -D warnings
       - name: Check packaged host crate still compiles
         run: cargo check --locked -p phenix-basic-runtime
+      - name: Check opt-in official SDK v1/v2 router compiles
+        run: cargo check --locked -p phenix-basic-runtime --features acp_v2_preview
