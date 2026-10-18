@@ -144,6 +144,44 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(updated, library)
         self.assertNotEqual(hashlib.sha256(updated.read_bytes()).hexdigest(), first_sha)
 
+    def test_workspace_source_edit_keeps_unrelated_cdylib_cached(self):
+        # Two independent plugins in the same Cargo workspace must share
+        # dependency fingerprints without recompiling the unchanged sibling.
+        workspace = self.root / "workspace"
+        workspace.mkdir()
+        (workspace / "Cargo.toml").write_text(
+            '[workspace]\nmembers = ["a", "b"]\nresolver = "2"\n')
+        names = {}
+        for part in ("a", "b"):
+            crate = workspace / part
+            (crate / "src").mkdir(parents=True)
+            name = "phenix-source-" + part
+            names[part] = name
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "' + name + '"\nversion = "0.1.0"\n'
+                'edition = "2021"\n[lib]\ncrate-type = ["cdylib"]\n')
+            (crate / "src" / "lib.rs").write_text(
+                '#[no_mangle]\npub extern "C" fn smoke_' + part +
+                '() -> u8 { 1 }\n')
+        subprocess.run(["cargo", "generate-lockfile", "--offline",
+                        "--manifest-path", str(workspace / "Cargo.toml")], check=True)
+        cache = self.root / "cache"
+        first_a = tool.rust_build(workspace / "a", {"package": names["a"]}, cache)
+        first_b = tool.rust_build(workspace / "b", {"package": names["b"]}, cache)
+        self.assertEqual(first_a.parent, first_b.parent,
+                         "same Cargo workspace should share a target directory")
+        a_sha = hashlib.sha256(first_a.read_bytes()).hexdigest()
+        b_sha = hashlib.sha256(first_b.read_bytes()).hexdigest()
+        b_mtime = first_b.stat().st_mtime_ns
+        (workspace / "a" / "src" / "lib.rs").write_text(
+            '#[no_mangle]\npub extern "C" fn smoke_a() -> u8 { 2 }\n')
+        rebuilt_a = tool.rust_build(workspace / "a", {"package": names["a"]}, cache)
+        self.assertNotEqual(hashlib.sha256(rebuilt_a.read_bytes()).hexdigest(), a_sha)
+        rebuilt_b = tool.rust_build(workspace / "b", {"package": names["b"]}, cache)
+        self.assertEqual(hashlib.sha256(rebuilt_b.read_bytes()).hexdigest(), b_sha)
+        self.assertEqual(rebuilt_b.stat().st_mtime_ns, b_mtime,
+                         "editing plugin A must not recompile plugin B")
+
     def test_builder_is_not_inferred_from_unknown_directory(self):
         (self.root / "unknown").mkdir()
         with self.assertRaisesRegex(ValueError, "recognized"):
