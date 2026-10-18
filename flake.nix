@@ -95,7 +95,9 @@
       # compilation instead of recompiling the workspace in each Nix check
       # shard. Keep feature-variant sources (pending, reactive-provider) on
       # individual Rust derivations so ABI/LTO/security-negative fixtures
-      # continue to test the actual distinct binaries.
+      # continue to test the actual distinct binaries. Revision A/B must
+      # also stay separate: both Cargo crates emit libexample_revision.so,
+      # but their different executable digests are part of generation tests.
       # Packaging stays per-plugin with a descriptor and digest of the final
       # copied shared library, preserving native path-based loading.
       coreExamples = [
@@ -124,8 +126,6 @@
         "example-pending-immediate"
         "example-pending-security"
         "example-reactive-client"
-        "example-revision-a"
-        "example-revision-b"
         "example-value-client"
         "example-value-provider"
       ];
