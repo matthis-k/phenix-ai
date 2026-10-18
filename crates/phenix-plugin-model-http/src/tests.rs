@@ -257,3 +257,154 @@ fn http_model_endpoint_is_parsed_by_url_crate_before_curl() {
         );
     }
 }
+
+#[test]
+fn anthropic_wire_max_tokens_required_and_provider_bound_precede_transport() {
+    use phenix_provider_protocols::{request::encode_protocol_with_max_tokens, Protocol};
+    let request = request();
+    let err = encode_protocol_with_max_tokens(
+        &request,
+        "claude-fixture",
+        Protocol::AnthropicMessages,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+
+    let encoded: Value = serde_json::from_slice(
+        &encode_protocol_with_max_tokens(
+            &request,
+            "claude-fixture",
+            Protocol::AnthropicMessages,
+            Some(1024),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(encoded["max_tokens"], 1024);
+
+    let mut limited = request.clone();
+    limited.limits.model_tokens = Some(128);
+    let encoded: Value = serde_json::from_slice(
+        &encode_protocol_with_max_tokens(
+            &limited,
+            "claude-fixture",
+            Protocol::AnthropicMessages,
+            Some(1024),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(encoded["max_tokens"], 128);
+
+    limited.limits.model_tokens = Some(2048);
+    let encoded: Value = serde_json::from_slice(
+        &encode_protocol_with_max_tokens(
+            &limited,
+            "claude-fixture",
+            Protocol::AnthropicMessages,
+            Some(1024),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(encoded["max_tokens"], 1024);
+    assert_eq!(
+        encode_protocol_with_max_tokens(
+            &limited,
+            "claude-fixture",
+            Protocol::AnthropicMessages,
+            Some(0)
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput,
+    );
+    // A provider budget is not an implicit caller token limit on Chat/Responses.
+    for protocol in [Protocol::OpenaiChat, Protocol::OpenaiResponses] {
+        let body: Value = serde_json::from_slice(
+            &encode_protocol_with_max_tokens(&request, "fixture", protocol, Some(1024)).unwrap(),
+        )
+        .unwrap();
+        assert!(body.get("max_completion_tokens").is_none());
+        assert!(body.get("max_output_tokens").is_none());
+    }
+}
+
+#[test]
+fn anthropic_groups_batched_tool_results_without_inventing_user_turns() {
+    use phenix_provider_protocols::{request::encode_protocol_with_max_tokens, Protocol};
+    let mut request = request();
+    request.history.extend([
+        Message {
+            role: Role::Assistant,
+            text: String::new(),
+            calls: vec![
+                ToolCall {
+                    id: "c1".into(),
+                    tool: "uppercase".into(),
+                    arguments: r#""hello""#.into(),
+                },
+                ToolCall {
+                    id: "c2".into(),
+                    tool: "uppercase".into(),
+                    arguments: r#""world""#.into(),
+                },
+            ],
+            call_id: String::new(),
+            error: None,
+        },
+        Message {
+            role: Role::Tool,
+            text: "HELLO".into(),
+            calls: vec![],
+            call_id: "c1".into(),
+            error: None,
+        },
+        Message {
+            role: Role::Tool,
+            text: String::new(),
+            calls: vec![],
+            call_id: "c2".into(),
+            error: Some("failed".into()),
+        },
+    ]);
+    let body: Value = serde_json::from_slice(
+        &encode_protocol_with_max_tokens(
+            &request,
+            "claude-fixture",
+            Protocol::AnthropicMessages,
+            Some(100),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    let blocks = messages[2]["content"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["tool_use_id"], "c1");
+    assert_eq!(blocks[1]["tool_use_id"], "c2");
+    assert_eq!(blocks[1]["is_error"], true);
+}
+
+#[test]
+fn legacy_http_provider_max_tokens_parser_rejects_invalid_values() {
+    let parse = crate::request::configured_max_tokens;
+    assert_eq!(parse(Err(std::env::VarError::NotPresent)).unwrap(), None);
+    assert_eq!(parse(Ok("32".into())).unwrap(), Some(32));
+    for raw in ["", "0", "-1", "abc", " 32", "18446744073709551616"] {
+        assert_eq!(
+            parse(Ok(raw.into())).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+    assert_eq!(
+        parse(Err(std::env::VarError::NotUnicode(
+            std::ffi::OsString::from("\u{fffd}")
+        )))
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
+}

@@ -10,6 +10,7 @@ pub(crate) struct Config {
     pub endpoint: String,
     pub model: String,
     pub protocol: Protocol,
+    pub provider_max_tokens: Option<u64>,
     pub credential: Option<String>,
     pub ca_file: Option<String>,
 }
@@ -28,6 +29,27 @@ pub(crate) fn endpoint_url(input: &str) -> Result<String, BasicError> {
     })
 }
 
+// Legacy HTTP preset only. Model-specific required output budgets belong to
+// provider configuration, never to the kernel or generic caller Limits.
+pub(crate) fn configured_max_tokens(
+    value: Result<String, env::VarError>,
+) -> Result<Option<u64>, BasicError> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(tokens) if tokens > 0 => Ok(Some(tokens)),
+            _ => Err(error(
+                ErrorCode::InvalidInput,
+                "invalid HTTP provider max tokens",
+            )),
+        },
+        Err(_) => Err(error(
+            ErrorCode::InvalidInput,
+            "invalid HTTP provider max tokens",
+        )),
+    }
+}
+
 impl Config {
     pub fn load() -> Result<Self, BasicError> {
         let endpoint = env::var("PHENIX_MODEL_HTTP_ENDPOINT")
@@ -39,6 +61,7 @@ impl Config {
             Err(env::VarError::NotPresent) => Protocol::OpenaiChat,
             Err(_) => return Err(error(ErrorCode::InvalidInput, "invalid HTTP protocol")),
         };
+        let provider_max_tokens = configured_max_tokens(env::var("PHENIX_MODEL_HTTP_MAX_TOKENS"))?;
         let endpoint = endpoint_url(&endpoint)?;
         if model.is_empty() {
             return Err(error(
@@ -57,6 +80,7 @@ impl Config {
             endpoint,
             model,
             protocol,
+            provider_max_tokens,
             credential,
             ca_file: env::var("PHENIX_MODEL_HTTP_CA_FILE").ok(),
         })

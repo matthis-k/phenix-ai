@@ -174,6 +174,10 @@ try:
         PHENIX_MODEL_HTTP_API_KEY="pending-fixture",
         PHENIX_BASIC_SQLITE_PATH=str(output / "basic-http.db"),
     )
+    # Normal Basic requests omit a caller output budget. Anthropic Messages
+    # requires one on the wire, provided by this explicit model preset.
+    if anthropic:
+        env["PHENIX_MODEL_HTTP_MAX_TOKENS"] = "128"
     packet = {"type": "prompt", "session": "s1", "text": "two tools",
               "limits": {"model_turns": 2, "tool_calls": 2, "model_tokens": 20}}
     result = subprocess.run(

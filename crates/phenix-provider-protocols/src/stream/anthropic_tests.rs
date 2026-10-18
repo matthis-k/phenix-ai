@@ -201,6 +201,8 @@ fn anthropic_request_encodes_system_tools_and_full_history() {
             error: Some("tool failed".into()),
         },
     ]);
+    // Anthropic requires a positive output budget on every wire request.
+    request.limits.model_tokens = Some(128);
     let encoded: Value = serde_json::from_slice(
         &encode_protocol(&request, "fixture", crate::Protocol::AnthropicMessages).unwrap(),
     )

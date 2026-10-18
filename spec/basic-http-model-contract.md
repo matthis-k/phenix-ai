@@ -11,8 +11,16 @@ provider follows no redirects and supports only HTTP/HTTPS endpoints.
 The authenticated begin callback checks the session resource and validates the
 complete transcript, tool schemas, skills, context and caller limits before
 starting network work. It rejects empty run identities and zero token/timeout
-limits before effects. No execution timeout or token limit is added when the
-caller omits those options. `model_tokens` bounds generated completion tokens.
+limits before effects. No execution timeout or generic caller token limit is added
+when the caller omits those options. `model_tokens` bounds generated completion
+tokens. The optional legacy HTTP preset `PHENIX_MODEL_HTTP_MAX_TOKENS` specifies
+a provider-configured wire maximum; it must be a positive integer. Anthropic
+Messages requires `max_tokens`, so an omitted caller limit uses this explicitly
+configured provider maximum, while an explicit caller limit is constrained by
+the configured maximum if present. If neither limit is present for Anthropic,
+request encoding returns a typed InvalidInput *before network I/O*. OpenAI
+Chat and Responses retain their existing absent-caller-limit behavior; this
+does not add a kernel default or a parallel provider registry.
 The API's function parameters use one object envelope, `{"value": <tool JSON>}`,
 for every tool schema. Replies unwrap this envelope into the existing ToolCall
 arguments. History uses the same mapping, so scalar and object tools preserve
