@@ -304,6 +304,55 @@ mod tests {
     }
 
     #[test]
+    fn registration_rejects_ambiguous_connection_and_protocol_identities() {
+        let mut providers = registrations();
+        providers[0].connections[0].id.clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("invalid provider connection")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].protocols.push(OPENAI_CHAT.into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty provider protocol")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].protocols[0].clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty provider protocol")
+        );
+    }
+
+    #[test]
+    fn registration_rejects_cross_origin_model_discovery() {
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://unrelated.test/v1/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("cross-origin model discovery")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://api.openai.com:8443/v1/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("cross-origin model discovery")
+        );
+
+        // Same origin with a different path is allowed for model discovery.
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://api.openai.com/available-models".into());
+        validate_registrations(&providers).unwrap();
+    }
+
+    #[test]
     fn registration_never_serializes_credentials() {
         let providers = registrations();
         let json = format!("{providers:?}");
