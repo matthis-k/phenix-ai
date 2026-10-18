@@ -190,7 +190,8 @@ if len(sys.argv) in (9, 10):
         assert row is not None and row[0] > 0
 
     # A multi-turn tool workflow must re-enter the watched preparation graph
-    # after every tool result. The scripted Model first requests
+    # after the complete batch of tool results from each Model reply.
+    # The scripted Model first requests
     # uppercase+length, then derives its answer from the exact tool results
     # it receives in the re-prepared second request. The prior slice failed
     # closed on any tool-bearing reply; the re-prepared history must now
@@ -206,6 +207,26 @@ if len(sys.argv) in (9, 10):
     assert [event["text"] for event in tool_events if event["kind"] == "Answer"] == [
         "mock:call-1:HELLO|call-2:5"
     ], tool_events
+    # Exactly one second Model wave follows *both* completed tools; no
+    # transient empty RunResult may appear as a premature terminal Answer.
+    model_waves = [event["sequence"] for event in tool_events
+                   if event["kind"] == "ModelStarted"]
+    tool_finish = [event["sequence"] for event in tool_events
+                   if event["kind"] == "ToolFinished"]
+    terminal = [event["sequence"] for event in tool_events
+                if event["kind"] == "Answer"]
+    assert len(model_waves) == 2 and len(tool_finish) == 2 and len(terminal) == 1
+    assert model_waves[0] < tool_finish[0] < tool_finish[1] < model_waves[1] < terminal[0]
+
+    # A new process must resume the completed session without executing any
+    # old tool twice or surfacing an earlier internal graph-wave result.
+    resumed, resumed_events = submit(selected_path, "selected-tools.sqlite", "after-tools")
+    assert resumed.returncode == 0, (resumed.stdout, resumed.stderr)
+    assert [event["text"] for event in resumed_events if event["kind"] == "Answer"] == [
+        "mock:after-tools"
+    ], resumed_events
+    assert "ToolStarted" not in [event["kind"] for event in resumed_events], resumed_events
+
 
     # An actual Model domain failure must terminate its durable Running
     # checkpoint. A fresh launcher can then reuse the same session, without
@@ -277,6 +298,7 @@ if len(sys.argv) in (9, 10):
         "authorized-basic-prepare-publishes-model-request-without-model-execution",
         "missing-prepare-grant-denies-without-journal-effects",
         "original-basic-composition-remains-separate",
-        "selected-advanced-graph-reenters-preparation-after-each-tool-result",
+        "selected-advanced-graph-reenters-after-tool-batch",
+        "selected-advanced-tool-completion-restart-no-reexecution",
     ],
 }, sort_keys=True, indent=2))

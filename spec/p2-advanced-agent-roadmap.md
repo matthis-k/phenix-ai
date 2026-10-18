@@ -554,6 +554,17 @@ fixture runs `tools:hello` through the selected three-plugin composition
 and asserts two `ModelStarted`/`ToolStarted`/`ToolFinished` events and the
 exact final `mock:call-1:HELLO|call-2:5` answer, proving the second Model
 request was re-prepared with correct tool results rather than denied.
+The intermediate re-preparation currently settles the internal
+`BasicTurnAdvance::advance` call with an empty-answer `RunResult`, while
+the session remains `Running`. This is not a terminal `Answer` event and
+the journal-backed JSONL product correctly waits for the later wave. The
+current contract does not explicitly distinguish intermediate continuation
+from completed results. A typed stage outcome and graph-failure recovery
+must be reviewed with the existing kernel pending/graph machinery before
+broad client or P2 acceptance; do not add a second scheduler or expose
+the intermediate result as a user-visible answer. Test cancellation,
+preparation denial and restart between waves as separate P2 release gates.
+
 Pending summarizer selection, verified compaction admission, crash-atomic
 journal/session reconciliation and production tokenizer parity remain
 release gates.
