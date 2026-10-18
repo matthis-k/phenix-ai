@@ -288,6 +288,49 @@ mod tests {
     }
 
     #[test]
+    fn failed_refresh_marks_snapshot_stale_before_ttl_expires() {
+        let mut cache = CatalogCache::default();
+        let account = key(Some("work"));
+        let previous = cache
+            .put(
+                account.clone(),
+                100,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 600 },
+                catalog("known"),
+            )
+            .unwrap();
+        assert_eq!(
+            cache.view(&account, 101, 7).unwrap().freshness,
+            Freshness::Fresh
+        );
+
+        // A failed network/auth refresh must not leave the cached result
+        // selectable for the remaining TTL, but retains inspection details.
+        assert!(cache.mark_stale(&account));
+        let old = cache.view(&account, 101, 7).unwrap();
+        assert_eq!(old.freshness, Freshness::Stale);
+        assert_eq!(old.page.models[0].id, "known");
+        assert_eq!(old.revision, previous);
+        assert!(!cache.mark_stale(&key(Some("unknown"))));
+
+        let next = cache
+            .put(
+                account.clone(),
+                102,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 600 },
+                catalog("new"),
+            )
+            .unwrap();
+        assert!(next > previous);
+        assert_eq!(
+            cache.view(&account, 102, 7).unwrap().freshness,
+            Freshness::Fresh
+        );
+    }
+
+    #[test]
     fn offline_declared_no_auth_catalog_has_no_network_ttl() {
         let mut cache = CatalogCache::default();
         cache
