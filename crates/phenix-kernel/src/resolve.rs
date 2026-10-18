@@ -130,7 +130,7 @@ fn definition<'a>(
 }
 impl Prepared {
     pub fn prepare(mut composition: Composition) -> Result<Self, Failure> {
-        if composition.format != "phenix.composition.v2"
+        if composition.format != "phenix.composition.v3"
             || !composition.authority.valid()
             || composition
                 .resource
