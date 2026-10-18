@@ -29,7 +29,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -37,5 +37,9 @@ jobs:
         run: cargo test --locked -p phenix-plugin-basic-frontends --no-default-features --features acp_v2
       - name: Test stable v1 adapter independently
         run: cargo test --locked -p phenix-plugin-basic-frontends --no-default-features --features acp
+      - name: Lint official v2 frontend
+        run: cargo clippy --locked -p phenix-plugin-basic-frontends --no-default-features --features acp_v2 --all-targets -- -D warnings
+      - name: Lint stable v1 frontend
+        run: cargo clippy --locked -p phenix-plugin-basic-frontends --no-default-features --features acp --all-targets -- -D warnings
       - name: Check packaged host crate still compiles
         run: cargo check --locked -p phenix-basic-runtime
