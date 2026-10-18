@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Enables only an incomplete SDK v2 initialize handshake for development.
+# The packaged Basic ACP host uses the stable-v1 builder by default.
+acp_v2_preview = []
+
 [dependencies]
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 phenix-contract.workspace = true
