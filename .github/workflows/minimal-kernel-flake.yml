@@ -1,6 +1,7 @@
 # Candidate only. The existing minimal-kernel.yml remains the shipping gate.
 # All execution, caching, sharding and evidence logic lives in phenix-flake-ci.
-# This immutable library revision batches each shard into one Nix DAG build;
+# This immutable library revision batches each shard into one Nix DAG build
+# and restores the compatible trusted-main Nix closure read-only;
 # it retains the complete exact-head inventory and credential-free PR boundary.
 name: Minimal kernel flake-aware matrix candidate
 on:
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@53453497cd37395d0e2a31131608738798cb0174
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@430d2abd51bf13110c8b26852a4f5f8ca347756c
     with:
       config: ci/flake-check-config.nix
-      library_ref: 53453497cd37395d0e2a31131608738798cb0174
+      library_ref: 430d2abd51bf13110c8b26852a4f5f8ca347756c
