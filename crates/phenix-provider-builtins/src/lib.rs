@@ -8,7 +8,7 @@ use phenix_provider_contracts::{
     AuthenticationKind, AuthenticationMethod, ConnectionDescriptor, DiscoveryKind, DiscoverySource,
     ProviderDescriptor,
 };
-use phenix_provider_protocols::{validate_endpoint, EndpointMode};
+use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
 
 pub const OPENAI_CHAT: &str = "openai-chat";
@@ -171,14 +171,23 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
         }
         let mut seen_connections = BTreeSet::new();
         for connection in &provider.connections {
-            if !seen_connections.insert(connection.id.as_str()) || connection.protocols.is_empty() {
+            if connection.id.is_empty()
+                || !seen_connections.insert(connection.id.as_str())
+                || connection.protocols.is_empty()
+            {
                 return Err("invalid provider connection");
+            }
+            let mut protocol_ids = BTreeSet::new();
+            for protocol in &connection.protocols {
+                if protocol.is_empty() || !protocol_ids.insert(protocol.as_str()) {
+                    return Err("duplicate or empty provider protocol");
+                }
             }
             let base = connection
                 .base_url
                 .as_deref()
                 .ok_or("missing provider endpoint")?;
-            validate_endpoint(base, EndpointMode::Remote)
+            let validated_base = validate_endpoint(base, EndpointMode::Remote)
                 .map_err(|_| "unsafe provider endpoint")?;
             let mut method_ids = BTreeSet::new();
             for method in &connection.auth_methods {
@@ -194,8 +203,11 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
                 match (&source.kind, source.endpoint.as_deref()) {
                     (DiscoveryKind::Declared, None) => {}
                     (DiscoveryKind::Dynamic, Some(endpoint)) => {
-                        validate_endpoint(endpoint, EndpointMode::Remote)
+                        let validated_endpoint = validate_endpoint(endpoint, EndpointMode::Remote)
                             .map_err(|_| "unsafe catalog endpoint")?;
+                        if !same_credential_origin(&validated_base, &validated_endpoint) {
+                            return Err("cross-origin model discovery");
+                        }
                     }
                     _ => return Err("inconsistent model discovery source"),
                 }
@@ -301,6 +313,57 @@ mod tests {
             validate_registrations(&providers),
             Err("unsafe catalog endpoint")
         );
+    }
+
+    #[test]
+    fn registration_rejects_ambiguous_connection_and_protocol_identities() {
+        let mut providers = registrations();
+        providers[0].connections[0].id.clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("invalid provider connection")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0]
+            .protocols
+            .push(OPENAI_CHAT.into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty provider protocol")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].protocols[0].clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty provider protocol")
+        );
+    }
+
+    #[test]
+    fn registration_rejects_cross_origin_model_discovery() {
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://unrelated.test/v1/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("cross-origin model discovery")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://api.openai.com:8443/v1/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("cross-origin model discovery")
+        );
+
+        // Same origin with a different path is allowed for model discovery.
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("https://api.openai.com/available-models".into());
+        validate_registrations(&providers).unwrap();
     }
 
     #[test]
