@@ -250,6 +250,7 @@
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerBuiltinsPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-provider-builtins";
@@ -284,6 +285,7 @@
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerBuiltinsCheck = rust.buildRustPackage {
         pname = "phenix-provider-builtins";
