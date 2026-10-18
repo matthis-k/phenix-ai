@@ -121,7 +121,7 @@ mod plugin {
         GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
         ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope,
         Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
-        ToolQuery, ToolRequest, Usage,
+        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -668,11 +668,11 @@ mod plugin {
     // Preserve a terminal session checkpoint when a Model import fails at the
     // kernel boundary. The journal and session owner must not disagree after
     // the root fails. If cleanup fails, leave the durable state fail-closed.
-    fn reconcile_model_failure(
+    fn reconcile_model_failure<R>(
         host: &Host<'_>,
         running: &Running,
         failure: Failure,
-    ) -> PendingResult<RunResult, BasicError> {
+    ) -> PendingResult<R, BasicError> {
         let problem = error(ErrorCode::ModelFailed, "Model execution failed");
         match stopped(host, running.session.clone(), &problem) {
             Ok(()) => PendingResult::QuiescentFailure(failure),
@@ -694,20 +694,39 @@ mod plugin {
                 state.active = Some(running);
                 PendingResult::Pending
             }
-            Ok(Advance::RePrepared) => {
-                let continuation = RunResult {
-                    session: running.input.session.clone(),
-                    run: running.run.clone(),
-                    answer: String::new(),
-                    model_turns: running.turns,
-                    tool_calls: running.calls,
-                    usage: running.usage.clone(),
-                };
-                state.active = Some(running);
-                PendingResult::Ready(Ok(continuation))
-            }
+            Ok(Advance::RePrepared) => PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "default Basic cannot publish a staged continuation",
+            )),
             Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
+            Err(CallError::Kernel(failure)) => reconcile_model_failure(host, &running, failure),
+        }
+    }
+
+    // Staged continuation is a graph wave, not an answer. Do not return a
+    // fabricated success with empty text while the Session is still Running.
+    fn finish_staged(
+        state: &mut State,
+        host: &Host<'_>,
+        running: Running,
+        value: CallResult<Advance, BasicError>,
+    ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
+        match value {
+            Ok(Advance::Pending) => {
+                state.active = Some(running);
+                PendingResult::Pending
+            }
+            Ok(Advance::RePrepared) => {
+                state.active = Some(running);
+                PendingResult::Ready(Ok(TurnAdvanceOutcome { completed: None }))
+            }
+            Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(TurnAdvanceOutcome {
+                completed: Some(reply),
+            })),
+            Err(CallError::Domain(problem)) => {
+                PendingResult::Ready(Err(CallError::Domain(problem)))
+            }
             Err(CallError::Kernel(failure)) => reconcile_model_failure(host, &running, failure),
         }
     }
@@ -721,7 +740,7 @@ mod plugin {
         state: &mut State,
         host: &Host<'_>,
         notice: GraphStateChange,
-    ) -> PendingResult<RunResult, BasicError> {
+    ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
         if notice.epoch == 0 || notice.properties != ["phenix.basic.agent/prepared_model_request"] {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
@@ -774,7 +793,7 @@ mod plugin {
         match host.begin::<Model::complete>("Model", &prepared) {
             Ok(ImportCall::Ready(reply)) => {
                 let result = staged_reply(state, host, &mut running, reply);
-                finish(state, host, running, result)
+                finish_staged(state, host, running, result)
             }
             Ok(ImportCall::Pending(child)) => {
                 running.child = Some(child);
@@ -819,7 +838,7 @@ mod plugin {
     fn poll_model_advance(
         state: &mut State,
         host: &Host<'_>,
-    ) -> PendingResult<RunResult, BasicError> {
+    ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
         let Some(mut running) = state.active.take() else {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
@@ -840,7 +859,7 @@ mod plugin {
             }
             Ok(ImportPoll::Ready(reply)) => {
                 let result = staged_reply(state, host, &mut running, reply);
-                finish(state, host, running, result)
+                finish_staged(state, host, running, result)
             }
             Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
                 Code::ScopeRejected,
