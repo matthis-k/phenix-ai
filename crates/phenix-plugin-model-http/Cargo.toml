@@ -12,6 +12,5 @@ phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 serde_json.workspace = true
 curl = { version = "0.4", default-features = false }
-sse-parse = "=0.1.0"
 
-phenix-provider-protocols = { path = "../phenix-provider-protocols" }
+phenix-provider-protocols = { path = "../phenix-provider-protocols", features = ["model-codecs"] }

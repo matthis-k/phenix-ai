@@ -90,7 +90,7 @@ pub(crate) fn run(
         return Err(failed("HTTP model cancelled"));
     }
     let mut handle = Easy2::new(Transfer {
-        stream: Stream::default(),
+        stream: Stream::new(config.protocol),
         progress,
         cancelled,
         wake,
@@ -118,7 +118,15 @@ pub(crate) fn run(
         headers.append("Accept: text/event-stream")?;
         headers.append("Expect:")?;
         if let Some(token) = config.credential {
-            headers.append(&format!("Authorization: Bearer {token}"))?;
+            match config.protocol {
+                phenix_provider_protocols::Protocol::AnthropicMessages => {
+                    headers.append(&format!("x-api-key: {token}"))?;
+                    headers.append("anthropic-version: 2023-06-01")?;
+                }
+                _ => {
+                    headers.append(&format!("Authorization: Bearer {token}"))?;
+                }
+            }
         }
         handle.http_headers(headers)?;
         Ok(())

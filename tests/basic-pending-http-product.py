@@ -13,6 +13,11 @@ import time
 binary, base_composition, http_model, destination, *options = sys.argv[1:]
 assert not options or options == ["--advanced-adapter"], options
 advanced_adapter = options == ["--advanced-adapter"]
+protocol = os.environ.get("PHENIX_MODEL_HTTP_PROTOCOL", "openai-chat")
+responses = protocol == "openai-responses"
+anthropic = protocol == "anthropic-messages"
+if responses or anthropic:
+    from model_protocol_fixture import AnthropicWire, ResponsesWire, anthropic_view, chat_view
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 
@@ -54,7 +59,13 @@ class Server(BaseHTTPRequestHandler):
         pass
 
     def chunk(self, content):
+        if responses or anthropic:
+            self.wire.chunk(content)
+            return
         payload = f"data: {json.dumps(content, ensure_ascii=False)}\r\n\r\n".encode()
+        self.fragment(payload)
+
+    def fragment(self, payload):
         # Deliberately split SSE frames and UTF-8 across HTTP chunks.
         for offset in range(0, len(payload), 2):
             data = payload[offset:offset + 2]
@@ -63,8 +74,18 @@ class Server(BaseHTTPRequestHandler):
 
     def do_POST(self):
         assert self.path == "/completions"
-        assert self.headers["Authorization"] == "Bearer pending-fixture"
+        if anthropic:
+            assert self.headers["x-api-key"] == "pending-fixture"
+            assert self.headers["anthropic-version"] == "2023-06-01"
+        else:
+            assert self.headers["Authorization"] == "Bearer pending-fixture"
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if responses:
+            request = chat_view(request)
+            self.wire = ResponsesWire(self.fragment)
+        elif anthropic:
+            request = anthropic_view(request)
+            self.wire = AnthropicWire(self.fragment)
         assert request["stream"] is True
         assert request["stream_options"]["include_usage"] is True
         assert request["model"] == "pending-fixture"
@@ -132,8 +153,11 @@ class Server(BaseHTTPRequestHandler):
         else:
             self.chunk({"choices": [{"index": 0, "delta": {"content": "recovered"}, "finish_reason": "stop"}]})
         self.chunk({"choices": [], "usage": {"prompt_tokens": 15, "completion_tokens": 3}})
-        done = b"data: [DONE]\r\n\r\n"
-        self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
+        if responses or anthropic:
+            self.wire.done()
+        else:
+            done = b"data: [DONE]\r\n\r\n"
+            self.wfile.write(f"{len(done):x}\r\n".encode() + done + b"\r\n")
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 

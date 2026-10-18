@@ -1,6 +1,6 @@
 //! Pending HTTP model. Worker I/O is separate from authenticated journal effects.
 mod request;
-mod stream;
+use phenix_provider_protocols::stream;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -63,7 +63,12 @@ mod plugin {
             )));
         }
         let config = super::request::Config::load().map_err(CallError::Domain)?;
-        let body = super::request::encode(&request, &config.model).map_err(CallError::Domain)?;
+        let body = phenix_provider_protocols::request::encode_protocol(
+            &request,
+            &config.model,
+            config.protocol,
+        )
+        .map_err(CallError::Domain)?;
         let session = request.session.clone();
         let run = request.run.clone();
         let progress = Arc::new(Mutex::new(String::new()));

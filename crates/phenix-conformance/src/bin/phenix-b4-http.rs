@@ -283,7 +283,7 @@ fn main() {
         "denied" => assert_eq!(result.unwrap_err().code, ErrorCode::Denied),
         "zero" | "bad-config" => assert_eq!(result.unwrap_err().code, ErrorCode::InvalidInput),
         "timeout" | "limit" => assert_eq!(result.unwrap_err().code, ErrorCode::TurnLimit),
-        "status" | "redirect" | "tls-untrusted" => {
+        "status" | "redirect" | "tls-untrusted" | "provider-error" => {
             assert_eq!(result.unwrap_err().code, ErrorCode::ModelFailed)
         }
         "malformed" | "truncated" | "no-usage" => {
