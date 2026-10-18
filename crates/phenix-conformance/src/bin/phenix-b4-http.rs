@@ -147,7 +147,7 @@ fn main() {
         ),
     ];
     let kernel = Prepared::prepare(Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: args[2..5].to_vec(),
         definitions: vec![args[5].clone()],
         entry: selection("phenix.basic.model@1/complete", "phenix.model.http"),
