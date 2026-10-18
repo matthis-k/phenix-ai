@@ -78,7 +78,7 @@ fn composition(args: &[String]) -> Composition {
     })
     .collect();
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: args[2..5].to_vec(),
         definitions: vec![args[5].clone()],
         entry: selected(open, "phenix.basic.session"),
