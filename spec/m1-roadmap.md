@@ -1009,6 +1009,13 @@ transport to save compile time.
     reason after durable graph completion. Implement new/list/resume/
     close/cancel; do not pretend v1's final `PromptResponse` represents
     the v2 lifecycle. Preserve persistence, authority and bounded input.
+    The first v2 output slice in `impl/m1-r1-acp-v2-journal-updates` maps
+    typed journal text and tool events directly to official
+    `v2::UpdateSessionNotification` values. It shares tool-completion
+    decoding with stable v1 and keeps SDK framing out of the native plugin.
+    It does not yet wire v2 output into the runtime, report running/idle,
+    or enable v2 negotiation. Require exact-head v2 native tests, Rustfmt,
+    Clippy, canonical conformance and SDK v1 regression before acceptance.
   - [ ] **R1-ACP5c — version routing and independent acceptance.** Route
     negotiated v1/v2 using the *same official crate*, without a second
     JSON-RPC parser. Run independent v2 SDK client tests for interleaved
