@@ -1432,6 +1432,16 @@
         ! grep -Fq "${historyTestModel}" ${basicBinaryClosure}/store-paths
         test -x ${basicBinary}/bin/phenix-basic
       '';
+      # Deterministic assistant-text streaming. The synchronous history-test
+      # Model still journals an ordered TextDelta before each terminal Answer;
+      # an empty intermediate tool reply contributes no streaming event.
+      basicStreamingCheck = pkgs.runCommand "phenix-basic-streaming" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-streaming-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
+        test -s "$out/streaming.json"
+      '';
       advancedBinaryClosure = pkgs.closureInfo {
         rootPaths = [ advancedBinary ];
       };
@@ -2194,6 +2204,7 @@
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
         basic-history-verification = historyVerificationCheck;
+        basic-streaming = basicStreamingCheck;
         basic-http-product = basicHttpProductCheck;
         basic-launcher-default-state = basicLauncherDefaultCheck;
         p2-composition-foundation = p2CompositionFoundationCheck;

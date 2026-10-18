@@ -1,7 +1,7 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
 Status: P1 integrated product accepted at 68f46f63; C4 authoritative CI accepted on main at b7017042; post-P1 work resumed
-Updated: 2026-10-17
+Updated: 2026-10-18
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
 Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
@@ -378,6 +378,46 @@ Status is an acceptance checklist: `[x]` means proven on an exact implementation
 | I1 | K3 | `phenix-plugin-introspection` | Independent optional typed, discoverable contract projection over authorized kernel query APIs; no direct unrestricted host handles, no dependency on L1 | [ ] NOT STARTED |
 
 G1-G4 refine S4/S5 using one resolver and dispatcher. S6 remains outside the Basic critical path. B1 can proceed after G1, F1 after G3, and P1 requires G4. K1-K3 and L1/I1 are independent operations milestones, not Basic product blockers.
+
+### Deterministic Basic capability matrix
+
+The scripted (`phenix.model.scripted`) and history-test (`phenix.model.history-test`)
+Models drive the deterministic product fixtures; no credentials or network are
+required. This table records where each Basic capability is proven. "Product"
+means a packaged `tests/*.py` fixture over `jsonl`/`terminal`/`acp`; "native"
+means a `phenix-b*` conformance binary or crate unit test. Items marked "gap"
+are not exercised through the synchronous deterministic Model and remain owned
+by their existing HTTP/pending or native gates — this section does not accept P2
+or claim real-model/live-provider verification.
+
+| Capability | Deterministic coverage | Status |
+| --- | --- | --- |
+| fresh session + prompt | `jsonl-multisession-product.py`, `terminal-sessions-product.py`, `acp-stdio-product.py`, `basic-history-verification-product.py` | covered |
+| assistant text streaming | `basic-streaming-product.py` (ordered `TextDelta` before `Answer`) | covered (new fixture) |
+| single and multiple tool calls | `basic-history-verification-product.py` (one call), `jsonl-multisession-product.py`, `acp-stdio-product.py` (two calls) | covered |
+| tool-call argument validation | `phenix-plugin-basic-tools` and `phenix-plugin-model-scripted` unit tests (invalid JSON, unavailable tool) | covered (unit) |
+| tool-result continuation | `basic-history-verification-product.py`, `jsonl-multisession-product.py` | covered |
+| tool errors and recovery | `basic-history-verification-product.py` (`tools-fail:hello`), `terminal-sessions-product.py` | covered |
+| multiple turns | `basic-history-verification-product.py`, `jsonl-multisession-product.py` | covered |
+| previous user/assistant recall | `basic-history-verification-product.py` (`recall:`/`verify-assistant:`) | covered |
+| history preservation without tools | `basic-history-verification-product.py` (restart `recall`/`verify-assistant`) | covered |
+| skills/context inclusion | `phenix-b5-agent` (`skills-and-context-imports`) | covered (native) |
+| provider substitution | `basic-history-verification-product.py` (scripted→history-test), `basic-http-preset-product.py` | covered |
+| model selection/connection identity | `acp-stdio-product.py` (`session/set_config_option`); connection identity in provider track | covered (model selection) |
+| usage reporting and limits | limits: `basic-history-verification-product.py`, `jsonl-multisession-product.py`; usage: `phenix-b5-agent` | covered (limits product / usage native) |
+| cancellation and effect revocation | idle cancel: `basic-history-verification-product.py`; active cancel/revocation: `basic-pending-http-product.py` | partial (active path is HTTP-only) |
+| persisted restart/replay | `basic-history-verification-product.py`, `jsonl-multisession-product.py`, `observer-product.py` | covered |
+| multiple observer cursors | `observer-product.py`, `basic-history-verification-product.py` | covered |
+| cross-session authority isolation | `jsonl-multisession-product.py`, `basic-history-verification-product.py`, `terminal-sessions-product.py` | covered |
+| conflicting state revisions | `phenix-plugin-storage-sqlite` CAS, `phenix-b2-sqlite` injected fault; owner-marker conflict in `basic-pending-http-product.py` | covered (native) |
+| invalid/unavailable operations | invalid session identity, unavailable model/provider (`acp-stdio-product.py`), `model-error` | covered |
+| ACP error propagation | `acp-stdio-product.py`, `basic-history-verification-acp.py` | covered |
+
+Remaining deterministic gaps (by design, not addable with the synchronous
+scripted/history Model): active mid-stream cancellation/effect revocation,
+product-surface usage reporting, product-surface skills/context mutation,
+product-surface conflicting-revision races and invalid-tool-argument injection.
+Each stays covered by its existing pending-HTTP or native gate.
 
 ### Post-P1 P2: shared session projections and typed I/O routing
 
