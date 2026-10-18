@@ -40,7 +40,7 @@ fn deployment(provider: &str, consumer: &str) -> Composition {
         },
     ];
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![provider.into(), consumer.into()],
         definitions: vec![],
         entry,
@@ -419,7 +419,7 @@ fn main() {
     drop(kernel);
     let cycle_key = selection("example.cycle@1", "run", "example.cycle");
     let mut cycle = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![args[4].clone()],
         definitions: vec![],
         entry: cycle_key.clone(),
@@ -474,7 +474,7 @@ fn main() {
     for bad in &args[5..9] {
         let entry = selection("example.transform.apply@1", "apply", "example.provider");
         let deployment = Composition {
-            format: "phenix.composition.v2".into(),
+            format: "phenix.composition.v3".into(),
             artifacts: vec![bad.clone()],
             definitions: vec![],
             entry: entry.clone(),

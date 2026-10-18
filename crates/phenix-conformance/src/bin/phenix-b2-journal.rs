@@ -70,7 +70,7 @@ fn main() {
     })
     .collect();
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![args[1].clone(), args[2].clone()],
         definitions: vec![args[3].clone()],
         entry: selection(append, "phenix.basic.event-journal"),

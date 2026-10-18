@@ -46,7 +46,7 @@ fn main() {
     let output = Path::new(&args[6]);
     fs::create_dir_all(output).unwrap();
     let policy = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         artifacts: args[1..4].to_vec(),
         entry: selection(PARENT, "example.pending-consumer"),

@@ -128,7 +128,7 @@ fn composition(artifacts: Vec<String>) -> Composition {
         operations.insert(format!("{cancel_probe}/{operation}"));
     }
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts,
         definitions: vec![],
         entry: Selection {

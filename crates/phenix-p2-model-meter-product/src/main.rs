@@ -37,7 +37,7 @@ fn invoke(
 ) -> Option<Outcome> {
     let grants = vec![grant(MODEL, "complete"), grant(TOKENS, "measure")];
     let composition = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: artifacts.to_vec(),
         definitions: definitions.to_vec(),
         entry: Selection {

@@ -81,6 +81,14 @@
         ./tests/generation-identity-v2.json
       ];
       describe = build "phenix-artifact" artifactSource;
+      pluginSourceTool = pkgs.writeShellApplication {
+        name = "phenix-plugin-sources";
+        runtimeInputs = [ pkgs.python3 pkgs.cargo pkgs.rustc pkgs.stdenv.cc pkgs.git pkgs.nix ];
+        text = ''
+          exec ${pkgs.python3}/bin/python ${./tools/phenix-plugin-sources.py} \
+            --describe ${describe}/bin/phenix-describe "$@"
+        '';
+      };
       kernel = build "phenix-kernel" kernelSource;
       conformanceBinary = build "phenix-conformance" conformanceSource;
       recordWriter = pkgs.writeText "phenix-package-record.py" ''
@@ -1014,7 +1022,7 @@
         index = 0;
       };
       basicCompositionSpec = {
-        format = "phenix.composition.v2";
+        format = "phenix.composition.v3";
         entry = {
           interface = "phenix.basic.input@1";
           operation = "submit";
@@ -1865,7 +1873,7 @@
       });
       deployment = pkgs.writeText "phenix-m1-deployment.json" (
         builtins.toJSON {
-          format = "phenix.composition.v2";
+          format = "phenix.composition.v3";
           artifacts = [
             "${provider}"
             "${consumer}"
@@ -2026,6 +2034,31 @@
         ln -s ${agentCheck} $out/agent
         ln -s ${agentProduct} $out/agent-product
       '';
+      pluginSourceCheck = pkgs.runCommand "phenix-plugin-source-preparation" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.cargo pkgs.rustc pkgs.stdenv.cc ];
+      } ''
+        export PHENIX_SOURCE_TOOL=${./tools/phenix-plugin-sources.py}
+        ${pkgs.python3}/bin/python ${./tests/test-plugin-sources.py}
+        export HOME="$TMPDIR"
+        export PHENIX_PLUGIN_CACHE_DIR="$TMPDIR/plugin-cache"
+        export PHENIX_PLUGIN_PREPARER=${pluginSourceTool}/bin/phenix-plugin-sources
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/plugin-sources.sqlite"
+        ${pkgs.python3}/bin/python - "${basicComposition}" "${scriptedModel}" "$TMPDIR/source-config.json" <<'PY'
+        import json, sys
+        original, plugin, destination = sys.argv[1:]
+        with open(original) as stream:
+            config = json.load(stream)
+        assert config["format"] == "phenix.composition.v3"
+        config["artifacts"].remove(plugin)
+        config["plugin_sources"] = [{"source": plugin + "/lib/plugin.so"}]
+        with open(destination, "w") as stream:
+            json.dump(config, stream)
+        PY
+        mkdir -p "$out"
+        printf 'hello\n' | ${basicRuntime}/bin/phenix-basic-runtime terminal \
+          "$TMPDIR/source-config.json" > "$out/terminal.txt"
+        grep -F 'answer: mock:hello' "$out/terminal.txt"
+      '';
     in
     {
       packages.${system} = {
@@ -2034,6 +2067,7 @@
         # Shared Cargo output for Nix CI prebuild; plugins remain independent packages.
         phenix-core-example-plugins = coreExamplesBuild;
         phenix-describe = describe;
+        phenix-plugin-sources = pluginSourceTool;
         example-provider = provider;
         example-consumer = consumer;
         phenix-m1-conformance = release;
@@ -2136,6 +2170,7 @@
       };
       checks.${system} = {
         m1-native-authoring = authoringCheck;
+        plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
         provider-contracts = providerContractsCheck;
