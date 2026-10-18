@@ -71,10 +71,10 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
         StaticGraphNode {
             id: "model-advance",
             triggers: &["state:phenix.basic.agent/prepared_model_request"],
-            after: &[],
+            after: &["phenix.basic.agent/prepare"],
             selector: "",
             operation: "phenix.basic.turn-advance@1/advance",
-            writes: &[],
+            writes: &["phenix.basic.agent/pending_model_request"],
             join: JoinPolicy::AllActive,
             failure: FailurePolicy::FailRoot,
         },
@@ -490,6 +490,152 @@ mod plugin {
     enum Advance {
         Pending,
         Done(RunResult),
+        RePrepared,
+    }
+
+    // Consume one completed Model reply: account usage and streaming text,
+    // then either finalize the answer or execute the requested tool calls.
+    // Returns Some(result) for a terminal answer and None after tool effects.
+    fn handle_model_reply(
+        host: &Host<'_>,
+        running: &mut Running,
+        result: CallResult<phenix_basic_contracts::ModelReply, BasicError>,
+    ) -> CallResult<Option<RunResult>, BasicError> {
+        let response = match result {
+            Ok(response) => response,
+            Err(CallError::Domain(problem)) => {
+                stopped(host, running.session.clone(), &problem)?;
+                return Err(CallError::Domain(problem));
+            }
+            Err(other) => return Err(other),
+        };
+        running.turns = running
+            .turns
+            .checked_add(1)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::TurnLimit, "model turn overflow")))?;
+        add_usage(&mut running.usage, &response.usage)?;
+        add_usage(&mut running.session.usage, &response.usage)?;
+        match reconcile_text(host, running, &response.text) {
+            Ok(()) => {}
+            Err(CallError::Domain(problem)) => {
+                stopped(host, running.session.clone(), &problem)?;
+                return Err(CallError::Domain(problem));
+            }
+            Err(other) => return Err(other),
+        }
+
+        if response.calls.is_empty() {
+            running.session.history.push(Message {
+                role: Role::Assistant,
+                text: response.text.clone(),
+                calls: vec![],
+                call_id: String::new(),
+                error: None,
+            });
+            running.session.status = RunStatus::Completed;
+            checkpoint(host, running.session.clone())?;
+            event(
+                host,
+                &running.input.session,
+                &running.run,
+                EventKind::Answer,
+                response.text.clone(),
+                "",
+            )?;
+            return Ok(Some(RunResult {
+                session: running.input.session.clone(),
+                run: running.run.clone(),
+                answer: response.text,
+                model_turns: running.turns,
+                tool_calls: running.calls,
+                usage: running.usage.clone(),
+            }));
+        }
+
+        let count = u64::try_from(response.calls.len())
+            .map_err(|_| CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls")))?;
+        let new_total = running
+            .calls
+            .checked_add(count)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow")))?;
+        if running
+            .input
+            .limits
+            .tool_calls
+            .is_some_and(|max| new_total > max)
+        {
+            let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
+            stopped(host, running.session.clone(), &problem)?;
+            return Err(CallError::Domain(problem));
+        }
+        let mut ids = BTreeSet::new();
+        for call in &response.calls {
+            if call.id.is_empty() || !ids.insert(call.id.clone()) {
+                let problem = error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
+                stopped(host, running.session.clone(), &problem)?;
+                return Err(CallError::Domain(problem));
+            }
+        }
+        running.session.history.push(Message {
+            role: Role::Assistant,
+            text: response.text,
+            calls: response.calls.clone(),
+            call_id: String::new(),
+            error: None,
+        });
+        running.session.pending = response.calls.clone();
+        running.session = checkpoint(host, running.session.clone())?;
+
+        for call in response.calls {
+            event(
+                host,
+                &running.input.session,
+                &running.run,
+                EventKind::ToolStarted,
+                call.tool.clone(),
+                &call.id,
+            )?;
+            let outcome = host.invoke::<ToolExecute::execute>(
+                "Tools",
+                &ToolRequest {
+                    session: running.input.session.clone(),
+                    run: running.run.clone(),
+                    call: call.clone(),
+                },
+            );
+            let (text, failure) = match outcome {
+                Ok(result) => (result.text, None),
+                Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
+                Err(other) => return Err(other),
+            };
+            running.session.history.push(Message {
+                role: Role::Tool,
+                text: text.clone(),
+                calls: vec![],
+                call_id: call.id.clone(),
+                error: failure.clone(),
+            });
+            running
+                .session
+                .pending
+                .retain(|pending| pending.id != call.id);
+            running.session = checkpoint(host, running.session.clone())?;
+            let data = phenix_basic_contracts::encode(&ToolCompletion {
+                failed: failure.is_some(),
+            })
+            .map_err(CallError::Kernel)?;
+            event_with_data(
+                host,
+                &running.input.session,
+                &running.run,
+                EventKind::ToolFinished,
+                failure.unwrap_or(text),
+                &call.id,
+                data,
+            )?;
+        }
+        running.calls = new_total;
+        Ok(None)
     }
 
     // Each model reply, immediate or polled, resumes this same continuation.
@@ -501,142 +647,10 @@ mod plugin {
     ) -> CallResult<Advance, BasicError> {
         loop {
             if let Some(result) = reply.take() {
-                let response = match result {
-                    Ok(response) => response,
-                    Err(CallError::Domain(problem)) => {
-                        stopped(host, running.session.clone(), &problem)?;
-                        return Err(CallError::Domain(problem));
-                    }
-                    Err(other) => return Err(other),
-                };
-                running.turns = running.turns.checked_add(1).ok_or_else(|| {
-                    CallError::Domain(error(ErrorCode::TurnLimit, "model turn overflow"))
-                })?;
-                add_usage(&mut running.usage, &response.usage)?;
-                add_usage(&mut running.session.usage, &response.usage)?;
-                match reconcile_text(host, running, &response.text) {
-                    Ok(()) => {}
-                    Err(CallError::Domain(problem)) => {
-                        stopped(host, running.session.clone(), &problem)?;
-                        return Err(CallError::Domain(problem));
-                    }
-                    Err(other) => return Err(other),
+                if let Some(done) = handle_model_reply(host, running, result)? {
+                    return Ok(Advance::Done(done));
                 }
-
-                if response.calls.is_empty() {
-                    running.session.history.push(Message {
-                        role: Role::Assistant,
-                        text: response.text.clone(),
-                        calls: vec![],
-                        call_id: String::new(),
-                        error: None,
-                    });
-                    running.session.status = RunStatus::Completed;
-                    checkpoint(host, running.session.clone())?;
-                    event(
-                        host,
-                        &running.input.session,
-                        &running.run,
-                        EventKind::Answer,
-                        response.text.clone(),
-                        "",
-                    )?;
-                    return Ok(Advance::Done(RunResult {
-                        session: running.input.session.clone(),
-                        run: running.run.clone(),
-                        answer: response.text,
-                        model_turns: running.turns,
-                        tool_calls: running.calls,
-                        usage: running.usage.clone(),
-                    }));
-                }
-
-                let count = u64::try_from(response.calls.len()).map_err(|_| {
-                    CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls"))
-                })?;
-                let new_total = running.calls.checked_add(count).ok_or_else(|| {
-                    CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
-                })?;
-                if running
-                    .input
-                    .limits
-                    .tool_calls
-                    .is_some_and(|max| new_total > max)
-                {
-                    let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
-                    stopped(host, running.session.clone(), &problem)?;
-                    return Err(CallError::Domain(problem));
-                }
-                let mut ids = BTreeSet::new();
-                for call in &response.calls {
-                    if call.id.is_empty() || !ids.insert(call.id.clone()) {
-                        let problem =
-                            error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
-                        stopped(host, running.session.clone(), &problem)?;
-                        return Err(CallError::Domain(problem));
-                    }
-                }
-                running.session.history.push(Message {
-                    role: Role::Assistant,
-                    text: response.text,
-                    calls: response.calls.clone(),
-                    call_id: String::new(),
-                    error: None,
-                });
-                running.session.pending = response.calls.clone();
-                running.session = checkpoint(host, running.session.clone())?;
-
-                for call in response.calls {
-                    event(
-                        host,
-                        &running.input.session,
-                        &running.run,
-                        EventKind::ToolStarted,
-                        call.tool.clone(),
-                        &call.id,
-                    )?;
-                    let outcome = host.invoke::<ToolExecute::execute>(
-                        "Tools",
-                        &ToolRequest {
-                            session: running.input.session.clone(),
-                            run: running.run.clone(),
-                            call: call.clone(),
-                        },
-                    );
-                    let (text, failure) = match outcome {
-                        Ok(result) => (result.text, None),
-                        Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
-                        Err(other) => return Err(other),
-                    };
-                    running.session.history.push(Message {
-                        role: Role::Tool,
-                        text: text.clone(),
-                        calls: vec![],
-                        call_id: call.id.clone(),
-                        error: failure.clone(),
-                    });
-                    running
-                        .session
-                        .pending
-                        .retain(|pending| pending.id != call.id);
-                    running.session = checkpoint(host, running.session.clone())?;
-                    let data = phenix_basic_contracts::encode(&ToolCompletion {
-                        failed: failure.is_some(),
-                    })
-                    .map_err(CallError::Kernel)?;
-                    event_with_data(
-                        host,
-                        &running.input.session,
-                        &running.run,
-                        EventKind::ToolFinished,
-                        failure.unwrap_or(text),
-                        &call.id,
-                        data,
-                    )?;
-                }
-                running.calls = new_total;
             }
-
             let request = prepare_next_model_request(host, running)?;
             match host
                 .begin::<Model::complete>("Model", &request)
@@ -679,6 +693,18 @@ mod plugin {
             Ok(Advance::Pending) => {
                 state.active = Some(running);
                 PendingResult::Pending
+            }
+            Ok(Advance::RePrepared) => {
+                let continuation = RunResult {
+                    session: running.input.session.clone(),
+                    run: running.run.clone(),
+                    answer: String::new(),
+                    model_turns: running.turns,
+                    tool_calls: running.calls,
+                    usage: running.usage.clone(),
+                };
+                state.active = Some(running);
+                PendingResult::Ready(Ok(continuation))
             }
             Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
@@ -747,7 +773,7 @@ mod plugin {
         }
         match host.begin::<Model::complete>("Model", &prepared) {
             Ok(ImportCall::Ready(reply)) => {
-                let result = staged_reply(host, &mut running, reply);
+                let result = staged_reply(state, host, &mut running, reply);
                 finish(state, host, running, result)
             }
             Ok(ImportCall::Pending(child)) => {
@@ -759,26 +785,34 @@ mod plugin {
         }
     }
 
-    // Intentionally fail closed on model-request iterations with tools.
-    // The next step must reenter the watched preparation graph after any
-    // tool result; executing them here would bypass the Advanced gate.
+    // After a tool-bearing Model reply, execute the tool effects and publish
+    // the next authoritative request as a fresh watched pending cell. The
+    // kernel then re-enters the selected Advanced preparation graph before
+    // the next Model call, instead of continuing inside this advance wave.
     fn staged_reply(
+        state: &mut State,
         host: &Host<'_>,
         running: &mut Running,
         reply: CallResult<phenix_basic_contracts::ModelReply, BasicError>,
     ) -> CallResult<Advance, BasicError> {
-        if reply
-            .as_ref()
-            .is_ok_and(|response| !response.calls.is_empty())
-        {
-            let problem = error(
-                ErrorCode::Denied,
-                "staged Model tool continuation requires graph re-preparation",
-            );
-            stopped(host, running.session.clone(), &problem)?;
-            return Err(CallError::Domain(problem));
+        if let Some(done) = handle_model_reply(host, running, reply)? {
+            return Ok(Advance::Done(done));
         }
-        advance(host, running, Some(reply))
+        let next = prepare_next_model_request(host, running)?;
+        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property read: {err}"),
+            )
+        })?;
+        *edit = Some(next);
+        edit.commit(host).map_err(|err| {
+            Failure::new(
+                Code::PluginFailed,
+                format!("staged request property CAS: {err}"),
+            )
+        })?;
+        Ok(Advance::RePrepared)
     }
 
     #[poll(BasicTurnAdvance::advance)]
@@ -805,7 +839,7 @@ mod plugin {
                 PendingResult::Pending
             }
             Ok(ImportPoll::Ready(reply)) => {
-                let result = staged_reply(host, &mut running, reply);
+                let result = staged_reply(state, host, &mut running, reply);
                 finish(state, host, running, result)
             }
             Ok(ImportPoll::Cancelled) => PendingResult::QuiescentFailure(Failure::new(
