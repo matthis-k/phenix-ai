@@ -432,7 +432,7 @@ and revocation, and check live-writer exclusion, pinned-directory authority and
 same-instance directory/file permission revalidation. The unchanged production
 CLI performs only one invocation per loaded generation, so same-generation
 checks are library evidence, not claimed native CLI coverage.
-The secret-service backend, provider-auth profile metadata/revision management,
+Provider-auth profile metadata/revision management,
 non-journaled ACP management admission, selected HTTP resolution and end-to-end
 Neovim onboarding remain open under #891. Stored bytes alone do not prove
 provider authentication, model entitlement or PV2 completion. Credential writes
@@ -444,6 +444,40 @@ operations therefore run under a dedicated credential-resource root; importing
 first establish the trusted controller's existing credential admission/binding
 path without weakening that rule or putting a secret in `ModelRequest`. This
 slice does not claim that transport integration is solved.
+
+**PV2 OS Secret Service slice (18 October 2026; acceptance pending).**
+`phenix-plugin-provider-secret-service` implements the existing typed
+`ProviderCredentials` import/resolve/revoke operations, with the same exact
+credential-resource root and separate kernel grants. R1 records the selected
+maintained keyring-core/Secret Service backend. The installed native
+`provider-secret-service` check uses an isolated real GNOME Keyring and private
+D-Bus session; no user keyring is read. It covers profile/connection isolation,
+native-process and service restart, rotation, revocation, missing operation
+grants, session-resource denial, diagnostic redaction and service failure with
+zero automatic file fallback. The initial functional RED fails against the
+existing file package because it cannot provide the new OS backend. This is
+storage integration only, not provider authentication or a packaged PV2 gate.
+Local verification passed: `nix build --no-link -L
+.#checks.x86_64-linux.provider-secret-service
+.#checks.x86_64-linux.m1-contract` (installed real-service fixture, strict
+workspace Clippy, formatting, Rust tests, C ABI and architecture checks).
+The independent package's Nix source contains only public SDK/contracts and
+this plugin, not private kernel sources. Exact-head full GitHub CI and merge
+evidence belong to the implementation PR; no live provider credentials tested.
+
+**PV2/PV3 management blocker (#891).** Official ACP SDK 3.3.0 has extension
+dispatch, but no standard provider-secret import operation. The accepted
+contracts do not yet specify a negotiated Phenix binding from authenticated
+management requests to the existing typed credentials/auth operations, nor
+the trusted controller's credential-root admission and selected transport
+handoff. `authenticate(methodId)` is agent login, not secret import; terminal
+auth cannot be advertised without negotiated same-local-agent support.
+Defining an extension name/payload, treating `_meta` as secret input, adding
+another endpoint or changing a session Model root's resource would introduce
+an unreviewed mechanism. That path is stopped pending the missing accepted
+binding, not worked around. Named profile metadata/CAS, secret submission,
+transport resolution and PV3-PV7 remain OPEN; P2 implementation is not part
+of this packet.
 
 #### Provider implementation packets: current coding queue
 

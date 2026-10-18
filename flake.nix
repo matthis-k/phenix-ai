@@ -328,6 +328,41 @@
         python ${./tests/provider-credential-store-product.py} \
           ${kernel}/bin/phenix-kernel ${providerCredentialStore} ${providerDefinitions} "$out"
       '';
+      providerSecretServiceSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-secret-service
+        ./crates/phenix-provider-contracts
+      ]);
+      providerSecretService = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-secret-service";
+        version = "0.1.0";
+        src = providerSecretServiceSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-secret-service" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-secret-service" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_secret_service.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerSecretServiceCheck = pkgs.runCommand "phenix-provider-secret-service-product" {
+        nativeBuildInputs = [ pkgs.python3 pkgs.dbus pkgs.gnome-keyring ];
+      } ''
+        export HOME="$TMPDIR/home"
+        export XDG_DATA_HOME="$HOME/.local/share"
+        export XDG_CONFIG_HOME="$HOME/.config"
+        export XDG_RUNTIME_DIR="$TMPDIR/runtime"
+        mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
+        chmod 700 "$HOME" "$XDG_RUNTIME_DIR"
+        export PHENIX_ISOLATED_SECRET_SERVICE_TEST=1
+        dbus-run-session --config-file=${pkgs.dbus}/share/dbus-1/session.conf -- python ${./tests/provider-secret-service-product.py} \
+          ${kernel}/bin/phenix-kernel ${providerSecretService} ${providerDefinitions} "$out"
+      '';
       providerCredentialFilesSource = subset (publicPaths ++ [ ./crates/phenix-provider-credential-files ]);
       providerCredentialFilesCheck = rust.buildRustPackage {
         pname = "phenix-provider-credential-files";
@@ -2037,6 +2072,7 @@
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
         phenix-plugin-provider-credential-files = providerCredentialStore;
+        phenix-plugin-provider-secret-service = providerSecretService;
         phenix-provider-contracts = providerDefinitions;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
@@ -2135,6 +2171,7 @@
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
         provider-credential-store = providerCredentialStoreCheck;
+        provider-secret-service = providerSecretServiceCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         b4-scripted = scriptedModelCheck;

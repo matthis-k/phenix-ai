@@ -284,6 +284,43 @@ The `oauth2` crate documents a first-party curl sync client: https://docs.rs/oau
 
 ### Library and plugin split
 
+**PV2 Linux backend selection (18 October 2026).** Use `keyring-core` 1.0.1
+with `zbus-secret-service-keyring-store` 1.0.1, both MIT/Apache-2.0, in the
+independently selected `phenix-plugin-provider-secret-service`. Enable only
+`rt-async-io-crypto-rust`: its blocking API negotiates encrypted DH
+Secret Service sessions through zbus/async-io, with no Tokio or HTTP stack.
+The backend owns its internal async executor; the plugin uses its blocking API.
+The lockfile includes the Rust AES/HKDF, zbus and numeric dependencies.
+Reject the alternative `dbus-secret-service` 4.1.0 backend: source inspection
+found `fastrand::Rng` generating DH private keys and AES IVs. The selected
+`secret-service` 5.2.0 uses OS `getrandom` instead; no local crypto patch.
+Build entries on the specific store rather
+than mutating keyring's process-global default. Service + exact canonical
+credential resource identify an item; do not search or enumerate other accounts.
+Upstream rejects ambiguous matches. Platform errors are mapped to fixed public
+messages, including errors that can contain bytes. Input retains the existing
+64 KiB credential bound. D-Bus/OS unlock prompts and synchronous waiting are
+backend-owned; this is not a cancellable Model worker or a new auth flow.
+Unavailable/locked service failures never activate plaintext storage. The
+existing file plugin remains separately selected with explicit consent.
+The packaged `provider-secret-service` gate uses a private D-Bus session,
+private HOME/XDG directories and real GNOME Keyring, not keyring's insecure
+mock/sample store. It exercises native process and service restart, rotation,
+profile isolation, independent grants, revocation and no automatic fallback.
+
+**ACP facilities inspected (18 October 2026).** The pinned official SDK 3.3.0
+and schema 1.11.0 define stable-v1 `AuthenticateRequest` with `method_id` and
+reserved `_meta`, not a provider identity or secret-import request. Terminal
+login requires negotiated client support for launching the same local agent.
+The SDK supports namespaced `ExtRequest` dispatch, but supplies no standard
+provider credential CRUD binding. There is no accepted Phenix extension
+identifier, negotiation/payload mapping to `ProviderCredentials`, or trusted
+controller handoff from an admitted credential root to a session Model
+transport. Generic extension support alone does not define that contract.
+Do not overload `authenticate`, `_meta`, session config values or env/argv to
+fill that gap. The precise implementation blocker is tracked in #891 and
+the roadmap; this backend does not resolve it.
+
 - **`phenix-provider-contracts`**: New definition-only M1 SDK package. Typed `ProviderDescriptor`, `ConnectionDescriptor`, `AuthMethod`, `AuthStatus`, `ModelDescriptor` with provenance/protocol identity, and scoped discovery/query/auth-selection contracts. Require no agent logic, direct HTTP calls or kernel dependency. Reuse the existing canonical `Model`, Session/Journal/Storage, capability and authority contracts. Credential values pass only via a separately authorized, non-journaled secret-input operation.
 - **`phenix-provider-protocols`**: Optional reusable Rust library for the three inference codecs, common `curl` worker and generic OAuth/OIDC library use. Ordinary code library, not a runtime dispatcher, model router or second network stack. Providers can select or supply a codec through the existing typed plugin import/binding mechanism.
 - **`phenix-provider-common`**: Optional composition of provider plugins. Initial registrations: OpenAI API + SIWC connection, OpenRouter, OpenCode Zen, OpenCode Go, Anthropic and Z.ai API; every provider owns only its URL/protocol/model mapping, method metadata, headers and supported discovery. Keep provider plugins separately replaceable and installable; a convenient base set is a Nix composition, not a mandatory monolithic plugin.
