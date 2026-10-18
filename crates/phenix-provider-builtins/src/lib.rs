@@ -325,7 +325,9 @@ mod tests {
         );
 
         let mut providers = registrations();
-        providers[0].connections[0].protocols.push(OPENAI_CHAT.into());
+        providers[0].connections[0]
+            .protocols
+            .push(OPENAI_CHAT.into());
         assert_eq!(
             validate_registrations(&providers),
             Err("duplicate or empty provider protocol")
