@@ -19,8 +19,12 @@ fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
 
 fn catalog() -> Result<Vec<ProviderDescriptor>, ProviderError> {
     let providers = registrations();
-    validate_registrations(&providers)
-        .map_err(|_| error(ProviderErrorCode::InvalidInput, "invalid installed provider catalog"))?;
+    validate_registrations(&providers).map_err(|_| {
+        error(
+            ProviderErrorCode::InvalidInput,
+            "invalid installed provider catalog",
+        )
+    })?;
     Ok(providers)
 }
 
