@@ -82,7 +82,7 @@ class PreparationTests(unittest.TestCase):
         source = self.root / "cpp"
         source.mkdir()
         with self.assertRaisesRegex(ValueError, "not registered"):
-            tool.resolve({"source": "cpp", "builder": "cpp"}, self.root, self.root, {})
+            tool.resolve({"source": "cpp", "builder": "cpp"}, self.root, self.root, {}, self.root / "cache")
 
     def test_nix_strategy_uses_single_output_path(self):
         project = self.root / "crate"
@@ -94,7 +94,7 @@ class PreparationTests(unittest.TestCase):
         with mock.patch.object(tool, "command", return_value=str(package)) as run:
             result, prebuilt = tool.resolve({
                 "source": "crate", "builder": "rust", "executor": "nix",
-                "installable": ".#plugin"}, self.root, self.root, {})
+                "installable": ".#plugin"}, self.root, self.root, {}, self.root / "cache")
         self.assertTrue(prebuilt)
         self.assertEqual(result, package)
         self.assertEqual(run.call_args.args[0], "nix")
@@ -108,7 +108,7 @@ class PreparationTests(unittest.TestCase):
         with mock.patch.object(tool, "rust_build", return_value=library) as build:
             for source in ("crate", "crate/Cargo.toml"):
                 result, prebuilt = tool.resolve(
-                    {"source": source}, self.root, self.root, {})
+                    {"source": source}, self.root, self.root, {}, self.root / "cache")
                 self.assertEqual(result, library)
                 self.assertFalse(prebuilt)
             self.assertEqual([c.args[0] for c in build.call_args_list],
@@ -124,14 +124,30 @@ class PreparationTests(unittest.TestCase):
             '#[no_mangle]\npub extern "C" fn smoke() -> u8 { 1 }\n')
         subprocess.run(["cargo", "generate-lockfile", "--offline",
                         "--manifest-path", str(crate / "Cargo.toml")], check=True)
-        library = tool.rust_build(crate, {}, self.root / "build")
+        cache = self.root / "cache"
+        library = tool.rust_build(crate, {}, cache)
         self.assertEqual(library.suffix, ".so")
         self.assertTrue(library.is_file())
+        # A second preparation of the same source reuses the exact target
+        # directory and Cargo's fingerprinted, compiled cdylib.
+        first_sha = hashlib.sha256(library.read_bytes()).hexdigest()
+        first_mtime = library.stat().st_mtime_ns
+        repeated = tool.rust_build(crate, {}, cache)
+        self.assertEqual(repeated, library)
+        self.assertEqual(repeated.stat().st_mtime_ns, first_mtime)
+        self.assertEqual(hashlib.sha256(repeated.read_bytes()).hexdigest(), first_sha)
+        # Editing this one plugin triggers its compilation, not an unrelated
+        # workspace's target build directory.
+        (crate / "src" / "lib.rs").write_text(
+            '#[no_mangle]\npub extern "C" fn smoke() -> u8 { 2 }\n')
+        updated = tool.rust_build(crate, {}, cache)
+        self.assertEqual(updated, library)
+        self.assertNotEqual(hashlib.sha256(updated.read_bytes()).hexdigest(), first_sha)
 
     def test_builder_is_not_inferred_from_unknown_directory(self):
         (self.root / "unknown").mkdir()
         with self.assertRaisesRegex(ValueError, "recognized"):
-            tool.resolve({"source": "unknown"}, self.root, self.root, {})
+            tool.resolve({"source": "unknown"}, self.root, self.root, {}, self.root / "cache")
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ def source_path(source, base, staging, spec):
     return (path if path.is_absolute() else base / path).resolve(strict=True)
 
 
-def rust_build(source, spec, staging):
+def rust_build(source, spec, cache):
     manifest = source / "Cargo.toml" if source.is_dir() else source
     if manifest.name != "Cargo.toml" or not manifest.is_file():
         raise ValueError("Rust source needs Cargo.toml")
@@ -89,8 +89,16 @@ def rust_build(source, spec, staging):
     features = spec.get("features", [])
     if not isinstance(features, list) or not all(isinstance(f, str) and f for f in features):
         raise ValueError("features must be nonempty strings")
+    # Cargo fingerprinting already tracks file contents, features, profiles and
+    # toolchains. Keep a stable target directory per workspace so an unchanged
+    # local crate is not rebuilt on every Basic runtime startup. Different
+    # local workspaces must never share target artifacts.
+    workspace = Path(info["workspace_root"]).resolve()
+    workspace_key = hashlib.sha256(os.fsencode(workspace)).hexdigest()
+    target = cache / "cargo-target" / workspace_key
+    target.mkdir(parents=True, exist_ok=True)
     argv = ["cargo", "build", "--locked", "--release", "--package", package["name"],
-            "--manifest-path", str(manifest), "--target-dir", str(staging / "target"),
+            "--manifest-path", str(manifest), "--target-dir", str(target),
             "--message-format=json-render-diagnostics"]
     for feature in features:
         argv.extend(["--features", feature])
@@ -113,7 +121,7 @@ def rust_build(source, spec, staging):
     return libs[0]
 
 
-def resolve(spec, base, staging, builders):
+def resolve(spec, base, staging, builders, cache):
     source = source_path(spec.get("source"), base, staging, spec)
     if source.is_dir() and (source / "package.json").is_file():
         if spec.get("builder") not in (None, "auto"):
@@ -151,7 +159,7 @@ def resolve(spec, base, staging, builders):
     if executor != "local":
         raise ValueError("unknown builder executor")
     if builder == "rust":
-        return rust_build(source, spec, staging), False
+        return rust_build(source, spec, cache), False
     argv = builders.get(builder)
     if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and x for x in argv):
         raise ValueError("builder strategy is not registered: " + builder)
@@ -219,7 +227,7 @@ def prepare(config_file, output_file, describe, cache, store):
         if not isinstance(source, dict):
             raise ValueError("plugin source must be an object")
         with tempfile.TemporaryDirectory(prefix="phenix-plugin-") as scratch:
-            location, prebuilt = resolve(source, config_file.parent, Path(scratch), builders)
+            location, prebuilt = resolve(source, config_file.parent, Path(scratch), builders, cache)
             packages.append(str(location if prebuilt else
                                 package(location, describe, Path(scratch), cache, store)))
     spec["artifacts"] = sorted(set(spec["artifacts"] + packages))

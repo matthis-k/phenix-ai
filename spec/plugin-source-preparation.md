@@ -50,6 +50,13 @@ nix run .#phenix-plugin-sources -- config.json prepared.json
 
 - Rust compilation is driven by Cargo metadata and emits exactly one
   `cdylib`. Cargo uses `--locked` and the selected package/features.
+- Local Rust crate builds use a persistent Cargo target directory keyed by
+  canonical workspace path under `PHENIX_PLUGIN_CACHE_DIR`. Cargo retains its
+  own source, feature, profile and toolchain fingerprints: unchanged crates
+  reuse compiled artifacts, while a source edit rebuilds that crate and actual
+  dependents. This cache is trusted same-user local state, not a remote
+  artifact trust boundary. Git checkouts staged in temporary directories do
+  not yet receive a stable cross-invocation workspace cache key.
 - Git sources require a pinned 40-character commit; HTTPS binaries require
   SHA-256. Remote source files are never trusted configuration.
 - `executor = "nix"` builds an explicit Nix installable; the existing
