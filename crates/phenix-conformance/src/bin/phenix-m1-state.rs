@@ -67,7 +67,7 @@ fn composition(provider: &str, client: &str, alternative: &str) -> Composition {
         export: export.into(),
     };
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         slots: vec![
             slot("refs", "refs"),
