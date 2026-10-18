@@ -256,6 +256,46 @@ mod tests {
     }
 
     #[test]
+    fn reject_ambiguous_or_inconsistent_model_discovery_sources() {
+        let mut providers = registrations();
+        let duplicate = providers[0].connections[0].model_sources[0].clone();
+        providers[0].connections[0].model_sources.push(duplicate);
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].id.clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint = None;
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("inconsistent model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].kind = DiscoveryKind::Declared;
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("inconsistent model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("http://external.test/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("unsafe catalog endpoint")
+        );
+    }
+
+    #[test]
     fn registration_never_serializes_credentials() {
         let providers = registrations();
         let json = format!("{providers:?}");
