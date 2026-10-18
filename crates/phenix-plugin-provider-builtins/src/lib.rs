@@ -5,7 +5,7 @@
 //! authentication or model entitlement until an authorized credentials and
 //! discovery implementation is installed. It is not a mock successful login.
 
-use phenix_provider_builtins::registrations;
+use phenix_provider_builtins::{registrations, validate_registrations};
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
@@ -17,8 +17,15 @@ fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
     }
 }
 
+fn catalog() -> Result<Vec<ProviderDescriptor>, ProviderError> {
+    let providers = registrations();
+    validate_registrations(&providers)
+        .map_err(|_| error(ProviderErrorCode::InvalidInput, "invalid installed provider catalog"))?;
+    Ok(providers)
+}
+
 fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
-    registrations()
+    catalog()?
         .into_iter()
         .find(|item| item.id == id)
         .ok_or_else(|| error(ProviderErrorCode::NotFound, "unknown installed provider"))
@@ -82,7 +89,7 @@ mod plugin {
     ) -> CallResult<ProviderPage, ProviderError> {
         check(host, &request.scope)?;
         Ok(ProviderPage {
-            providers: registrations(),
+            providers: catalog().map_err(CallError::Domain)?,
             revision: 1,
         })
     }
@@ -171,7 +178,7 @@ mod tests {
 
     #[test]
     fn registered_providers_are_visible_without_authentication() {
-        assert_eq!(registrations().len(), 6);
+        assert_eq!(catalog().unwrap().len(), 6);
         assert_eq!(provider("openai").unwrap().connections.len(), 2);
         assert_eq!(
             provider("missing").unwrap_err().code,
