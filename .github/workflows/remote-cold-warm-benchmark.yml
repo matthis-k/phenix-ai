@@ -15,10 +15,10 @@ concurrency:
 jobs:
   cold:
     name: cold
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
     with:
       config: ci/flake-check-config.nix
-      library_ref: 1a733ae1daae2cb99989b735b171bc5dedd80d63
+      library_ref: e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
       worker_count: 4
       slots_per_worker: 2
       cache_namespace: ${{ format('bench-{0}-{1}', github.run_id, github.run_attempt) }}
@@ -30,10 +30,10 @@ jobs:
   warm:
     name: warm
     needs: cold
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@1a733ae1daae2cb99989b735b171bc5dedd80d63
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
     with:
       config: ci/flake-check-config.nix
-      library_ref: 1a733ae1daae2cb99989b735b171bc5dedd80d63
+      library_ref: e91cc8de2e10d0c4592b950e442f73ff6ea9efa3
       worker_count: 4
       slots_per_worker: 2
       cache_namespace: ${{ format('bench-{0}-{1}', github.run_id, github.run_attempt) }}
