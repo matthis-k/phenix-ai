@@ -1003,7 +1003,43 @@ fn run() -> Result<(), String> {
     };
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
-    let composition: Composition = serde_json::from_slice(&config).map_err(|e| e.to_string())?;
+    // Source/build policies belong to the product host. The kernel receives
+    // the sole v3 composition format containing verified package paths only.
+    let source_config: serde_json::Value =
+        serde_json::from_slice(&config).map_err(|e| e.to_string())?;
+    let prepared = if source_config.get("plugin_sources").is_some()
+        || source_config.get("builders").is_some()
+    {
+        if source_config.get("format").and_then(|v| v.as_str()) != Some("phenix.composition.v3") {
+            return Err("source declarations require phenix.composition.v3".into());
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "phenix-plugin-sources-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+        let output = scratch.join("composition.json");
+        let preparer = std::env::var_os("PHENIX_PLUGIN_PREPARER")
+            .unwrap_or_else(|| "phenix-plugin-sources".into());
+        let status = std::process::Command::new(preparer)
+            .arg(path)
+            .arg(&output)
+            .status();
+        let result = match status {
+            Ok(status) if status.success() => std::fs::read(&output).map_err(|e| e.to_string()),
+            Ok(status) => Err(format!("plugin source preparation exited with {status}")),
+            Err(error) => Err(format!("cannot invoke plugin source preparer: {error}")),
+        };
+        let _ = std::fs::remove_dir_all(scratch);
+        result?
+    } else {
+        config
+    };
+    let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
         "acp" => acp_sdk::run(&composition),
         "jsonl" => run_jsonl(&composition),
@@ -1091,7 +1127,7 @@ mod session_lock_tests {
             resources: [session.into(), foreign.into(), property.into()].into(),
         };
         let original = Composition {
-            format: "phenix.composition.v2".into(),
+            format: "phenix.composition.v3".into(),
             artifacts: vec![],
             definitions: vec![],
             entry: Selection {
