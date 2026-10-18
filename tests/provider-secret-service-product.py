@@ -40,8 +40,25 @@ with tempfile.TemporaryDirectory(prefix="phenix-secret-service-") as temporary:
     # The outer dbus-run-session and private HOME/XDG paths are mandatory.
     assert os.environ.get("PHENIX_ISOLATED_SECRET_SERVICE_TEST") == "1"
     assert Path(os.environ["HOME"]).is_relative_to(Path(os.environ["TMPDIR"]))
-    subprocess.run(["gnome-keyring-daemon", "--unlock", "--components=secrets"],
-                   input=b"isolated-fixture-password", capture_output=True, check=True, timeout=30)
+    control = root / "control"
+    control.mkdir(mode=0o700)
+
+    def start_service(replace=False):
+        command = ["gnome-keyring-daemon", "--unlock", "--control-directory=" + str(control)]
+        if replace:
+            command.append("--replace")
+        subprocess.run(command, input=b"isolated-fixture-password",
+                       capture_output=True, check=True, timeout=30)
+        # Unlock only prepares the daemon; --start registers the secrets component.
+        subprocess.run(["gnome-keyring-daemon", "--start", "--components=secrets",
+                        "--control-directory=" + str(control)],
+                       capture_output=True, check=True, timeout=30)
+        subprocess.run(["dbus-send", "--session", "--print-reply",
+                        "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus",
+                        "org.freedesktop.DBus.GetNameOwner", "string:org.freedesktop.secrets"],
+                       capture_output=True, check=True, timeout=30)
+
+    start_service()
     first, second = identity(), identity("work")
     secrets = [b"fixture-personal-key", b"fixture-work-key", b"fixture-rotated-key"]
 
@@ -105,8 +122,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-secret-service-") as temporary:
         success("resolve", first, dict(bytes=list(secrets[0])))
     success("import", dict(identity=first, secret=secrets[2]))
     # Replace the actual service, not just the caller, to verify at-rest persistence.
-    subprocess.run(["gnome-keyring-daemon", "--replace", "--unlock", "--components=secrets"],
-                   input=b"isolated-fixture-password", capture_output=True, check=True, timeout=30)
+    start_service(replace=True)
     success("resolve", first, dict(bytes=list(secrets[2])))
     success("revoke", first)
     domain("resolve", first, "NotFound")
