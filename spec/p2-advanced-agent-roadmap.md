@@ -73,7 +73,7 @@ release acceptance.
 | P2-3ai | [#952](https://github.com/matthis-k/phenix-ai/pull/952) | `21c480be` | Opt-in Basic prepare node publishing a watched request |
 | P2-3aj | [#956](https://github.com/matthis-k/phenix-ai/pull/956) | `6f7f81a5` | Basic Model-advance node gates on the watched prepared request |
 | P2-3ak | [#957](https://github.com/matthis-k/phenix-ai/pull/957) | `f919c35f` | Selected Advanced preparer writes the watched Basic request; packaged JSONL/SQLite prepare→advance→answer proof |
-| P2-3al | [#976](https://github.com/matthis-k/phenix-ai/pull/976) | `TBD` | Staged tool re-entry through the watched preparation graph; packaged JSONL/SQLite multi-turn tool proof |
+| P2-3al | [#976](https://github.com/matthis-k/phenix-ai/pull/976) | `439c4c2d6` | Staged tool re-entry through the watched preparation graph; packaged JSONL/SQLite multi-turn tool proof |
 
 P2-3 is **not accepted**: the staged graph now re-enters preparation after
 each tool result and completes identity multi-turn workflows, but changed
