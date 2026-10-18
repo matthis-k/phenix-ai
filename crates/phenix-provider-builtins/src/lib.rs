@@ -186,10 +186,18 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
                     return Err("duplicate authentication method");
                 }
             }
+            let mut source_ids = BTreeSet::new();
             for source in &connection.model_sources {
-                if let Some(endpoint) = &source.endpoint {
-                    validate_endpoint(endpoint, EndpointMode::Remote)
-                        .map_err(|_| "unsafe catalog endpoint")?;
+                if source.id.is_empty() || !source_ids.insert(source.id.as_str()) {
+                    return Err("duplicate or empty model discovery source");
+                }
+                match (&source.kind, source.endpoint.as_deref()) {
+                    (DiscoveryKind::Declared, None) => {}
+                    (DiscoveryKind::Dynamic, Some(endpoint)) => {
+                        validate_endpoint(endpoint, EndpointMode::Remote)
+                            .map_err(|_| "unsafe catalog endpoint")?;
+                    }
+                    _ => return Err("inconsistent model discovery source"),
                 }
             }
         }
@@ -252,6 +260,46 @@ mod tests {
         assert_eq!(
             validate_registrations(&providers),
             Err("unsafe provider endpoint")
+        );
+    }
+
+    #[test]
+    fn reject_ambiguous_or_inconsistent_model_discovery_sources() {
+        let mut providers = registrations();
+        let duplicate = providers[0].connections[0].model_sources[0].clone();
+        providers[0].connections[0].model_sources.push(duplicate);
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].id.clear();
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("duplicate or empty model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint = None;
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("inconsistent model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].kind = DiscoveryKind::Declared;
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("inconsistent model discovery source")
+        );
+
+        let mut providers = registrations();
+        providers[0].connections[0].model_sources[0].endpoint =
+            Some("http://external.test/models".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("unsafe catalog endpoint")
         );
     }
 
