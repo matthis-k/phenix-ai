@@ -39,7 +39,7 @@ impl Fixture {
             })
             .collect::<Vec<_>>();
         Composition {
-            format: "phenix.composition.v2".into(),
+            format: "phenix.composition.v3".into(),
             artifacts: vec![self.package.clone()],
             definitions: self.definitions.clone(),
             entry: Selection {
