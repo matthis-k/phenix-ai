@@ -44,7 +44,7 @@ fn composition(artifacts: Vec<String>) -> Composition {
         }
     }
     Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         definitions: vec![],
         slots: ["counter", "all"]
             .map(|slot| SlotBinding {
