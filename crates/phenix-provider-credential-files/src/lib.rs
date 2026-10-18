@@ -27,6 +27,13 @@ static NONCE: AtomicU64 = AtomicU64::new(0);
 // Reserved publish slot, accessed only while exclusively locking the pinned
 // directory. No other candidate names are scanned or removed.
 const PENDING: &str = ".credential-pending";
+// Explicit 0600 sidecar marker for a pending publication. Unlike inode
+// extended attributes, this works with O_TMPFILE on Linux filesystems where
+// user xattrs are unavailable (including some Nix sandboxes). Both entries
+// live under the same pinned, 0700 directory and exclusive directory flock.
+// It proves our recovery protocol, not adversarial identity against the UID.
+const PENDING_MARKER_NAME: &str = ".credential-pending.marker";
+const PENDING_MARKER: &[u8] = b"phenix-pending-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialError {
@@ -43,8 +50,9 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn new(data: Vec<u8>) -> Result<Self, CredentialError> {
+    pub fn new(mut data: Vec<u8>) -> Result<Self, CredentialError> {
         if data.is_empty() || data.len() > MAX_SECRET_BYTES || data.contains(&0) {
+            data.fill(0);
             return Err(CredentialError::InvalidIdentity);
         }
         Ok(Self { data })
@@ -210,6 +218,91 @@ impl CredentialFiles {
         self.store_with_hook(id, secret, |_| {})
     }
 
+    fn mark_pending(&self) -> Result<(), CredentialError> {
+        // Publish the marker and fsync the directory before linking the
+        // anonymous credential inode. Recovery then knows whether the reserved
+        // pending slot belongs to an interrupted writer.
+        let mut marker = self
+            .open_relative(
+                PENDING_MARKER_NAME,
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+                0o600,
+            )
+            .map_err(|_| CredentialError::InsecureFile)?;
+        let result = (|| -> Result<(), CredentialError> {
+            marker
+                .write_all(PENDING_MARKER)
+                .map_err(|_| CredentialError::Io)?;
+            marker.sync_all().map_err(|_| CredentialError::Io)?;
+            self.directory.sync_all().map_err(|_| CredentialError::Io)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            // This name was created exclusively by this operation.
+            let _ = self.unlink_relative(PENDING_MARKER_NAME);
+        }
+        result
+    }
+
+    fn recover_pending(&self) -> Result<(), CredentialError> {
+        let mut marker =
+            match self.open_relative(PENDING_MARKER_NAME, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+                Ok(file) => Some(file),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(_) => return Err(CredentialError::InsecureFile),
+            };
+        if let Some(file) = marker.as_mut() {
+            let metadata = file.metadata().map_err(|_| CredentialError::InsecureFile)?;
+            if !metadata.is_file()
+                || metadata.mode() & 0o777 != 0o600
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.nlink() != 1
+                || metadata.len() != PENDING_MARKER.len() as u64
+            {
+                return Err(CredentialError::InsecureFile);
+            }
+            let mut bytes = [0u8; PENDING_MARKER.len()];
+            file.read_exact(&mut bytes)
+                .map_err(|_| CredentialError::InsecureFile)?;
+            if bytes.as_slice() != PENDING_MARKER {
+                return Err(CredentialError::InsecureFile);
+            }
+        }
+        let pending = match self.open_relative(PENDING, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(_) => return Err(CredentialError::InsecureFile),
+        };
+        let had_pending = pending.is_some();
+        if let Some(pending) = pending {
+            // Never unlink an unknown reserved-name entry. The marker must
+            // precede the pending link and the pending inode must be a private
+            // regular file, not a symlink, directory or multi-linked inode.
+            if marker.is_none() {
+                return Err(CredentialError::InsecureFile);
+            }
+            let metadata = pending
+                .metadata()
+                .map_err(|_| CredentialError::InsecureFile)?;
+            if !metadata.is_file()
+                || metadata.mode() & 0o777 != 0o600
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.nlink() != 1
+                || metadata.len() > MAX_SECRET_BYTES as u64
+            {
+                return Err(CredentialError::InsecureFile);
+            }
+            self.unlink_relative(PENDING)?;
+        }
+        if marker.is_some() {
+            self.unlink_relative(PENDING_MARKER_NAME)?;
+        }
+        if marker.is_some() || had_pending {
+            self.directory.sync_all().map_err(|_| CredentialError::Io)?;
+        }
+        Ok(())
+    }
+
     fn lock_and_recover(&self) -> Result<File, CredentialError> {
         // A fresh open description is essential: dup/flock on the shared fd
         // would not serialize threads using the same backend instance.
@@ -225,11 +318,7 @@ impl CredentialFiles {
             }
         }
         validate_directory(&self.directory)?;
-        match self.unlink_relative(PENDING) {
-            Ok(()) => self.directory.sync_all().map_err(|_| CredentialError::Io)?,
-            Err(CredentialError::NotFound) => (),
-            Err(error) => return Err(error),
-        }
+        self.recover_pending()?;
         Ok(lock)
     }
 
@@ -253,6 +342,7 @@ impl CredentialFiles {
             .write_all(secret.expose_for_authorized_provider())
             .map_err(|_| CredentialError::Io)?;
         output.sync_all().map_err(|_| CredentialError::Io)?;
+        self.mark_pending()?;
         checkpoint("synced");
         // /proc/self/fd permits linking our anonymous inode without requiring
         // CAP_DAC_READ_SEARCH (unlike linkat with AT_EMPTY_PATH).
@@ -268,17 +358,23 @@ impl CredentialFiles {
             )
         } != 0
         {
+            // Pending inode was not linked by us; preserve any unexpected entry.
+            // The marker was created exclusively by this operation.
+            let _ = self.unlink_relative(PENDING_MARKER_NAME);
             return Err(CredentialError::Io);
         }
         let result = (|| -> Result<(), CredentialError> {
             checkpoint("linked");
             self.rename_relative(PENDING, &destination)?;
             self.directory.sync_all().map_err(|_| CredentialError::Io)?;
+            self.unlink_relative(PENDING_MARKER_NAME)?;
+            self.directory.sync_all().map_err(|_| CredentialError::Io)?;
             Ok(())
         })();
         if result.is_err() {
-            // This path is reachable only after we successfully linked our inode.
-            let _ = self.unlink_relative(PENDING);
+            // Recovery uses our validated marker to clean a still-linked
+            // candidate; never remove another publisher's entry.
+            let _ = self.recover_pending();
         }
         result
     }
@@ -691,6 +787,60 @@ mod tests {
             b"replacement-witness"
         );
         fs::remove_dir_all(pinned).unwrap();
+    }
+
+    #[test]
+    fn recovery_rejects_unmarked_or_symlinked_pending_entries_without_deleting_them() {
+        for symlinked in [false, true] {
+            let fixture = Fixture::new();
+            let reserved = fixture.0.join(PENDING);
+            let witness = fixture.0.join("witness");
+            fs::write(&witness, b"unowned-witness").unwrap();
+            if symlinked {
+                symlink(&witness, &reserved).unwrap();
+            } else {
+                fs::write(&reserved, b"unowned-pending-witness").unwrap();
+                fs::set_permissions(&reserved, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert!(matches!(
+                CredentialFiles::open(&fixture.0, true),
+                Err(CredentialError::InsecureFile)
+            ));
+            assert!(reserved.symlink_metadata().is_ok());
+            assert_eq!(fs::read(&witness).unwrap(), b"unowned-witness");
+            if !symlinked {
+                assert_eq!(fs::read(&reserved).unwrap(), b"unowned-pending-witness");
+            }
+        }
+    }
+
+    #[test]
+    fn successful_publication_marks_only_owned_recoverable_candidates() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        root.store_with_hook(
+            &id("work"),
+            &Secret::new(b"marked-secret".to_vec()).unwrap(),
+            |stage| {
+                if stage == "linked" {
+                    let pending = root.open_relative(PENDING, libc::O_RDONLY, 0).unwrap();
+                    assert!(pending.metadata().unwrap().is_file());
+                    let mut marker = root
+                        .open_relative(PENDING_MARKER_NAME, libc::O_RDONLY, 0)
+                        .unwrap();
+                    let mut bytes = [0u8; PENDING_MARKER.len()];
+                    marker.read_exact(&mut bytes).unwrap();
+                    assert_eq!(bytes, PENDING_MARKER);
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            root.read(&id("work"))
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"marked-secret"
+        );
     }
 
     #[test]
