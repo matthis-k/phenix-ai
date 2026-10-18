@@ -189,6 +189,24 @@ if len(sys.argv) in (9, 10):
         ).fetchone()
         assert row is not None and row[0] > 0
 
+    # A multi-turn tool workflow must re-enter the watched preparation graph
+    # after every tool result. The scripted Model first requests
+    # uppercase+length, then derives its answer from the exact tool results
+    # it receives in the re-prepared second request. The prior slice failed
+    # closed on any tool-bearing reply; the re-prepared history must now
+    # reach the second Model call instead of being denied.
+    tooled, tool_events = submit(selected_path, "selected-tools.sqlite", "tools:hello")
+    assert tooled.returncode == 0, (tooled.stdout, tooled.stderr)
+    tool_kinds = [event["kind"] for event in tool_events]
+    assert tool_kinds.count("PromptAccepted") == 1, tool_events
+    assert tool_kinds.count("ModelStarted") == 2, tool_events
+    assert tool_kinds.count("ToolStarted") == 2, tool_events
+    assert tool_kinds.count("ToolFinished") == 2, tool_events
+    assert "Failure" not in tool_kinds, tool_events
+    assert [event["text"] for event in tool_events if event["kind"] == "Answer"] == [
+        "mock:call-1:HELLO|call-2:5"
+    ], tool_events
+
     # An actual Model domain failure must terminate its durable Running
     # checkpoint. A fresh launcher can then reuse the same session, without
     # dropping history or spuriously repeating the failed Model effect.
@@ -259,5 +277,6 @@ if len(sys.argv) in (9, 10):
         "authorized-basic-prepare-publishes-model-request-without-model-execution",
         "missing-prepare-grant-denies-without-journal-effects",
         "original-basic-composition-remains-separate",
+        "selected-advanced-graph-reenters-preparation-after-each-tool-result",
     ],
 }, sort_keys=True, indent=2))

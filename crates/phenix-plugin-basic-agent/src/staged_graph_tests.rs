@@ -46,8 +46,8 @@ fn staged_graph_requires_distinct_prepare_then_model_advance_nodes() {
         ["state:phenix.basic.agent/prepared_model_request"]
     );
     assert_eq!(next.operation, "phenix.basic.turn-advance@1/advance");
-    assert!(next.after.is_empty());
-    assert!(next.writes.is_empty());
+    assert_eq!(next.after, ["phenix.basic.agent/prepare"]);
+    assert_eq!(next.writes, ["phenix.basic.agent/pending_model_request"]);
 }
 
 #[test]
@@ -73,5 +73,4 @@ fn staged_graph_has_no_extra_public_action() {
     let graph = GRAPH.owned().unwrap();
     assert!(graph.actions.is_empty());
     assert!(graph.events.is_empty());
-    assert!(graph.nodes.iter().all(|node| node.after.is_empty()));
 }

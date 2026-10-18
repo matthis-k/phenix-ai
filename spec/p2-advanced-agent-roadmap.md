@@ -1,6 +1,6 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
-Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3ak are integrated, but the no-compaction graph handoff and all P2 release gates remain unaccepted. Provider catalog/credential metadata is integrated; runtime credential submission, model discovery, revision-checked selection mutation and the Neovim journey remain PV2–PV7.
+Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 are active. P2-3 compaction and graph-preparation slices through P2-3al are integrated, but verified compaction admission, crash-atomic journal/session reconciliation, production tokenizer parity and all P2 release gates remain unaccepted. Provider catalog/credential metadata is integrated; runtime credential submission, model discovery, revision-checked selection mutation and the Neovim journey remain PV2–PV7.
 Updated: 2026-10-17
 Parent: [M1 roadmap](m1-roadmap.md)
 Historical reference: archived oldmain, especially rust/crates/phenix-agent-configurations and rust/crates/phenix-plugin-memory.
@@ -73,12 +73,14 @@ release acceptance.
 | P2-3ai | [#952](https://github.com/matthis-k/phenix-ai/pull/952) | `21c480be` | Opt-in Basic prepare node publishing a watched request |
 | P2-3aj | [#956](https://github.com/matthis-k/phenix-ai/pull/956) | `6f7f81a5` | Basic Model-advance node gates on the watched prepared request |
 | P2-3ak | [#957](https://github.com/matthis-k/phenix-ai/pull/957) | `f919c35f` | Selected Advanced preparer writes the watched Basic request; packaged JSONL/SQLite prepare→advance→answer proof |
+| P2-3al | [#976](https://github.com/matthis-k/phenix-ai/pull/976) | `TBD` | Staged tool re-entry through the watched preparation graph; packaged JSONL/SQLite multi-turn tool proof |
 
-P2-3 is **not accepted**: changed candidates still require verified compaction
-admission, the Advanced preparer currently forwards only the exact original
-request, multi-turn tool continuations must be re-prepared through the graph,
-and crash-atomic journal/session reconciliation plus production tokenizer
-parity remain open.
+P2-3 is **not accepted**: the staged graph now re-enters preparation after
+each tool result and completes identity multi-turn workflows, but changed
+candidates still require verified compaction admission, the Advanced
+preparer still forwards only the exact original request, and crash-atomic
+journal/session reconciliation plus production tokenizer parity remain
+open.
 
 P2-2b has three integrated slices: [#906](https://github.com/matthis-k/phenix-ai/pull/906) authenticates durable project membership, [#907](https://github.com/matthis-k/phenix-ai/pull/907) revalidates project-record sources, and [#908](https://github.com/matthis-k/phenix-ai/pull/908) provides packaged cross-session EvidenceStore retrieval (merged at `340b2ac2`). [#910](https://github.com/matthis-k/phenix-ai/pull/910) verifies denial after revocation of an already-admitted root (merged at `8ea04017`). Trusted runtime session/project admission and cancellation of active work remain tracked in [#891](https://github.com/matthis-k/phenix-ai/issues/891); P2-2b is not accepted yet.
 
@@ -533,6 +535,28 @@ before journaling any turn. The existing Basic and Advanced presets
 remain unchanged. Real pending summarizer selection, checkpoint CAS
 proof, tool-call re-entry through every graph wave, restart, cross-root
 concurrency and compaction migration are still required for P2 acceptance.
+
+**P2-3al: staged tool re-entry through the watched preparation graph.**
+The staged Basic `model-advance` node no longer fails closed when the
+selected Model returns tool calls. It executes the tool effects exactly as
+the ordinary Basic loop does, then publishes the next authoritative
+`ModelRequest` (with the updated history including tool results) as a fresh
+watched `phenix.basic.agent/pending_model_request` cell and ends its graph
+wave. The kernel re-admits the selected Advanced graph preparer, which
+re-invokes the identity `model-preparation@1/prepare` provider and commits
+the next watched `prepared_model_request`, activating the same
+`model-advance` node for the following Model call. The `model-advance` node
+now declares its `pending_model_request` write and an `after` edge to
+Basic's `prepare` node so the graph compiler admits the two ordered
+writers. The default Basic (non-staged) path is unchanged; the no-op
+preparer remains the default Advanced preparer. A packaged JSONL/SQLite
+fixture runs `tools:hello` through the selected three-plugin composition
+and asserts two `ModelStarted`/`ToolStarted`/`ToolFinished` events and the
+exact final `mock:call-1:HELLO|call-2:5` answer, proving the second Model
+request was re-prepared with correct tool results rather than denied.
+Pending summarizer selection, verified compaction admission, crash-atomic
+journal/session reconciliation and production tokenizer parity remain
+release gates.
 
 **Mandatory graph split for P2-3ah onward.** The current Basic submit graph
 node remains pending while it invokes and polls the Model. M1 state-triggered
