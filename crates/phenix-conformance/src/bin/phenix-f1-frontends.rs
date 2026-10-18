@@ -43,7 +43,7 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
         })
         .collect();
     let composition = Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![path],
         definitions: vec![defs],
         entry: selection("decode", provider),
