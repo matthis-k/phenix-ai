@@ -37,6 +37,29 @@ current integrated P1 and CI acceptance statements above supersede their
 pre-integration projections.
 
 
+## Immediate delivery queue: fast CI to usable Neovim (18 October 2026)
+
+This is a **dependency and integration order**, not an alternative implementation
+specification or release gate. The existing owner roadmaps and #891 supply
+behavioral contracts and exact acceptance tests. Do not introduce a second
+protocol, catalog, storage owner, or legacy composition branch to complete it.
+
+| Order | Owning implementation and dependency | Next action | Evidence needed before promotion |
+| --- | --- | --- | --- |
+| 1. CI and incremental builds | [CI matrix](m1-ci-matrix.md), [post-P1 ledger](ci-post-p1-cutover.md), merged #983–#985/#987 and `phenix-flake-ci` | Recheck integrated `main`; benchmark comparable cold/full and warm runs and one edited Basic plugin versus an unchanged sibling. Confirm verified read-only cache substitution on PRs and trusted-only publication. | Every Nix check and official ACP gate on the actual SHA, stable source-scoped derivations, measured wall-clock and realized/substituted paths. Target <10m; ~11m is tolerable, 30m is not. A 2m cache-hit run alone does not satisfy the source-edit case. |
+| 2. Plugin source preparation | [#977](https://github.com/matthis-k/phenix-ai/pull/977), then [#988](https://github.com/matthis-k/phenix-ai/pull/988) | Merge the rebased path/pinned-source and Rust/Nix builder path, then persistent Cargo target reuse. Supply a verified native package path to the unchanged loader. | Real `.so` from local/prebuilt and buildable sources, reject unpinned/unauthorized sources, source-edit rebuild only where needed; exact-head Nix/Basic checks. One canonical `phenix.composition.v3` without a v2 reader. |
+| 3. Authorized interactive management | [runtime #891](https://github.com/matthis-k/phenix-ai/issues/891), [M1 post-P1](#current-integrated-acceptance-and-next-stages) | Implement typed, revision-checked provider/connection/model, auth method, session and subscription operations in runtime plugins/product APIs, prioritizing the smallest end-to-end model-selection and provider-auth path. | Fake provider with zero/one/both methods, API-key and supported OAuth paths, effective model revision and availability, denial/stale/expiry, restart and independent ACP/client evidence. No client-authored catalog or secret persisted by UI. |
+| 4. Standalone Neovim experience | [client N4–N6](https://github.com/matthis-k/phenix-ai.nvim/blob/main/spec/p1-p2-client-roadmap.md), [queue PR #46](https://github.com/matthis-k/phenix-ai.nvim/pull/46) | First fix #46's syntax/CI regressions and update its branch; land safe queue/UI portions separately from unsupported runtime steering if needed. Complete runtime-backed auth/model picker, bounded editor tools, callback disposal and supported feature matrix. | Installed headless Neovim: prompt, tools, queued follow-up admission, attachments, cancel, reconnect and failure/denial. Client queue never asserts admission solely from a transport callback; unsupported capabilities explicitly disabled. |
+| 5. Distribution D4 | [distribution roadmap](https://github.com/matthis-k/phenix-nvim/blob/main/spec/p1-p2-distribution-roadmap.md) | Promote **only** accepted runtime and client SHAs together; keep Basic the default. Test live-model onboarding separately from deterministic fixtures. | Installed `nvim-nix-live`: authorized provider/auth method, effective model, real turn, restart/selection persistence, no secret exposure; Source/Distribution/Maintenance checks green on the exact pin. |
+| 6. P2 Advanced/UI | [Advanced roadmap](p2-advanced-agent-roadmap.md), client C1–C7 and distribution E1–E4 | Resume Advanced composition, negotiated A2UI, workspace/edit/job and independent multi-client views after the usable P1 path. | Existing Advanced fixtures and independent transport/schema tests, while the default Basic package and UI regression stay green. |
+
+Parallelism: CI benchmarking, source builders and unprivileged Neovim
+transcript/editor-tool work need not wait for #891; runtime-backed auth,
+model mutations and durable queue acceptance do. Merge/pin in runtime →
+standalone client → distribution order, verifying the actual integrated
+commit at each boundary. Do not mark an individual roadmap row accepted
+from tests of a parent PR, a provisional lockfile or a stale branch head.
+
 ## P2 advanced agent
 
 [The P2 advanced agent roadmap](p2-advanced-agent-roadmap.md) owns the detailed
