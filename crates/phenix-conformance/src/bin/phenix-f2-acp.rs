@@ -34,7 +34,7 @@ fn main() {
     let resources = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let ops = ["decode", "render", "cancel"];
     let kernel = Prepared::prepare(Composition {
-        format: "phenix.composition.v2".into(),
+        format: "phenix.composition.v3".into(),
         artifacts: vec![args[1].clone()],
         definitions: vec![args[2].clone()],
         entry: selection("decode"),
