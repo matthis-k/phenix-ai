@@ -1049,7 +1049,7 @@ transport to save compile time.
     The default production build retains the tested SDK v1 host and its
     version rejection behavior. The preview has no v2 session handlers and
     is not release support. Native `cargo check --locked` is required for
-    the opt-in feature before an independent v2-client handshake test. Run independent v2 SDK client tests for interleaved
+    the opt-in feature. The stacked `test/m1-r1-acp-v2-router-sdk-client` PR adds independent official SDK v1/v2 initialize checks, without advertising unfinished v2 session capabilities. Before release, run independent v2 SDK client tests for interleaved
     updates, replay cursors, cancellation, session close/reopen and
     v1/v2 version mismatches. Only then advertise draft v2 support.
 
