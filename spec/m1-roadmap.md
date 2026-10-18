@@ -1017,14 +1017,16 @@ transport to save compile time.
     **Integrated 2026-10-17:** [#846](https://github.com/matthis-k/phenix-ai/pull/846)
     merged at `ab724c79` and [#847](https://github.com/matthis-k/phenix-ai/pull/847)
     at `d6c042d9` after exact-head checks; the `acp_v2` feature and native
-    frontend workflow are on `main`. The remaining stack
-    [#848](https://github.com/matthis-k/phenix-ai/pull/848),
-    [#849](https://github.com/matthis-k/phenix-ai/pull/849),
-    [#850](https://github.com/matthis-k/phenix-ai/pull/850) and
-    [#851](https://github.com/matthis-k/phenix-ai/pull/851) is **not merged**:
-    their checks are green but GitHub rejects the merge because the available
-    token lacks `workflow` scope for their workflow-file edits; #851 also has
-    conflicts. Draft v2 is not advertised and R1-ACP5b/5c remain open.
+    frontend workflow are on `main`.
+    **Integrated 2026-10-18:** [#848](https://github.com/matthis-k/phenix-ai/pull/848)
+    merged at `bad8d680`, [#849](https://github.com/matthis-k/phenix-ai/pull/849)
+    at `1d092daa`, [#850](https://github.com/matthis-k/phenix-ai/pull/850)
+    at `e0c66702`, and [#851](https://github.com/matthis-k/phenix-ai/pull/851)
+    at `e722ec29`. Each passed its exact-head CI before merge.
+    The earlier workflow-permission blocker is resolved. Default Basic
+    remains ACP v1. The v2 SDK router and independent initialize tests
+    are accepted as **disabled-by-default preview** only. R1-ACP5b and
+    the full session-lifecycle and replay acceptance in R1-ACP5c remain open.
   - [ ] **R1-ACP5b — v2 SDK host lifecycle.** Use `Agent.v2()` handlers,
     typed `v2::Session*Request` and the existing Phenix single-thread
     graph controller. Return `session/prompt` acceptance immediately;
