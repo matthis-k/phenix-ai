@@ -6,7 +6,7 @@ in
 flakeCi.mkFlakeCiWorkflow {
   ci = import ./flake-backend.nix;
   configPath = "ci/flake-check-config.nix";
-  libraryRef = "e91cc8de2e10d0c4592b950e442f73ff6ea9efa3";
+  libraryRef = "c4467d7dc233ada85ea49823561ee8be57089591";
   name = "Phenix generated Nix CI (4 remote builders)";
   events = {
     pullRequest = false;

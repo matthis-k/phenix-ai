@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_SOURCE_PIN = 'e91cc8de2e10d0c4592b950e442f73ff6ea9efa3'
+EXPECTED_SOURCE_PIN = 'c4467d7dc233ada85ea49823561ee8be57089591'
 
 
 def require(condition, message):
@@ -51,6 +51,10 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('ci.mkFlakeCheckConfig' in check_config, 'not using generic flake check planner')
     require('ci.rustCheckStrategy' in check_config, 'existing Rust strategy absent')
     require('shardCount = 5;' in check_config, 'existing experimental matrix was altered')
+    candidate_refs = re.findall(r'flake-checks\.yml@([0-9a-f]{40})', matrix)
+    candidate_libraries = re.findall(r'(?m)^      library_ref: ([0-9a-f]{40})$', matrix)
+    require(candidate_refs == [EXPECTED_SOURCE_PIN] and candidate_libraries == candidate_refs,
+            'unprivileged PR matrix must use the same reviewed immutable cache library')
     # Preserve independent authoritative release checks until same-head remote
     # full-inventory, security and cold/warm checks are proven.
     require('branches: [main,' not in canonical and '  workflow_dispatch:' in canonical,
@@ -61,6 +65,11 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
             'legacy DAG still duplicates main')
     require('P1 official ACP SDK interop' in acp and 'branches: [main]' in acp,
             'independent ACP SDK main check removed')
+    require('nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569' in acp
+            and 'remote-phenix-m1-x86_64-linux-' in acp
+            and 'gc-max-store-size-linux: "6G"' in acp
+            and 'save: false' in acp and 'save: true' not in acp,
+            'independent ACP must restore only the trusted-main cache read-only')
     verify_refs = re.findall(r'(?m)^          ref: ([0-9a-f]{40})$', verifier)
     require(verify_refs == [EXPECTED_SOURCE_PIN],
             'verifier checkout does not match generated remote backend pin')
@@ -117,6 +126,12 @@ def self_test():
              '          ref: ' + 'f' * 40),
         (9, '      - ci/m1-p1-cache-benchmark',
              '      - ci/unknown-benchmark'),
+        (8, 'save: false', 'save: true'),
+        (8, 'remote-phenix-m1-x86_64-linux-', 'phenix-m1-x86_64-linux-'),
+        (6, 'flake-checks.yml@' + EXPECTED_SOURCE_PIN,
+             'flake-checks.yml@' + 'f' * 40),
+        (6, 'library_ref: ' + EXPECTED_SOURCE_PIN,
+             'library_ref: ' + 'f' * 40),
     ]
     for index, before, after in mutations:
         sample = good.copy()
