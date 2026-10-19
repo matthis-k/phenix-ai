@@ -3,19 +3,30 @@ on:
   pull_request:
     paths:
       - flake.nix
+      - flake.lock
+      - Cargo.toml
+      - Cargo.lock
+      - examples/**
+      - crates/**
       - ci/flake-check-config.nix
       - .github/scripts/test-basic-plugin-cache-isolation.sh
+      - .github/scripts/basic-plugin-cache-evidence.py
       - .github/workflows/basic-plugin-cache-isolation.yml
+  push:
+    branches:
+      - ci/verify-incremental-nix-*
   workflow_dispatch:
 
+# Credential-free CI diagnostic. Only phenix-flake-ci orchestrates remote
+# builders and publishes production binary caches.
 permissions:
   contents: read
 
 jobs:
   isolation:
-    name: Native plugin derivation isolation
+    name: Nix derivation and dependency isolation
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -26,5 +37,40 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
-      - name: Verify changed plugin and dependent composition only
-        run: bash .github/scripts/test-basic-plugin-cache-isolation.sh
+      - name: Validate evidence collector syntax
+        run: python3 -m py_compile .github/scripts/basic-plugin-cache-evidence.py
+      - name: Derive source impact and real reverse dependencies
+        run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --output incremental-ci-evidence
+      - name: Preserve machine-readable evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: basic-nix-isolation
+          path: incremental-ci-evidence/
+          if-no-files-found: warn
+
+  # This opt-in diagnostic must not run on untrusted PR events.
+  materialization:
+    name: Local Nix builds and same-run warm replay
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[cache-probe]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Build representative incremental products and replay unchanged
+        run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --build --cases A B C D E F G H I J --output incremental-ci-build-evidence
+      - name: Preserve build plans, outputs, actual build and substitution logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: basic-nix-materialization
+          path: incremental-ci-build-evidence/
+          if-no-files-found: warn
