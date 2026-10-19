@@ -196,9 +196,14 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
+struct ProviderManagement {
+    kernel: Kernel,
+    selected: Selection,
+}
+
 struct Controller {
     composition: Composition,
-    management: Option<Kernel>,
+    management: Option<ProviderManagement>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -210,7 +215,7 @@ struct Controller {
 impl Controller {
     fn start(
         composition: Composition,
-        management: Option<Kernel>,
+        management: Option<ProviderManagement>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
@@ -305,16 +310,16 @@ impl Controller {
         let query = ProviderQuery {
             scope: request.scope,
         };
-        let kernel = self
+        let management = self
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let selected = Selection {
-            interface: "phenix.provider.catalog@1".into(),
-            operation: "list".into(),
-            provider: "phenix.provider.builtins".into(),
-        };
-        let root = kernel.admit_root(selected).map_err(internal)?;
+        // Provider identity comes from the independently authorized
+        // management composition, not from Basic or its frontend.
+        let root = management
+            .kernel
+            .admit_root(management.selected.clone())
+            .map_err(internal)?;
         let page: ProviderPage = match root.invoke(&query.to_value()).map_err(internal)? {
             Outcome::Success(value) => ProviderPage::from_value(value).map_err(internal)?,
             Outcome::Domain(value) => {
@@ -552,8 +557,11 @@ impl Controller {
         for (_, kernel) in self.sessions {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
-        if let Some(kernel) = self.management {
-            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        if let Some(management) = self.management {
+            management
+                .kernel
+                .shutdown()
+                .map_err(|e| format!("{e:?}"))?;
         }
         Ok(())
     }
@@ -565,10 +573,17 @@ pub(super) fn run(
 ) -> Result<(), String> {
     let management = management
         .map(|spec| {
-            Prepared::prepare(spec.clone())
+            if spec.entry.interface != "phenix.provider.catalog@1"
+                || spec.entry.operation != "list"
+            {
+                return Err("ACP management composition must select provider catalog list".into());
+            }
+            let selected = spec.entry.clone();
+            let kernel = Prepared::prepare(spec.clone())
                 .map_err(|e| format!("{e:?}"))?
                 .load()
-                .map_err(|e| format!("{e:?}"))
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(ProviderManagement { kernel, selected })
         })
         .transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
