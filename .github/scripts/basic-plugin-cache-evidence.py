@@ -83,8 +83,23 @@ def dependencies(root, paths):
     p, timing = call(["nix", "derivation", "show", "--recursive", "--stdin"],
                      root, timeout=900, stdin="\n".join(paths) + "\n")
     drvs = json.loads(p.stdout)
-    return {os.path.basename(k): sorted(os.path.basename(dep) for dep in v.get("inputDrvs", {}))
-            for k, v in drvs.items() if k.endswith(".drv") and isinstance(v, dict)}, timing
+    if isinstance(drvs, dict) and isinstance(drvs.get("derivations"), dict):
+        drvs = drvs["derivations"]
+    graph = {}
+    for path, data in drvs.items():
+        if not path.endswith(".drv") or not isinstance(data, dict):
+            continue
+        # Nix >=2.33 uses derivation JSON v4: inputs.drvs (v3: inputDrvs).
+        inputs = data.get("inputs", {}).get("drvs") if "inputs" in data else data.get("inputDrvs")
+        if not isinstance(inputs, dict):
+            raise RuntimeError("unknown Nix derivation input shape: " + path)
+        graph[os.path.basename(path)] = sorted(os.path.basename(dep) for dep in inputs)
+    required = {os.path.basename(path) for path in paths}
+    if not graph or not required.issubset(graph):
+        raise RuntimeError("Nix graph incomplete: missing %s" % sorted(required - graph.keys()))
+    if not any(graph.values()):
+        raise RuntimeError("Nix graph unexpectedly contains no derivation edges")
+    return graph, timing
 
 
 def mutate(root, case):
