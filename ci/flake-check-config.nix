@@ -22,6 +22,11 @@ ci.mkFlakeCheckConfig {
       ".#phenix-basic-contracts"
       ".#phenix-plugin-event-journal"
       ".#phenix-plugin-storage-sqlite"
+      # A reused contract-check derivation was compiled again for ~3 minutes
+      # on an unchanged PR head despite the seven-package shared cache.
+      # Promote this observed shared Nix *check* to the rooted hotset, without
+      # moving test ownership out of flake.nix or skipping any shard checks.
+      ".#checks.x86_64-linux.m1-contract"
     ];
     checkHints = {
       "m1-shipping" = { isolate = true; weight = 240; };
