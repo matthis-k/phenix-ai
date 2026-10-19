@@ -209,7 +209,12 @@ def main():
     graph, graph_time = dependencies(repo, [baseline[k] for k in sorted(needed)])
     evidence = {
         "schema": "phenix.incremental-ci-evidence.v1",
-        "head_sha": sha, "github_run_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+        "head_sha": sha,
+        "toolchain": {
+            name: call([name, "--version"], repo, check=False)[0].stdout.strip()
+            for name in ("nix", "cargo", "rustc")
+        },
+        "github_run_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com")
                            + "/" + os.environ.get("GITHUB_REPOSITORY", "matthis-k/phenix-ai")
                            + "/actions/runs/" + os.environ.get("GITHUB_RUN_ID", "unknown"),
         "recorded_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -258,8 +263,17 @@ def main():
                         "scenario": CASES[case][0], "baseline_sha": sha,
                         "probe_base_sha": sha, "changed_files": changed_files,
                         "packages_changed": delta, "new_packages": new_attrs,
+                        "package_derivation_diff": {
+                            key: {"baseline": baseline[key], "changed": after.get(key)}
+                            for key in delta
+                        },
                         "checks_changed": sorted(k for k in baseline_checks
                                                  if baseline_checks[k] != after_checks[k]),
+                        "check_derivation_diff": {
+                            key: {"baseline": baseline_checks[key], "changed": after_checks[key]}
+                            for key in baseline_checks
+                            if baseline_checks[key] != after_checks[key]
+                        },
                         "must_change": guards.get("changed", []),
                         "must_stay": guards.get("stable", []),
                         "expected_changed_missing": changed_missing,
