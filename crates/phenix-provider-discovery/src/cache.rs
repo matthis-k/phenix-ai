@@ -454,4 +454,160 @@ mod tests {
         );
         assert!(cache.is_empty());
     }
+    #[test]
+    fn rejects_ambiguous_or_unbounded_pages_without_changing_revision() {
+        let mut cache = CatalogCache::default();
+        let account = key(Some("work"));
+        let first = cache
+            .put(
+                account.clone(),
+                100,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                catalog("initial"),
+            )
+            .unwrap();
+
+        let mut invalid_pages = vec![
+            CatalogPage {
+                models: vec![CatalogModel {
+                    id: String::new(),
+                    label: "Unnamed".into(),
+                }],
+                next_provider_cursor: None,
+            },
+            CatalogPage {
+                models: vec![CatalogModel {
+                    id: "model".into(),
+                    label: "Invalid\nlabel".into(),
+                }],
+                next_provider_cursor: None,
+            },
+            CatalogPage {
+                models: vec![
+                    CatalogModel {
+                        id: "duplicate".into(),
+                        label: "First".into(),
+                    },
+                    CatalogModel {
+                        id: "duplicate".into(),
+                        label: "Second".into(),
+                    },
+                ],
+                next_provider_cursor: None,
+            },
+            CatalogPage {
+                models: vec![],
+                next_provider_cursor: Some("".into()),
+            },
+            CatalogPage {
+                models: vec![],
+                next_provider_cursor: Some("x".repeat(4097)),
+            },
+        ];
+        invalid_pages.push(CatalogPage {
+            models: (0..=MAX_MODELS)
+                .map(|index| CatalogModel {
+                    id: format!("m{index}"),
+                    label: "Entry".into(),
+                })
+                .collect(),
+            next_provider_cursor: None,
+        });
+        invalid_pages.push(CatalogPage {
+            models: (0..300)
+                .map(|index| CatalogModel {
+                    id: format!("m{index}"),
+                    label: "x".repeat(4096),
+                })
+                .collect(),
+            next_provider_cursor: None,
+        });
+
+        for page in invalid_pages {
+            assert_eq!(
+                cache.put(
+                    account.clone(),
+                    101,
+                    7,
+                    CachePolicy::Dynamic { ttl_seconds: 30 },
+                    page,
+                ),
+                Err(CacheError::InvalidCatalog)
+            );
+            let visible = cache.view(&account, 101, 7).unwrap();
+            assert_eq!(visible.revision, first);
+            assert_eq!(visible.page.models[0].id, "initial");
+        }
+        assert_eq!(
+            cache.put(
+                account.clone(),
+                102,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                catalog("new"),
+            ),
+            Ok(first + 1),
+            "invalid catalog attempts must not consume revisions"
+        );
+    }
+
+    #[test]
+    fn stale_refresh_cannot_rollback_timestamp_or_credential_generation() {
+        let mut cache = CatalogCache::default();
+        let account = key(Some("work"));
+        let original = cache
+            .put(
+                account.clone(),
+                200,
+                8,
+                CachePolicy::Dynamic { ttl_seconds: 90 },
+                catalog("current"),
+            )
+            .unwrap();
+
+        for (timestamp, generation) in [(199, 8), (200, 7), (199, 7)] {
+            assert_eq!(
+                cache.put(
+                    account.clone(),
+                    timestamp,
+                    generation,
+                    CachePolicy::Dynamic { ttl_seconds: 90 },
+                    catalog("old"),
+                ),
+                Err(CacheError::StaleRefresh)
+            );
+            let snapshot = cache.view(&account, 201, 8).unwrap();
+            assert_eq!(snapshot.revision, original);
+            assert_eq!(snapshot.page.models[0].id, "current");
+            assert_eq!(snapshot.freshness, Freshness::Fresh);
+        }
+
+        // Independent accounts do not borrow each other's timestamps or
+        // credential generations. A newer refresh replaces this exact key.
+        assert!(cache
+            .put(
+                key(Some("personal")),
+                100,
+                1,
+                CachePolicy::Dynamic { ttl_seconds: 90 },
+                catalog("personal"),
+            )
+            .is_ok());
+        let next = cache
+            .put(
+                account.clone(),
+                201,
+                9,
+                CachePolicy::Dynamic { ttl_seconds: 90 },
+                catalog("updated"),
+            )
+            .unwrap();
+        assert!(next > original);
+        assert_eq!(
+            cache.view(&account, 202, 9).unwrap().page.models[0].id,
+            "updated"
+        );
+    }
+
 }
