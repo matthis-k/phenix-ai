@@ -97,8 +97,10 @@ def mutate(root, case):
         after = before + "\n// Phenix temporary CI derivation probe: %s.\n" % case
     elif case == "G":
         needle = "grants = basicGrants;"
-        assert before.count(needle) == 1, "composition grant declaration drift"
-        after = before.replace(needle, "grants = builtins.reverseList basicGrants;", 1)
+        alternate = "grants = builtins.reverseList basicGrants;"
+        assert before.count(needle) + before.count(alternate) == 1, "composition grant declaration drift"
+        after = (before.replace(needle, alternate, 1) if needle in before
+                 else before.replace(alternate, needle, 1))
     elif case == "H":
         needle = 'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];'
         assert before.count(needle) == 1, "verification composition declaration drift"
