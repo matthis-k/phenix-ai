@@ -303,8 +303,6 @@ impl Controller {
             return Err(invalid("provider query must request user scope only"));
         }
         let query = ProviderQuery { scope: request.scope };
-            return Err(invalid("unsupported provider scope"));
-        }
         let kernel = self
             .management
             .as_ref()
