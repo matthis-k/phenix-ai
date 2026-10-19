@@ -4,7 +4,7 @@
 use super::*;
 use acp::schema::{
     v1::{
-        AgentCapabilities, CancelNotification, ExtRequest, ExtResponse, Implementation,
+        AgentCapabilities, CancelNotification, Implementation,
         InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
         NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
         SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
@@ -31,6 +31,15 @@ type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
 type PendingPrompts = Mutex<VecDeque<(String, Arc<AtomicBool>)>>;
 
+/// ACP v1 extension request: the official SDK owns its JSON-RPC dispatch.
+/// The separate launcher-owned native kernel grant is the only authority.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/list", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderListRequest {
+    scope: String,
+}
+
 enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
@@ -39,7 +48,7 @@ enum Command {
         SetSessionConfigOptionRequest,
         Reply<SetSessionConfigOptionResponse>,
     ),
-    ProviderList(ExtRequest, Reply<ExtResponse>),
+    ProviderList(ProviderListRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -289,22 +298,11 @@ impl Controller {
     /// Stable ACP extension: read-only, runtime-granted provider identities.
     /// The client cannot supply a composition path, caller, grant, or model
     /// entitlement. A missing management kernel fails closed.
-    fn provider_list(&self, request: ExtRequest) -> acp::Result<ExtResponse> {
-        if request.method.as_ref() != "_phenix/providers/list" {
-            return Err(acp::Error::method_not_found());
-        }
-        let fields: serde_json::Value = serde_json::from_str(request.params.get())
-            .map_err(|_| invalid("invalid provider query"))?;
-        let object = fields
-            .as_object()
-            .ok_or_else(|| invalid("invalid provider query"))?;
-        if object.len() != 1 || object.get("scope").and_then(|value| value.as_str()) != Some("user")
-        {
+    fn provider_list(&self, request: ProviderListRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user" {
             return Err(invalid("provider query must request user scope only"));
         }
-        let query: ProviderQuery =
-            serde_json::from_value(fields).map_err(|_| invalid("invalid provider query"))?;
-        if query.scope != "user" {
+        let query = ProviderQuery { scope: request.scope };
             return Err(invalid("unsupported provider scope"));
         }
         let kernel = self
@@ -327,11 +325,9 @@ impl Controller {
                 })));
             }
         };
-        // Official SDK serializes the extension response as JSON-RPC. No
-        // custom framing, data-bearing notification or frontend catalog.
-        let raw = acp::RawValue::from_string(serde_json::to_string(&page).map_err(internal)?)
-            .map_err(internal)?;
-        Ok(ExtResponse::new(Arc::from(raw)))
+        // Official SDK serializes the extension response as JSON-RPC.
+        // No custom transport, frontend-owned catalog or secret exposure.
+        serde_json::to_value(page).map_err(internal)
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
@@ -627,7 +623,7 @@ pub(super) fn run(
             acp::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: ExtRequest, reply, _peer| {
+            async move |request: ProviderListRequest, reply, _peer| {
                 submit(&provider_list, Command::ProviderList(request, reply))
             },
             acp::on_receive_request!(),
