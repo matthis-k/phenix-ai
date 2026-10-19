@@ -100,11 +100,11 @@ def mutate(root, case):
         assert before.count(needle) == 1, "composition grant declaration drift"
         after = before.replace(needle, "grants = builtins.reverseList basicGrants;", 1)
     elif case == "H":
-        needle = 'artifacts = basicCompositionSpec.artifacts ++ [ "\${historyTestModel}" ];'
+        needle = 'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];'
         assert before.count(needle) == 1, "verification composition declaration drift"
         after = before.replace(
             needle,
-            'artifacts = basicCompositionSpec.artifacts ++ [ "\${historyTestModel}" "\${httpModel}" ];', 1)
+            'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" "${httpModel}" ];', 1)
         # This adds an existing already-built optional plugin, without modifying
         # any Rust source or the selected verification Model slot.
     elif case == "I":
