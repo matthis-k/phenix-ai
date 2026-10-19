@@ -110,7 +110,7 @@ def mutate(root, case):
         after = before + "\n// Phenix temporary CI derivation probe: %s.\n" % case
     elif case == "G":
         needle = "grants = basicGrants;"
-        alternate = "grants = builtins.reverseList basicGrants;"
+        alternate = "grants = pkgs.lib.reverseList basicGrants;"
         assert before.count(needle) + before.count(alternate) == 1, "composition grant declaration drift"
         after = (before.replace(needle, alternate, 1) if needle in before
                  else before.replace(alternate, needle, 1))
