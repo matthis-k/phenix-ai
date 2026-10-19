@@ -1,5 +1,71 @@
 # M1 CI matrix rollout
 
+## Incremental Nix isolation verification (19 October 2026)
+
+This section extends the current CI acceptance evidence; it is **not** another
+source of truth for Nix dependencies or check names. The canonical dependency
+and check inventory remain the exact-head `flake.nix`. All distributed-build
+orchestration, worker credentials and shared-cache publication remain in the
+pinned `phenix-flake-ci` library.
+
+### Baseline and scope
+
+- Baseline `main`: `45d77ae6508a2fc8b8fa39bbc0f6d08f12e825c4`.
+- `flake.lock` pins Nixpkgs `e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3`.
+  Cargo lockfiles: `Cargo.lock`, `examples/Cargo.lock`.
+- Trusted main remote Nix check workflow:
+  [39201091225](https://github.com/matthis-k/phenix-ai/actions/runs/39201091225)
+  passed, 7m54s end-to-end.
+  Prior trusted main run
+  [39197830049](https://github.com/matthis-k/phenix-ai/actions/runs/39197830049)
+  passed, 5m43s end-to-end.
+  Worker topology: 4 ephemeral Tailscale `ssh-ng` builders, 2 slots each.
+- Latest main independent official ACP interop:
+  [39201091104](https://github.com/matthis-k/phenix-ai/actions/runs/39201091104)
+  passed, 6m47s end-to-end.
+- Trusted shared-store publication was **skipped** on run 39201091225;
+  its passing result is not proof of an external binary cache upload.
+  The GitHub Actions cache save and remote-worker transfers are separate
+  mechanisms from public signed binary-cache substitution.
+
+### Reproducible diagnostics
+
+```sh
+# Fast diagnostic: canonical package/check drv identities and Nix inputDrvs
+bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+  --output incremental-ci-evidence
+
+# Opt-in slower diagnostic: materialize selected packages, capture real Nix
+# build/substitution logs, and replay unchanged installables on one runner
+bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+  --build --output incremental-ci-build-evidence
+```
+
+The harness uses detached, disposable Git worktrees. Source mutation cannot
+overwrite tracked files in the original checkout. Cases A–J compare all
+evaluated Nix package and check identities and inspect actual `inputDrvs`.
+An explicit small set of package guards catches unintended coupling; the
+canonical graph comes from Nix rather than a parallel handwritten graph.
+Machine-readable JSON, dry-run plans and actual `nix build` logs are
+retained by the existing cache-isolation workflow as Actions artifacts.
+
+A source edit changing a derivation name alone is **not** a cache hit:
+the evidence must separately report actual local compilation, substitute
+transfer, or an already-present output. A second build in the same job (K)
+does not establish cross-run substitution on a fresh runner (L). Until
+controlled cross-run read-only cache restoration is demonstrated, L remains
+unverified. No PR test receives Tailscale secrets or binary-cache write access.
+
+### Outstanding acceptance evidence
+
+See [incremental-build PR #996](https://github.com/matthis-k/phenix-ai/pull/996)
+for the experiment commits and exact-head run IDs. Only completed, inspected
+runs may be described as verified. The scenario matrix must be updated with
+actual changed/rebuilt derivations and outputs, cache restore/substitution,
+wall time and failure classification before marking the PR ready. Do not
+infer full-suite performance from these narrow diagnostic checks.
+
+
 ## Current CI principles and applied assessment (15 October 2026)
 
 This section supersedes the **historical candidate/cutover status** recorded below, not its benchmark measurements or uncompleted optimization tasks. It is an engineering guide, not a second validation authority. The [M1 roadmap](m1-roadmap.md) remains the milestone tracker. A generated CI workflow and `flake.nix` remain the source of executable check definitions.
