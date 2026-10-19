@@ -78,6 +78,20 @@ def probe(managed: bool):
     return dict(providers=sorted(providers), revision=page["revision"])
 
 
+# The installed ACP management process cannot be pointed at a different
+# contract/operation by an untrusted launcher option. The controller admits
+# only this one read-only typed provider catalog entry.
+invalid = json.loads(Path(management).read_text())
+invalid["entry"]["operation"] = "begin"
+invalid_path = output / "invalid-provider-management.json"
+invalid_path.write_text(json.dumps(invalid))
+denied = subprocess.run(
+    [runtime, "acp", basic, "--provider-management", str(invalid_path)],
+    capture_output=True, text=True, timeout=15, env=os.environ.copy(),
+)
+assert denied.returncode != 0, denied
+assert "must select provider catalog list" in denied.stderr, denied.stderr
+
 probe(False)
 report = probe(True)
 (output / "acp-provider-management.json").write_text(json.dumps(dict(
