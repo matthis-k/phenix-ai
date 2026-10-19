@@ -5,8 +5,8 @@
 //! revalidate and authorize every selected account and model.
 
 use phenix_provider_contracts::{
-    AuthenticationKind, AuthenticationMethod, ConnectionDescriptor, DiscoveryKind, DiscoverySource,
-    AdapterBinding, ApiKeyOptions, ProtocolBinding, ProviderDescriptor,
+    AdapterBinding, ApiKeyOptions, AuthenticationKind, AuthenticationMethod, ConnectionDescriptor,
+    DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
@@ -110,7 +110,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                                 environment_variable: Some("OPENAI_API_KEY".into()),
                                 interactive: true,
                             },
-                        ).unwrap(),
+                        )
+                        .unwrap(),
                     }],
                     model_sources: vec![DiscoverySource {
                         id: "models".into(),
@@ -169,7 +170,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                             environment_variable: None,
                             interactive: true,
                         },
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
@@ -200,7 +202,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                             environment_variable: None,
                             interactive: true,
                         },
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
@@ -241,7 +244,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                             environment_variable: None,
                             interactive: true,
                         },
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
@@ -282,7 +286,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                             environment_variable: None,
                             interactive: true,
                         },
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
@@ -313,7 +318,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                             environment_variable: None,
                             interactive: true,
                         },
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
@@ -648,12 +654,19 @@ mod tests {
         let key = &openai.auth_methods[0].adapter;
         assert_eq!(key.id, "api-key");
         let settings = key.config.decode::<ApiKeyOptions>().unwrap();
-        assert_eq!(settings.environment_variable.as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(
+            settings.environment_variable.as_deref(),
+            Some("OPENAI_API_KEY")
+        );
         assert!(settings.interactive);
 
         let chatgpt = &catalog[0].connections[1];
         assert_eq!(chatgpt.auth_methods[0].adapter.id, "chatgpt.oauth");
-        assert!(chatgpt.auth_methods[0].adapter.config.decode::<()>().is_ok());
+        assert!(chatgpt.auth_methods[0]
+            .adapter
+            .config
+            .decode::<()>()
+            .is_ok());
         assert_ne!(
             openai.model_sources[0].adapter.id,
             chatgpt.model_sources[0].adapter.id
@@ -670,9 +683,7 @@ mod tests {
         );
 
         let mut invalid = registrations();
-        invalid[0].connections[0].model_sources[0]
-            .adapter
-            .id = "../file".into();
+        invalid[0].connections[0].model_sources[0].adapter.id = "../file".into();
         assert_eq!(
             validate_registrations(&invalid),
             Err("invalid model discovery adapter")
