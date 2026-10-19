@@ -20,8 +20,8 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    CredentialIdentity, CredentialImport, CredentialSecret, ProviderError, ProviderPage,
-    ProviderQuery,
+    AuthQuery, AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialSecret,
+    ModelPage, ModelQuery, ProviderError, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -41,6 +41,29 @@ type PendingPrompts = Mutex<VecDeque<(String, Arc<AtomicBool>)>>;
 #[serde(deny_unknown_fields)]
 struct ProviderListRequest {
     scope: String,
+}
+
+/// Read-only provider queries retain exact provider/connection/profile
+/// selectors, while the controller fixes the resource and grants.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/auth/status", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderAuthStatusRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/models", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderModelsRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+    profile_id: Option<String>,
+    cursor: Option<String>,
+    limit: u64,
 }
 
 /// Secret-bearing ACP extension. The SDK owns framing; the trusted launcher
@@ -100,6 +123,8 @@ enum Command {
         Reply<SetSessionConfigOptionResponse>,
     ),
     ProviderList(ProviderListRequest, Reply<serde_json::Value>),
+    ProviderAuthStatus(ProviderAuthStatusRequest, Reply<serde_json::Value>),
+    ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
     CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
@@ -114,6 +139,8 @@ impl Command {
             Self::Load(_, reply, _) => reply.respond_with_error(error),
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
             Self::ProviderList(_, reply) => reply.respond_with_error(error),
+            Self::ProviderAuthStatus(_, reply) => reply.respond_with_error(error),
+            Self::ProviderModels(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
             Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
@@ -398,6 +425,22 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::ProviderAuthStatus(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_auth_status(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ProviderModels(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_models(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::CredentialImport(request, reply) => {
                 let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
                     Err(invalid("active initialized ACP connection required"))
@@ -429,28 +472,26 @@ impl Controller {
         }
     }
 
-    /// Stable ACP extension: read-only, runtime-granted provider identities.
-    /// The client cannot supply a composition path, caller, grant, or model
-    /// entitlement. A missing management kernel fails closed.
-    fn provider_list(&self, request: ProviderListRequest) -> acp::Result<serde_json::Value> {
-        if request.scope != "user" {
-            return Err(invalid("provider query must request user scope only"));
-        }
-        let query = ProviderQuery {
-            scope: request.scope,
-        };
+    // The launcher preselects provider implementation and grants. These
+    // operations can never infer model entitlement from a catalog entry.
+    fn provider_read<Q: Portable, R: Portable + serde::Serialize>(
+        &self,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> acp::Result<serde_json::Value> {
         let management = self
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        // Provider identity comes from the independently authorized
-        // management composition, not from Basic or its frontend.
-        let root = management
-            .kernel
-            .admit_root(management.selected.clone())
-            .map_err(internal)?;
-        let page: ProviderPage = match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => ProviderPage::from_value(value).map_err(internal)?,
+        let selection = Selection {
+            interface: interface.into(),
+            operation: operation.into(),
+            provider: management.selected.provider.clone(),
+        };
+        let root = management.kernel.admit_root(selection).map_err(internal)?;
+        let value = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => value,
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
                 return Err(acp::Error::invalid_params().data(serde_json::json!({
@@ -459,9 +500,69 @@ impl Controller {
                 })));
             }
         };
-        // Official SDK serializes the extension response as JSON-RPC.
-        // No custom transport, frontend-owned catalog or secret exposure.
-        serde_json::to_value(page).map_err(internal)
+        let result = R::from_value(value).map_err(internal)?;
+        serde_json::to_value(result).map_err(internal)
+    }
+
+    fn provider_list(&self, request: ProviderListRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user" {
+            return Err(invalid("provider query must request user scope only"));
+        }
+        self.provider_read::<_, ProviderPage>(
+            "phenix.provider.catalog@1",
+            "list",
+            &ProviderQuery {
+                scope: request.scope,
+            },
+        )
+    }
+
+    fn provider_auth_status(
+        &self,
+        request: ProviderAuthStatusRequest,
+    ) -> acp::Result<serde_json::Value> {
+        if request.scope != "user"
+            || request.provider_id.is_empty()
+            || request.connection_id.is_empty()
+        {
+            return Err(invalid("invalid provider authentication query"));
+        }
+        self.provider_read::<_, AuthenticationStatus>(
+            "phenix.provider.auth@1",
+            "status",
+            &AuthQuery {
+                scope: request.scope,
+                provider_id: request.provider_id,
+                connection_id: request.connection_id,
+            },
+        )
+    }
+
+    fn provider_models(&self, request: ProviderModelsRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user"
+            || request.provider_id.is_empty()
+            || request.connection_id.is_empty()
+            || request.limit == 0
+            || request.limit > 256
+            || request
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.len() > 1024)
+        {
+            return Err(invalid("invalid provider model query"));
+        }
+        self.provider_read::<_, ModelPage>(
+            "phenix.provider.catalog@1",
+            "models",
+            &ModelQuery {
+                scope: request.scope,
+                provider_id: request.provider_id,
+                connection_id: request.connection_id,
+                profile_id: request.profile_id,
+                cursor: request.cursor,
+                limit: request.limit,
+            },
+        )
     }
 
     fn credential_operation(
@@ -821,6 +922,8 @@ pub(super) fn run(
     let load = tx.clone();
     let set_config = tx.clone();
     let provider_list = tx.clone();
+    let provider_auth_status = tx.clone();
+    let provider_models = tx.clone();
     let credential_import = tx.clone();
     let credential_revoke = tx.clone();
     let prompt = tx.clone();
@@ -858,6 +961,21 @@ pub(super) fn run(
         .on_receive_request(
             async move |request: ProviderListRequest, reply, _peer| {
                 submit(&provider_list, Command::ProviderList(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderAuthStatusRequest, reply, _peer| {
+                submit(
+                    &provider_auth_status,
+                    Command::ProviderAuthStatus(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderModelsRequest, reply, _peer| {
+                submit(&provider_models, Command::ProviderModels(request, reply))
             },
             acp::on_receive_request!(),
         )

@@ -39,6 +39,13 @@ def probe(managed: bool):
     result = call(2, "_phenix/providers/list", query)
     if not managed:
         assert result["error"]["code"] == -32601, result
+        unavailable = call(7, "_phenix/providers/auth/status", dict(
+            scope="user", provider_id="openai", connection_id="api"))
+        assert unavailable["error"]["code"] == -32601
+        unavailable = call(8, "_phenix/providers/models", dict(
+            scope="user", provider_id="openai", connection_id="api",
+            profile_id=None, cursor=None, limit=20))
+        assert unavailable["error"]["code"] == -32601
         child.stdin.close()
         assert child.wait(timeout=15) == 0
         child.stdout.close()
@@ -75,6 +82,36 @@ def probe(managed: bool):
     unknown = call(5, "_phenix/providers/write", query)
     assert unknown["error"]["code"] == -32601, unknown
 
+    status = call(7, "_phenix/providers/auth/status", dict(
+        scope="user", provider_id="openai", connection_id="api"))
+    assert status["result"] == {
+        "provider_id": "openai", "connection_id": "api", "profiles": [],
+    }, status
+    # Credential storage or provider registration alone cannot claim readiness.
+    subscription = call(8, "_phenix/providers/auth/status", dict(
+        scope="user", provider_id="openai", connection_id="chatgpt"))
+    assert subscription["result"]["profiles"] == []
+
+    # Actual model discovery is not installed: no invented models from
+    # provider metadata, even if a caller supplies a forged profile.
+    models = call(9, "_phenix/providers/models", dict(
+        scope="user", provider_id="openai", connection_id="api",
+        profile_id="forged", cursor=None, limit=20))
+    assert models["error"]["data"]["code"] == "AuthenticationRequired", models
+    wrong_scope = call(10, "_phenix/providers/auth/status", dict(
+        scope="foreign", provider_id="openai", connection_id="api"))
+    assert wrong_scope["error"]["code"] == -32602
+    invalid = call(11, "_phenix/providers/models", dict(
+        scope="user", provider_id="openai", connection_id="api",
+        profile_id=None, cursor=None, limit=1000))
+    assert invalid["error"]["code"] == -32602
+    missing = call(12, "_phenix/providers/auth/status", dict(
+        scope="user", provider_id="openai", connection_id="missing"))
+    assert missing["error"]["data"]["code"] == "NotFound", missing
+    unauthorized = call(13, "_phenix/providers/auth/begin", dict(
+        scope="user", provider_id="openai", connection_id="api", method_id="api-key"))
+    assert unauthorized["error"]["code"] == -32601
+
     new_session = call(6, "session/new", dict(cwd="/tmp", mcpServers=[]))
     assert "sessionId" in new_session["result"], new_session
     assert new_session["result"]["configOptions"][0]["currentValue"] == "phenix.model.scripted"
@@ -108,6 +145,8 @@ report = probe(True)
     format="phenix.acp.provider-management.product.v1",
     read_only=True, managed=True, unmodified_basic_denied=True,
     scope_denied=True, unknown_mutation_denied=True,
-    simultaneous_basic_session=True, **report,
+    simultaneous_basic_session=True, auth_status=True,
+    missing_discovery_not_selectable=True, scoped_read_only_model_query=True,
+    no_auth_begin=True, **report,
 ), sort_keys=True, indent=2))
 print("Authorized read-only provider catalog via official ACP SDK verified")
