@@ -6,7 +6,7 @@
 
 use phenix_provider_contracts::{
     AuthenticationKind, AuthenticationMethod, ConnectionDescriptor, DiscoveryKind, DiscoverySource,
-    ProtocolBinding, ProviderDescriptor,
+    AdapterBinding, ApiKeyOptions, ProtocolBinding, ProviderDescriptor,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
@@ -21,6 +21,7 @@ fn method(id: &str, label: &str, kind: AuthenticationKind) -> AuthenticationMeth
         id: id.into(),
         label: label.into(),
         kind,
+        adapter: AdapterBinding::from_typed("fixture.auth", &()).unwrap(),
     }
 }
 
@@ -39,6 +40,7 @@ fn source(endpoint: Option<&str>, id: &str) -> DiscoverySource {
             DiscoveryKind::Declared
         },
         endpoint: endpoint.map(str::to_string),
+        adapter: AdapterBinding::from_typed("fixture.models", &()).unwrap(),
     }
 }
 
@@ -102,11 +104,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                         id: "api-key".into(),
                         label: "API key".into(),
                         kind: AuthenticationKind::ApiKey,
+                        adapter: AdapterBinding::from_typed(
+                            "api-key",
+                            &ApiKeyOptions {
+                                environment_variable: Some("OPENAI_API_KEY".into()),
+                                interactive: true,
+                            },
+                        ).unwrap(),
                     }],
                     model_sources: vec![DiscoverySource {
                         id: "models".into(),
                         kind: DiscoveryKind::Dynamic,
                         endpoint: Some("https://api.openai.com/v1/models".into()),
+                        adapter: AdapterBinding::from_typed("openai.models", &()).unwrap(),
                     }],
                 },
                 ConnectionDescriptor {
@@ -121,11 +131,13 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                         id: "chatgpt-sign-in".into(),
                         label: "Sign in with ChatGPT".into(),
                         kind: AuthenticationKind::OAuthAuthorizationCode,
+                        adapter: AdapterBinding::from_typed("chatgpt.oauth", &()).unwrap(),
                     }],
                     model_sources: vec![DiscoverySource {
                         id: "models".into(),
                         kind: DiscoveryKind::Dynamic,
                         endpoint: Some("https://api.openai.com/v1/models".into()),
+                        adapter: AdapterBinding::from_typed("chatgpt.models", &()).unwrap(),
                     }],
                 },
             ],
@@ -151,11 +163,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    ).unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
                     kind: DiscoveryKind::Dynamic,
                     endpoint: Some("https://openrouter.ai/api/v1/models".into()),
+                    adapter: AdapterBinding::from_typed("openrouter.models", &()).unwrap(),
                 }],
             }],
         },
@@ -174,11 +194,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    ).unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
                     kind: DiscoveryKind::Dynamic,
                     endpoint: Some("https://api.anthropic.com/v1/models".into()),
+                    adapter: AdapterBinding::from_typed("anthropic.models", &()).unwrap(),
                 }],
             }],
         },
@@ -207,11 +235,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    ).unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
                     kind: DiscoveryKind::Dynamic,
                     endpoint: Some("https://opencode.ai/zen/v1/models".into()),
+                    adapter: AdapterBinding::from_typed("opencode.models", &()).unwrap(),
                 }],
             }],
         },
@@ -240,11 +276,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    ).unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
                     kind: DiscoveryKind::Dynamic,
                     endpoint: Some("https://opencode.ai/zen/go/v1/models".into()),
+                    adapter: AdapterBinding::from_typed("opencode.models", &()).unwrap(),
                 }],
             }],
         },
@@ -263,11 +307,19 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    ).unwrap(),
                 }],
                 model_sources: vec![DiscoverySource {
                     id: "models".into(),
                     kind: DiscoveryKind::Declared,
                     endpoint: None,
+                    adapter: AdapterBinding::from_typed("zai.declared", &()).unwrap(),
                 }],
             }],
         },
