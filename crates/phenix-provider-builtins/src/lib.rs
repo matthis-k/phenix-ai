@@ -705,7 +705,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn plugin_contributions_can_describe_offline_and_local_models() {
         // Local or in-process providers do not need a fabricated remote URL.
