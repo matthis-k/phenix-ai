@@ -177,7 +177,10 @@ mod tests {
     fn launcher_resource_can_be_decoded_without_widening_identity() {
         let selected = identity("openai", "api", "personal");
         let resource = selected.resource().unwrap();
-        assert_eq!(CredentialIdentity::from_resource(&resource).unwrap(), selected);
+        assert_eq!(
+            CredentialIdentity::from_resource(&resource).unwrap(),
+            selected
+        );
         for invalid in [
             "",
             "phenix.credentials.openai.api.personal",
