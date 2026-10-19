@@ -42,7 +42,7 @@ CASES = {
 # Compositions and shared consumers are discovered from the actual drv graph.
 GUARDS = {
     "B": {"changed": [TOOLS, COMPOSITION], "stable": [p for p in BASIC if p != TOOLS]},
-    "C": {"changed": [AGENT, COMPOSITION, "phenix-basic-agent-staged-NOT-EXPORTED"],
+    "C": {"changed": [AGENT, COMPOSITION],
           "stable": [p for p in BASIC if p != AGENT]},
     "D": {"changed": [MODEL, COMPOSITION], "stable": [p for p in BASIC if p != MODEL]},
     "E": {"changed": [TOOLS, AGENT, MODEL], "stable": ["phenix-kernel"]},
@@ -53,9 +53,7 @@ GUARDS = {
     "I": {"changed": [], "stable": list(BASIC) + [COMPOSITION]},
     "J": {"changed": ["phenix-core-example-plugins"], "stable": list(BASIC) + [COMPOSITION]},
 }
-# C and I cover staged feature variant with checks.x86_64-linux instead of
-# inventing a separate package alias in the canonical packages inventory.
-GUARDS["C"]["changed"].remove("phenix-basic-agent-staged-NOT-EXPORTED")
+# C and I assert the staged feature variant using checks.x86_64-linux.
 
 
 def call(argv, cwd, timeout=900, check=True, stdin=None):
@@ -187,6 +185,8 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("incremental-ci-evidence"))
     parser.add_argument("--cases", nargs="+", choices=sorted(CASES), default=list(CASES))
     parser.add_argument("--build", action="store_true", help="materialize selected real Nix packages")
+    parser.add_argument("--no-warm", action="store_true",
+                        help="omit baseline identical repeat for isolated source-edit commits")
     parser.add_argument("--build-cases", nargs="+", choices=sorted(CASES),
                         default=["B", "C", "D", "G", "H", "J"])
     args = parser.parse_args()
@@ -282,7 +282,7 @@ def main():
                 finally:
                     call(["git", "worktree", "remove", "--force", str(root)],
                          repo, timeout=120)
-            if args.build:
+            if args.build and not args.no_warm:
                 control = [TOOLS, AGENT, MODEL, COMPOSITION]
                 evidence["builds"]["K-first"] = run_build(repo, control, target, "K-first")
                 evidence["builds"]["K-repeat"] = run_build(repo, control, target, "K-repeat")
