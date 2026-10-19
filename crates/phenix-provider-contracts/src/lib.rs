@@ -79,12 +79,22 @@ pub struct DiscoverySource {
     pub endpoint: Option<String>,
 }
 
+/// An inference protocol contributed by a provider plugin.
+///
+/// `id` is a provider-domain protocol identifier, not a kernel operation.
+/// The endpoint overrides the connection's default for this protocol only.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProtocolBinding {
+    pub id: String,
+    pub endpoint: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct ConnectionDescriptor {
     pub id: String,
     pub label: String,
-    /// Explicit model protocol identifiers, not an inferred URL format.
-    pub protocols: Vec<String>,
+    /// Protocol-specific configuration, resolved by provider plugins.
+    pub protocols: Vec<ProtocolBinding>,
     /// Transport endpoint or base URL when applicable.
     pub base_url: Option<String>,
     /// An empty list means no authentication is required.
@@ -269,7 +279,16 @@ mod tests {
         ConnectionDescriptor {
             id: "api".into(),
             label: "API".into(),
-            protocols: vec!["openai-chat".into(), "openai-responses".into()],
+            protocols: vec![
+                ProtocolBinding {
+                    id: "openai-chat".into(),
+                    endpoint: None,
+                },
+                ProtocolBinding {
+                    id: "openai-responses".into(),
+                    endpoint: Some("https://example.test/v1/responses".into()),
+                },
+            ],
             base_url: Some("https://example.test/v1".into()),
             auth_methods: methods,
             model_sources: vec![DiscoverySource {
