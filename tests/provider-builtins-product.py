@@ -73,6 +73,17 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     assert connections["api"]["auth_methods"][0]["id"] == "api-key"
     assert connections["chatgpt"]["auth_methods"][0]["id"] == "chatgpt-sign-in"
     assert connections["api"]["base_url"] != "" and connections["chatgpt"]["base_url"] != ""
+    assert [p["id"] for p in connections["api"]["protocols"]] == [
+        "openai-responses", "openai-chat",
+    ]
+    assert [p["id"] for p in connections["chatgpt"]["protocols"]] == [
+        "openai-responses",
+    ]
+    assert all(
+        protocol["endpoint"] is None
+        for connection in connections.values()
+        for protocol in connection["protocols"]
+    )
 
     described, status = invoke(
         catalog, "describe", dict(scope="user", provider_id="openai")
