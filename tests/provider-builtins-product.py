@@ -115,6 +115,88 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     assert status == 0 and challenge["kind"] == "domain_error"
     assert challenge["value"]["code"] == "Unavailable"
 
+    # An offline registration never makes either connection authenticated,
+    # even when the two connections belong to the same visible provider group.
+    chatgpt_status, code = invoke(auth, "status", dict(
+        scope="user", provider_id="openai", connection_id="chatgpt",
+    ))
+    assert code == 0 and chatgpt_status == dict(kind="success", value=dict(
+        provider_id="openai", connection_id="chatgpt", profiles=[],
+    )), chatgpt_status
+    assert connections["chatgpt"]["auth_methods"][0]["kind"] == "OAuthAuthorizationCode"
+    assert connections["api"]["auth_methods"][0]["kind"] == "ApiKey"
+    assert connections["chatgpt"]["protocols"] != connections["api"]["protocols"], (
+        "API-key and subscription connections must remain independently defined"
+    )
+
+    # No client can authenticate one connection by submitting the method ID
+    # advertised by another connection in the same logical provider.
+    for connection_id, foreign_method in [
+        ("api", "chatgpt-sign-in"),
+        ("chatgpt", "api-key"),
+    ]:
+        wrong_method, code = invoke(auth, "begin", dict(
+            scope="user", provider_id="openai",
+            connection_id=connection_id, method_id=foreign_method,
+        ))
+        assert code == 0 and wrong_method["kind"] == "domain_error", wrong_method
+        assert wrong_method["value"]["code"] == "InvalidInput", wrong_method
+
+    # A nonexistent provider/connection cannot be resolved to a fallback
+    # account or silently become a selectable model.
+    for provider_id, connection_id in [
+        ("missing", "api"), ("openai", "missing"), ("openai", "standard"),
+    ]:
+        absent, code = invoke(auth, "status", dict(
+            scope="user", provider_id=provider_id, connection_id=connection_id,
+        ))
+        assert code == 0 and absent["kind"] == "domain_error"
+        assert absent["value"]["code"] == "NotFound"
+        missing_models, code = invoke(catalog, "models", dict(
+            scope="user", provider_id=provider_id, connection_id=connection_id,
+            profile_id=None, cursor=None, limit=20,
+        ))
+        assert code == 0 and missing_models["kind"] == "domain_error"
+        assert missing_models["value"]["code"] == "NotFound"
+
+    # The registered subscription's OAuth method is not a completed login:
+    # it must fail closed until a provider-authorized backend is installed.
+    oauth, code = invoke(auth, "begin", dict(
+        scope="user", provider_id="openai", connection_id="chatgpt",
+        method_id="chatgpt-sign-in",
+    ))
+    assert code == 0 and oauth["kind"] == "domain_error", oauth
+    assert oauth["value"]["code"] == "Unavailable", oauth
+    no_catalog, code = invoke(catalog, "models", dict(
+        scope="user", provider_id="openai", connection_id="chatgpt",
+        profile_id=None, cursor=None, limit=20,
+    ))
+    assert code == 0 and no_catalog["kind"] == "domain_error", no_catalog
+    assert no_catalog["value"]["code"] == "AuthenticationRequired", no_catalog
+
+    for contract, operation, request in [
+        (auth, "status", dict(
+            scope="other", provider_id="openai", connection_id="api",
+        )),
+        (auth, "begin", dict(
+            scope="other", provider_id="openai",
+            connection_id="api", method_id="api-key",
+        )),
+        (catalog, "models", dict(
+            scope="other", provider_id="openai", connection_id="api",
+            profile_id=None, cursor=None, limit=20,
+        )),
+    ]:
+        refused, code = invoke(contract, operation, request)
+        assert code == 0 and refused["kind"] == "domain_error", refused
+        assert refused["value"]["code"] == "Denied", refused
+        no_authority, code = invoke(
+            contract, operation, {**request, "scope": "user"},
+            grant="phenix.providers.other",
+        )
+        assert code != 0 and no_authority["kind"] == "kernel_failure", no_authority
+        assert no_authority["failure"]["code"] == "Denied", no_authority
+
     (out / "product.json").write_text(json.dumps(dict(
         format="phenix.provider.builtins.product.v1",
         provider_ids=sorted(providers),
@@ -124,5 +206,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         denied_grant=True,
         authenticated_profiles=0,
         available_models=0,
+        wrong_connection_method_denied=True,
+        unknown_connection_fallback_denied=True,
+        subscription_oauth_unavailable=True,
+        unauthorized_status_begin_models_denied=True,
     ), sort_keys=True, indent=2))
     print("Native provider discovery, authorization and unavailable-model checks passed")
