@@ -50,7 +50,7 @@ impl CredentialIdentity {
     /// lookup or an authority grant.
     pub fn from_resource(resource: &str) -> Result<Self, ProviderError> {
         fn decode(item: &str) -> Option<String> {
-            if item.is_empty() || item.len() % 2 != 0 || item.len() > 128 {
+            if item.is_empty() || !item.len().is_multiple_of(2) || item.len() > 128 {
                 return None;
             }
             let mut result = Vec::with_capacity(item.len() / 2);
