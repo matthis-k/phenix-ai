@@ -6,7 +6,7 @@
 
 use phenix_provider_contracts::{
     AuthenticationKind, AuthenticationMethod, ConnectionDescriptor, DiscoveryKind, DiscoverySource,
-    ProviderDescriptor,
+    ProtocolBinding, ProviderDescriptor,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
@@ -15,6 +15,7 @@ pub const OPENAI_CHAT: &str = "openai-chat";
 pub const OPENAI_RESPONSES: &str = "openai-responses";
 pub const ANTHROPIC_MESSAGES: &str = "anthropic-messages";
 
+#[cfg(test)]
 fn method(id: &str, label: &str, kind: AuthenticationKind) -> AuthenticationMethod {
     AuthenticationMethod {
         id: id.into(),
@@ -23,10 +24,12 @@ fn method(id: &str, label: &str, kind: AuthenticationKind) -> AuthenticationMeth
     }
 }
 
+#[cfg(test)]
 fn api_key() -> Vec<AuthenticationMethod> {
     vec![method("api-key", "API key", AuthenticationKind::ApiKey)]
 }
 
+#[cfg(test)]
 fn source(endpoint: Option<&str>, id: &str) -> DiscoverySource {
     DiscoverySource {
         id: id.into(),
@@ -39,6 +42,7 @@ fn source(endpoint: Option<&str>, id: &str) -> DiscoverySource {
     }
 }
 
+#[cfg(test)]
 fn connection(
     id: &str,
     label: &str,
@@ -50,13 +54,20 @@ fn connection(
     ConnectionDescriptor {
         id: id.into(),
         label: label.into(),
-        protocols: protocols.iter().map(|id| (*id).into()).collect(),
+        protocols: protocols
+            .iter()
+            .map(|id| ProtocolBinding {
+                id: (*id).into(),
+                endpoint: None,
+            })
+            .collect(),
         base_url: Some(base.into()),
         auth_methods: methods,
         model_sources: vec![source(discovery, "models")],
     }
 }
 
+#[cfg(test)]
 fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> ProviderDescriptor {
     ProviderDescriptor {
         id: id.into(),
@@ -69,95 +80,227 @@ fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> Pr
 /// availability. OAuth is only usable after provider-approved authorization.
 pub fn registrations() -> Vec<ProviderDescriptor> {
     vec![
-        provider(
-            "openai",
-            "OpenAI",
-            vec![
-                connection(
-                    "api",
-                    "OpenAI API",
-                    "https://api.openai.com/v1",
-                    &[OPENAI_RESPONSES, OPENAI_CHAT],
-                    api_key(),
-                    Some("https://api.openai.com/v1/models"),
-                ),
-                connection(
-                    "chatgpt",
-                    "ChatGPT subscription",
-                    "https://api.openai.com/v1",
-                    &[OPENAI_RESPONSES],
-                    vec![method(
-                        "chatgpt-sign-in",
-                        "Sign in with ChatGPT",
-                        AuthenticationKind::OAuthAuthorizationCode,
-                    )],
-                    // This OAuth catalog has a separate schema from the API-key list.
-                    Some("https://api.openai.com/v1/models"),
-                ),
+        ProviderDescriptor {
+            id: "openai".into(),
+            label: "OpenAI".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "OpenAI API".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_RESPONSES.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: OPENAI_CHAT.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://api.openai.com/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://api.openai.com/v1/models".into()),
+                    }],
+                },
+                ConnectionDescriptor {
+                    id: "chatgpt".into(),
+                    label: "ChatGPT subscription".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_RESPONSES.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://api.openai.com/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "chatgpt-sign-in".into(),
+                            label: "Sign in with ChatGPT".into(),
+                            kind: AuthenticationKind::OAuthAuthorizationCode,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://api.openai.com/v1/models".into()),
+                    }],
+                },
             ],
-        ),
-        provider(
-            "openrouter",
-            "OpenRouter",
-            vec![connection(
-                "api",
-                "OpenRouter API",
-                "https://openrouter.ai/api/v1",
-                &[OPENAI_CHAT, OPENAI_RESPONSES],
-                api_key(),
-                Some("https://openrouter.ai/api/v1/models"),
-            )],
-        ),
-        provider(
-            "anthropic",
-            "Anthropic",
-            vec![connection(
-                "api",
-                "Anthropic API",
-                "https://api.anthropic.com/v1",
-                &[ANTHROPIC_MESSAGES],
-                api_key(),
-                Some("https://api.anthropic.com/v1/models"),
-            )],
-        ),
-        provider(
-            "opencode-zen",
-            "OpenCode Zen",
-            vec![connection(
-                "api",
-                "OpenCode Zen",
-                "https://opencode.ai/zen/v1",
-                &[OPENAI_CHAT, OPENAI_RESPONSES, ANTHROPIC_MESSAGES],
-                api_key(),
-                Some("https://opencode.ai/zen/v1/models"),
-            )],
-        ),
-        provider(
-            "opencode-go",
-            "OpenCode Go",
-            vec![connection(
-                "api",
-                "OpenCode Go",
-                "https://opencode.ai/zen/go/v1",
-                &[OPENAI_CHAT, OPENAI_RESPONSES, ANTHROPIC_MESSAGES],
-                api_key(),
-                Some("https://opencode.ai/zen/go/v1/models"),
-            )],
-        ),
-        provider(
-            "zai",
-            "Z.ai",
-            vec![connection(
-                "standard",
-                "Z.ai API",
-                "https://api.z.ai/api/paas/v4",
-                &[OPENAI_CHAT],
-                api_key(),
-                // Model names depend on account/plan. A provider plugin must
-                // supply a declared list or verified live discovery.
-                None,
-            )],
-        ),
+        },
+        ProviderDescriptor {
+            id: "openrouter".into(),
+            label: "OpenRouter".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "OpenRouter API".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_CHAT.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: OPENAI_RESPONSES.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://openrouter.ai/api/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://openrouter.ai/api/v1/models".into()),
+                    }],
+                },
+            ],
+        },
+        ProviderDescriptor {
+            id: "anthropic".into(),
+            label: "Anthropic".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "Anthropic API".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: ANTHROPIC_MESSAGES.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://api.anthropic.com/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://api.anthropic.com/v1/models".into()),
+                    }],
+                },
+            ],
+        },
+        ProviderDescriptor {
+            id: "opencode-zen".into(),
+            label: "OpenCode Zen".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "OpenCode Zen".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_CHAT.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: OPENAI_RESPONSES.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: ANTHROPIC_MESSAGES.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://opencode.ai/zen/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://opencode.ai/zen/v1/models".into()),
+                    }],
+                },
+            ],
+        },
+        ProviderDescriptor {
+            id: "opencode-go".into(),
+            label: "OpenCode Go".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "OpenCode Go".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_CHAT.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: OPENAI_RESPONSES.into(),
+                            endpoint: None,
+                        },
+                        ProtocolBinding {
+                            id: ANTHROPIC_MESSAGES.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://opencode.ai/zen/go/v1".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Dynamic,
+                        endpoint: Some("https://opencode.ai/zen/go/v1/models".into()),
+                    }],
+                },
+            ],
+        },
+        ProviderDescriptor {
+            id: "zai".into(),
+            label: "Z.ai".into(),
+            connections: vec![
+                ConnectionDescriptor {
+                    id: "standard".into(),
+                    label: "Z.ai API".into(),
+                    protocols: vec![
+                        ProtocolBinding {
+                            id: OPENAI_CHAT.into(),
+                            endpoint: None,
+                        },
+                    ],
+                    base_url: Some("https://api.z.ai/api/paas/v4".into()),
+                    auth_methods: vec![
+                        AuthenticationMethod {
+                            id: "api-key".into(),
+                            label: "API key".into(),
+                            kind: AuthenticationKind::ApiKey,
+                        },
+                    ],
+                    model_sources: vec![DiscoverySource {
+                        id: "models".into(),
+                        kind: DiscoveryKind::Declared,
+                        endpoint: None,
+                    }],
+                },
+            ],
+        },
     ]
 }
 
@@ -177,18 +320,25 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
             {
                 return Err("invalid provider connection");
             }
-            let mut protocol_ids = BTreeSet::new();
-            for protocol in &connection.protocols {
-                if protocol.is_empty() || !protocol_ids.insert(protocol.as_str()) {
-                    return Err("duplicate or empty provider protocol");
-                }
-            }
             let base = connection
                 .base_url
                 .as_deref()
                 .ok_or("missing provider endpoint")?;
             let validated_base = validate_endpoint(base, EndpointMode::Remote)
                 .map_err(|_| "unsafe provider endpoint")?;
+            let mut protocol_ids = BTreeSet::new();
+            for protocol in &connection.protocols {
+                if protocol.id.is_empty() || !protocol_ids.insert(protocol.id.as_str()) {
+                    return Err("duplicate or empty provider protocol");
+                }
+                if let Some(endpoint) = protocol.endpoint.as_deref() {
+                    let checked = validate_endpoint(endpoint, EndpointMode::Remote)
+                        .map_err(|_| "unsafe protocol endpoint")?;
+                    if !same_credential_origin(&validated_base, &checked) {
+                        return Err("cross-origin protocol endpoint");
+                    }
+                }
+            }
             let mut method_ids = BTreeSet::new();
             for method in &connection.auth_methods {
                 if !method_ids.insert(method.id.as_str()) || method.id.is_empty() {
@@ -238,7 +388,13 @@ mod tests {
             openai.connections[1].auth_methods[0].kind,
             AuthenticationKind::OAuthAuthorizationCode
         );
-        assert_eq!(openai.connections[1].protocols, vec![OPENAI_RESPONSES]);
+        assert_eq!(
+            openai.connections[1].protocols,
+            vec![ProtocolBinding {
+                id: OPENAI_RESPONSES.into(),
+                endpoint: None,
+            }]
+        );
     }
 
     #[test]
@@ -319,7 +475,10 @@ mod tests {
                 .unwrap()
                 .connections[0]
                 .protocols,
-            vec![ANTHROPIC_MESSAGES]
+            vec![ProtocolBinding {
+                id: ANTHROPIC_MESSAGES.into(),
+                endpoint: None,
+            }]
         );
         validate_registrations(&all).unwrap();
     }
@@ -392,14 +551,17 @@ mod tests {
         let mut providers = registrations();
         providers[0].connections[0]
             .protocols
-            .push(OPENAI_CHAT.into());
+            .push(ProtocolBinding {
+                id: OPENAI_CHAT.into(),
+                endpoint: None,
+            });
         assert_eq!(
             validate_registrations(&providers),
             Err("duplicate or empty provider protocol")
         );
 
         let mut providers = registrations();
-        providers[0].connections[0].protocols[0].clear();
+        providers[0].connections[0].protocols[0].id.clear();
         assert_eq!(
             validate_registrations(&providers),
             Err("duplicate or empty provider protocol")
@@ -429,6 +591,28 @@ mod tests {
         providers[0].connections[0].model_sources[0].endpoint =
             Some("https://api.openai.com/available-models".into());
         validate_registrations(&providers).unwrap();
+    }
+
+    #[test]
+    fn protocol_overrides_must_keep_the_registered_credential_origin() {
+        let mut providers = registrations();
+        providers[0].connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        validate_registrations(&providers).unwrap();
+
+        providers[0].connections[0].protocols[0].endpoint =
+            Some("https://outside.test/responses".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("cross-origin protocol endpoint")
+        );
+
+        providers[0].connections[0].protocols[0].endpoint =
+            Some("http://outside.test/responses".into());
+        assert_eq!(
+            validate_registrations(&providers),
+            Err("unsafe protocol endpoint")
+        );
     }
 
     #[test]
