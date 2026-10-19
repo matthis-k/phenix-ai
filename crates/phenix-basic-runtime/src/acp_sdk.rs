@@ -4,9 +4,9 @@
 use super::*;
 use acp::schema::{
     v1::{
-        AgentCapabilities, CancelNotification, Implementation,
-        InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
-        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
+        AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
+        InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+        NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
         SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
         SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
         StopReason,
@@ -302,7 +302,9 @@ impl Controller {
         if request.scope != "user" {
             return Err(invalid("provider query must request user scope only"));
         }
-        let query = ProviderQuery { scope: request.scope };
+        let query = ProviderQuery {
+            scope: request.scope,
+        };
         let kernel = self
             .management
             .as_ref()
