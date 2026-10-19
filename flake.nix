@@ -1670,7 +1670,7 @@
         mkdir -p "$out"
         python ${./tests/acp-credential-management-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} \
-          ${providerCredentialStore} ${providerDefinitions} "$out"
+          ${providerCredentialStore} ${providerDefinitions} ${providerManagementComposition} "$out"
         test -s "$out/acp-credential-management.json"
       '';
       basicPendingHttpProductCheck = pkgs.runCommand "phenix-basic-pending-http-product" {
