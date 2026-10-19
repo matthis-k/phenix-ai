@@ -132,6 +132,10 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
 
     imported = call(child, 3, "_phenix/credentials/import", dict(**account, secret=secret))
     assert imported["result"] == {"ok": True}
+    unverified = call(child, 9, "_phenix/providers/auth/status", dict(
+        scope="user", provider_id="openai", connection_id="api"))
+    # The vault holds an API key, but the provider has not verified it.
+    assert unverified["result"]["profiles"] == []
     assert len(list(vault.iterdir())) == 1
     stored = list(vault.iterdir())[0]
     assert stat.S_IMODE(stored.stat().st_mode) == 0o600
@@ -162,6 +166,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "restart": True,
     "strict_composition_grants": True,
     "catalog_coexists_without_credential_authority": True,
+    "stored_secret_is_not_verified_auth": True,
     "secret_redacted": True,
 }, sort_keys=True, indent=2))
 print("ACP credential import/revoke with exact launcher grants verified")

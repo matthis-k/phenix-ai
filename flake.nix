@@ -1082,16 +1082,24 @@
           artifacts = [ "${providerBuiltinsPlugin}" ];
           definitions = [ "${providerDefinitions}" ];
           slots = [];
-          grants = [{
+          grants = map (binding: {
             caller = "root";
-            interface = "phenix.provider.catalog@1";
-            operation = "list";
+            interface = binding.interface;
+            operation = binding.operation;
             resources = [ "phenix.providers.user" ];
-          }];
+          }) [
+            { interface = "phenix.provider.catalog@1"; operation = "list"; }
+            { interface = "phenix.provider.auth@1"; operation = "status"; }
+            { interface = "phenix.provider.catalog@1"; operation = "models"; }
+          ];
           excluded = [];
           substitutions = [];
           authority = {
-            operations = [ "phenix.provider.catalog@1/list" ];
+            operations = [
+              "phenix.provider.catalog@1/list"
+              "phenix.provider.auth@1/status"
+              "phenix.provider.catalog@1/models"
+            ];
             resources = [ "phenix.providers.user" ];
           };
           resource = "phenix.providers.user";
