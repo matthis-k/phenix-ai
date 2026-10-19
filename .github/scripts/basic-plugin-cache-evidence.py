@@ -303,6 +303,16 @@ def main():
                 for phase in ("K-first", "K-repeat"):
                     if evidence["builds"][phase]["build"]["exit_code"] != 0:
                         error = "identical build %s failed" % phase
+                first, repeat = evidence["builds"]["K-first"], evidence["builds"]["K-repeat"]
+                if not error:
+                    same_outputs = first["realized_outputs"] == repeat["realized_outputs"]
+                    no_rebuild = not repeat["local_build_logs"]
+                    no_substitution = not repeat["substitution_logs"]
+                    evidence["builds"]["K-repeat"]["status"] = (
+                        "pass" if same_outputs and no_rebuild and no_substitution else "fail"
+                    )
+                    if not (same_outputs and no_rebuild and no_substitution):
+                        error = "identical second Nix build rebuilt, substituted, or changed outputs"
                 # Cross-run (L) must be collected on a separate clean runner
                 # with a known populated read-only cache, never inferred here.
                 evidence["builds"]["L"] = {
