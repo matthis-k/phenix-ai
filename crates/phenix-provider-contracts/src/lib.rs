@@ -8,6 +8,9 @@
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
+pub mod adapter;
+pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions};
+
 pub mod credentials;
 pub use credentials::{
     CredentialIdentity, CredentialImport, CredentialSecret, ProviderCredentials,
@@ -56,6 +59,8 @@ pub enum AuthenticationKind {
     ApiKey,
     OAuthAuthorizationCode,
     OAuthDeviceCode,
+    /// A plugin-owned authentication method with a standard UI challenge.
+    Plugin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -63,6 +68,8 @@ pub struct AuthenticationMethod {
     pub id: String,
     pub label: String,
     pub kind: AuthenticationKind,
+    /// Describes plugin-owned behavior, never an authority grant.
+    pub adapter: AdapterBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -77,6 +84,8 @@ pub struct DiscoverySource {
     pub kind: DiscoveryKind,
     /// Empty for a declared static catalog. Never infer a /models URL.
     pub endpoint: Option<String>,
+    /// The discovery plugin's decoder or static-catalog implementation.
+    pub adapter: AdapterBinding,
 }
 
 /// An inference protocol contributed by a provider plugin.
@@ -295,6 +304,7 @@ mod tests {
                 id: "api-models".into(),
                 kind: DiscoveryKind::Dynamic,
                 endpoint: Some("https://example.test/v1/models".into()),
+                adapter: AdapterBinding::from_typed("openai.models", &()).unwrap(),
             }],
         }
     }
@@ -304,6 +314,7 @@ mod tests {
             id: id.into(),
             label: id.into(),
             kind,
+            adapter: AdapterBinding::from_typed("test.auth", &()).unwrap(),
         }
     }
 

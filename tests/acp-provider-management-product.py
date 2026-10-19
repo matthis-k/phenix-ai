@@ -55,6 +55,10 @@ def probe(managed: bool):
     assert set(openai) == {"api", "chatgpt"}, openai
     assert openai["api"]["auth_methods"][0]["kind"] == "ApiKey"
     assert openai["chatgpt"]["auth_methods"][0]["kind"] == "OAuthAuthorizationCode"
+    assert openai["api"]["auth_methods"][0]["adapter"]["id"] == "api-key"
+    assert openai["chatgpt"]["auth_methods"][0]["adapter"]["id"] == "chatgpt.oauth"
+    assert openai["api"]["model_sources"][0]["adapter"]["id"] == "openai.models"
+    assert openai["chatgpt"]["model_sources"][0]["adapter"]["id"] == "chatgpt.models"
     assert [entry["id"] for entry in openai["api"]["protocols"]] == [
         "openai-responses", "openai-chat",
     ]
