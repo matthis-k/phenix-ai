@@ -974,6 +974,7 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
+        ./crates/phenix-provider-contracts
         ./crates/phenix-basic-runtime
         ./tests/generation-identity-v2.json
       ];
@@ -1066,6 +1067,35 @@
       };
       basicComposition = pkgs.writeText "phenix-basic-composition.json"
         (builtins.toJSON basicCompositionSpec);
+      # Opt-in, read-only ACP provider management uses the same compiled
+      # native plugin and typed definitions as the kernel product test, with
+      # an independent resource and exact root operations. The default Basic
+      # composition remains byte-for-byte unchanged.
+      providerManagementComposition = pkgs.writeText "phenix-provider-management.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.catalog@1";
+            operation = "list";
+            provider = "phenix.provider.builtins";
+          };
+          artifacts = [ "${providerBuiltinsPlugin}" ];
+          definitions = [ "${providerDefinitions}" ];
+          slots = [];
+          grants = [{
+            caller = "root";
+            interface = "phenix.provider.catalog@1";
+            operation = "list";
+            resources = [ "phenix.providers.user" ];
+          }];
+          excluded = [];
+          substitutions = [];
+          authority = {
+            operations = [ "phenix.provider.catalog@1/list" ];
+            resources = [ "phenix.providers.user" ];
+          };
+          resource = "phenix.providers.user";
+        });
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
       basicHttpCompositionSpec = basicCompositionSpec // {
@@ -1620,6 +1650,8 @@
         test -s "$out/terminal-sessions.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
+        python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} $out
+        test -s "$out/acp-provider-management.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         # A caller that sets neither the explicit variable nor HOME must still
         # resolve the XDG state default instead of failing session ownership.
@@ -2123,6 +2155,13 @@
           text = ''
             ${basicSqliteEnvironment "basic.sqlite"}
             exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} "$@"
+          '';
+        };
+        phenix-basic-managed-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-managed-acp";
+          text = ''
+            ${basicSqliteEnvironment "basic.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} --provider-management ${providerManagementComposition} "$@"
           '';
         };
         # The executable reads credentials only at invocation. Nothing secret

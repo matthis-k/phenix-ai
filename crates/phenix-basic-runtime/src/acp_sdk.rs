@@ -19,6 +19,7 @@ use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
+use phenix_provider_contracts::{ProviderError, ProviderPage, ProviderQuery};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -30,6 +31,15 @@ type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
 type PendingPrompts = Mutex<VecDeque<(String, Arc<AtomicBool>)>>;
 
+/// ACP v1 extension request: the official SDK owns its JSON-RPC dispatch.
+/// The separate launcher-owned native kernel grant is the only authority.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/list", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderListRequest {
+    scope: String,
+}
+
 enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
@@ -38,6 +48,7 @@ enum Command {
         SetSessionConfigOptionRequest,
         Reply<SetSessionConfigOptionResponse>,
     ),
+    ProviderList(ProviderListRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -49,6 +60,7 @@ impl Command {
             Self::New(_, reply) => reply.respond_with_error(error),
             Self::Load(_, reply, _) => reply.respond_with_error(error),
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
+            Self::ProviderList(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
@@ -184,8 +196,14 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
+struct ProviderManagement {
+    kernel: Kernel,
+    selected: Selection,
+}
+
 struct Controller {
     composition: Composition,
+    management: Option<ProviderManagement>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -197,11 +215,13 @@ struct Controller {
 impl Controller {
     fn start(
         composition: Composition,
+        management: Option<ProviderManagement>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
         Self {
             composition,
+            management,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             initialized: false,
@@ -257,6 +277,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::ProviderList(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_list(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -270,6 +298,41 @@ impl Controller {
             }
             Command::Closed => self.closed.store(true, Ordering::Release),
         }
+    }
+
+    /// Stable ACP extension: read-only, runtime-granted provider identities.
+    /// The client cannot supply a composition path, caller, grant, or model
+    /// entitlement. A missing management kernel fails closed.
+    fn provider_list(&self, request: ProviderListRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user" {
+            return Err(invalid("provider query must request user scope only"));
+        }
+        let query = ProviderQuery {
+            scope: request.scope,
+        };
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        // Provider identity comes from the independently authorized
+        // management composition, not from Basic or its frontend.
+        let root = management
+            .kernel
+            .admit_root(management.selected.clone())
+            .map_err(internal)?;
+        let page: ProviderPage = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => ProviderPage::from_value(value).map_err(internal)?,
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                return Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": problem.code,
+                })));
+            }
+        };
+        // Official SDK serializes the extension response as JSON-RPC.
+        // No custom transport, frontend-owned catalog or secret exposure.
+        serde_json::to_value(page).map_err(internal)
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
@@ -494,11 +557,31 @@ impl Controller {
         for (_, kernel) in self.sessions {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
+        if let Some(management) = self.management {
+            management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        }
         Ok(())
     }
 }
 
-pub(super) fn run(composition: &Composition) -> Result<(), String> {
+pub(super) fn run(
+    composition: &Composition,
+    management: Option<&Composition>,
+) -> Result<(), String> {
+    let management = management
+        .map(|spec| -> Result<ProviderManagement, String> {
+            if spec.entry.interface != "phenix.provider.catalog@1" || spec.entry.operation != "list"
+            {
+                return Err("ACP management composition must select provider catalog list".into());
+            }
+            let selected = spec.entry.clone();
+            let kernel = Prepared::prepare(spec.clone())
+                .map_err(|e| format!("{e:?}"))?
+                .load()
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(ProviderManagement { kernel, selected })
+        })
+        .transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -506,6 +589,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let queued: Arc<PendingPrompts> = Arc::new(Mutex::new(VecDeque::new()));
     let controller = Controller::start(
         composition.clone(),
+        management,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
@@ -516,6 +600,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let new = tx.clone();
     let load = tx.clone();
     let set_config = tx.clone();
+    let provider_list = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -545,6 +630,12 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .on_receive_request(
             async move |request: SetSessionConfigOptionRequest, reply, _peer| {
                 submit(&set_config, Command::SetConfig(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderListRequest, reply, _peer| {
+                submit(&provider_list, Command::ProviderList(request, reply))
             },
             acp::on_receive_request!(),
         )
