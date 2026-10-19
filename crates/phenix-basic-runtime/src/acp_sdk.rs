@@ -4,9 +4,9 @@
 use super::*;
 use acp::schema::{
     v1::{
-        AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
-        InitializeResponse, ExtRequest, ExtResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-        NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
+        AgentCapabilities, CancelNotification, ExtRequest, ExtResponse, Implementation,
+        InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
         SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
         SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
         StopReason,
@@ -293,12 +293,13 @@ impl Controller {
         if request.method.as_ref() != "_phenix/providers/list" {
             return Err(acp::Error::method_not_found());
         }
-        let fields: serde_json::Value =
-            serde_json::from_str(request.params.get()).map_err(|_| invalid("invalid provider query"))?;
+        let fields: serde_json::Value = serde_json::from_str(request.params.get())
+            .map_err(|_| invalid("invalid provider query"))?;
         let object = fields
             .as_object()
             .ok_or_else(|| invalid("invalid provider query"))?;
-        if object.len() != 1 || object.get("scope").and_then(|value| value.as_str()) != Some("user") {
+        if object.len() != 1 || object.get("scope").and_then(|value| value.as_str()) != Some("user")
+        {
             return Err(invalid("provider query must request user scope only"));
         }
         let query: ProviderQuery =
