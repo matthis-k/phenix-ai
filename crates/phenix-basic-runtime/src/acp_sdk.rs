@@ -19,7 +19,10 @@ use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
-use phenix_provider_contracts::{ProviderError, ProviderPage, ProviderQuery};
+use phenix_provider_contracts::{
+    CredentialIdentity, CredentialImport, CredentialSecret, ProviderError, ProviderPage,
+    ProviderQuery,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -40,6 +43,54 @@ struct ProviderListRequest {
     scope: String,
 }
 
+/// Secret-bearing ACP extension. The SDK owns framing; the trusted launcher
+/// fixes the only credential resource this connection may modify.
+#[derive(Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/import", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialImportRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+    secret: String,
+}
+
+impl std::fmt::Debug for CredentialImportRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialImportRequest")
+            .field("provider_id", &self.provider_id)
+            .field("connection_id", &self.connection_id)
+            .field("profile_id", &self.profile_id)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for CredentialImportRequest {
+    fn drop(&mut self) {
+        std::mem::take(&mut self.secret).into_bytes().fill(0);
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/revoke", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialRevokeRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+}
+
+impl CredentialRevokeRequest {
+    fn identity(&self) -> CredentialIdentity {
+        CredentialIdentity {
+            provider_id: self.provider_id.clone(),
+            connection_id: self.connection_id.clone(),
+            profile_id: self.profile_id.clone(),
+        }
+    }
+}
+
 enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
@@ -49,6 +100,8 @@ enum Command {
         Reply<SetSessionConfigOptionResponse>,
     ),
     ProviderList(ProviderListRequest, Reply<serde_json::Value>),
+    CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
+    CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -61,6 +114,8 @@ impl Command {
             Self::Load(_, reply, _) => reply.respond_with_error(error),
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
             Self::ProviderList(_, reply) => reply.respond_with_error(error),
+            Self::CredentialImport(_, reply) => reply.respond_with_error(error),
+            Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
@@ -201,9 +256,65 @@ struct ProviderManagement {
     selected: Selection,
 }
 
+struct CredentialManagement {
+    kernel: Kernel,
+    importer: Selection,
+    resource: String,
+}
+
+/// The credential composition is a separate control-plane grant, never an
+/// operation from the ordinary Basic session or provider-list root.
+fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+    const CONTRACT: &str = "phenix.provider.credentials@1";
+    let resource = spec
+        .resource
+        .as_deref()
+        .filter(|value| value.starts_with("phenix.credentials."))
+        .ok_or("credential management requires one explicit credential resource")?;
+    let operations = std::collections::BTreeSet::from([
+        format!("{CONTRACT}/import"),
+        format!("{CONTRACT}/revoke"),
+    ]);
+    if spec.entry.interface != CONTRACT
+        || spec.entry.operation != "import"
+        || spec.authority.operations != operations
+        || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
+        || spec.grants.len() != 2
+        || !spec.slots.is_empty()
+        || !spec.excluded.is_empty()
+        || !spec.substitutions.is_empty()
+    {
+        return Err("credential management composition has unexpected authority".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for grant in &spec.grants {
+        if grant.caller != "root"
+            || grant.interface != CONTRACT
+            || !["import", "revoke"].contains(&grant.operation.as_str())
+            || grant.resources != std::collections::BTreeSet::from([resource.to_string()])
+            || !seen.insert(grant.operation.as_str())
+        {
+            return Err("credential management requires exact root grants".into());
+        }
+    }
+    if seen.len() != 2 {
+        return Err("credential management requires import and revoke grants".into());
+    }
+    let kernel = Prepared::prepare(spec.clone())
+        .map_err(|_| "invalid credential management composition".to_string())?
+        .load()
+        .map_err(|_| "cannot load credential management composition".to_string())?;
+    Ok(CredentialManagement {
+        kernel,
+        importer: spec.entry.clone(),
+        resource: resource.into(),
+    })
+}
+
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
+    credentials: Option<CredentialManagement>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -216,12 +327,14 @@ impl Controller {
     fn start(
         composition: Composition,
         management: Option<ProviderManagement>,
+        credentials: Option<CredentialManagement>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
         Self {
             composition,
             management,
+            credentials,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             initialized: false,
@@ -285,6 +398,22 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::CredentialImport(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_import(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::CredentialRevoke(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_revoke(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -333,6 +462,88 @@ impl Controller {
         // Official SDK serializes the extension response as JSON-RPC.
         // No custom transport, frontend-owned catalog or secret exposure.
         serde_json::to_value(page).map_err(internal)
+    }
+
+    fn credential_operation(
+        &self,
+        operation: &str,
+        identity: &CredentialIdentity,
+        value: &Value,
+    ) -> acp::Result<serde_json::Value> {
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        // Identity is an untrusted selector. It never widens the fixed
+        // launcher-owned credential resource or its root grants.
+        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
+            return Err(invalid("credential identity is not authorized"));
+        }
+        let selected = Selection {
+            operation: operation.into(),
+            ..management.importer.clone()
+        };
+        let root = management
+            .kernel
+            .admit_root(selected)
+            .map_err(|_| internal("credential operation not admitted"))?;
+        match root
+            .invoke(value)
+            .map_err(|_| internal("credential operation failed"))?
+        {
+            Outcome::Success(_) => Ok(serde_json::json!({ "ok": true })),
+            Outcome::Domain(value) => {
+                let error = ProviderError::from_value(value)
+                    .map_err(|_| internal("credential operation failed"))?;
+                Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": error.code,
+                })))
+            }
+        }
+    }
+
+    fn credential_import(
+        &self,
+        mut request: CredentialImportRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = CredentialIdentity {
+            provider_id: request.provider_id.clone(),
+            connection_id: request.connection_id.clone(),
+            profile_id: request.profile_id.clone(),
+        };
+        // Check the identity before allocating/copying the supplied secret.
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
+            return Err(invalid("credential identity is not authorized"));
+        }
+        let secret = CredentialSecret::new(std::mem::take(&mut request.secret).into_bytes())
+            .map_err(|_| invalid("invalid credential secret"))?;
+        let payload = CredentialImport {
+            identity: identity.clone(),
+            secret,
+        };
+        let mut value = payload.to_value();
+        let response = self.credential_operation("import", &identity, &value);
+        // The canonical Value cannot own CredentialSecret's Drop behavior.
+        // Overwrite its serialized payload copy even on domain or host denial.
+        if let Value::Map(fields) = &mut value {
+            if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
+                bytes.fill(0);
+            }
+        }
+        response
+    }
+
+    fn credential_revoke(
+        &self,
+        request: CredentialRevokeRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = request.identity();
+        self.credential_operation("revoke", &identity, &identity.to_value())
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
@@ -560,6 +771,12 @@ impl Controller {
         if let Some(management) = self.management {
             management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
+        if let Some(credentials) = self.credentials {
+            credentials
+                .kernel
+                .shutdown()
+                .map_err(|_| "credential cleanup failed")?;
+        }
         Ok(())
     }
 }
@@ -567,6 +784,7 @@ impl Controller {
 pub(super) fn run(
     composition: &Composition,
     management: Option<&Composition>,
+    credentials: Option<&Composition>,
 ) -> Result<(), String> {
     let management = management
         .map(|spec| -> Result<ProviderManagement, String> {
@@ -582,6 +800,7 @@ pub(super) fn run(
             Ok(ProviderManagement { kernel, selected })
         })
         .transpose()?;
+    let credentials = credentials.map(prepare_credentials).transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -590,6 +809,7 @@ pub(super) fn run(
     let controller = Controller::start(
         composition.clone(),
         management,
+        credentials,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
@@ -601,6 +821,8 @@ pub(super) fn run(
     let load = tx.clone();
     let set_config = tx.clone();
     let provider_list = tx.clone();
+    let credential_import = tx.clone();
+    let credential_revoke = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -636,6 +858,24 @@ pub(super) fn run(
         .on_receive_request(
             async move |request: ProviderListRequest, reply, _peer| {
                 submit(&provider_list, Command::ProviderList(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialImportRequest, reply, _peer| {
+                submit(
+                    &credential_import,
+                    Command::CredentialImport(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialRevokeRequest, reply, _peer| {
+                submit(
+                    &credential_revoke,
+                    Command::CredentialRevoke(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
