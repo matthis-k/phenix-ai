@@ -92,6 +92,45 @@ actual changed/rebuilt derivations and outputs, cache restore/substitution,
 wall time and failure classification before marking the PR ready. Do not
 infer full-suite performance from these narrow diagnostic checks.
 
+### Experiment isolation and cleanup rules
+
+Incremental-build probes must be reversible diagnostics, never persistent source
+changes or an alternate CI topology.
+
+1. **Clean working tree:** run source/config mutations only inside detached,
+   disposable Git worktrees. Remove them in a `finally`/exit trap on success,
+   failure, cancellation or timeout; report a failed cleanup as a test failure.
+   The primary checkout, `flake.lock`, tracked test fixtures and production
+   source must remain unchanged.
+2. **Branch lifecycle:** opt-in `[cache-probe]` commits may exist only on
+   dedicated disposable probe branches. After capturing the exact commit SHA,
+   run URL, required artifacts and measurements, delete those probe branches.
+   Never merge or cherry-pick source-edit triggers into `main` or the
+   evidence-harness PR. The reviewed harness branch itself stays until merge.
+3. **Cache isolation:** probes run credential-free and must not write to the
+   trusted main binary cache, reuse a production cache-publishing identity or
+   modify builder configuration. A local store, restored Actions snapshot,
+   portable file cache and signed remote binary cache are distinct mechanisms;
+   name which one was tested. Do not publish experimental outputs as trusted
+   artifacts.
+4. **Evidence retention:** retain immutable run links, tested SHAs, original
+   Nix derivation identities, build/substitution logs, wall and runner-minutes,
+   and machine-readable pass/fail classification. Preserve failures as well as
+   successes. Before artifact expiry, summarize accepted evidence here without
+   copying transient source edits or generated Nix store paths into the repo.
+5. **Acceptance cleanup:** remove experiment-only workflows, temporary
+   triggers, disposable branches and worktrees once scenarios are accepted.
+   Retain only useful regression checks and the canonical `flake.nix` check
+   inventory. Verify no new privileged PR path, runner secret, cache writer,
+   test bypass, or unexplained baseline change survives the experiment.
+
+Scenario K's identical replay completed successfully in
+[the isolated run 39207618373](https://github.com/matthis-k/phenix-ai/actions/runs/39207618373):
+the harness asserts identical realized outputs and **zero** local builds or
+substitutions on the repeat. It establishes same-run warm reuse only.
+Scenario L remains unverified until a separate fresh-runner cache substitution
+is measured and inspected.
+
 
 ## Current CI principles and applied assessment (15 October 2026)
 
