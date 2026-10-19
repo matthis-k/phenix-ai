@@ -4,8 +4,8 @@
 //! specific profile saw, but never proves its current authorization to infer.
 //! The runtime must revalidate account, model and protocol before dispatch.
 
-use crate::CatalogPage;
-use std::collections::BTreeMap;
+use crate::{CatalogPage, MAX_CATALOG_BYTES, MAX_MODELS};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const DEFAULT_DYNAMIC_TTL_SECONDS: u64 = 15 * 60;
 const MAX_CACHED_IDENTITIES: usize = 512;
@@ -46,6 +46,8 @@ pub enum CacheError {
     InvalidPolicy,
     TooManyIdentities,
     RevisionOverflow,
+    InvalidCatalog,
+    StaleRefresh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +64,45 @@ pub struct CatalogView {
     /// Stale snapshots remain inspectable but must not be used for
     /// fresh selection or inference. Fresh snapshots are not auth grants.
     pub freshness: Freshness,
+}
+
+/// Check provider-supplied pages even when they did not pass through the
+/// built-in JSON decoder. Plugins may declare static models or use their own
+/// adapters, but none may store unbounded or ambiguous catalog data.
+fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
+    const MAX_FIELD_BYTES: usize = 4096;
+    if page.models.len() > MAX_MODELS {
+        return Err(CacheError::InvalidCatalog);
+    }
+    let mut size = 0usize;
+    let mut ids = BTreeSet::new();
+    for model in &page.models {
+        for field in [&model.id, &model.label] {
+            if field.is_empty()
+                || field.len() > MAX_FIELD_BYTES
+                || field.chars().any(char::is_control)
+            {
+                return Err(CacheError::InvalidCatalog);
+            }
+            size = size.checked_add(field.len()).ok_or(CacheError::InvalidCatalog)?;
+        }
+        if !ids.insert(model.id.as_str()) {
+            return Err(CacheError::InvalidCatalog);
+        }
+    }
+    if let Some(cursor) = &page.next_provider_cursor {
+        if cursor.is_empty()
+            || cursor.len() > MAX_FIELD_BYTES
+            || cursor.chars().any(char::is_control)
+        {
+            return Err(CacheError::InvalidCatalog);
+        }
+        size = size.checked_add(cursor.len()).ok_or(CacheError::InvalidCatalog)?;
+    }
+    if size > MAX_CATALOG_BYTES {
+        return Err(CacheError::InvalidCatalog);
+    }
+    Ok(())
 }
 
 struct Snapshot {
@@ -92,6 +133,16 @@ impl CatalogCache {
     ) -> Result<u64, CacheError> {
         if !key.valid() {
             return Err(CacheError::InvalidIdentity);
+        }
+        validate_page(&page)?;
+        // Refreshes may finish out of order. An old request must never
+        // replace a newer snapshot, even if its returned models look valid.
+        if let Some(existing) = self.entries.get(&key) {
+            if checked_at < existing.checked_at
+                || credential_revision < existing.credential_revision
+            {
+                return Err(CacheError::StaleRefresh);
+            }
         }
         if self.entries.len() >= MAX_CACHED_IDENTITIES && !self.entries.contains_key(&key) {
             return Err(CacheError::TooManyIdentities);
