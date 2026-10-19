@@ -283,13 +283,14 @@ mod tests {
         );
         assert_eq!(validate_registrations(&[fixture]), Ok(()));
         assert_eq!(
-            [no_auth.auth_methods.len(), key_only.auth_methods.len(), both.auth_methods.len()],
+            [
+                no_auth.auth_methods.len(),
+                key_only.auth_methods.len(),
+                both.auth_methods.len()
+            ],
             [0, 1, 2]
         );
-        assert_eq!(
-            both.auth_methods[0].kind,
-            AuthenticationKind::ApiKey
-        );
+        assert_eq!(both.auth_methods[0].kind, AuthenticationKind::ApiKey);
         assert_eq!(
             both.auth_methods[1].kind,
             AuthenticationKind::OAuthAuthorizationCode
