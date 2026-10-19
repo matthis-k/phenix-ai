@@ -366,11 +366,17 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
                 if !method_ids.insert(method.id.as_str()) || method.id.is_empty() {
                     return Err("duplicate authentication method");
                 }
+                if method.adapter.validate().is_err() {
+                    return Err("invalid authentication adapter");
+                }
             }
             let mut source_ids = BTreeSet::new();
             for source in &connection.model_sources {
                 if source.id.is_empty() || !source_ids.insert(source.id.as_str()) {
                     return Err("duplicate or empty model discovery source");
+                }
+                if source.adapter.validate().is_err() {
+                    return Err("invalid model discovery adapter");
                 }
                 match (&source.kind, source.endpoint.as_deref()) {
                     (DiscoveryKind::Declared, None) => {}
@@ -632,6 +638,44 @@ mod tests {
         assert_eq!(
             validate_registrations(&providers),
             Err("unsafe protocol endpoint")
+        );
+    }
+
+    #[test]
+    fn plugin_defined_adapter_metadata_is_typed_and_validated() {
+        let catalog = registrations();
+        let openai = &catalog[0].connections[0];
+        let key = &openai.auth_methods[0].adapter;
+        assert_eq!(key.id, "api-key");
+        let settings = key.config.decode::<ApiKeyOptions>().unwrap();
+        assert_eq!(settings.environment_variable.as_deref(), Some("OPENAI_API_KEY"));
+        assert!(settings.interactive);
+
+        let chatgpt = &catalog[0].connections[1];
+        assert_eq!(chatgpt.auth_methods[0].adapter.id, "chatgpt.oauth");
+        assert!(chatgpt.auth_methods[0].adapter.config.decode::<()>().is_ok());
+        assert_ne!(
+            openai.model_sources[0].adapter.id,
+            chatgpt.model_sources[0].adapter.id
+        );
+
+        let mut invalid = catalog;
+        invalid[0].connections[0].auth_methods[0]
+            .adapter
+            .config
+            .schema_id = "not-a-schema".into();
+        assert_eq!(
+            validate_registrations(&invalid),
+            Err("invalid authentication adapter")
+        );
+
+        let mut invalid = registrations();
+        invalid[0].connections[0].model_sources[0]
+            .adapter
+            .id = "../file".into();
+        assert_eq!(
+            validate_registrations(&invalid),
+            Err("invalid model discovery adapter")
         );
     }
 
