@@ -558,10 +558,7 @@ impl Controller {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         if let Some(management) = self.management {
-            management
-                .kernel
-                .shutdown()
-                .map_err(|e| format!("{e:?}"))?;
+            management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         Ok(())
     }
@@ -573,8 +570,7 @@ pub(super) fn run(
 ) -> Result<(), String> {
     let management = management
         .map(|spec| {
-            if spec.entry.interface != "phenix.provider.catalog@1"
-                || spec.entry.operation != "list"
+            if spec.entry.interface != "phenix.provider.catalog@1" || spec.entry.operation != "list"
             {
                 return Err("ACP management composition must select provider catalog list".into());
             }
