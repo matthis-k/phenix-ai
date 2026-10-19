@@ -59,6 +59,23 @@ impl AdapterConfig {
         })
     }
 
+    /// Validate a catalog entry even before its specific plugin is loaded.
+    /// Only the selected adapter can check its declared structural schema.
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        if self.schema_id.len() != 64
+            || !self
+                .schema_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || self.data.0.len() > MAX_CONFIG_BYTES
+        {
+            return Err(rejected("invalid adapter configuration"));
+        }
+        Value::decode(&self.data.0)
+            .map_err(|_| rejected("invalid adapter configuration"))?;
+        Ok(())
+    }
+
     pub fn decode<T: Portable>(&self) -> Result<T, ProviderError> {
         if self.schema_id != Self::schema_id::<T>() || self.data.0.len() > MAX_CONFIG_BYTES {
             return Err(rejected("adapter configuration schema mismatch"));
@@ -78,19 +95,26 @@ pub struct AdapterBinding {
 }
 
 impl AdapterBinding {
-    pub fn from_typed<T: Portable>(id: &str, config: &T) -> Result<Self, ProviderError> {
-        if id.is_empty()
-            || id.len() > 128
-            || !id
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        if self.id.is_empty()
+            || self.id.len() > 128
+            || !self
+                .id
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
         {
             return Err(rejected("invalid adapter identity"));
         }
-        Ok(Self {
+        self.config.validate()
+    }
+
+    pub fn from_typed<T: Portable>(id: &str, config: &T) -> Result<Self, ProviderError> {
+        let binding = Self {
             id: id.into(),
             config: AdapterConfig::from_typed(config)?,
-        })
+        };
+        binding.validate()?;
+        Ok(binding)
     }
 }
 
@@ -158,8 +182,9 @@ mod tests {
 
     #[test]
     fn adapter_identity_is_bounded_and_not_an_artifact_path() {
-        for bad in ["", "../plugin.so", "a/b", "a:b", "a".repeat(129).as_str()] {
+        for bad in ["", "../plugin.so", "a/b", "a:b"] {
             assert!(AdapterBinding::from_typed(bad, &()).is_err());
         }
+        assert!(AdapterBinding::from_typed(&"a".repeat(129), &()).is_err());
     }
 }
