@@ -301,7 +301,7 @@
         '';
       };
       providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" {
-        nativeBuildInputs = [ pkgs.jq ];
+        nativeBuildInputs = [ pkgs.jq pkgs.python3 ];
       } ''
         mkdir -p "$out"
         test -s "${providerBuiltinsPlugin}/descriptor.bin"
@@ -309,6 +309,8 @@
         grep -aq 'phenix.provider.builtins' "${providerBuiltinsPlugin}/descriptor.bin"
         jq -e '.format == "phenix.native-package.v2" and .artifact == "lib/plugin.so"' \
           "${providerBuiltinsPlugin}/package.json"
+        python ${./tests/provider-builtins-product.py} \
+          ${kernel}/bin/phenix-kernel ${providerBuiltinsPlugin} ${providerDefinitions} "$out"
         touch "$out/verified"
       '';
       providerBuiltinsSource = subset (publicPaths ++ [
