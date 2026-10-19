@@ -1382,6 +1382,7 @@ dependencies = [
  "phenix-kernel",
  "phenix-provider-contracts",
  "phenix-sdk",
+ "serde",
  "serde_json",
 ]
 
