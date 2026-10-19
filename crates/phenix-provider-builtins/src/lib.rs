@@ -242,6 +242,71 @@ mod tests {
     }
 
     #[test]
+    fn registration_accepts_no_auth_key_only_and_two_independent_methods() {
+        // These are metadata-only fixtures, not claims that a provider
+        // backend, OAuth issuer, or usable model has been installed.
+        let no_auth = connection(
+            "no-auth",
+            "Credential-free connection",
+            "https://models.example.test/v1",
+            &[OPENAI_CHAT],
+            vec![],
+            None,
+        );
+        let key_only = connection(
+            "key",
+            "Named API-key connection",
+            "https://models.example.test/v1",
+            &[OPENAI_CHAT],
+            api_key(),
+            Some("https://models.example.test/v1/models"),
+        );
+        let both = connection(
+            "both",
+            "Two explicit methods",
+            "https://models.example.test/v1",
+            &[OPENAI_RESPONSES],
+            vec![
+                method("api-key", "API key", AuthenticationKind::ApiKey),
+                method(
+                    "oauth",
+                    "Approved OAuth",
+                    AuthenticationKind::OAuthAuthorizationCode,
+                ),
+            ],
+            Some("https://models.example.test/v1/models"),
+        );
+        let fixture = provider(
+            "fixture",
+            "Fixture",
+            vec![no_auth.clone(), key_only.clone(), both.clone()],
+        );
+        assert_eq!(validate_registrations(&[fixture]), Ok(()));
+        assert_eq!(
+            [
+                no_auth.auth_methods.len(),
+                key_only.auth_methods.len(),
+                both.auth_methods.len()
+            ],
+            [0, 1, 2]
+        );
+        assert_eq!(both.auth_methods[0].kind, AuthenticationKind::ApiKey);
+        assert_eq!(
+            both.auth_methods[1].kind,
+            AuthenticationKind::OAuthAuthorizationCode
+        );
+        // The choice is scoped to one connection. Duplicating method IDs
+        // within that connection would make explicit authentication ambiguous.
+        let mut duplicate = both;
+        duplicate.auth_methods[1].id = "api-key".into();
+        let bad = provider("fixture", "Fixture", vec![duplicate]);
+        assert_eq!(
+            validate_registrations(&[bad]),
+            Err("duplicate authentication method")
+        );
+    }
+
+    #[test]
     fn each_provider_uses_an_explicit_protocol_and_safe_endpoint() {
         let all = registrations();
         assert!(all.iter().all(|provider| provider
