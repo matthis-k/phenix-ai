@@ -151,6 +151,14 @@ mod tests {
                     id: "api-key".into(),
                     label: "API key".into(),
                     kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    )
+                    .unwrap(),
                 }],
                 model_sources: vec![],
             }],
