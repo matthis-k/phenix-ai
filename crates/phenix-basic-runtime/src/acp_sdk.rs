@@ -293,8 +293,16 @@ impl Controller {
         if request.method.as_ref() != "_phenix/providers/list" {
             return Err(acp::Error::method_not_found());
         }
-        let query: ProviderQuery =
+        let fields: serde_json::Value =
             serde_json::from_str(request.params.get()).map_err(|_| invalid("invalid provider query"))?;
+        let object = fields
+            .as_object()
+            .ok_or_else(|| invalid("invalid provider query"))?;
+        if object.len() != 1 || object.get("scope").and_then(|value| value.as_str()) != Some("user") {
+            return Err(invalid("provider query must request user scope only"));
+        }
+        let query: ProviderQuery =
+            serde_json::from_value(fields).map_err(|_| invalid("invalid provider query"))?;
         if query.scope != "user" {
             return Err(invalid("unsupported provider scope"));
         }
