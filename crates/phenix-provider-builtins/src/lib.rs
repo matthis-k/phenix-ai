@@ -710,42 +710,47 @@ mod tests {
     fn plugin_contributions_can_describe_offline_and_local_models() {
         // Local or in-process providers do not need a fabricated remote URL.
         let mut in_process = connection(
-            "native", "In-process model", "https://unused.example.test",
-            &["native-model"], vec![], None,
+            "native",
+            "In-process model",
+            "https://unused.example.test",
+            &["native-model"],
+            vec![],
+            None,
         );
         in_process.base_url = None;
-        assert_eq!(
-            validate_registrations(&[provider("native", "Native", vec![in_process.clone()])]),
-            Ok(())
-        );
+        let native = provider("native", "Native", vec![in_process.clone()]);
+        assert_eq!(validate_registrations(&[native]), Ok(()));
 
         // Dynamic discovery can be implemented by the plugin without HTTP.
         in_process.model_sources[0].kind = DiscoveryKind::Dynamic;
-        assert_eq!(
-            validate_registrations(&[provider("native", "Native", vec![in_process])]),
-            Ok(())
-        );
+        let native = provider("native", "Native", vec![in_process]);
+        assert_eq!(validate_registrations(&[native]), Ok(()));
 
         let mut local = connection(
-            "ollama", "Local HTTP model", "http://127.0.0.1:11434/v1",
-            &[OPENAI_CHAT], vec![], Some("http://127.0.0.1:11434/api/tags"),
+            "ollama",
+            "Local HTTP model",
+            "http://127.0.0.1:11434/v1",
+            &[OPENAI_CHAT],
+            vec![],
+            Some("http://127.0.0.1:11434/api/tags"),
         );
-        assert_eq!(
-            validate_registrations(&[provider("local", "Local", vec![local.clone()])]),
-            Ok(())
-        );
+        let installed = provider("local", "Local", vec![local.clone()]);
+        assert_eq!(validate_registrations(&[installed]), Ok(()));
 
         // A local provider cannot use a DNS hostname as a shortcut to
         // credential-bearing loopback HTTP.
         local.base_url = Some("http://localhost:11434/v1".into());
+        let installed = provider("local", "Local", vec![local.clone()]);
         assert_eq!(
-            validate_registrations(&[provider("local", "Local", vec![local.clone()])]),
+            validate_registrations(&[installed]),
             Err("unsafe provider endpoint")
         );
+
         local.base_url = Some("http://127.0.0.1:11434/v1".into());
         local.model_sources[0].endpoint = Some("http://127.0.0.1:11435/api/tags".into());
+        let installed = provider("local", "Local", vec![local]);
         assert_eq!(
-            validate_registrations(&[provider("local", "Local", vec![local])]),
+            validate_registrations(&[installed]),
             Err("cross-origin model discovery")
         );
     }
@@ -753,17 +758,23 @@ mod tests {
     #[test]
     fn protocol_specific_urls_do_not_require_a_fake_base_url() {
         let mut local = connection(
-            "direct", "Direct protocol endpoint", "https://unused.example.test",
-            &[OPENAI_CHAT], vec![], None,
+            "direct",
+            "Direct protocol endpoint",
+            "https://unused.example.test",
+            &[OPENAI_CHAT],
+            vec![],
+            None,
         );
         local.base_url = None;
         local.protocols[0].endpoint = Some("https://models.example.test/v1/chat".into());
-        validate_registrations(&[provider("direct", "Direct", vec![local.clone()])]).unwrap();
+        let installed = provider("direct", "Direct", vec![local.clone()]);
+        validate_registrations(&[installed]).unwrap();
 
         local.model_sources[0].kind = DiscoveryKind::Dynamic;
         local.model_sources[0].endpoint = Some("https://foreign.example.test/models".into());
+        let installed = provider("direct", "Direct", vec![local]);
         assert_eq!(
-            validate_registrations(&[provider("direct", "Direct", vec![local])]),
+            validate_registrations(&[installed]),
             Err("cross-origin model discovery")
         );
     }
