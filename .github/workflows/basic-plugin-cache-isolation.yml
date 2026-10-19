@@ -80,7 +80,10 @@ jobs:
           case "$COMMIT_MESSAGE" in
             *"Tools source edit"*) case_id=B ;;
             *"Agent source edit"*) case_id=C ;;
+            *"Scripted Model source edit"*) case_id=D ;;
             *"configuration-only composition update"*) case_id=G ;;
+            *"composition-add-artifact edit"*) case_id=H ;;
+            *"example fixture source edit"*) case_id=J ;;
             *) case_id=A ;;
           esac
           if [[ "$case_id" == A ]]; then
