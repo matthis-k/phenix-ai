@@ -20,7 +20,8 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    CredentialIdentity, CredentialImport, CredentialSecret, ProviderError, ProviderPage, ProviderQuery,
+    CredentialIdentity, CredentialImport, CredentialSecret, ProviderError, ProviderPage,
+    ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -771,7 +772,10 @@ impl Controller {
             management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         if let Some(credentials) = self.credentials {
-            credentials.kernel.shutdown().map_err(|_| "credential cleanup failed")?;
+            credentials
+                .kernel
+                .shutdown()
+                .map_err(|_| "credential cleanup failed")?;
         }
         Ok(())
     }
@@ -859,13 +863,19 @@ pub(super) fn run(
         )
         .on_receive_request(
             async move |request: CredentialImportRequest, reply, _peer| {
-                submit(&credential_import, Command::CredentialImport(request, reply))
+                submit(
+                    &credential_import,
+                    Command::CredentialImport(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
         .on_receive_request(
             async move |request: CredentialRevokeRequest, reply, _peer| {
-                submit(&credential_revoke, Command::CredentialRevoke(request, reply))
+                submit(
+                    &credential_revoke,
+                    Command::CredentialRevoke(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
