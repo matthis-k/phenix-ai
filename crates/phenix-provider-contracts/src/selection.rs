@@ -113,7 +113,10 @@ pub fn validate_model_selection(
     }
     if !selected.selectable
         || selected.endpoint_id.is_empty()
-        || !connection.protocols.contains(&selected.protocol_id)
+        || !connection
+            .protocols
+            .iter()
+            .any(|protocol| protocol.id == selected.protocol_id)
     {
         return Err(selection_error(
             ProviderErrorCode::Denied,
@@ -139,7 +142,10 @@ mod tests {
             connections: vec![ConnectionDescriptor {
                 id: "api".into(),
                 label: "API".into(),
-                protocols: vec!["openai-responses".into()],
+                protocols: vec![ProtocolBinding {
+                    id: "openai-responses".into(),
+                    endpoint: None,
+                }],
                 base_url: Some("https://api.openai.com/v1".into()),
                 auth_methods: vec![AuthenticationMethod {
                     id: "api-key".into(),
