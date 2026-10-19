@@ -60,6 +60,19 @@ standalone client → distribution order, verifying the actual integrated
 commit at each boundary. Do not mark an individual roadmap row accepted
 from tests of a parent PR, a provisional lockfile or a stale branch head.
 
+### Runtime N4 implementation packets, 19 October 2026
+
+These are implementation entry points for existing [management issue #891](https://github.com/matthis-k/phenix-ai/issues/891); its accepted decisions and acceptance cases are unchanged. Split by the first observable end-to-end result. Keep one selection authority in the runtime and one ACP transport in the client.
+
+| Order | Existing code | Smallest verifiable result | Release gate |
+| --- | --- | --- | --- |
+| R-N4a provider discovery | `crates/phenix-provider-contracts/src/lib.rs`, `crates/phenix-plugin-provider-builtins/src/lib.rs`, `crates/phenix-provider-discovery/src/lib.rs` | An authorized Basic host query returns installed provider/connection/method identities and current catalog provenance. An offline registration does not claim entitlement. | Separate account/connection catalog identities, zero/one/both authentication methods, stale/denied reads; packaged product test |
+| R-N4b credential actions | `crates/phenix-provider-contracts/src/credentials.rs`, `crates/phenix-plugin-provider-secret-service/src/lib.rs`, existing opt-in 0600 file provider | A typed, resource-granted host operation imports, resolves and revokes one named API-key profile without journal/config/Neovim secret persistence. ProviderAuth checks actual readiness. | Cross-account and revoked-grant denial, error redaction, restart, `tests/provider-credential-store-product.py` and `tests/provider-secret-service-product.py` |
+| R-N4c effective selection | `crates/phenix-provider-contracts/src/selection.rs`, the existing Basic Session/Storage plugins, `crates/phenix-basic-runtime/src/acp_sdk.rs` | Runtime validates current catalog + credential profile, stores an effective scoped selection with revision CAS, and applies it only to later turns. Standard ACP session config reflects the admitted session choice. | Conflict, stale catalog, revoked profile, cross-session/connection spoofing, restart and two-client race. Run `tests/acp-stdio-product.py` and independent ACP SDK interop |
+| R-N4d client/distribution | [Client N4](https://github.com/matthis-k/phenix-ai.nvim/blob/main/spec/p1-p2-client-roadmap.md), [distribution D4](https://github.com/matthis-k/phenix-nvim/blob/main/spec/p1-p2-distribution-roadmap.md) | Expose only operations actually admitted by the host. Pin accepted runtime, then client, then distribution; test an installed fake provider before manual live-provider setup. | `:Phenix auth` -> `:Phenix model` -> prompt -> restart, zero secret disclosure and no fallback to a different account |
+
+First acceptance slice is read-only R-N4a, then credential/action admission. The existing provider contract tests and packaged runtime checks must fail on the missing behavior before the corresponding production integration is accepted. [Client #78](https://github.com/matthis-k/phenix-ai.nvim/pull/78) already handles pushed ACP catalog removal; client picker invalidation and distribution pinning are separate client/distribution PRs. They do not prove any R-N4a–c host operation. N5 unprivileged Neovim editor integrations may proceed in parallel. Do not treat a passing fixture UI as a completed auth or model-selection product.
+
 ## P2 advanced agent
 
 [The P2 advanced agent roadmap](p2-advanced-agent-roadmap.md) owns the detailed
