@@ -42,6 +42,28 @@ pub trait Environment {
     fn resolve(&self, request: EnvironmentQuery) -> Result<EnvironmentPaths, EnvironmentError>;
 }
 
+/// One authorized import with the caller's current resource; callers do not
+/// need to duplicate resource checks or XDG resolution.
+pub fn resolve_for(
+    host: &Host<'_>,
+    slot: &str,
+    namespace: &str,
+) -> CallResult<EnvironmentPaths, EnvironmentError> {
+    let resource = host.resource()?.ok_or_else(|| {
+        CallError::Domain(EnvironmentError {
+            problem: EnvironmentProblem::Denied,
+            message: "the active root has no environment resource".into(),
+        })
+    })?;
+    host.invoke::<Environment::resolve>(
+        slot,
+        &EnvironmentQuery {
+            resource,
+            namespace: namespace.into(),
+        },
+    )
+}
+
 #[plugin(
     id = "phenix.environment-contracts",
     version = "1.0.0",

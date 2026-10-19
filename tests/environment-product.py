@@ -16,13 +16,13 @@ operation = "resolve"
 
 def encode(value):
     if value is None:
-        return b"\\x00"
+        return b"\x00"
     if isinstance(value, str):
         raw = value.encode("utf-8")
-        return b"\\x05" + len(raw).to_bytes(4, "big") + raw
+        return b"\x05" + len(raw).to_bytes(4, "big") + raw
     if isinstance(value, dict):
         items = sorted(value.items())
-        return b"\\x08" + len(items).to_bytes(4, "big") + b"".join(
+        return b"\x08" + len(items).to_bytes(4, "big") + b"".join(
             len(key.encode()).to_bytes(4, "big") + key.encode() + encode(item)
             for key, item in items
         )
@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-environment-") as temporary:
             resource=resource,
         )
         (root / "composition.json").write_text(json.dumps(composition))
-        (root / "request.bin").write_bytes(b"PV\\x02\\0" + encode(request))
+        (root / "request.bin").write_bytes(b"PV\x02\0" + encode(request))
         done = subprocess.run(
             [kernel, "invoke", str(root / "composition.json"), str(root / "request.bin")],
             cwd=root, env=env, capture_output=True, text=True, timeout=30,

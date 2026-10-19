@@ -73,6 +73,38 @@ These are implementation entry points for existing [management issue #891](https
 
 First acceptance slice is read-only R-N4a, then credential/action admission. The existing provider contract tests and packaged runtime checks must fail on the missing behavior before the corresponding production integration is accepted. [Client #78](https://github.com/matthis-k/phenix-ai.nvim/pull/78) already handles pushed ACP catalog removal; client picker invalidation and distribution pinning are separate client/distribution PRs. They do not prove any R-N4a–c host operation. N5 unprivileged Neovim editor integrations may proceed in parallel. Do not treat a passing fixture UI as a completed auth or model-selection product.
 
+### Runtime environment locations
+
+`phenix.environment@1` is an optional plugin import. Its default native
+implementation resolves a resource-bound snapshot with a launch workspace,
+config, state, data, cache and optional runtime directory. Each plugin asks
+for its own namespace through `resolve_for(host, "Environment", namespace)`.
+This provider computes locations but never creates directories, opens files,
+changes process cwd, stores configuration or grants filesystem authority.
+
+On Linux, the default provider follows absolute XDG home variables with
+HOME-based fallbacks; it ignores relative variables and does not invent an
+XDG runtime directory. The launch cwd is a hint, not an authorized project
+root. Workspace selection and changes remain project/session configuration
+owned by selected plugins, without `chdir` for the entire process. A
+filesystem/tool provider must validate its resource grant and resolve paths
+within its admitted workspace before every effect.
+
+The kernel remains unaware of XDG, project filenames, config precedence and
+SQLite schema. The selected runtime/project/session configuration providers
+own effective values and revision CAS under #891; Storage and ProjectStorage
+providers own durable bytes. Plugin packages own bundled assets. The product
+host resolves pinned plugin sources to verified native package paths before
+passing the one v3 composition to the kernel. Never use paths returned by an
+Environment import as a substitute for those artifact paths.
+
+Acceptance for the default provider is a native, separately composed
+Environment contract/product test with absolute and relative XDG roots,
+optional runtime, denied foreign resource, namespace traversal and zero
+filesystem effects. Adoption by Basic SQLite, per-session cwd overrides and
+config mutations are separate integration work and are not claimed by
+this directory-resolution slice.
+
 ## P2 advanced agent
 
 [The P2 advanced agent roadmap](p2-advanced-agent-roadmap.md) owns the detailed
