@@ -84,7 +84,9 @@ fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
             {
                 return Err(CacheError::InvalidCatalog);
             }
-            size = size.checked_add(field.len()).ok_or(CacheError::InvalidCatalog)?;
+            size = size
+                .checked_add(field.len())
+                .ok_or(CacheError::InvalidCatalog)?;
         }
         if !ids.insert(model.id.as_str()) {
             return Err(CacheError::InvalidCatalog);
@@ -97,7 +99,9 @@ fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
         {
             return Err(CacheError::InvalidCatalog);
         }
-        size = size.checked_add(cursor.len()).ok_or(CacheError::InvalidCatalog)?;
+        size = size
+            .checked_add(cursor.len())
+            .ok_or(CacheError::InvalidCatalog)?;
     }
     if size > MAX_CATALOG_BYTES {
         return Err(CacheError::InvalidCatalog);
@@ -609,5 +613,4 @@ mod tests {
             "updated"
         );
     }
-
 }
