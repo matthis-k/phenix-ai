@@ -54,6 +54,16 @@ GUARDS = {
     "J": {"changed": ["phenix-core-example-plugins"], "stable": list(BASIC) + [COMPOSITION]},
 }
 # C and I assert the staged feature variant using checks.x86_64-linux.
+# Targets measure selected products; derivation dependencies still come from Nix.
+BUILD_TARGETS = {
+    "B": [TOOLS, COMPOSITION],
+    "C": [AGENT, COMPOSITION],
+    "D": [MODEL, COMPOSITION],
+    "G": [COMPOSITION],
+    "H": ["phenix-basic-verification-composition"],
+    "J": ["phenix-core-example-plugins"],
+}
+WARM_CONTROL = [TOOLS, AGENT, MODEL, COMPOSITION]
 
 
 def call(argv, cwd, timeout=900, check=True, stdin=None):
@@ -227,6 +237,20 @@ def main():
         "cases": {}, "builds": {},
     }
     error = None
+    if args.build:
+        # Real edit impact requires a realized baseline on this exact runner.
+        # Otherwise ordinary cold-build work is misreported as edit rebuilds.
+        baseline_targets = {
+            attr for case in args.cases if case in args.build_cases
+            for attr in BUILD_TARGETS.get(case, ())
+        }
+        if not args.no_warm:
+            baseline_targets.update(WARM_CONTROL)
+        if baseline_targets:
+            evidence["builds"]["baseline"] = run_build(
+                repo, sorted(baseline_targets), target, "baseline")
+            if evidence["builds"]["baseline"]["build"]["exit_code"] != 0:
+                error = "baseline materialization failed"
     try:
         with tempfile.TemporaryDirectory(prefix="phenix-nix-isolation-") as temporary:
             # Avoid changing or restoring tracked files in the original checkout.
@@ -285,10 +309,7 @@ def main():
                     }
                     evidence["cases"][case] = record
                     if args.build and case in args.build_cases:
-                        attrs = {"B": [TOOLS, COMPOSITION], "C": [AGENT, COMPOSITION],
-                                 "D": [MODEL, COMPOSITION], "G": [COMPOSITION],
-                                 "H": ["phenix-basic-verification-composition"],
-                                 "J": ["phenix-core-example-plugins"]}.get(case, [])
+                        attrs = BUILD_TARGETS.get(case, [])
                         if attrs:
                             evidence["builds"][case] = run_build(root, attrs, target, case)
                             if evidence["builds"][case]["build"]["exit_code"] != 0:
@@ -297,7 +318,7 @@ def main():
                     call(["git", "worktree", "remove", "--force", str(root)],
                          repo, timeout=120)
             if args.build and not args.no_warm:
-                control = [TOOLS, AGENT, MODEL, COMPOSITION]
+                control = WARM_CONTROL
                 evidence["builds"]["K-first"] = run_build(repo, control, target, "K-first")
                 evidence["builds"]["K-repeat"] = run_build(repo, control, target, "K-repeat")
                 for phase in ("K-first", "K-repeat"):
