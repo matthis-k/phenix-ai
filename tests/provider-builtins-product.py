@@ -73,6 +73,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     assert connections["api"]["auth_methods"][0]["id"] == "api-key"
     assert connections["chatgpt"]["auth_methods"][0]["id"] == "chatgpt-sign-in"
     assert connections["api"]["base_url"] != "" and connections["chatgpt"]["base_url"] != ""
+    key = connections["api"]["auth_methods"][0]["adapter"]
+    subscription = connections["chatgpt"]["auth_methods"][0]["adapter"]
+    assert key["id"] == "api-key", key
+    assert subscription["id"] == "chatgpt.oauth", subscription
+    assert len(key["config"]["schema_id"]) == 64
+    assert key["config"]["schema_id"] != subscription["config"]["schema_id"]
+    assert connections["api"]["model_sources"][0]["adapter"]["id"] == "openai.models"
+    assert connections["chatgpt"]["model_sources"][0]["adapter"]["id"] == "chatgpt.models"
     assert [p["id"] for p in connections["api"]["protocols"]] == [
         "openai-responses", "openai-chat",
     ]
