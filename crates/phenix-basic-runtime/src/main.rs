@@ -999,9 +999,7 @@ fn run() -> Result<(), String> {
     {
         "s1"
     } else {
-        return Err(
-            "terminal session or ACP provider-management arguments are invalid".into(),
-        );
+        return Err("terminal session or ACP provider-management arguments are invalid".into());
     };
     // A provider-management composition is supplied by the product launcher,
     // never by an ACP request. Its root grants are checked by the native
