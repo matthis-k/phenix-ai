@@ -144,6 +144,11 @@ impl CatalogCache {
         if let Some(existing) = self.entries.get(&key) {
             if checked_at < existing.checked_at
                 || credential_revision < existing.credential_revision
+                // Two network refreshes can complete out of order within
+                // one clock tick. A same-generation tie is not fresh proof.
+                || (matches!(policy, CachePolicy::Dynamic { .. })
+                    && checked_at == existing.checked_at
+                    && credential_revision == existing.credential_revision)
             {
                 return Err(CacheError::StaleRefresh);
             }
@@ -570,7 +575,7 @@ mod tests {
             )
             .unwrap();
 
-        for (timestamp, generation) in [(199, 8), (200, 7), (199, 7)] {
+        for (timestamp, generation) in [(199, 8), (200, 8), (200, 7), (199, 7)] {
             assert_eq!(
                 cache.put(
                     account.clone(),
