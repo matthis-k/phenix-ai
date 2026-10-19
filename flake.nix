@@ -1662,6 +1662,17 @@
         test -s "$XDG_STATE_HOME/phenix/basic.sqlite"
         echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"default_state_path":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
       '';
+      # Separate acceptance keeps the credential plugin out of ordinary Basic
+      # dependency closures and never stores test secrets in Nix outputs.
+      basicCredentialAcpCheck = pkgs.runCommand "phenix-basic-acp-credentials-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-credential-management-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} \
+          ${providerCredentialStore} ${providerDefinitions} "$out"
+        test -s "$out/acp-credential-management.json"
+      '';
       basicPendingHttpProductCheck = pkgs.runCommand "phenix-basic-pending-http-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2233,6 +2244,7 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
         basic-streaming = basicStreamingCheck;
         basic-http-product = basicHttpProductCheck;
