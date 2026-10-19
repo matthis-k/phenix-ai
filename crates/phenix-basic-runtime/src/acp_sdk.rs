@@ -569,7 +569,7 @@ pub(super) fn run(
     management: Option<&Composition>,
 ) -> Result<(), String> {
     let management = management
-        .map(|spec| {
+        .map(|spec| -> Result<ProviderManagement, String> {
             if spec.entry.interface != "phenix.provider.catalog@1" || spec.entry.operation != "list"
             {
                 return Err("ACP management composition must select provider catalog list".into());
