@@ -24,6 +24,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: cachix/install-nix-action@v31
+      # Keep independent SDK/protocol assertions, but do not rebuild an
+      # unchanged native host when the trusted-main store snapshot is available.
+      # This restores only: never let untrusted PR code publish cache entries.
+      - name: Restore trusted main Nix store for ACP host (read-only)
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: phenix-acp-sdk-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'examples/Cargo.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            remote-phenix-m1-x86_64-linux-
+          gc-max-store-size-linux: "6G"
+          save: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
