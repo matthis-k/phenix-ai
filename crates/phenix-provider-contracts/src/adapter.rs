@@ -71,8 +71,7 @@ impl AdapterConfig {
         {
             return Err(rejected("invalid adapter configuration"));
         }
-        Value::decode(&self.data.0)
-            .map_err(|_| rejected("invalid adapter configuration"))?;
+        Value::decode(&self.data.0).map_err(|_| rejected("invalid adapter configuration"))?;
         Ok(())
     }
 
@@ -80,8 +79,8 @@ impl AdapterConfig {
         if self.schema_id != Self::schema_id::<T>() || self.data.0.len() > MAX_CONFIG_BYTES {
             return Err(rejected("adapter configuration schema mismatch"));
         }
-        let value = Value::decode(&self.data.0)
-            .map_err(|_| rejected("invalid adapter configuration"))?;
+        let value =
+            Value::decode(&self.data.0).map_err(|_| rejected("invalid adapter configuration"))?;
         T::from_value(value).map_err(|_| rejected("invalid adapter configuration"))
     }
 }
@@ -147,7 +146,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            key.config.decode::<ApiKeyOptions>().unwrap().environment_variable,
+            key.config
+                .decode::<ApiKeyOptions>()
+                .unwrap()
+                .environment_variable,
             Some("OPENAI_API_KEY".into())
         );
         assert!(key.config.decode::<CustomOptions>().is_err());
