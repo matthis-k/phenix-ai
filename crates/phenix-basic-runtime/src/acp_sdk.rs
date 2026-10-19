@@ -398,16 +398,16 @@ impl Controller {
                 let _ = reply.respond_with_result(result);
             }
             Command::CredentialImport(request, reply) => {
-                let result = if !self.initialized {
-                    Err(invalid("initialize required"))
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
                 } else {
                     self.credential_import(request)
                 };
                 let _ = reply.respond_with_result(result);
             }
             Command::CredentialRevoke(request, reply) => {
-                let result = if !self.initialized {
-                    Err(invalid("initialize required"))
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
                 } else {
                     self.credential_revoke(request)
                 };
