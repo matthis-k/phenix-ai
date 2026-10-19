@@ -348,22 +348,31 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
             {
                 return Err("invalid provider connection");
             }
-            let base = connection
+            // A connection may be in-process (no URL), local HTTP on a literal
+            // loopback IP, or remote HTTPS. All explicitly declared network
+            // endpoints on one connection must share one credential origin.
+            let mut credential_origin = connection
                 .base_url
                 .as_deref()
-                .ok_or("missing provider endpoint")?;
-            let validated_base = validate_endpoint(base, EndpointMode::Remote)
-                .map_err(|_| "unsafe provider endpoint")?;
+                .map(|base| {
+                    validate_endpoint(base, EndpointMode::LocalLoopback)
+                        .map_err(|_| "unsafe provider endpoint")
+                })
+                .transpose()?;
             let mut protocol_ids = BTreeSet::new();
             for protocol in &connection.protocols {
                 if protocol.id.is_empty() || !protocol_ids.insert(protocol.id.as_str()) {
                     return Err("duplicate or empty provider protocol");
                 }
                 if let Some(endpoint) = protocol.endpoint.as_deref() {
-                    let checked = validate_endpoint(endpoint, EndpointMode::Remote)
+                    let checked = validate_endpoint(endpoint, EndpointMode::LocalLoopback)
                         .map_err(|_| "unsafe protocol endpoint")?;
-                    if !same_credential_origin(&validated_base, &checked) {
-                        return Err("cross-origin protocol endpoint");
+                    if let Some(origin) = credential_origin.as_ref() {
+                        if !same_credential_origin(origin, &checked) {
+                            return Err("cross-origin protocol endpoint");
+                        }
+                    } else {
+                        credential_origin = Some(checked);
                     }
                 }
             }
@@ -386,11 +395,18 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
                 }
                 match (&source.kind, source.endpoint.as_deref()) {
                     (DiscoveryKind::Declared, None) => {}
+                    // Plugins may discover models in-process without an HTTP
+                    // endpoint. The selected implementation owns that lookup.
+                    (DiscoveryKind::Dynamic, None) => {}
                     (DiscoveryKind::Dynamic, Some(endpoint)) => {
-                        let validated_endpoint = validate_endpoint(endpoint, EndpointMode::Remote)
+                        let checked = validate_endpoint(endpoint, EndpointMode::LocalLoopback)
                             .map_err(|_| "unsafe catalog endpoint")?;
-                        if !same_credential_origin(&validated_base, &validated_endpoint) {
-                            return Err("cross-origin model discovery");
+                        if let Some(origin) = credential_origin.as_ref() {
+                            if !same_credential_origin(origin, &checked) {
+                                return Err("cross-origin model discovery");
+                            }
+                        } else {
+                            credential_origin = Some(checked);
                         }
                     }
                     _ => return Err("inconsistent model discovery source"),
@@ -550,12 +566,11 @@ mod tests {
             Err("duplicate or empty model discovery source")
         );
 
+        // Dynamic discovery without an endpoint is valid when a plugin
+        // supplies the catalog in-process instead of making an HTTP call.
         let mut providers = registrations();
         providers[0].connections[0].model_sources[0].endpoint = None;
-        assert_eq!(
-            validate_registrations(&providers),
-            Err("inconsistent model discovery source")
-        );
+        assert_eq!(validate_registrations(&providers), Ok(()));
 
         let mut providers = registrations();
         providers[0].connections[0].model_sources[0].kind = DiscoveryKind::Declared;
@@ -687,6 +702,69 @@ mod tests {
         assert_eq!(
             validate_registrations(&invalid),
             Err("invalid model discovery adapter")
+        );
+    }
+
+
+    #[test]
+    fn plugin_contributions_can_describe_offline_and_local_models() {
+        // Local or in-process providers do not need a fabricated remote URL.
+        let mut in_process = connection(
+            "native", "In-process model", "https://unused.example.test",
+            &["native-model"], vec![], None,
+        );
+        in_process.base_url = None;
+        assert_eq!(
+            validate_registrations(&[provider("native", "Native", vec![in_process.clone()])]),
+            Ok(())
+        );
+
+        // Dynamic discovery can be implemented by the plugin without HTTP.
+        in_process.model_sources[0].kind = DiscoveryKind::Dynamic;
+        assert_eq!(
+            validate_registrations(&[provider("native", "Native", vec![in_process])]),
+            Ok(())
+        );
+
+        let mut local = connection(
+            "ollama", "Local HTTP model", "http://127.0.0.1:11434/v1",
+            &[OPENAI_CHAT], vec![], Some("http://127.0.0.1:11434/api/tags"),
+        );
+        assert_eq!(
+            validate_registrations(&[provider("local", "Local", vec![local.clone()])]),
+            Ok(())
+        );
+
+        // A local provider cannot use a DNS hostname as a shortcut to
+        // credential-bearing loopback HTTP.
+        local.base_url = Some("http://localhost:11434/v1".into());
+        assert_eq!(
+            validate_registrations(&[provider("local", "Local", vec![local.clone()])]),
+            Err("unsafe provider endpoint")
+        );
+        local.base_url = Some("http://127.0.0.1:11434/v1".into());
+        local.model_sources[0].endpoint = Some("http://127.0.0.1:11435/api/tags".into());
+        assert_eq!(
+            validate_registrations(&[provider("local", "Local", vec![local])]),
+            Err("cross-origin model discovery")
+        );
+    }
+
+    #[test]
+    fn protocol_specific_urls_do_not_require_a_fake_base_url() {
+        let mut local = connection(
+            "direct", "Direct protocol endpoint", "https://unused.example.test",
+            &[OPENAI_CHAT], vec![], None,
+        );
+        local.base_url = None;
+        local.protocols[0].endpoint = Some("https://models.example.test/v1/chat".into());
+        validate_registrations(&[provider("direct", "Direct", vec![local.clone()])]).unwrap();
+
+        local.model_sources[0].kind = DiscoveryKind::Dynamic;
+        local.model_sources[0].endpoint = Some("https://foreign.example.test/models".into());
+        assert_eq!(
+            validate_registrations(&[provider("direct", "Direct", vec![local])]),
+            Err("cross-origin model discovery")
         );
     }
 

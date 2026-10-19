@@ -82,7 +82,8 @@ pub enum DiscoveryKind {
 pub struct DiscoverySource {
     pub id: String,
     pub kind: DiscoveryKind,
-    /// Empty for a declared static catalog. Never infer a /models URL.
+    /// Optional network URL. Declared catalogs and plugin-owned dynamic
+    /// discovery need no URL; never infer a /models endpoint.
     pub endpoint: Option<String>,
     /// The discovery plugin's decoder or static-catalog implementation.
     pub adapter: AdapterBinding,
@@ -104,7 +105,8 @@ pub struct ConnectionDescriptor {
     pub label: String,
     /// Protocol-specific configuration, resolved by provider plugins.
     pub protocols: Vec<ProtocolBinding>,
-    /// Transport endpoint or base URL when applicable.
+    /// Optional network base URL. In-process models need none; individual
+    /// protocol bindings may specify their own explicit endpoints.
     pub base_url: Option<String>,
     /// An empty list means no authentication is required.
     pub auth_methods: Vec<AuthenticationMethod>,
