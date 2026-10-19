@@ -45,6 +45,20 @@ fn connection(provider_id: &str, connection_id: &str) -> Result<bool, ProviderEr
         .ok_or_else(|| error(ProviderErrorCode::NotFound, "unknown provider connection"))
 }
 
+fn missing_model_catalog(requires_auth: bool) -> ProviderError {
+    if requires_auth {
+        error(
+            ProviderErrorCode::AuthenticationRequired,
+            "authenticated model discovery is not installed",
+        )
+    } else {
+        error(
+            ProviderErrorCode::Unavailable,
+            "model discovery is not installed for this credential-free connection",
+        )
+    }
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.provider.builtins",
     version = "1.0.0",
@@ -115,14 +129,12 @@ mod plugin {
         request: ModelQuery,
     ) -> CallResult<ModelPage, ProviderError> {
         check(host, &request.scope)?;
-        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
-        // A static provider entry does not prove credential readiness or a
-        // model's inference transport. Runtime may later import an authorized
-        // discovery plugin, which supplies the actual catalog.
-        Err(CallError::Domain(error(
-            ProviderErrorCode::AuthenticationRequired,
-            "authenticated model discovery is not installed",
-        )))
+        let requires_auth =
+            connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        // Registration alone proves neither model entitlement nor a usable
+        // inference transport. A credential-free connection must not be
+        // misreported as requiring authentication when discovery is absent.
+        Err(CallError::Domain(missing_model_catalog(requires_auth)))
     }
 
     #[provide(ProviderAuth::status)]
@@ -198,6 +210,20 @@ mod tests {
             connection("openai", "unknown").unwrap_err().code,
             ProviderErrorCode::NotFound
         );
+    }
+
+    #[test]
+    fn missing_discovery_distinguishes_authentication_from_unavailability() {
+        assert_eq!(
+            missing_model_catalog(true).code,
+            ProviderErrorCode::AuthenticationRequired
+        );
+        assert_eq!(
+            missing_model_catalog(false).code,
+            ProviderErrorCode::Unavailable
+        );
+        // Neither error asserts that an unconfigured provider has any
+        // selectable model or usable inference transport.
     }
 
     #[test]
