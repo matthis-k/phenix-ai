@@ -467,7 +467,7 @@ impl Controller {
         &self,
         operation: &str,
         identity: &CredentialIdentity,
-        value: Value,
+        value: &Value,
     ) -> acp::Result<serde_json::Value> {
         let management = self
             .credentials
@@ -487,7 +487,7 @@ impl Controller {
             .admit_root(selected)
             .map_err(|_| internal("credential operation not admitted"))?;
         match root
-            .invoke(&value)
+            .invoke(value)
             .map_err(|_| internal("credential operation failed"))?
         {
             Outcome::Success(_) => Ok(serde_json::json!({ "ok": true })),
@@ -525,7 +525,16 @@ impl Controller {
             identity: identity.clone(),
             secret,
         };
-        self.credential_operation("import", &identity, payload.to_value())
+        let mut value = payload.to_value();
+        let response = self.credential_operation("import", &identity, &value);
+        // The canonical Value cannot own CredentialSecret's Drop behavior.
+        // Overwrite its serialized payload copy even on domain or host denial.
+        if let Value::Map(fields) = &mut value {
+            if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
+                bytes.fill(0);
+            }
+        }
+        response
     }
 
     fn credential_revoke(
@@ -533,7 +542,7 @@ impl Controller {
         request: CredentialRevokeRequest,
     ) -> acp::Result<serde_json::Value> {
         let identity = request.identity();
-        self.credential_operation("revoke", &identity, identity.to_value())
+        self.credential_operation("revoke", &identity, &identity.to_value())
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
