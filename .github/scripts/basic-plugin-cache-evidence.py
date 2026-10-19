@@ -80,11 +80,11 @@ def inventory(root, kind):
 
 def dependencies(root, paths):
     # Nix emits actual inputDrvs, never a guessed crate -> plugin mapping.
-    p, timing = call(["nix", "derivation", "show", "--stdin"],
+    p, timing = call(["nix", "derivation", "show", "--recursive", "--stdin"],
                      root, timeout=900, stdin="\n".join(paths) + "\n")
     drvs = json.loads(p.stdout)
-    return {k: sorted(v.get("inputDrvs", {}))
-            for k, v in drvs.items()}, timing
+    return {os.path.basename(k): sorted(os.path.basename(dep) for dep in v.get("inputDrvs", {}))
+            for k, v in drvs.items() if k.endswith(".drv") and isinstance(v, dict)}, timing
 
 
 def mutate(root, case):
@@ -123,7 +123,8 @@ def mutate(root, case):
 
 def is_dependent(consumer, provider, graph):
     seen = set()
-    todo = [consumer]
+    todo = [os.path.basename(consumer)]
+    provider = os.path.basename(provider)
     while todo:
         drv = todo.pop()
         if drv == provider:
