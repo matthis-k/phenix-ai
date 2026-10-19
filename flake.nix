@@ -974,6 +974,7 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
+        ./crates/phenix-provider-contracts
         ./crates/phenix-basic-runtime
         ./tests/generation-identity-v2.json
       ];
