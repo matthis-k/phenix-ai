@@ -24,9 +24,12 @@ fn path(value: Option<&PathBuf>) -> Option<&Path> {
 }
 
 fn as_utf8(path: &Path) -> Result<String, EnvironmentError> {
-    path.to_str()
-        .map(str::to_string)
-        .ok_or_else(|| error(EnvironmentProblem::Unavailable, "environment path is not UTF-8"))
+    path.to_str().map(str::to_string).ok_or_else(|| {
+        error(
+            EnvironmentProblem::Unavailable,
+            "environment path is not UTF-8",
+        )
+    })
 }
 
 /// A captured launch environment is immutable for the lifetime of the plugin.
@@ -200,7 +203,10 @@ mod tests {
         };
         let result = resolve_paths(&inputs, &request()).unwrap();
         assert_eq!(result.config, "/home/user/.config/phenix/example.plugin");
-        assert_eq!(result.state, "/home/user/.local/state/phenix/example.plugin");
+        assert_eq!(
+            result.state,
+            "/home/user/.local/state/phenix/example.plugin"
+        );
         assert_eq!(result.data, "/home/user/.local/share/phenix/example.plugin");
         assert_eq!(result.cache, "/home/user/.cache/phenix/example.plugin");
         assert_eq!(result.runtime, None);
