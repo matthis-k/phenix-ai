@@ -989,28 +989,38 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json]".into());
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json]".into());
     }
     ensure_default_sqlite_path()?;
+
+    // Management compositions are launcher-owned. Client requests cannot
+    // supply a package path, composition or native authority grant.
+    let mut management: Option<Composition> = None;
+    let mut credentials: Option<Composition> = None;
+    if args[1] == "acp" {
+        if !(args.len() - 3).is_multiple_of(2) {
+            return Err("ACP management flags require a composition file".into());
+        }
+        for flag in args[3..].chunks_exact(2) {
+            let target = match flag[0].as_str() {
+                "--provider-management" => &mut management,
+                "--provider-credentials" => &mut credentials,
+                _ => return Err("unknown ACP management flag".into()),
+            };
+            if target.is_some() {
+                return Err("duplicate ACP management flag".into());
+            }
+            let data = std::fs::read(&flag[1]).map_err(|e| e.to_string())?;
+            *target = Some(serde_json::from_slice(&data).map_err(|e| e.to_string())?);
+        }
+    }
     let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
         args[4].as_str()
-    } else if args.len() == 3
-        || (args[1] == "acp" && args.len() == 5 && args[3] == "--provider-management")
-    {
+    } else if args.len() == 3 || args[1] == "acp" {
         "s1"
     } else {
-        return Err("terminal session or ACP provider-management arguments are invalid".into());
+        return Err("terminal session arguments are invalid".into());
     };
-    // A provider-management composition is supplied by the product launcher,
-    // never by an ACP request. Its root grants are checked by the native
-    // kernel independently of the Basic session's authority and journal.
-    let management: Option<Composition> =
-        if args[1] == "acp" && args.len() == 5 && args[3] == "--provider-management" {
-            let data = std::fs::read(&args[4]).map_err(|e| e.to_string())?;
-            Some(serde_json::from_slice(&data).map_err(|e| e.to_string())?)
-        } else {
-            None
-        };
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
     // Source/build policies belong to the product host. The kernel receives
@@ -1051,7 +1061,7 @@ fn run() -> Result<(), String> {
     };
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
-        "acp" => acp_sdk::run(&composition, management.as_ref()),
+        "acp" => acp_sdk::run(&composition, management.as_ref(), credentials.as_ref()),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(
             &composition,
