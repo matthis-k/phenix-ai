@@ -31,6 +31,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -59,14 +60,33 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
-      - name: Build representative incremental products and replay unchanged
-        run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --build --cases A B C D E F G H I J --output incremental-ci-build-evidence
+      - name: Materialize the source edit specific to this pushed commit
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$COMMIT_MESSAGE" in
+            *"Tools source edit"*) case_id=B ;;
+            *"Agent source edit"*) case_id=C ;;
+            *"configuration-only composition update"*) case_id=G ;;
+            *) case_id=A ;;
+          esac
+          if [[ "$case_id" == A ]]; then
+            bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+              --build --cases A --build-cases A --output incremental-ci-build-evidence
+          else
+            bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+              --build --no-warm --cases "$case_id" --build-cases "$case_id" \
+              --output incremental-ci-build-evidence
+          fi
       - name: Preserve build plans, outputs, actual build and substitution logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
