@@ -12,9 +12,6 @@ on:
       - .github/scripts/test-basic-plugin-cache-isolation.sh
       - .github/scripts/basic-plugin-cache-evidence.py
       - .github/workflows/basic-plugin-cache-isolation.yml
-  push:
-    branches:
-      - ci/verify-incremental-nix-*
   workflow_dispatch:
 
 # Credential-free CI diagnostic. Only phenix-flake-ci orchestrates remote
@@ -24,10 +21,8 @@ permissions:
 
 jobs:
   isolation:
-    # PRs measure source/derivation isolation once per exact head. Branch push
-    # events are reserved for the opt-in real-build experiments below, avoiding
-    # a duplicate expensive Nix inventory job for each push to an open PR.
-    if: github.event_name != 'push'
+    # Reproducible derivation-only regression: no privileged runner or cache
+    # publishing credentials, and no experimental push-commit triggers.
     name: Nix derivation and dependency isolation
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -52,52 +47,4 @@ jobs:
         with:
           name: basic-nix-isolation
           path: incremental-ci-evidence/
-          if-no-files-found: warn
-
-  # This opt-in diagnostic must not run on untrusted PR events.
-  materialization:
-    name: Local Nix builds and same-run warm replay
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[cache-probe]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-      - name: Materialize the source edit specific to this pushed commit
-        env:
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$COMMIT_MESSAGE" in
-            *"Tools source edit"*) case_id=B ;;
-            *"Agent source edit"*) case_id=C ;;
-            *"Scripted Model source edit"*) case_id=D ;;
-            *"configuration-only composition update"*) case_id=G ;;
-            *"composition-add-artifact edit"*) case_id=H ;;
-            *"example fixture source edit"*) case_id=J ;;
-            *) case_id=A ;;
-          esac
-          if [[ "$case_id" == A ]]; then
-            bash .github/scripts/test-basic-plugin-cache-isolation.sh \
-              --build --cases A --build-cases A --output incremental-ci-build-evidence
-          else
-            bash .github/scripts/test-basic-plugin-cache-isolation.sh \
-              --build --no-warm --cases "$case_id" --build-cases "$case_id" \
-              --output incremental-ci-build-evidence
-          fi
-      - name: Preserve build plans, outputs, actual build and substitution logs
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: basic-nix-materialization
-          path: incremental-ci-build-evidence/
           if-no-files-found: warn
