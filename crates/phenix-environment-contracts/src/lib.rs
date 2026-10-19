@@ -16,7 +16,7 @@ pub struct EnvironmentQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct EnvironmentPaths {
     pub resource: String,
-    pub workspace: Option<String>,
+    pub launch_cwd: Option<String>,
     pub config: String,
     pub state: String,
     pub data: String,
@@ -88,7 +88,7 @@ mod tests {
         );
         let paths = EnvironmentPaths {
             resource: query.resource,
-            workspace: None,
+            launch_cwd: None,
             config: "/tmp/config".into(),
             state: "/tmp/state".into(),
             data: "/tmp/data".into(),

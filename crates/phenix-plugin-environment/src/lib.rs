@@ -98,10 +98,10 @@ pub fn resolve_paths(
     let runtime = path(inputs.runtime.as_ref())
         .map(|runtime| as_utf8(&runtime.join("phenix").join(namespace)))
         .transpose()?;
-    let workspace = path(inputs.cwd.as_ref()).map(as_utf8).transpose()?;
+    let launch_cwd = path(inputs.cwd.as_ref()).map(as_utf8).transpose()?;
     Ok(EnvironmentPaths {
         resource: request.resource.clone(),
-        workspace,
+        launch_cwd,
         config: base(inputs.config.as_ref(), home, ".config", namespace)?,
         state: base(inputs.state.as_ref(), home, ".local/state", namespace)?,
         data: base(inputs.data.as_ref(), home, ".local/share", namespace)?,
@@ -180,7 +180,7 @@ mod tests {
             runtime: Some("/run/user/1000".into()),
         };
         let result = resolve_paths(&inputs, &request()).unwrap();
-        assert_eq!(result.workspace.as_deref(), Some("/work/repo"));
+        assert_eq!(result.launch_cwd.as_deref(), Some("/work/repo"));
         assert_eq!(result.config, "/custom/config/phenix/example.plugin");
         assert_eq!(result.state, "/custom/state/phenix/example.plugin");
         assert_eq!(result.data, "/custom/data/phenix/example.plugin");
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(result.data, "/home/user/.local/share/phenix/example.plugin");
         assert_eq!(result.cache, "/home/user/.cache/phenix/example.plugin");
         assert_eq!(result.runtime, None);
-        assert_eq!(result.workspace, None);
+        assert_eq!(result.launch_cwd, None);
     }
 
     #[test]

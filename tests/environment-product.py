@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-environment-") as temporary:
     assert code == 0 and good["kind"] == "success", good
     paths = good["value"]
     assert paths["resource"] == resource
-    assert paths["workspace"] == str(root)
+    assert paths["launch_cwd"] == str(root)
     for field in ("config", "state", "data", "cache", "runtime"):
         assert paths[field] == str(root / field / "phenix" / "sample.plugin"), paths
         assert not (root / field / "phenix").exists()

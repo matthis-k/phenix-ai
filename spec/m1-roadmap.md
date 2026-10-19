@@ -76,7 +76,7 @@ First acceptance slice is read-only R-N4a, then credential/action admission. The
 ### Runtime environment locations
 
 `phenix.environment@1` is an optional plugin import. Its default native
-implementation resolves a resource-bound snapshot with a launch workspace,
+implementation resolves a resource-bound snapshot with a launch cwd hint,
 config, state, data, cache and optional runtime directory. Each plugin asks
 for its own namespace through `resolve_for(host, "Environment", namespace)`.
 This provider computes locations but never creates directories, opens files,
