@@ -56,6 +56,33 @@ does not establish cross-run substitution on a fresh runner (L). Until
 controlled cross-run read-only cache restoration is demonstrated, L remains
 unverified. No PR test receives Tailscale secrets or binary-cache write access.
 
+### Measured source-edit rebuilds
+
+Three opt-in push trials passed on 19 October 2026. Each runner first realized
+the selected unedited package targets. The probe then changed one input in a
+disposable Git worktree and measured the resulting physical Nix build. Build
+counts below are parsed from Nix's local build log, **not** from changed
+derivation identities. No production source edit was merged.
+
+| Experiment | Exact-head workflow | Baseline local builds / substitutions | Edited local builds | Edited build time | Edited substitutions | Result |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| B: Basic Tools source | [39206321443](https://github.com/matthis-k/phenix-ai/actions/runs/39206321443), `323e3659` | 233 / 526 (345.639s baseline) | `phenix-plugin-basic-tools`, `phenix-basic-composition` | 28.013s | 0 | PASS |
+| C: Basic Agent source | [39206556341](https://github.com/matthis-k/phenix-ai/actions/runs/39206556341), `4cfcc130` | 233 / 526 (374.519s baseline) | `phenix-plugin-basic-agent`, `phenix-basic-composition` | 30.970s | 0 | PASS |
+| G: composition configuration | [39206551354](https://github.com/matthis-k/phenix-ai/actions/runs/39206551354), `2f42d4de` | 233 / 526 (301.541s baseline) | `phenix-basic-composition` only | 0.195s | 0 | PASS |
+
+The baseline was intentionally a cold materialization in each isolated
+workflow. Its 233 builds and 526 substitutions are **not** changes caused by
+the edit and must not be included in incremental rebuild counts. B and C
+changed 18 package derivation identities and 26 check derivations each; G
+changed 17 package identities and 23 check derivations. These include
+downstream compositions/checks not physically built by the narrow probe.
+All three tests reported no missing required changed packages and no
+unexpected changes to guarded independent Basic packages.
+
+These are targeted package-level experiments, not the total time to execute
+the full test matrix. Scenario K (same-run identical replay) and L (clean
+runner with a populated read-only cache) require separate measured evidence.
+
 ### Outstanding acceptance evidence
 
 See [incremental-build PR #996](https://github.com/matthis-k/phenix-ai/pull/996)
