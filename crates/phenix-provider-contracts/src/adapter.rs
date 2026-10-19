@@ -163,10 +163,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            other.config.decode::<CustomOptions>().unwrap().enabled,
-            false
-        );
+        assert!(!other.config.decode::<CustomOptions>().unwrap().enabled);
         assert_ne!(other.config.schema_id, key.config.schema_id);
     }
 
