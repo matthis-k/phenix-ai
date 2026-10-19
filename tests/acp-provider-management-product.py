@@ -55,6 +55,12 @@ def probe(managed: bool):
     assert set(openai) == {"api", "chatgpt"}, openai
     assert openai["api"]["auth_methods"][0]["kind"] == "ApiKey"
     assert openai["chatgpt"]["auth_methods"][0]["kind"] == "OAuthAuthorizationCode"
+    assert [entry["id"] for entry in openai["api"]["protocols"]] == [
+        "openai-responses", "openai-chat",
+    ]
+    assert [entry["id"] for entry in openai["chatgpt"]["protocols"]] == [
+        "openai-responses",
+    ]
     assert all("secret" not in json.dumps(p).lower() for p in providers.values())
 
     # No ACP-supplied scope or operation can widen this launcher-owned grant.
