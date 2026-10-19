@@ -5,7 +5,7 @@ use super::*;
 use acp::schema::{
     v1::{
         AgentCapabilities, CancelNotification, Implementation, InitializeRequest,
-        InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+        InitializeResponse, ExtRequest, ExtResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
         SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
         SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
@@ -19,6 +19,7 @@ use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
+use phenix_provider_contracts::{ProviderError, ProviderPage, ProviderQuery};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -38,6 +39,7 @@ enum Command {
         SetSessionConfigOptionRequest,
         Reply<SetSessionConfigOptionResponse>,
     ),
+    ProviderList(ExtRequest, Reply<ExtResponse>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -49,6 +51,7 @@ impl Command {
             Self::New(_, reply) => reply.respond_with_error(error),
             Self::Load(_, reply, _) => reply.respond_with_error(error),
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
+            Self::ProviderList(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
@@ -186,6 +189,7 @@ fn bounded_transport(
 
 struct Controller {
     composition: Composition,
+    management: Option<Kernel>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -197,11 +201,13 @@ struct Controller {
 impl Controller {
     fn start(
         composition: Composition,
+        management: Option<Kernel>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
         Self {
             composition,
+            management,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             initialized: false,
@@ -257,6 +263,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::ProviderList(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_list(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -270,6 +284,45 @@ impl Controller {
             }
             Command::Closed => self.closed.store(true, Ordering::Release),
         }
+    }
+
+    /// Stable ACP extension: read-only, runtime-granted provider identities.
+    /// The client cannot supply a composition path, caller, grant, or model
+    /// entitlement. A missing management kernel fails closed.
+    fn provider_list(&self, request: ExtRequest) -> acp::Result<ExtResponse> {
+        if request.method.as_ref() != "_phenix/providers/list" {
+            return Err(acp::Error::method_not_found());
+        }
+        let query: ProviderQuery =
+            serde_json::from_str(request.params.get()).map_err(|_| invalid("invalid provider query"))?;
+        if query.scope != "user" {
+            return Err(invalid("unsupported provider scope"));
+        }
+        let kernel = self
+            .management
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let selected = Selection {
+            interface: "phenix.provider.catalog@1".into(),
+            operation: "list".into(),
+            provider: "phenix.provider.builtins".into(),
+        };
+        let root = kernel.admit_root(selected).map_err(internal)?;
+        let page: ProviderPage = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => ProviderPage::from_value(value).map_err(internal)?,
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                return Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": problem.code,
+                })));
+            }
+        };
+        // Official SDK serializes the extension response as JSON-RPC. No
+        // custom framing, data-bearing notification or frontend catalog.
+        let raw = acp::RawValue::from_string(serde_json::to_string(&page).map_err(internal)?)
+            .map_err(internal)?;
+        Ok(ExtResponse::new(Arc::from(raw)))
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
@@ -494,11 +547,25 @@ impl Controller {
         for (_, kernel) in self.sessions {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
+        if let Some(kernel) = self.management {
+            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        }
         Ok(())
     }
 }
 
-pub(super) fn run(composition: &Composition) -> Result<(), String> {
+pub(super) fn run(
+    composition: &Composition,
+    management: Option<&Composition>,
+) -> Result<(), String> {
+    let management = management
+        .map(|spec| {
+            Prepared::prepare(spec.clone())
+                .map_err(|e| format!("{e:?}"))?
+                .load()
+                .map_err(|e| format!("{e:?}"))
+        })
+        .transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -506,6 +573,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let queued: Arc<PendingPrompts> = Arc::new(Mutex::new(VecDeque::new()));
     let controller = Controller::start(
         composition.clone(),
+        management,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
@@ -516,6 +584,7 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let new = tx.clone();
     let load = tx.clone();
     let set_config = tx.clone();
+    let provider_list = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -545,6 +614,12 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .on_receive_request(
             async move |request: SetSessionConfigOptionRequest, reply, _peer| {
                 submit(&set_config, Command::SetConfig(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ExtRequest, reply, _peer| {
+                submit(&provider_list, Command::ProviderList(request, reply))
             },
             acp::on_receive_request!(),
         )
