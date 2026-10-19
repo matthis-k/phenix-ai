@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-runtime, basic, credential_plugin, definitions, destination = sys.argv[1:]
+runtime, basic, credential_plugin, definitions, catalog, destination = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 
@@ -65,7 +65,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     def start(config=None):
         argv = [runtime, "acp", basic]
         if config is not None:
-            argv += ["--provider-credentials", str(config)]
+            argv += ["--provider-management", catalog,
+                     "--provider-credentials", str(config)]
         return subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
@@ -122,6 +123,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     assert secret not in bad.stdout + bad.stderr
 
     child = initialized(config_file)
+    providers = call(child, 7, "_phenix/providers/list", {"scope": "user"})
+    assert providers["result"]["revision"] > 0
+    assert "openai" in {item["id"] for item in providers["result"]["providers"]}
     spoofed = call(child, 2, "_phenix/credentials/import", dict(**other, secret=secret))
     assert spoofed["error"]["code"] == -32602
     assert not list(vault.iterdir())
@@ -157,6 +161,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "resolve_unavailable_to_acp": True,
     "restart": True,
     "strict_composition_grants": True,
+    "catalog_coexists_without_credential_authority": True,
     "secret_redacted": True,
 }, sort_keys=True, indent=2))
 print("ACP credential import/revoke with exact launcher grants verified")
