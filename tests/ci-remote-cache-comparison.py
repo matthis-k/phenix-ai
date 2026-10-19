@@ -8,7 +8,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-PIN = "e91cc8de2e10d0c4592b950e442f73ff6ea9efa3"
+PIN = "5366cd3b0f79d83049b95fdb278220394f6866a9"
 REQUIRED = {"m1-shipping", "p1-release-preflight", "basic-host-smoke",
             "basic-pending-http-product", "m1-imports", "m1-public-sdk"}
 
