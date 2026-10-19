@@ -52,9 +52,11 @@ retained by the existing cache-isolation workflow as Actions artifacts.
 A source edit changing a derivation name alone is **not** a cache hit:
 the evidence must separately report actual local compilation, substitute
 transfer, or an already-present output. A second build in the same job (K)
-does not establish cross-run substitution on a fresh runner (L). Until
-controlled cross-run read-only cache restoration is demonstrated, L remains
-unverified. No PR test receives Tailscale secrets or binary-cache write access.
+does not establish cross-run cache reuse on a fresh runner (L). Cross-run
+**GitHub Actions Nix-store restoration** has since been demonstrated in a
+separate clean PR-runner experiment. That result must never be confused with
+signed remote binary-cache substitution, which remains unverified. No PR test
+receives Tailscale secrets or binary-cache write access.
 
 ### Measured source-edit rebuilds
 
@@ -80,8 +82,9 @@ All three tests reported no missing required changed packages and no
 unexpected changes to guarded independent Basic packages.
 
 These are targeted package-level experiments, not the total time to execute
-the full test matrix. Scenario K (same-run identical replay) and L (clean
-runner with a populated read-only cache) require separate measured evidence.
+the full test matrix. Scenario K's identical replay and L's fresh-runner
+read-only **Actions-store restoration** have separate measured evidence.
+External signed binary-cache substitution was not exercised by either.
 
 ### Outstanding acceptance evidence
 
@@ -128,8 +131,16 @@ Scenario K's identical replay completed successfully in
 [the isolated run 39207618373](https://github.com/matthis-k/phenix-ai/actions/runs/39207618373):
 the harness asserts identical realized outputs and **zero** local builds or
 substitutions on the repeat. It establishes same-run warm reuse only.
-Scenario L remains unverified until a separate fresh-runner cache substitution
-is measured and inspected.
+Scenario L (fresh-runner **Actions Nix-store restoration**) is verified by
+[the 2m50s PR run 39210162210](https://github.com/matthis-k/phenix-ai/actions/runs/39210162210):
+its shared writer restored ~1.28 GB of compressed trusted-main Actions cache
+from revision `3376890d`; each of five independent shards then restored the
+new PR snapshot read-only and verified seven prebuilt outputs locally without
+recompiling any of those outputs. All 74 exact-head Nix checks passed. The
+unchanged `phenix-contract-check` was not rebuilt on those shards, unlike
+the previous 4 GiB snapshot case. This demonstrates cross-run store reuse,
+**not** substitution from a signed remote binary cache. An independent
+signed-substitution experiment is still outstanding and must not be inferred.
 
 
 ## Current CI principles and applied assessment (15 October 2026)
