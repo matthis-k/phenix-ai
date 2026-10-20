@@ -175,13 +175,13 @@ pub fn assemble_verified_basic_request(
                     || !receipt.call_id().is_empty()
                     || receipt.error().is_some()
                     || receipt
-                        .calls
+                        .calls()
                         .iter()
                         .any(|call| call.id.is_empty() || !seen_ids.insert(call.id.clone()))
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
-                queued_calls.extend(receipt.calls());
+                queued_calls.extend(receipt.calls().iter().cloned());
                 if retained {
                     retained_history.push(assistant.clone());
                 }
@@ -206,7 +206,7 @@ pub fn assemble_verified_basic_request(
                         || !assistant.call_id().is_empty()
                         || assistant.error().is_some()
                         || assistant
-                            .calls
+                            .calls()
                             .iter()
                             .any(|call| call.id.is_empty() || !seen_ids.insert(call.id.clone()))
                     {
