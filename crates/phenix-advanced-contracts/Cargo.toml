@@ -9,3 +9,6 @@ phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true
 sha2 = "0.10"
+
+[dev-dependencies]
+serde_json.workspace = true
