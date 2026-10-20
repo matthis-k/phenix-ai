@@ -1,7 +1,7 @@
 //! Real pending native Model with independently hosted HTTP and journal providers.
 use phenix_basic_contracts::{
     BasicError, ContextItem, ErrorCode, EventPage, JournalQuery, Limits, Message, ModelReply,
-    ModelRequest, Role, Skill, ToolCall, ToolInfo,
+    ModelRequest, Skill, ToolCall, ToolInfo,
 };
 use phenix_contract::{Authority, Portable};
 use phenix_kernel::{
@@ -51,7 +51,7 @@ fn request(mode: &str) -> ModelRequest {
         session: if mode == "denied" { "s2" } else { "s1" }.into(),
         run: "r1".into(),
         history: vec![
-            Message::user("prior".into()),
+            Message::user("prior"),
             Message::assistant(String::new(), vec![
                     ToolCall {
                         id: "prior-1".into(),
@@ -64,9 +64,9 @@ fn request(mode: &str) -> ModelRequest {
                         arguments: r#""old""#.into(),
                     },
                 ]),
-            Message::tool("prior-1".into(), ToolOutcome::Succeeded { text: "OLD".into() }),
-            Message::tool("prior-2".into(), ToolOutcome::Failed { output: String::new(), reason: "prior tool failed".into() }),
-            Message::user(mode.into()),
+            Message::tool("prior-1", ToolOutcome::Succeeded { text: "OLD".into() }),
+            Message::tool("prior-2", ToolOutcome::Failed { output: String::new(), reason: "prior tool failed".into() }),
+            Message::user(mode),
         ],
         tools: ["uppercase", "length"]
             .into_iter()
