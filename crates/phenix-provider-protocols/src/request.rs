@@ -353,3 +353,108 @@ fn anthropic_body(
     body["max_tokens"] = json!(max_tokens);
     body
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phenix_basic_contracts::{Limits, Message, ToolCall, ToolInfo};
+
+    fn tool_history(outcome: ToolOutcome) -> ModelRequest {
+        ModelRequest {
+            session: "s1".into(),
+            run: "r1".into(),
+            history: vec![
+                Message::user("hello"),
+                Message::assistant(
+                    "",
+                    vec![ToolCall {
+                        id: "call-1".into(),
+                        tool: "uppercase".into(),
+                        arguments: r#""hello""#.into(),
+                    }],
+                ),
+                Message::tool("call-1", outcome),
+            ],
+            tools: vec![ToolInfo {
+                id: "uppercase".into(),
+                description: "Uppercase".into(),
+                arguments_schema: r#"{"type":"string"}"#.into(),
+                idempotent: true,
+            }],
+            skills: vec![],
+            context: vec![],
+            limits: Limits {
+                model_tokens: Some(64),
+                ..Limits::default()
+            },
+        }
+    }
+
+    #[test]
+    fn typed_tool_outcomes_reach_each_wire_codec() {
+        for protocol in [
+            crate::Protocol::OpenaiChat,
+            crate::Protocol::OpenaiResponses,
+            crate::Protocol::AnthropicMessages,
+        ] {
+            for outcome in [
+                ToolOutcome::Succeeded {
+                    text: "HELLO".into(),
+                },
+                ToolOutcome::Failed {
+                    output: "partial".into(),
+                    reason: "denied".into(),
+                },
+            ] {
+                let failed = matches!(outcome, ToolOutcome::Failed { .. });
+                let request = tool_history(outcome);
+                let encoded = encode_protocol(&request, "test-model", protocol).unwrap();
+                let body: Value = serde_json::from_slice(&encoded).unwrap();
+                let output = match protocol {
+                    crate::Protocol::OpenaiChat => &body["messages"][2]["content"],
+                    crate::Protocol::OpenaiResponses => &body["input"][3]["output"],
+                    crate::Protocol::AnthropicMessages => &body["messages"][2]["content"][0]["content"],
+                };
+                if failed {
+                    assert_eq!(
+                        serde_json::from_str::<Value>(output.as_str().unwrap()).unwrap(),
+                        json!({"error":"denied","output":"partial"})
+                    );
+                } else {
+                    assert_eq!(output, "HELLO");
+                }
+                if protocol == crate::Protocol::AnthropicMessages {
+                    assert_eq!(
+                        body["messages"][2]["content"][0]["is_error"].as_bool(),
+                        failed.then_some(true)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_results_without_corresponding_calls_are_rejected() {
+        let mut request = tool_history(ToolOutcome::Succeeded {
+            text: "HELLO".into(),
+        });
+        request.history[2] = Message::tool(
+            "unknown",
+            ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        );
+        for protocol in [
+            crate::Protocol::OpenaiChat,
+            crate::Protocol::OpenaiResponses,
+            crate::Protocol::AnthropicMessages,
+        ] {
+            assert_eq!(
+                encode_protocol(&request, "test-model", protocol)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidInput
+            );
+        }
+    }
+}
