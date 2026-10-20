@@ -179,7 +179,7 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_basic_contracts::{ToolCall, ToolOutcome};
+    use phenix_basic_contracts::{Role, ToolCall, ToolOutcome};
 
     #[test]
     fn interrupted_tool_recovery_requires_explicit_call_id() {
