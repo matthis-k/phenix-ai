@@ -6,38 +6,14 @@ use phenix_plugin_basic_agent::project_model_request;
 #[test]
 fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs() {
     let history = vec![
-        Message {
-            role: Role::User,
-            text: "read the file".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        },
-        Message {
-            role: Role::Assistant,
-            text: "reading".into(),
-            calls: vec![ToolCall {
+        Message::user("read the file".into()),
+        Message::assistant("reading".into(), vec![ToolCall {
                 id: "c1".into(),
                 tool: "read".into(),
                 arguments: r#"{"path":"a.rs"}"#.into(),
-            }],
-            call_id: String::new(),
-            error: None,
-        },
-        Message {
-            role: Role::Tool,
-            text: "fn main() {}".into(),
-            calls: vec![],
-            call_id: "c1".into(),
-            error: None,
-        },
-        Message {
-            role: Role::User,
-            text: "now fix the code".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        },
+            }]),
+        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "fn main() {}".into() }),
+        Message::user("now fix the code".into()),
     ];
     let tools = vec![ToolInfo {
         id: "read".into(),
@@ -83,13 +59,7 @@ fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs(
 
 #[test]
 fn projection_is_not_a_scheduler_or_agent_run() {
-    let history = vec![Message {
-        role: Role::User,
-        text: "hello".into(),
-        calls: vec![],
-        call_id: String::new(),
-        error: None,
-    }];
+    let history = vec![Message::user("hello".into())];
     let limits = Limits::default();
     let first = project_model_request("s2", "run-1", &history, &[], &[], &[], &limits);
     let second = project_model_request("s2", "run-1", &history, &[], &[], &[], &limits);
