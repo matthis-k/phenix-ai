@@ -13,38 +13,14 @@ fn source() -> ModelRequest {
         session: "s1".into(),
         run: "run-3".into(),
         history: vec![
-            Message {
-                role: Role::User,
-                text: "read this".into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Assistant,
-                text: "running".into(),
-                calls: vec![ToolCall {
+            Message::user("read this".into()),
+            Message::assistant("running".into(), vec![ToolCall {
                     id: "c1".into(),
                     tool: "read".into(),
                     arguments: r#"{"path":"a.rs"}"#.into(),
-                }],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Tool,
-                text: "read result".into(),
-                calls: vec![],
-                call_id: "c1".into(),
-                error: None,
-            },
-            Message {
-                role: Role::User,
-                text: "now answer".into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
+                }]),
+            Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "read result".into() }),
+            Message::user("now answer".into()),
         ],
         tools: vec![ToolInfo {
             id: "read".into(),
