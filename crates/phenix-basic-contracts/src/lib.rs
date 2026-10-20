@@ -197,11 +197,12 @@ pub struct ContextSet {
     pub items: Vec<ContextItem>,
 }
 
-/// Typed payload carried by ToolFinished events in Event::data.
-/// Older, payload-free journal entries represent successful completion.
-#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct ToolCompletion {
-    pub failed: bool,
+/// Every completed tool effect explicitly records success or failure.
+/// Missing metadata is not silently interpreted as success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum ToolCompletion {
+    Succeeded,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
