@@ -1,14 +1,14 @@
 //! P2-3u RED: checkpoint pressure derives from the selected Model's exact
 //! full-request measurement. It does not execute, summarize, or store effects.
 use phenix_advanced_contracts::{model_request_sha256, ModelTokenMeasurement, ModelTokenProblem};
-use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Limits, Message, ModelRequest};
 use phenix_p2_compaction_replay::{checkpoint_pressure, CheckpointPressure, PressureProblem};
 
 fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message::user("What happened earlier?".into())],
+        history: vec![Message::user("What happened earlier?")],
         tools: vec![],
         skills: vec![],
         context: vec![],
