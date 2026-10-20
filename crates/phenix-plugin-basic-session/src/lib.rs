@@ -1,7 +1,8 @@
 //! Session aggregate over selected revision-checked Storage.
 //! The kernel provides admission and cancellation, not durable session logic.
 use phenix_basic_contracts::{
-    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot, Usage,
+    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot,
+    ToolOutcome, Usage,
 };
 
 const RECORD: &str = "session.snapshot.v1";
@@ -42,10 +43,10 @@ pub fn reconcile_snapshot(
     snapshot.pending.remove(position);
     snapshot.history.push(Message {
         role: Role::Tool,
-        text: resolution.text.clone(),
+        text: resolution.outcome.text().into(),
         calls: vec![],
         call_id: resolution.call_id.clone(),
-        error: resolution.error.clone(),
+        error: resolution.outcome.error().map(str::to_owned),
     });
     if snapshot.pending.is_empty() {
         snapshot.status = RunStatus::Running;
@@ -207,8 +208,9 @@ mod tests {
                 &ReconcileTool {
                     session: "s2".into(),
                     call_id: "a".into(),
-                    text: String::new(),
-                    error: None
+                    outcome: ToolOutcome::Succeeded {
+                        text: String::new(),
+                    }
                 }
             )
             .unwrap_err()
@@ -221,8 +223,9 @@ mod tests {
                 &ReconcileTool {
                     session: "s1".into(),
                     call_id: "unknown".into(),
-                    text: String::new(),
-                    error: None
+                    outcome: ToolOutcome::Succeeded {
+                        text: String::new(),
+                    }
                 }
             )
             .unwrap_err()
@@ -234,8 +237,9 @@ mod tests {
             &ReconcileTool {
                 session: "s1".into(),
                 call_id: "a".into(),
-                text: "HELLO".into(),
-                error: None,
+                outcome: ToolOutcome::Succeeded {
+                    text: "HELLO".into(),
+                },
             },
         )
         .unwrap();
@@ -246,8 +250,10 @@ mod tests {
             &ReconcileTool {
                 session: "s1".into(),
                 call_id: "b".into(),
-                text: String::new(),
-                error: Some("tool failed".into()),
+                outcome: ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "tool failed".into(),
+                },
             },
         )
         .unwrap();

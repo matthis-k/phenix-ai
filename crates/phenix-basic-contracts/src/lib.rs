@@ -277,12 +277,35 @@ pub struct SessionSnapshot {
     pub pending: Vec<ToolCall>,
     pub usage: Usage,
 }
+/// A tool effect has exactly one reconciled outcome. A failed result
+/// explicitly carries both any partial output and its error reason.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum ToolOutcome {
+    Succeeded { text: String },
+    Failed { output: String, reason: String },
+}
+
+impl ToolOutcome {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Succeeded { text } => text,
+            Self::Failed { output, .. } => output,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Succeeded { .. } => None,
+            Self::Failed { reason, .. } => Some(reason),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct ReconcileTool {
     pub session: String,
     pub call_id: String,
-    pub text: String,
-    pub error: Option<String>,
+    pub outcome: ToolOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -466,6 +489,38 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reconciliation_outcomes_reject_ambiguous_wire_payloads() {
+        for outcome in [
+            ToolOutcome::Succeeded {
+                text: "hello".into(),
+            },
+            ToolOutcome::Failed {
+                output: String::new(),
+                reason: "failed".into(),
+            },
+        ] {
+            let encoded = outcome.to_value();
+            assert!(ToolOutcome::SCHEMA.owned().unwrap().accepts(&encoded));
+            assert_eq!(ToolOutcome::from_value(encoded).unwrap(), outcome);
+        }
+        let ambiguous = Value::map([
+            (
+                "Succeeded",
+                Value::map([("text", Value::String("hi".into()))]),
+            ),
+            (
+                "Failed",
+                Value::map([
+                    ("output", Value::String("".into())),
+                    ("reason", Value::String("no".into())),
+                ]),
+            ),
+        ]);
+        assert!(!ToolOutcome::SCHEMA.owned().unwrap().accepts(&ambiguous));
+        assert!(ToolOutcome::from_value(ambiguous).is_err());
+    }
+
     #[test]
     fn internal_reprepare_is_distinct_from_a_completed_turn() {
         let reprepare = TurnAdvanceOutcome::Reprepare;

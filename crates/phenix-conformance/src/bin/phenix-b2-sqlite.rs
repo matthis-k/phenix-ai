@@ -470,8 +470,9 @@ fn main() {
                 ReconcileTool {
                     session: "s1".into(),
                     call_id: "missing".into(),
-                    text: String::new(),
-                    error: None,
+                    outcome: ToolOutcome::Succeeded {
+                        text: String::new(),
+                    },
                 }
             )
             .unwrap()
@@ -486,8 +487,9 @@ fn main() {
             ReconcileTool {
                 session: "s1".into(),
                 call_id: "c1".into(),
-                text: "PROMPT".into(),
-                error: None,
+                outcome: ToolOutcome::Succeeded {
+                    text: "PROMPT".into(),
+                },
             },
         )
         .unwrap()
@@ -500,8 +502,10 @@ fn main() {
             ReconcileTool {
                 session: "s1".into(),
                 call_id: "c2".into(),
-                text: String::new(),
-                error: Some("failed".into()),
+                outcome: ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "failed".into(),
+                },
             },
         )
         .unwrap()
