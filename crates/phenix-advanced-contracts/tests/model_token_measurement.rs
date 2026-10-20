@@ -5,13 +5,13 @@ use phenix_advanced_contracts::{
     model_request_sha256, validate_model_token_measurement, ModelTokenMeasurement,
     ModelTokenProblem,
 };
-use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Role, Skill, ToolInfo};
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 
 fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message::user("Explain the result".into())],
+        history: vec![Message::user("Explain the result")],
         tools: vec![ToolInfo {
             id: "read".into(),
             description: "Read a file".into(),
