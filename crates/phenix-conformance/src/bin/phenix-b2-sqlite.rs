@@ -142,13 +142,7 @@ fn main() {
         running.run = "r1".into();
         running.status = RunStatus::Running;
         running.checkpoint = 7;
-        running.history.push(Message {
-            role: Role::User,
-            text: "prompt".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        });
+        running.history.push(Message::user("prompt".into()));
         running.pending = ["c1", "c2"]
             .into_iter()
             .map(|id| ToolCall {
