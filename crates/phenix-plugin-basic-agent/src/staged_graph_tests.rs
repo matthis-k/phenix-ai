@@ -7,13 +7,7 @@ fn source() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "answer".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("answer".into())],
         tools: vec![],
         skills: vec![],
         context: vec![],
