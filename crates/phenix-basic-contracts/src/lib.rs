@@ -150,10 +150,11 @@ pub struct RunResult {
 /// A re-preparation commits a watched request and allows the kernel's existing
 /// graph scheduling to trigger another Model wave; it is not an Answer.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct TurnAdvanceOutcome {
-    /// None signals a committed re-preparation wave, not a terminal answer.
-    /// Some carries the completed, authoritative Basic turn result.
-    pub completed: Option<RunResult>,
+pub enum TurnAdvanceOutcome {
+    /// A committed preparation wave: another model invocation is required.
+    Reprepare,
+    /// Terminal, authoritative Basic turn result.
+    Complete { result: RunResult },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -453,20 +454,20 @@ mod tests {
     use super::*;
     #[test]
     fn internal_reprepare_is_distinct_from_a_completed_turn() {
-        let reprepare = TurnAdvanceOutcome { completed: None };
+        let reprepare = TurnAdvanceOutcome::Reprepare;
         assert_eq!(
             decode::<TurnAdvanceOutcome>(&encode(&reprepare).unwrap()).unwrap(),
             reprepare
         );
-        let complete = TurnAdvanceOutcome {
-            completed: Some(RunResult {
+        let complete = TurnAdvanceOutcome::Complete {
+            result: RunResult {
                 session: "s1".into(),
                 run: "run-1".into(),
                 answer: String::new(),
                 model_turns: 1,
                 tool_calls: 0,
                 usage: Usage::default(),
-            }),
+            },
         };
         assert_ne!(reprepare, complete);
         assert_eq!(
