@@ -130,7 +130,10 @@ impl Portable for PreparationReceipt {
 
     fn from_value(value: Value) -> Result<Self, Failure> {
         let Value::Map(mut fields) = value else {
-            return Err(Failure::new(Code::SchemaRejected, "receipt must be a struct"));
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "receipt must be a struct",
+            ));
         };
         let sha = fields
             .remove("request_sha256")
@@ -223,7 +226,10 @@ mod receipt_tests {
         assert_eq!(receipt.source_epoch(), 42);
         assert_eq!(receipt.request_sha256(), sha());
         let encoded = receipt.to_value();
-        assert!(PreparationReceipt::SCHEMA.owned().unwrap().accepts(&encoded));
+        assert!(PreparationReceipt::SCHEMA
+            .owned()
+            .unwrap()
+            .accepts(&encoded));
         assert_eq!(PreparationReceipt::from_value(encoded).unwrap(), receipt);
     }
 
@@ -240,16 +246,20 @@ mod receipt_tests {
             ("authority", Value::Bool(true)),
         ]);
         assert!(PreparationReceipt::from_value(extra).is_err());
-        assert!(serde_json::from_value::<PreparationReceipt>(serde_json::json!({
-            "source_epoch": 0,
-            "request_sha256": sha()
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<PreparationReceipt>(serde_json::json!({
-            "source_epoch": 1,
-            "request_sha256": sha(),
-            "authority": true
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<PreparationReceipt>(serde_json::json!({
+                "source_epoch": 0,
+                "request_sha256": sha()
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<PreparationReceipt>(serde_json::json!({
+                "source_epoch": 1,
+                "request_sha256": sha(),
+                "authority": true
+            }))
+            .is_err()
+        );
     }
 }
