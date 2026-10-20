@@ -52,7 +52,7 @@ fn candidate_admission_rejects_every_modification_without_durable_proof() {
     modified.run = "run-other".into();
     assert!(verify_staged_model_candidate(&original, &modified).is_err());
     let mut modified = original.clone();
-    modified.history[0].text = "forged".into();
+    *modified.history[0].text_mut() = "forged".into();
     assert!(verify_staged_model_candidate(&original, &modified).is_err());
     let mut modified = original.clone();
     modified.limits.model_tokens = Some(10_000);
