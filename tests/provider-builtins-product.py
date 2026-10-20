@@ -88,8 +88,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         "openai-responses",
     ]
     assert {p["id"]: p["endpoint"] for p in connections["api"]["protocols"]} == {
-        "openai-responses": "https://api.openai.com/v1/responses",
-        "openai-chat": "https://api.openai.com/v1/chat/completions",
+        "openai-responses": ["https://api.openai.com/v1/responses"],
+        "openai-chat": ["https://api.openai.com/v1/chat/completions"],
     }
     # A descriptor with an explicit API endpoint does not authenticate it.
     # ChatGPT delegated subscription inference remains deliberately unavailable.
