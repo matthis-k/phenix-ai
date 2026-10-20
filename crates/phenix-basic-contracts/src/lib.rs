@@ -89,13 +89,93 @@ pub struct ToolCall {
     pub tool: String,
     pub arguments: String,
 }
+/// Exactly one transcript role and its role-specific payload.
+///
+/// Invalid cross-role fields do not exist in the wire schema. Model history
+/// remains untrusted until the consumer verifies sequencing and call IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub text: String,
-    pub calls: Vec<ToolCall>,
-    pub call_id: String,
-    pub error: Option<String>,
+pub enum Message {
+    User { text: String },
+    Assistant { text: String, calls: Vec<ToolCall> },
+    Tool { call_id: String, outcome: ToolOutcome },
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self::User { text: text.into() }
+    }
+
+    pub fn assistant(text: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        Self::Assistant {
+            text: text.into(),
+            calls,
+        }
+    }
+
+    pub fn tool(call_id: impl Into<String>, outcome: ToolOutcome) -> Self {
+        Self::Tool {
+            call_id: call_id.into(),
+            outcome,
+        }
+    }
+
+    pub fn role(&self) -> Role {
+        match self {
+            Self::User { .. } => Role::User,
+            Self::Assistant { .. } => Role::Assistant,
+            Self::Tool { .. } => Role::Tool,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            Self::User { text } | Self::Assistant { text, .. } => text,
+            Self::Tool { outcome, .. } => outcome.text(),
+        }
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::User { text } | Self::Assistant { text, .. } => text,
+            Self::Tool { outcome: ToolOutcome::Succeeded { text }, .. } => text,
+            Self::Tool { outcome: ToolOutcome::Failed { output, .. }, .. } => output,
+        }
+    }
+
+    pub fn calls(&self) -> &[ToolCall] {
+        match self {
+            Self::Assistant { calls, .. } => calls,
+            Self::User { .. } | Self::Tool { .. } => &[],
+        }
+    }
+
+    pub fn call_id(&self) -> &str {
+        match self {
+            Self::Tool { call_id, .. } => call_id,
+            Self::User { .. } | Self::Assistant { .. } => "",
+        }
+    }
+
+    pub fn tool_call_id_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Tool { call_id, .. } => Some(call_id),
+            _ => None,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Tool { outcome, .. } => outcome.error(),
+            _ => None,
+        }
+    }
+
+    pub fn outcome(&self) -> Option<&ToolOutcome> {
+        match self {
+            Self::Tool { outcome, .. } => Some(outcome),
+            _ => None,
+        }
+    }
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct Usage {
@@ -551,31 +631,21 @@ mod tests {
             session: "test".into(),
             run: "r1".into(),
             history: vec![
-                Message {
-                    role: Role::User,
-                    text: "hello".into(),
-                    calls: vec![],
-                    call_id: String::new(),
-                    error: None,
-                },
-                Message {
-                    role: Role::Assistant,
-                    text: String::new(),
-                    calls: vec![ToolCall {
+                Message::user("hello"),
+                Message::assistant(
+                    "",
+                    vec![ToolCall {
                         id: "c1".into(),
                         tool: "uppercase".into(),
                         arguments: "{}".into(),
                     }],
-                    call_id: String::new(),
-                    error: None,
-                },
-                Message {
-                    role: Role::Tool,
-                    text: "HELLO".into(),
-                    calls: vec![],
-                    call_id: "c1".into(),
-                    error: None,
-                },
+                ),
+                Message::tool(
+                    "c1",
+                    ToolOutcome::Succeeded {
+                        text: "HELLO".into(),
+                    },
+                ),
             ],
             tools: vec![],
             skills: vec![],
