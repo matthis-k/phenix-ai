@@ -412,3 +412,56 @@ Maintain the old shipping workflow until AI-CI3 proves the complete check
 inventory, exact-head evidence and production closure match. Introduce
 selective PR skipping under AI-CI4 only after the full generated gate works.
 Mark milestones complete only after their measured acceptance work passes.
+
+
+### Physical A–J follow-up: D/E/F/H/I/J (20 October 2026)
+
+This is **physical Nix execution** evidence supplementing the merged
+[#996](https://github.com/matthis-k/phenix-ai/pull/996) A–J derivation-identity
+suite; it does not change the canonical Nix graph or assume that equal
+derivation identities imply cache hits. The selected package/check targets
+were realized in detached disposable worktrees on an unprivileged GitHub
+runner. Per-case `evidence.json` includes baseline/changed derivation paths,
+realized output store paths, Nix build stderr, local build lines and
+substitution lines. All selected builds returned exit code 0. These are
+subset materializations, **not** end-to-end CI-duration measurements.
+
+Full six-case physical run
+[39453122866](https://github.com/matthis-k/phenix-ai/actions/runs/39453122866)
+at head `e54e6a02`, artifact `physical-nix-evidence` ID `12281391702`:
+
+| Edit case | Selected actual build targets | Real Nix build time | Local derivation builds reported | Observed result |
+| --- | --- | ---: | ---: | --- |
+| D: scripted Model source | Model plugin + Basic composition | 27.699 s | 2 | Pass; only edited Model and composition are materialized |
+| E: shared Basic contracts | Tools, Agent, Model + composition | 297.156 s | 13 | Pass; shared-contract dependents rebuild |
+| F: shared SDK | Tools, Agent, Model + composition | 297.188 s | 13 | Pass; SDK-dependent graph rebuild |
+| H: add existing HTTP plugin to verification composition | Verification composition | 42.998 s | 2 | Pass, **confounded by first cold realization** of unchanged HTTP plugin; superseded by controlled H retest below |
+| I: staged feature check toggle | `checks.p2-basic-staged-plugin` | 47.760 s | 1 | Pass; check variant changes without changing plugin package identity |
+| J: external example fixture | Core example package | 113.609 s | 2 | Pass; external fixture source and affected package rebuild |
+
+The full run pre-realized its selected baseline package targets in
+488.620 s and baseline staged check in 47.730 s. Each post-edit case has
+a distinct source baseline and inspected `realized_outputs`. Observed
+changed-versus-preserved derivation counts and the full list of actual
+`inputDrvs` remain in the uploaded JSON. No unexpected derivation
+changes or missing expected changes were reported for D/E/F/H/I/J.
+
+Controlled H correction:
+[39455318159](https://github.com/matthis-k/phenix-ai/actions/runs/39455318159)
+at head `de641d99`, artifact `physical-nix-evidence` ID
+`12280517346`. Pre-realized both the unchanged verification composition
+and the unchanged `phenix-plugin-model-http` (baseline 290.448 s).
+After adding that HTTP plugin to the verification composition, the
+edited composition itself materialized in **0.163 s** with **exactly one
+local derivation build** and no plugin recompilation. This controlled
+result, not the original 42.998 s, is the relevant H isolation evidence.
+A log line absent from the local-build/substitution lists means
+**unknown**, not automatically a cache hit.
+
+The PR branch removes the temporary
+`.github/workflows/basic-plugin-physical-probe.yml` after collecting
+these archived run/artifact links. No probe workflow or special
+cache-publication authority is merged. These experiments **do not**
+prove signed external binary cache substitution or a sub-10-minute
+cold/full CI workflow. The full matrix, source checks, official ACP
+and generated caller must pass again at the final post-cleanup PR head.
