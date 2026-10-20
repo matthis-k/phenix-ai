@@ -23,10 +23,10 @@ fn previous_fact<'a>(history: &'a [Message], key: &str) -> Option<(usize, &'a st
         .enumerate()
         .rev()
         .find_map(|(index, message)| {
-            if message.role != Role::User {
+            if message.role() != Role::User {
                 return None;
             }
-            let (found, value) = fact(&message.text)?;
+            let (found, value) = fact(&message.text())?;
             (found == key).then_some((index, value))
         })
 }
@@ -35,16 +35,16 @@ fn previous_fact<'a>(history: &'a [Message], key: &str) -> Option<(usize, &'a st
 fn linked_tool_result(history: &[Message]) -> Option<&str> {
     history.windows(2).rev().find_map(|pair| {
         let (assistant, result) = (&pair[0], &pair[1]);
-        if assistant.role != Role::Assistant || result.role != Role::Tool {
+        if assistant.role() != Role::Assistant || result.role() != Role::Tool {
             return None;
         }
         assistant
             .calls
             .iter()
-            .any(|call| call.id == result.call_id && call.tool == "uppercase")
+            .any(|call| call.id == result.call_id() && call.tool == "uppercase")
             .then_some(result)
             .and_then(|result| {
-                (result.error.is_none() && result.text == "HELLO").then_some(result.text.as_str())
+                (result.error().is_none() && result.text() == "HELLO").then_some(result.text())
             })
     })
 }
@@ -58,16 +58,16 @@ fn tool_continuation(history: &[Message], start: usize) -> Result<String, BasicE
     }
     let assistant = &tail[0];
     let result = &tail[1];
-    if assistant.role != Role::Assistant
-        || !assistant.text.is_empty()
-        || assistant.calls.len() != 1
-        || assistant.calls[0].id != "history-tool-1"
-        || assistant.calls[0].tool != "uppercase"
-        || assistant.calls[0].arguments != r#""hello""#
-        || result.role != Role::Tool
-        || result.call_id != "history-tool-1"
-        || result.error.is_some()
-        || result.text != "HELLO"
+    if assistant.role() != Role::Assistant
+        || !assistant.text().is_empty()
+        || assistant.calls().len() != 1
+        || assistant.calls()[0].id != "history-tool-1"
+        || assistant.calls()[0].tool != "uppercase"
+        || assistant.calls()[0].arguments != r#""hello""#
+        || result.role() != Role::Tool
+        || result.call_id() != "history-tool-1"
+        || result.error().is_some()
+        || result.text() != "HELLO"
     {
         return Err(invalid("tool continuation lost or changed its transcript"));
     }
@@ -80,24 +80,24 @@ fn failing_tool_continuation(history: &[Message], start: usize) -> Result<String
         return Err(invalid("expected two tool results"));
     }
     let assistant = &tail[0];
-    if assistant.role != Role::Assistant || assistant.calls.len() != 2 {
+    if assistant.role() != Role::Assistant || assistant.calls().len() != 2 {
         return Err(invalid("missing two assistant tool calls"));
     }
-    let first = &assistant.calls[0];
-    let second = &assistant.calls[1];
+    let first = &assistant.calls()[0];
+    let second = &assistant.calls()[1];
     if first.id != "history-fail-1"
         || first.tool != "fail"
         || first.arguments != r#""hello""#
         || second.id != "history-length-2"
         || second.tool != "length"
         || second.arguments != r#""hello""#
-        || tail[1].role != Role::Tool
-        || tail[1].call_id != first.id
-        || tail[1].error.as_deref() != Some("scripted failure")
-        || tail[2].role != Role::Tool
-        || tail[2].call_id != second.id
-        || tail[2].error.is_some()
-        || tail[2].text != "5"
+        || tail[1].role() != Role::Tool
+        || tail[1].call_id() != first.id
+        || tail[1].error() != Some("scripted failure")
+        || tail[2].role() != Role::Tool
+        || tail[2].call_id() != second.id
+        || tail[2].error().is_some()
+        || tail[2].text() != "5"
     {
         return Err(invalid("failed tool continuation transcript mismatch"));
     }
@@ -113,15 +113,15 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     let start = request
         .history
         .iter()
-        .rposition(|message| message.role == Role::User)
+        .rposition(|message| message.role() == Role::User)
         .ok_or_else(|| invalid("missing user turn"))?;
     let prompt = &request.history[start];
-    if !prompt.calls.is_empty() || !prompt.call_id.is_empty() || prompt.error.is_some() {
+    if !prompt.calls().is_empty() || !prompt.call_id().is_empty() || prompt.error().is_some() {
         return Err(invalid("invalid latest user turn"));
     }
 
-    let (text, calls) = if request.history.last().is_some_and(|m| m.role == Role::Tool) {
-        let reply = match prompt.text.as_str() {
+    let (text, calls) = if request.history.last().is_some_and(|m| m.role() == Role::Tool) {
+        let reply = match prompt.text() {
             "tools:hello" => tool_continuation(&request.history, start)?,
             "tools-fail:hello" => failing_tool_continuation(&request.history, start)?,
             _ => return Err(invalid("unexpected tool continuation")),
@@ -129,13 +129,13 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         (reply, vec![])
     } else if start + 1 != request.history.len() {
         return Err(invalid("unexpected transcript tail"));
-    } else if prompt.text == "model-error" {
+    } else if prompt.text() == "model-error" {
         return Err(error(ErrorCode::ModelFailed, "verification model failure"));
-    } else if let Some(text) = prompt.text.strip_prefix("echo:") {
+    } else if let Some(text) = prompt.text().strip_prefix("echo:") {
         (format!("echo:{text}"), vec![])
-    } else if let Some((key, value)) = fact(&prompt.text) {
+    } else if let Some((key, value)) = fact(&prompt.text()) {
         (format!("stored:{key}={value}"), vec![])
-    } else if let Some(key) = prompt.text.strip_prefix("recall:") {
+    } else if let Some(key) = prompt.text().strip_prefix("recall:") {
         if key.is_empty() {
             return Err(error(ErrorCode::InvalidInput, "empty recall key"));
         }
@@ -147,22 +147,22 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             },
             vec![],
         )
-    } else if let Some(key) = prompt.text.strip_prefix("verify-assistant:") {
+    } else if let Some(key) = prompt.text().strip_prefix("verify-assistant:") {
         let (index, value) = previous_fact(&request.history[..start], key)
             .ok_or_else(|| invalid("prior user fact missing"))?;
         let response = request
             .history
             .get(index + 1)
             .ok_or_else(|| invalid("prior assistant answer missing"))?;
-        if response.role != Role::Assistant
-            || response.text != format!("stored:{key}={value}")
-            || !response.calls.is_empty()
-            || response.error.is_some()
+        if response.role() != Role::Assistant
+            || response.text() != format!("stored:{key}={value}")
+            || !response.calls().is_empty()
+            || response.error().is_some()
         {
             return Err(invalid("prior assistant answer changed"));
         }
         (format!("verified:{key}={value}"), vec![])
-    } else if prompt.text == "tools:hello" {
+    } else if prompt.text() == "tools:hello" {
         if !request.tools.iter().any(|tool| tool.id == "uppercase") {
             return Err(invalid("uppercase tool unavailable"));
         }
@@ -174,7 +174,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 arguments: serde_json::to_string("hello").expect("string serialization"),
             }],
         )
-    } else if prompt.text == "tools-fail:hello" {
+    } else if prompt.text() == "tools-fail:hello" {
         if !request.tools.iter().any(|tool| tool.id == "fail")
             || !request.tools.iter().any(|tool| tool.id == "length")
         {
@@ -195,7 +195,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 },
             ],
         )
-    } else if prompt.text == "recall-tool" {
+    } else if prompt.text() == "recall-tool" {
         let text = linked_tool_result(&request.history[..start])
             .ok_or_else(|| invalid("prior tool result missing"))?;
         (format!("tool-recalled:{text}"), vec![])
@@ -209,7 +209,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     let input_size: usize = request
         .history
         .iter()
-        .map(|message| message.text.len())
+        .map(|message| message.text().len())
         .sum();
     let output_size = text.len() + calls.iter().map(|call| call.arguments.len()).sum::<usize>();
     let usage = Usage {
@@ -258,12 +258,10 @@ mod tests {
     use phenix_basic_contracts::{Limits, ToolInfo};
 
     fn message(role: Role, text: &str) -> Message {
-        Message {
-            role,
-            text: text.into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
+        match role {
+            Role::User => Message::user(text),
+            Role::Assistant => Message::assistant(text, vec![]),
+            Role::Tool => panic!("tool fixtures require a call ID and explicit outcome"),
         }
     }
 
@@ -301,7 +299,7 @@ mod tests {
             complete(&request(history.clone())).unwrap().text,
             "verified:color=violet"
         );
-        history[1].text = "different".into();
+        *history[1].text_mut() = "different".into();
         assert_eq!(
             complete(&request(history)).unwrap_err().code,
             ErrorCode::InvalidReply
@@ -318,7 +316,7 @@ mod tests {
         );
         let mut absent = request(vec![message(Role::User, "verify-assistant:color")]);
         assert_eq!(complete(&absent).unwrap_err().code, ErrorCode::InvalidReply);
-        absent.history[0].text = "recall-tool".into();
+        *absent.history[0].text_mut() = "recall-tool".into();
         assert_eq!(complete(&absent).unwrap_err().code, ErrorCode::InvalidReply);
     }
 
@@ -329,7 +327,7 @@ mod tests {
         assert_eq!(calls.len(), 1);
         history.push(Message::assistant("", calls));
         let mut result = message(Role::Tool, "HELLO");
-        result.call_id = "history-tool-1".into();
+        result.call_id() = "history-tool-1".into();
         history.push(result);
         assert_eq!(
             complete(&request(history.clone())).unwrap().text,
@@ -341,7 +339,7 @@ mod tests {
             complete(&request(history.clone())).unwrap().text,
             "tool-recalled:HELLO"
         );
-        history[2].call_id = "wrong".into();
+        *history[2].tool_call_id_mut().unwrap() = "wrong".into();
         assert_eq!(
             complete(&request(history)).unwrap_err().code,
             ErrorCode::InvalidReply
