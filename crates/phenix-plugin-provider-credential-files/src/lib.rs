@@ -48,9 +48,9 @@ fn authorize(
         ));
     }
     Ok(CredentialId {
-        provider: identity.provider_id.clone(),
-        connection: identity.connection_id.clone(),
-        profile: identity.profile_id.clone(),
+        provider: identity.provider_id().to_owned(),
+        connection: identity.connection_id().to_owned(),
+        profile: identity.profile_id().to_owned(),
     })
 }
 
@@ -152,11 +152,7 @@ mod tests {
 
     #[test]
     fn profile_selectors_never_grant_credential_access() {
-        let id = CredentialIdentity {
-            provider_id: "openai".into(),
-            connection_id: "api".into(),
-            profile_id: "personal".into(),
-        };
+        let id = CredentialIdentity::new("openai", "api", "personal").unwrap();
         let authorized = id.resource().unwrap();
         assert!(authorize(&id, Some(&authorized)).is_ok());
         for resource in [None, Some("phenix.session.s1"), Some("phenix.providers.s1")] {
@@ -165,10 +161,7 @@ mod tests {
                 ProviderErrorCode::Denied
             );
         }
-        let other = CredentialIdentity {
-            profile_id: "work".into(),
-            ..id
-        };
+        let other = CredentialIdentity::new("openai", "api", "work").unwrap();
         assert_eq!(
             authorize(&other, Some(&authorized)).unwrap_err().code,
             ProviderErrorCode::Denied
