@@ -5,7 +5,7 @@ use phenix_advanced_contracts::{
     ModelPreparationInput, ModelPreparationProblem, ModelPreparationProposal,
 };
 use phenix_basic_contracts::{
-    ContextItem, Limits, Message, ModelRequest, Role, Skill, ToolCall, ToolInfo,
+    ContextItem, Limits, Message, ModelRequest, Skill, ToolCall, ToolInfo,
 };
 
 fn source() -> ModelRequest {
@@ -13,14 +13,14 @@ fn source() -> ModelRequest {
         session: "s1".into(),
         run: "run-3".into(),
         history: vec![
-            Message::user("read this".into()),
-            Message::assistant("running".into(), vec![ToolCall {
+            Message::user("read this"),
+            Message::assistant("running", vec![ToolCall {
                     id: "c1".into(),
                     tool: "read".into(),
                     arguments: r#"{"path":"a.rs"}"#.into(),
                 }]),
-            Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "read result".into() }),
-            Message::user("now answer".into()),
+            Message::tool("c1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "read result".into() }),
+            Message::user("now answer"),
         ],
         tools: vec![ToolInfo {
             id: "read".into(),
