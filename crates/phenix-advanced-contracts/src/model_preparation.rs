@@ -55,12 +55,20 @@ pub trait ModelPreparation {
 
 /// State-change handler for an independently contributed graph preparation
 /// node. Its request schema is exactly the M1 kernel state-change schema.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct PreparationReceipt {
+    /// State epoch that triggered this exact preparation operation.
+    pub source_epoch: u64,
+    /// Fingerprint of the authoritative request that was prepared.
+    pub request_sha256: String,
+}
+
 #[phenix_sdk::contract(id = "phenix.advanced.model-preparation-change@1")]
 pub trait ModelPreparationChange {
     fn run(
         &self,
         notification: phenix_basic_contracts::GraphStateChange,
-    ) -> Result<String, ModelPreparationError>;
+    ) -> Result<PreparationReceipt, ModelPreparationError>;
 }
 
 /// Structural fail-closed check. This does NOT authorize a graph transition.

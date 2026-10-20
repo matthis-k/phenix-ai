@@ -3,7 +3,7 @@
 use phenix_advanced_contracts::{
     model_request_sha256, validate_model_preparation_proposal, ModelPreparation,
     ModelPreparationChange, ModelPreparationError, ModelPreparationInput, ModelPreparationProblem,
-    ModelPreparationProposal,
+    ModelPreparationProposal, PreparationReceipt,
 };
 use phenix_basic_contracts::{
     BasicPendingModelRequest, BasicPreparedModelRequest, GraphStateChange,
@@ -57,7 +57,7 @@ mod provider {
     fn run(
         host: &Host<'_>,
         notification: GraphStateChange,
-    ) -> CallResult<String, ModelPreparationError> {
+    ) -> CallResult<PreparationReceipt, ModelPreparationError> {
         if notification.epoch == 0
             || notification.properties != ["phenix.basic.agent/pending_model_request"]
         {
@@ -113,6 +113,9 @@ mod provider {
         let mut draft = selected.edit(host).map_err(host_failure)?;
         *draft = Some(proposal.candidate);
         draft.commit(host).map_err(host_failure)?;
-        Ok(input.original_sha256)
+        Ok(PreparationReceipt {
+            source_epoch: notification.epoch,
+            request_sha256: input.original_sha256,
+        })
     }
 }
