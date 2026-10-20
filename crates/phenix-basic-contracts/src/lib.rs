@@ -96,9 +96,17 @@ pub struct ToolCall {
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Message {
-    User { text: String },
-    Assistant { text: String, calls: Vec<ToolCall> },
-    Tool { call_id: String, outcome: ToolOutcome },
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+        calls: Vec<ToolCall>,
+    },
+    Tool {
+        call_id: String,
+        outcome: ToolOutcome,
+    },
 }
 
 impl Message {
@@ -138,8 +146,14 @@ impl Message {
     pub fn text_mut(&mut self) -> &mut String {
         match self {
             Self::User { text } | Self::Assistant { text, .. } => text,
-            Self::Tool { outcome: ToolOutcome::Succeeded { text }, .. } => text,
-            Self::Tool { outcome: ToolOutcome::Failed { output, .. }, .. } => output,
+            Self::Tool {
+                outcome: ToolOutcome::Succeeded { text },
+                ..
+            } => text,
+            Self::Tool {
+                outcome: ToolOutcome::Failed { output, .. },
+                ..
+            } => output,
         }
     }
 
@@ -667,7 +681,10 @@ mod tests {
                     ("call_id", Value::String("c1".into())),
                     (
                         "outcome",
-                        ToolOutcome::Succeeded { text: "done".into() }.to_value(),
+                        ToolOutcome::Succeeded {
+                            text: "done".into(),
+                        }
+                        .to_value(),
                     ),
                 ]),
             ),
@@ -675,10 +692,9 @@ mod tests {
         assert!(!Message::SCHEMA.owned().unwrap().accepts(&ambiguous));
         assert!(Message::from_value(ambiguous).is_err());
 
-        assert!(serde_json::from_str::<Message>(
-            r#"{"User":{"text":"hello","calls":[]}}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_str::<Message>(r#"{"User":{"text":"hello","calls":[]}}"#).is_err()
+        );
         assert!(serde_json::from_str::<Message>(
             r#"{"Assistant":{"text":"ok","calls":[],"call_id":"c1"}}"#
         )

@@ -248,9 +248,7 @@ pub fn assemble_verified_basic_request(
                     ToolCompletion::Failed
                 );
                 if failed {
-                    if !message.text().is_empty()
-                        || message.error() != Some(event.text.as_str())
-                    {
+                    if !message.text().is_empty() || message.error() != Some(event.text.as_str()) {
                         return Err(TranscriptProblem::UnalignedHistory);
                     }
                 } else if message.text() != event.text || message.error().is_some() {

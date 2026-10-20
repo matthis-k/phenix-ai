@@ -119,9 +119,9 @@ mod plugin {
         error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
         CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
         GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
-        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope,
-        Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
-        ToolOutcome, ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
+        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
+        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -519,7 +519,10 @@ mod plugin {
         }
 
         if response.calls.is_empty() {
-            running.session.history.push(Message::assistant(response.text.clone(), vec![]));
+            running
+                .session
+                .history
+                .push(Message::assistant(response.text.clone(), vec![]));
             running.session.status = RunStatus::Completed;
             checkpoint(host, running.session.clone())?;
             event(
@@ -564,7 +567,10 @@ mod plugin {
                 return Err(CallError::Domain(problem));
             }
         }
-        running.session.history.push(Message::assistant(response.text, response.calls.clone()));
+        running
+            .session
+            .history
+            .push(Message::assistant(response.text, response.calls.clone()));
         running.session.pending = response.calls.clone();
         running.session = checkpoint(host, running.session.clone())?;
 

@@ -52,7 +52,9 @@ fn request(mode: &str) -> ModelRequest {
         run: "r1".into(),
         history: vec![
             Message::user("prior"),
-            Message::assistant(String::new(), vec![
+            Message::assistant(
+                String::new(),
+                vec![
                     ToolCall {
                         id: "prior-1".into(),
                         tool: "uppercase".into(),
@@ -63,9 +65,16 @@ fn request(mode: &str) -> ModelRequest {
                         tool: "length".into(),
                         arguments: r#""old""#.into(),
                     },
-                ]),
+                ],
+            ),
             Message::tool("prior-1", ToolOutcome::Succeeded { text: "OLD".into() }),
-            Message::tool("prior-2", ToolOutcome::Failed { output: String::new(), reason: "prior tool failed".into() }),
+            Message::tool(
+                "prior-2",
+                ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "prior tool failed".into(),
+                },
+            ),
             Message::user(mode),
         ],
         tools: ["uppercase", "length"]

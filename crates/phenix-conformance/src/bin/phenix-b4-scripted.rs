@@ -79,9 +79,19 @@ fn main() {
     let mut scripted = request("tools:hello");
     let first = invoke(&kernel, &scripted).unwrap().unwrap();
     assert_eq!(first.calls.len(), 2);
-    scripted.history.push(Message::assistant(String::new(), first.calls));
-    scripted.history.push(Message::tool("call-1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
-    scripted.history.push(Message::tool("call-2", phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
+    scripted
+        .history
+        .push(Message::assistant(String::new(), first.calls));
+    scripted.history.push(Message::tool(
+        "call-1",
+        phenix_basic_contracts::ToolOutcome::Succeeded {
+            text: "HELLO".into(),
+        },
+    ));
+    scripted.history.push(Message::tool(
+        "call-2",
+        phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() },
+    ));
     assert_eq!(
         invoke(&kernel, &scripted).unwrap().unwrap().text,
         "mock:call-1:HELLO|call-2:5"

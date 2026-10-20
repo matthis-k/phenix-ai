@@ -242,15 +242,23 @@ fn never_summarizes_unattested_legacy_tool_turns() {
     }
     request.history.insert(
         3,
-        Message::assistant(String::new(), vec![phenix_basic_contracts::ToolCall {
+        Message::assistant(
+            String::new(),
+            vec![phenix_basic_contracts::ToolCall {
                 id: "t1".into(),
                 tool: "uppercase".into(),
                 arguments: r#""secret""#.into(),
-            }]),
+            }],
+        ),
     );
     request.history.insert(
         4,
-        Message::tool("t1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }),
+        Message::tool(
+            "t1",
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        ),
     );
     let planned = plan_verified_checkpoint(&request, &journal, None, policy());
     assert!(matches!(planned, Err(PlanProblem::UnverifiedHistory)));

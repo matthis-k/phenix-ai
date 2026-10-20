@@ -14,12 +14,20 @@ fn source() -> ModelRequest {
         run: "run-3".into(),
         history: vec![
             Message::user("read this"),
-            Message::assistant("running", vec![ToolCall {
+            Message::assistant(
+                "running",
+                vec![ToolCall {
                     id: "c1".into(),
                     tool: "read".into(),
                     arguments: r#"{"path":"a.rs"}"#.into(),
-                }]),
-            Message::tool("c1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "read result".into() }),
+                }],
+            ),
+            Message::tool(
+                "c1",
+                phenix_basic_contracts::ToolOutcome::Succeeded {
+                    text: "read result".into(),
+                },
+            ),
             Message::user("now answer"),
         ],
         tools: vec![ToolInfo {

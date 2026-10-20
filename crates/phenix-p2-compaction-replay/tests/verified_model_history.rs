@@ -263,8 +263,20 @@ fn tool_request() -> ModelRequest {
         message(Role::User, "older question"),
         message(Role::Assistant, "older answer"),
         message(Role::User, "tool question"),
-        Message::assistant("calling tool", vec![ToolCall { id: "t1".into(), tool: "uppercase".into(), arguments: r#""hello""#.into() }]),
-        Message::tool("t1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }),
+        Message::assistant(
+            "calling tool",
+            vec![ToolCall {
+                id: "t1".into(),
+                tool: "uppercase".into(),
+                arguments: r#""hello""#.into(),
+            }],
+        ),
+        Message::tool(
+            "t1",
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        ),
         message(Role::Assistant, "tool completed"),
         message(Role::User, "current question"),
     ];
