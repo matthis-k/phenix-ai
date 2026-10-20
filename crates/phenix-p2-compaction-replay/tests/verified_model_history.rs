@@ -54,6 +54,13 @@ fn message(role: Role, text: &str) -> Message {
         Role::Tool => panic!("tool fixtures require a call ID and explicit outcome"),
     }
 }
+fn assistant_calls_mut(message: &mut Message) -> &mut Vec<ToolCall> {
+    let Message::Assistant { calls, .. } = message else {
+        panic!("expected assistant message");
+    };
+    calls
+}
+
 fn original_request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
@@ -109,7 +116,7 @@ fn mismatch_or_missing_session_message_fails_before_model_submission() {
     let cp = checkpoint(&events);
     let view = compacted_view(&cp, &events, 4096).unwrap();
     let mut forged = original_request();
-    forged.history[1].text = "rewritten answer".into();
+    *forged.history[1].text_mut() = "rewritten answer".into();
     assert_eq!(
         assemble_verified_basic_request(&forged, &events, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
@@ -134,7 +141,7 @@ fn tool_calls_are_not_reconstructed_from_incomplete_journal_events() {
     let cp = checkpoint(&events);
     let view = compacted_view(&cp, &events, 4096).unwrap();
     let mut tools = original_request();
-    tools.history[3].calls.push(ToolCall {
+    assistant_calls_mut(&mut tools.history[3]).push(ToolCall {
         id: "t1".into(),
         tool: "uppercase".into(),
         arguments: r#""secret argument""#.into(),
@@ -296,8 +303,8 @@ fn compact_old_text_but_retain_complete_authoritative_tool_turn() {
     let authoritative = tool_request();
     let result = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
     assert_eq!(result.history, authoritative.history[2..]);
-    assert_eq!(result.history[1].calls[0].arguments, r#""hello""#);
-    assert_eq!(result.history[2].text, "HELLO");
+    assert_eq!(result.history[1].calls()[0].arguments, r#""hello""#);
+    assert_eq!(result.history[2].text(), "HELLO");
     assert_eq!(result.context[1].text, "Old turn anchored in journal");
     assert_eq!(authoritative.history.len(), 7);
 }
@@ -308,14 +315,14 @@ fn tool_history_rejects_modified_results_missing_source_and_tool_elision() {
     let cp = tool_checkpoint(&journal);
     let view = compacted_view(&cp, &journal, 4096).unwrap();
     let mut forged = tool_request();
-    forged.history[4].text = "FORGED".into();
+    *forged.history[4].text_mut() = "FORGED".into();
     assert_eq!(
         assemble_verified_basic_request(&forged, &journal, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
     );
 
     let mut forged = tool_request();
-    forged.history[3].calls[0].id = "other".into();
+    assistant_calls_mut(&mut forged.history[3])[0].id = "other".into();
     assert_eq!(
         assemble_verified_basic_request(&forged, &journal, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
@@ -346,8 +353,8 @@ fn in_progress_tool_result_may_continue_same_model_turn_without_answer() {
     authoritative.run = "run-2".into();
     let input = assemble_verified_basic_request(&authoritative, &journal, &cp, &view).unwrap();
     assert_eq!(input.history, authoritative.history[2..]);
-    assert_eq!(input.history.last().unwrap().role, Role::Tool);
-    assert_eq!(input.history[1].calls[0].arguments, r#""hello""#);
+    assert_eq!(input.history.last().unwrap().role(), Role::Tool);
+    assert_eq!(input.history[1].calls()[0].arguments, r#""hello""#);
 
     // The next ModelStarted journal event is needed to prove that the
     // submitted request follows the completed tool response.
@@ -370,10 +377,20 @@ fn tool_failure_status_must_match_authoritative_session_message() {
     let cp = tool_checkpoint(&journal);
     let view = compacted_view(&cp, &journal, 4096).unwrap();
     let mut request = tool_request();
-    request.history[4].text.clear();
-    request.history[4].error = Some("tool failed".into());
+    request.history[4] = Message::tool(
+        "t1",
+        phenix_basic_contracts::ToolOutcome::Failed {
+            output: String::new(),
+            reason: "tool failed".into(),
+        },
+    );
     assert!(assemble_verified_basic_request(&request, &journal, &cp, &view).is_ok());
-    request.history[4].error = None;
+    request.history[4] = Message::tool(
+        "t1",
+        phenix_basic_contracts::ToolOutcome::Succeeded {
+            text: "HELLO".into(),
+        },
+    );
     assert_eq!(
         assemble_verified_basic_request(&request, &journal, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
@@ -415,7 +432,7 @@ fn active_model_run_must_match_final_authoritative_session_run() {
 fn attested_tool_source() -> Vec<Event> {
     let mut journal = tool_source();
     let assistant = tool_request().history[3].clone();
-    let mut receipt = event(5, EventKind::AssistantReply, &assistant.text);
+    let mut receipt = event(5, EventKind::AssistantReply, assistant.text());
     receipt.run = "run-2".into();
     receipt.data = phenix_basic_contracts::encode(&assistant).unwrap();
     for item in &mut journal[4..] {
@@ -448,7 +465,7 @@ fn tool_summary_denies_missing_or_altered_model_reply_receipt() {
     cp.retained = vec![span_for_events(&journal[9..]).unwrap()];
     let view = compacted_view(&cp, &journal, 4096).unwrap();
     let mut forged = tool_request();
-    forged.history[3].calls[0].arguments = r#""different""#.into();
+    assistant_calls_mut(&mut forged.history[3])[0].arguments = r#""different""#.into();
     assert_eq!(
         assemble_verified_basic_request(&forged, &journal, &cp, &view),
         Err(TranscriptProblem::UnalignedHistory),
@@ -500,8 +517,8 @@ fn checkpoint_tail_assembly_keeps_exact_live_tool_turn() {
     )
     .unwrap();
     assert_eq!(projected.history, source.history[2..]);
-    assert_eq!(projected.history[1].calls[0].arguments, r#""hello""#);
-    assert_eq!(projected.history[2].text, "HELLO");
+    assert_eq!(projected.history[1].calls()[0].arguments, r#""hello""#);
+    assert_eq!(projected.history[2].text(), "HELLO");
     assert_eq!(projected.context.last().unwrap().text, cp.summary);
     assert_eq!(source.history.len(), 7);
 }
@@ -551,7 +568,7 @@ fn checkpoint_tail_assembly_rejects_orphaned_receipts_gaps_and_forged_messages()
     // Crash after ToolStarted but before a matching completion.
     assert!(assemble(&source, &journal[2..6]).is_err());
     let mut forged = source.clone();
-    forged.history[3].calls[0].arguments = r#""forged""#.into();
+    assistant_calls_mut(&mut forged.history[3])[0].arguments = r#""forged""#.into();
     assert!(assemble(&forged, &journal[2..]).is_err());
 
     let mut missing = journal[2..].to_vec();
