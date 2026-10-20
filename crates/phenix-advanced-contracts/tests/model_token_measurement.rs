@@ -50,7 +50,7 @@ fn count_binds_to_every_part_of_submitted_request() {
         Ok(())
     );
     let mut altered = original.clone();
-    altered.history[0].text.push('!');
+    altered.history[0].text_mut().push('!');
     assert_eq!(
         validate_model_token_measurement(&altered, &count, "test-model-v1", 50),
         Err(ModelTokenProblem::RequestChanged)
