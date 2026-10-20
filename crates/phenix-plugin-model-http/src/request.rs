@@ -52,7 +52,9 @@ pub(crate) fn configured_max_tokens(
 
 /// An absent setting permits a deliberately credential-free local provider.
 /// An explicitly supplied but unusable value must never become no-auth.
-fn configured_credential(value: Result<String, env::VarError>) -> Result<Option<String>, BasicError> {
+fn configured_credential(
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, BasicError> {
     match value {
         Err(env::VarError::NotPresent) => Ok(None),
         Ok(secret) if !secret.is_empty() && !secret.chars().any(char::is_control) => {
