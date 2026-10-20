@@ -59,7 +59,7 @@ pub fn assemble_verified_basic_request(
         return Err(TranscriptProblem::UnalignedSource);
     }
     let message_tools = authoritative.history.iter().any(|message| {
-        message.role == Role::Tool || !message.calls.is_empty() || !message.call_id.is_empty()
+        message.role() == Role::Tool || !message.calls().is_empty() || !message.call_id().is_empty()
     });
     let journal_tools = journal
         .iter()
@@ -132,11 +132,11 @@ pub fn assemble_verified_basic_request(
                     .history
                     .get(matched)
                     .ok_or(TranscriptProblem::UnalignedHistory)?;
-                if message.role != Role::User
-                    || message.text != event.text
-                    || !message.calls.is_empty()
-                    || !message.call_id.is_empty()
-                    || message.error.is_some()
+                if message.role() != Role::User
+                    || message.text() != event.text
+                    || !message.calls().is_empty()
+                    || !message.call_id().is_empty()
+                    || message.error().is_some()
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
@@ -169,11 +169,11 @@ pub fn assemble_verified_basic_request(
                     .get(matched)
                     .ok_or(TranscriptProblem::UnalignedHistory)?;
                 if receipt != *assistant
-                    || receipt.role != Role::Assistant
-                    || receipt.text != event.text
-                    || receipt.calls.is_empty()
-                    || !receipt.call_id.is_empty()
-                    || receipt.error.is_some()
+                    || receipt.role() != Role::Assistant
+                    || receipt.text() != event.text
+                    || receipt.calls().is_empty()
+                    || !receipt.call_id().is_empty()
+                    || receipt.error().is_some()
                     || receipt
                         .calls
                         .iter()
@@ -181,7 +181,7 @@ pub fn assemble_verified_basic_request(
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
-                queued_calls.extend(receipt.calls);
+                queued_calls.extend(receipt.calls());
                 if retained {
                     retained_history.push(assistant.clone());
                 }
@@ -201,10 +201,10 @@ pub fn assemble_verified_basic_request(
                         .history
                         .get(matched)
                         .ok_or(TranscriptProblem::UnalignedHistory)?;
-                    if assistant.role != Role::Assistant
-                        || assistant.calls.is_empty()
-                        || !assistant.call_id.is_empty()
-                        || assistant.error.is_some()
+                    if assistant.role() != Role::Assistant
+                        || assistant.calls().is_empty()
+                        || !assistant.call_id().is_empty()
+                        || assistant.error().is_some()
                         || assistant
                             .calls
                             .iter()
@@ -212,7 +212,7 @@ pub fn assemble_verified_basic_request(
                     {
                         return Err(TranscriptProblem::UnalignedHistory);
                     }
-                    queued_calls.extend(assistant.calls.iter().cloned());
+                    queued_calls.extend(assistant.calls().iter().cloned());
                     retained_history.push(assistant.clone());
                     matched += 1;
                 }
@@ -235,10 +235,10 @@ pub fn assemble_verified_basic_request(
                     .history
                     .get(matched)
                     .ok_or(TranscriptProblem::UnalignedHistory)?;
-                if message.role != Role::Tool
-                    || message.call_id != id
+                if message.role() != Role::Tool
+                    || message.call_id() != id
                     || event.call_id != id
-                    || !message.calls.is_empty()
+                    || !message.calls().is_empty()
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
@@ -248,12 +248,12 @@ pub fn assemble_verified_basic_request(
                     ToolCompletion::Failed
                 );
                 if failed {
-                    if !message.text.is_empty()
-                        || message.error.as_deref() != Some(event.text.as_str())
+                    if !message.text().is_empty()
+                        || message.error() != Some(event.text.as_str())
                     {
                         return Err(TranscriptProblem::UnalignedHistory);
                     }
-                } else if message.text != event.text || message.error.is_some() {
+                } else if message.text() != event.text || message.error().is_some() {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
                 if retained {
@@ -275,11 +275,11 @@ pub fn assemble_verified_basic_request(
                     .history
                     .get(matched)
                     .ok_or(TranscriptProblem::UnalignedHistory)?;
-                if message.role != Role::Assistant
-                    || message.text != event.text
-                    || !message.calls.is_empty()
-                    || !message.call_id.is_empty()
-                    || message.error.is_some()
+                if message.role() != Role::Assistant
+                    || message.text() != event.text
+                    || !message.calls().is_empty()
+                    || !message.call_id().is_empty()
+                    || message.error().is_some()
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
@@ -312,7 +312,7 @@ pub fn assemble_verified_basic_request(
         || !queued_calls.is_empty()
         || retained_history
             .last()
-            .is_none_or(|msg| msg.role != Role::User && msg.role != Role::Tool)
+            .is_none_or(|msg| msg.role() != Role::User && msg.role() != Role::Tool)
     {
         return Err(TranscriptProblem::MissingCurrentPrompt);
     }
@@ -321,7 +321,7 @@ pub fn assemble_verified_basic_request(
     // same run, and the complete tool transaction remains in the request.
     if retained_history
         .last()
-        .is_some_and(|msg| msg.role == Role::Tool)
+        .is_some_and(|msg| msg.role() == Role::Tool)
         && journal
             .last()
             .is_none_or(|event| event.kind != EventKind::ModelStarted)
