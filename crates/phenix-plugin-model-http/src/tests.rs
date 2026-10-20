@@ -495,8 +495,14 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
     let config = request::Config::from_checked_binding(&choice, Some(&key), None).unwrap();
     assert_eq!(config.model, "model-a");
-    assert_eq!(config.endpoint, "https://api.openai.com/v1/chat/completions");
-    assert_eq!(config.protocol, phenix_provider_protocols::Protocol::OpenaiChat);
+    assert_eq!(
+        config.endpoint,
+        "https://api.openai.com/v1/chat/completions"
+    );
+    assert_eq!(
+        config.protocol,
+        phenix_provider_protocols::Protocol::OpenaiChat
+    );
     assert_eq!(config.credential.as_deref(), Some("selected-account-token"));
 
     assert_eq!(
