@@ -98,13 +98,7 @@ mod plugin {
         if count == 0 {
             return finish(result);
         }
-        let message = Message {
-            role: Role::Assistant,
-            text: reply.text.clone(),
-            calls: reply.calls.clone(),
-            call_id: String::new(),
-            error: None,
-        };
+        let message = Message::assistant(reply.text.clone(), reply.calls.clone());
         let payload = match phenix_basic_contracts::encode(&message) {
             Ok(payload) => payload,
             Err(failure) => return PendingResult::QuiescentFailure(failure),
