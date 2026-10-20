@@ -493,7 +493,11 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     use phenix_provider_contracts::CredentialSecret;
     let choice = bound_http_choice(true);
     let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
-    let config = request::Config::from_checked_binding(&choice, Some(&key), None).unwrap();
+    let config = request::Config::from_checked_binding(
+        &choice,
+        Some((choice.credential_identity().unwrap(), &key)),
+        None,
+    ).unwrap();
     assert_eq!(config.model, "model-a");
     assert_eq!(
         config.endpoint,
@@ -505,6 +509,19 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     );
     assert_eq!(config.credential.as_deref(), Some("selected-account-token"));
 
+    // A valid secret from a *different* named account must not be bound to
+    // this model merely because the bytes are available to the controller.
+    let foreign = phenix_provider_contracts::CredentialIdentity::new(
+        "fixture", "api", "other-account",
+    )
+    .unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(&choice, Some((&foreign, &key)), None)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+
     assert_eq!(
         request::Config::from_checked_binding(&choice, None, None)
             .unwrap_err()
@@ -515,7 +532,11 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     let config = request::Config::from_checked_binding(&no_auth, None, None).unwrap();
     assert_eq!(config.credential, None);
     assert_eq!(
-        request::Config::from_checked_binding(&no_auth, Some(&key), None)
+        request::Config::from_checked_binding(
+            &no_auth,
+            Some((choice.credential_identity().unwrap(), &key)),
+            None,
+        )
             .unwrap_err()
             .code,
         ErrorCode::InvalidInput
@@ -528,7 +549,11 @@ fn checked_transport_rejects_non_utf8_secret_without_environment_fallback() {
     let binding = bound_http_choice(true);
     let key = CredentialSecret::new(vec![0xff, 0xfe]).unwrap();
     assert_eq!(
-        request::Config::from_checked_binding(&binding, Some(&key), Some(512))
+        request::Config::from_checked_binding(
+            &binding,
+            Some((binding.credential_identity().unwrap(), &key)),
+            Some(512),
+        )
             .unwrap_err()
             .code,
         ErrorCode::InvalidInput
