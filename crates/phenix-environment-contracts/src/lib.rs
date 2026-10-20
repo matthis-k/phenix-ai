@@ -70,7 +70,9 @@ pub fn resolve_for(
     profile = "definitions",
     define(Environment)
 )]
-pub mod definitions {}
+pub mod definitions {
+    use super::Environment;
+}
 
 #[cfg(test)]
 mod tests {
