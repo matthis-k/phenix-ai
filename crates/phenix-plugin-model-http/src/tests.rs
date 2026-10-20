@@ -497,7 +497,8 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
         &choice,
         Some((choice.credential_identity().unwrap(), &key)),
         None,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(config.model, "model-a");
     assert_eq!(
         config.endpoint,
@@ -511,10 +512,9 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
 
     // A valid secret from a *different* named account must not be bound to
     // this model merely because the bytes are available to the controller.
-    let foreign = phenix_provider_contracts::CredentialIdentity::new(
-        "fixture", "api", "other-account",
-    )
-    .unwrap();
+    let foreign =
+        phenix_provider_contracts::CredentialIdentity::new("fixture", "api", "other-account")
+            .unwrap();
     assert_eq!(
         request::Config::from_checked_binding(&choice, Some((&foreign, &key)), None)
             .unwrap_err()
@@ -537,8 +537,8 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
             Some((choice.credential_identity().unwrap(), &key)),
             None,
         )
-            .unwrap_err()
-            .code,
+        .unwrap_err()
+        .code,
         ErrorCode::InvalidInput
     );
 }
@@ -554,8 +554,8 @@ fn checked_transport_rejects_non_utf8_secret_without_environment_fallback() {
             Some((binding.credential_identity().unwrap(), &key)),
             Some(512),
         )
-            .unwrap_err()
-            .code,
+        .unwrap_err()
+        .code,
         ErrorCode::InvalidInput
     );
 }
