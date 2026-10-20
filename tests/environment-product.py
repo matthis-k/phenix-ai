@@ -68,7 +68,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-environment-") as temporary:
     assert paths["resource"] == resource
     assert paths["launch_cwd"] == [str(root)], paths
     for field in ("config", "state", "data", "cache", "runtime"):
-        expected = str(root / field / "phenix" / "sample.plugin")
+        # XDG_RUNTIME_DIR uses "run"; "runtime" is the contract field name.
+        directory = "run" if field == "runtime" else field
+        expected = str(root / directory / "phenix" / "sample.plugin")
         # Portable Option<String> wraps Some(value) in a one-element list.
         assert paths[field] == ([expected] if field == "runtime" else expected), paths
         assert not (root / field / "phenix").exists()
