@@ -113,8 +113,7 @@ mod provider {
         let mut draft = selected.edit(host).map_err(host_failure)?;
         *draft = Some(proposal.candidate);
         draft.commit(host).map_err(host_failure)?;
-        PreparationReceipt::new(notification.epoch, input.original_sha256).map_err(|problem| {
-            invalid(problem, "invalid source-bound preparation receipt")
-        })
+        PreparationReceipt::new(notification.epoch, input.original_sha256)
+            .map_err(|problem| invalid(problem, "invalid source-bound preparation receipt"))
     }
 }
