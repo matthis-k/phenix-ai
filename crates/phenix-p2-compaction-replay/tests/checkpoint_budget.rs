@@ -8,13 +8,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "What happened earlier?".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("What happened earlier?".into())],
         tools: vec![],
         skills: vec![],
         context: vec![],
