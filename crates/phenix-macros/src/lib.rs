@@ -122,20 +122,134 @@ pub fn portable(input: TokenStream) -> TokenStream {
                 )
             }
             Data::Enum(e) => {
-                if e.variants.iter().any(|v| !matches!(v.fields, Fields::Unit)) {
-                    return Err(syn::Error::new(
-                        e.enum_token.span,
-                        "live portable variants must be unit variants",
-                    ));
+                if e.variants.iter().all(|v| matches!(v.fields, Fields::Unit)) {
+                    let mut names: Vec<_> = e.variants.iter().map(|v| &v.ident).collect();
+                    names.sort_by_key(|v| v.to_string());
+                    let keys: Vec<_> = names.iter().map(|v| v.to_string()).collect();
+                    (
+                        quote!(::phenix_sdk::StaticSchema::Variants(&[#(#keys),*])),
+                        quote!(::phenix_sdk::Value::String(match self{#(Self::#names=>#keys),*}.into())),
+                        quote! {let ::phenix_sdk::Value::String(name)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected live variant"));};match name.as_str(){#(#keys=>Ok(Self::#names),)*_=>Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown live variant"))}},
+                    )
+                } else {
+                    // A tagged sum has exactly one variant and its associated
+                    // payload. Keep unit-only enums on their existing schema.
+                    let mut variants: Vec<_> = e.variants.iter().collect();
+                    variants.sort_by_key(|v| v.ident.to_string());
+                    let mut schemas = Vec::new();
+                    let mut to_arms = Vec::new();
+                    let mut from_arms = Vec::new();
+                    for variant in variants {
+                        let name = &variant.ident;
+                        let tag = name.to_string();
+                        match &variant.fields {
+                            Fields::Unit => {
+                                schemas.push(quote!(::phenix_sdk::StaticVariant {
+                                    name: #tag, schema: None
+                                }));
+                                to_arms.push(quote!(
+                                    Self::#name => ::phenix_sdk::Value::map([
+                                        (#tag, ::phenix_sdk::Value::Null)
+                                    ])
+                                ));
+                                from_arms.push(quote!(
+                                    #tag => {
+                                        if !matches!(payload, ::phenix_sdk::Value::Null) {
+                                            return Err(::phenix_sdk::Failure::new(
+                                                ::phenix_sdk::Code::SchemaRejected,
+                                                "unit variant requires null payload"
+                                            ));
+                                        }
+                                        Ok(Self::#name)
+                                    }
+                                ));
+                            }
+                            Fields::Named(named) => {
+                                let mut fields: Vec<_> = named.named.iter().collect();
+                                fields.sort_by_key(|f| f.ident.as_ref().unwrap().to_string());
+                                let names: Vec<_> =
+                                    fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+                                let keys: Vec<_> = names.iter().map(|n| n.to_string()).collect();
+                                let types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+                                schemas.push(quote!(::phenix_sdk::StaticVariant {
+                                    name: #tag,
+                                    schema: Some(::phenix_sdk::StaticSchema::Struct(&[
+                                        #(::phenix_sdk::StaticField {
+                                            name: #keys,
+                                            schema: <#types as ::phenix_sdk::live::Portable>::SCHEMA,
+                                        }),*
+                                    ]))
+                                }));
+                                to_arms.push(quote!(
+                                    Self::#name { #(#names),* } => ::phenix_sdk::Value::map([
+                                        (#tag, ::phenix_sdk::Value::map([
+                                            #((#keys, ::phenix_sdk::live::Portable::to_value(#names))),*
+                                        ]))
+                                    ])
+                                ));
+                                from_arms.push(quote!(
+                                    #tag => {
+                                        let ::phenix_sdk::Value::Map(mut fields) = payload else {
+                                            return Err(::phenix_sdk::Failure::new(
+                                                ::phenix_sdk::Code::SchemaRejected,
+                                                "variant payload must be a struct"
+                                            ));
+                                        };
+                                        let result = Self::#name {
+                                            #(#names: <#types as ::phenix_sdk::live::Portable>::from_value(
+                                                fields.remove(#keys).ok_or_else(|| {
+                                                    ::phenix_sdk::Failure::new(
+                                                        ::phenix_sdk::Code::SchemaRejected,
+                                                        concat!("missing variant field ", #keys)
+                                                    )
+                                                })?
+                                            )?),*
+                                        };
+                                        if !fields.is_empty() {
+                                            return Err(::phenix_sdk::Failure::new(
+                                                ::phenix_sdk::Code::SchemaRejected,
+                                                "unknown variant field"
+                                            ));
+                                        }
+                                        Ok(result)
+                                    }
+                                ));
+                            }
+                            Fields::Unnamed(unnamed) => {
+                                return Err(syn::Error::new(
+                                    unnamed.span(),
+                                    "portable tagged variants require named fields",
+                                ));
+                            }
+                        }
+                    }
+                    (
+                        quote!(::phenix_sdk::StaticSchema::Tagged(&[#(#schemas),*])),
+                        quote!(match self { #(#to_arms),* }),
+                        quote! {
+                            let ::phenix_sdk::Value::Map(mut variants) = value else {
+                                return Err(::phenix_sdk::Failure::new(
+                                    ::phenix_sdk::Code::SchemaRejected,
+                                    "expected tagged variant"
+                                ));
+                            };
+                            if variants.len() != 1 {
+                                return Err(::phenix_sdk::Failure::new(
+                                    ::phenix_sdk::Code::SchemaRejected,
+                                    "tagged value must contain exactly one variant"
+                                ));
+                            }
+                            let (name, payload) = variants.pop_first().unwrap();
+                            match name.as_str() {
+                                #(#from_arms,)*
+                                _ => Err(::phenix_sdk::Failure::new(
+                                    ::phenix_sdk::Code::SchemaRejected,
+                                    "unknown tagged variant"
+                                )),
+                            }
+                        },
+                    )
                 }
-                let mut names: Vec<_> = e.variants.iter().map(|v| &v.ident).collect();
-                names.sort_by_key(|v| v.to_string());
-                let keys: Vec<_> = names.iter().map(|v| v.to_string()).collect();
-                (
-                    quote!(::phenix_sdk::StaticSchema::Variants(&[#(#keys),*])),
-                    quote!(::phenix_sdk::Value::String(match self{#(Self::#names=>#keys),*}.into())),
-                    quote! {let ::phenix_sdk::Value::String(name)=value else{return Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"expected live variant"));};match name.as_str(){#(#keys=>Ok(Self::#names),)*_=>Err(::phenix_sdk::Failure::new(::phenix_sdk::Code::SchemaRejected,"unknown live variant"))}},
-                )
             }
             _ => {
                 return Err(syn::Error::new(
