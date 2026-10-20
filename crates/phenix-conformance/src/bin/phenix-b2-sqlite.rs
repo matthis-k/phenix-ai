@@ -2,7 +2,7 @@
 //! reopen it with new native plugin instances and explicitly reconcile tools.
 use phenix_basic_contracts::{
     BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery, Message,
-    ReconcileTool, Role, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
+    ReconcileTool, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
     StoredRecord, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Blob, Portable};
@@ -142,7 +142,7 @@ fn main() {
         running.run = "r1".into();
         running.status = RunStatus::Running;
         running.checkpoint = 7;
-        running.history.push(Message::user("prompt".into()));
+        running.history.push(Message::user("prompt"));
         running.pending = ["c1", "c2"]
             .into_iter()
             .map(|id| ToolCall {
