@@ -121,7 +121,7 @@ mod plugin {
         GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
         ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope,
         Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
-        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
+        ToolOutcome, ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -585,29 +585,34 @@ mod plugin {
                     call: call.clone(),
                 },
             );
-            let (text, failure) = match outcome {
-                Ok(result) => (result.text, None),
-                Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
+            let tool_outcome = match outcome {
+                Ok(result) => ToolOutcome::Succeeded { text: result.text },
+                Err(CallError::Domain(problem)) => ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: problem.message,
+                },
                 Err(other) => return Err(other),
             };
-            running.session.history.push(Message::tool(call.id.clone(), match failure.clone() { Some(reason) => ToolOutcome::Failed { output: text.clone().clone(), reason }, None => ToolOutcome::Succeeded { text: text.clone() } }));
+            let (completion, event_text) = match &tool_outcome {
+                ToolOutcome::Succeeded { text } => (ToolCompletion::Succeeded, text.clone()),
+                ToolOutcome::Failed { reason, .. } => (ToolCompletion::Failed, reason.clone()),
+            };
+            running
+                .session
+                .history
+                .push(Message::tool(call.id.clone(), tool_outcome));
             running
                 .session
                 .pending
                 .retain(|pending| pending.id != call.id);
             running.session = checkpoint(host, running.session.clone())?;
-            let completion = if failure.is_some() {
-                ToolCompletion::Failed
-            } else {
-                ToolCompletion::Succeeded
-            };
             let data = phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
             event_with_data(
                 host,
                 &running.input.session,
                 &running.run,
                 EventKind::ToolFinished,
-                failure.unwrap_or(text),
+                event_text,
                 &call.id,
                 data,
             )?;
