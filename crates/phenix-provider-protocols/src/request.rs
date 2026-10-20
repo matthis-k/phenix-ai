@@ -153,7 +153,7 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
                 });
             }
             Role::Tool => {
-                if !message.calls().is_empty() || !pending.remove(&message.call_id()) {
+                if !message.calls().is_empty() || !pending.remove(message.call_id()) {
                     return Err(bad("unmatched tool history"));
                 }
                 messages.push(PreparedMessage::Tool {
