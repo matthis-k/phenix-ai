@@ -491,7 +491,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
-        let payload: PromptSubmitted = phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
+        let payload: PromptSubmitted =
+            phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
@@ -516,11 +517,9 @@ mod tests {
             "read this reference\nResource link: design notes (file:///tmp/design.md)"
         );
 
-        assert!(
-            decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
-                .unwrap()
-                .is_cancel()
-        );
+        assert!(decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
+            .unwrap()
+            .is_cancel());
         let refused = decode(serde_json::json!({
             "prompt": {"sessionId": "s2", "prompt": [{"type": "text", "text": "other"}]}
         }))
@@ -636,7 +635,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(submitted.as_dispatch().unwrap().0, "phenix.basic.submit");
-        let turn: PromptSubmitted = phenix_basic_contracts::decode(&submitted.as_dispatch().unwrap().1).unwrap();
+        let turn: PromptSubmitted =
+            phenix_basic_contracts::decode(&submitted.as_dispatch().unwrap().1).unwrap();
         assert_eq!(turn.session, "s1");
         assert_eq!(
             turn.text,
@@ -704,7 +704,9 @@ mod tests {
                 }
             }))
             .unwrap()
-            .as_dispatch().unwrap().0,
+            .as_dispatch()
+            .unwrap()
+            .0,
             "phenix.basic.submit"
         );
     }

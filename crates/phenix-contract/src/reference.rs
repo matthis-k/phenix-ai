@@ -147,7 +147,10 @@ impl ValueSchema {
                     variants
                         .iter()
                         .map(|(name, schema)| {
-                            (name.clone(), schema.as_ref().map_or(Value::Null, Self::descriptor))
+                            (
+                                name.clone(),
+                                schema.as_ref().map_or(Value::Null, Self::descriptor),
+                            )
                         })
                         .collect(),
                 ),
@@ -205,7 +208,16 @@ impl ValueSchema {
                         ("Tagged", Value::Map(variants)) => ValueSchema::Tagged(
                             variants
                                 .into_iter()
-                                .map(|(name, v)| Ok((name, if v == Value::Null { None } else { Some(parse(v)?) })))
+                                .map(|(name, v)| {
+                                    Ok((
+                                        name,
+                                        if v == Value::Null {
+                                            None
+                                        } else {
+                                            Some(parse(v)?)
+                                        },
+                                    ))
+                                })
                                 .collect::<Result<_, Failure>>()?,
                         ),
                         ("Ref", Value::Bytes(id)) => ValueSchema::Ref(SchemaId::from_bytes(&id)?),
@@ -241,13 +253,14 @@ impl ValueSchema {
                         .all(|(k, s)| values.get(k).is_some_and(|v| s.accepts(v)))
             }
             (Self::Variants(names), Value::String(name)) => names.contains(name),
-            (Self::Tagged(variants), Value::Map(value)) if value.len() == 1 => {
-                value.iter().next().is_some_and(|(name, payload)| match variants.get(name) {
+            (Self::Tagged(variants), Value::Map(value)) if value.len() == 1 => value
+                .iter()
+                .next()
+                .is_some_and(|(name, payload)| match variants.get(name) {
                     Some(None) => *payload == Value::Null,
                     Some(Some(schema)) => schema.accepts(payload),
                     None => false,
-                })
-            },
+                }),
             (Self::Ref(schema), Value::Ref(location)) => schema == &location.schema,
             _ => false,
         }

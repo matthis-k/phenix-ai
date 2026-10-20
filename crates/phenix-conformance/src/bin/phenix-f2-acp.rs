@@ -75,7 +75,8 @@ fn main() {
     .unwrap()
     .unwrap();
     assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
-    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
+    let prompt: PromptSubmitted =
+        phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
     assert_eq!(prompt.text, "hello");
     assert_eq!(prompt.session, "s1");
     let resource: Submission = call(

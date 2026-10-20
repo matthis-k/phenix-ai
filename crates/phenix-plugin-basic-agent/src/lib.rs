@@ -723,7 +723,7 @@ mod plugin {
             }
             Ok(Advance::Done(reply)) => {
                 PendingResult::Ready(Ok(TurnAdvanceOutcome::Complete { result: reply }))
-            },
+            }
             Err(CallError::Domain(problem)) => {
                 PendingResult::Ready(Err(CallError::Domain(problem)))
             }

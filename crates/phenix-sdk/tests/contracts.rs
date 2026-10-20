@@ -180,7 +180,10 @@ fn tagged_variants_are_schema_checked_and_canonical() {
     ]));
     assert_eq!(schema, expected);
     assert_eq!(TaggedResult::SCHEMA.id().unwrap(), expected.id().unwrap());
-    assert_eq!(TaggedResult::SCHEMA.encode().bytes(), expected.encode().unwrap());
+    assert_eq!(
+        TaggedResult::SCHEMA.encode().bytes(),
+        expected.encode().unwrap()
+    );
 
     for value in [
         TaggedResult::Reprepare,
@@ -201,11 +204,17 @@ fn tagged_variants_are_schema_checked_and_canonical() {
         ]),
         Value::map([("Reprepare", Value::String("non-null".into()))]),
         Value::map([("Unknown", Value::Null)]),
-        Value::map([("Finished", Value::map([("output", Value::String("missing tokens".into()))]))]),
-        Value::map([("Finished", Value::map([
-            ("output", Value::String("wrong".into())),
-            ("tokens", Value::String("nine".into())),
-        ]))]),
+        Value::map([(
+            "Finished",
+            Value::map([("output", Value::String("missing tokens".into()))]),
+        )]),
+        Value::map([(
+            "Finished",
+            Value::map([
+                ("output", Value::String("wrong".into())),
+                ("tokens", Value::String("nine".into())),
+            ]),
+        )]),
     ] {
         assert!(!schema.accepts(&malformed));
         assert!(TaggedResult::from_value(malformed).is_err());
