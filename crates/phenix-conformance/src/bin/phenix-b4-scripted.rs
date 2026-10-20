@@ -13,13 +13,7 @@ fn request(text: &str) -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: text.into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user(text.into())],
         tools: ["uppercase", "length"]
             .map(|id| ToolInfo {
                 id: id.into(),
@@ -85,27 +79,9 @@ fn main() {
     let mut scripted = request("tools:hello");
     let first = invoke(&kernel, &scripted).unwrap().unwrap();
     assert_eq!(first.calls.len(), 2);
-    scripted.history.push(Message {
-        role: Role::Assistant,
-        text: String::new(),
-        calls: first.calls,
-        call_id: String::new(),
-        error: None,
-    });
-    scripted.history.push(Message {
-        role: Role::Tool,
-        text: "HELLO".into(),
-        calls: vec![],
-        call_id: "call-1".into(),
-        error: None,
-    });
-    scripted.history.push(Message {
-        role: Role::Tool,
-        text: "5".into(),
-        calls: vec![],
-        call_id: "call-2".into(),
-        error: None,
-    });
+    scripted.history.push(Message::assistant(String::new(), first.calls));
+    scripted.history.push(Message::tool("call-1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
+    scripted.history.push(Message::tool("call-2".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
     assert_eq!(
         invoke(&kernel, &scripted).unwrap().unwrap().text,
         "mock:call-1:HELLO|call-2:5"
