@@ -137,11 +137,7 @@ pub fn validate_model_selection(
         .profile_id
         .as_deref()
         .map(|profile| {
-            CredentialIdentity::new(
-                &requested.provider_id,
-                &requested.connection_id,
-                profile,
-            )
+            CredentialIdentity::new(&requested.provider_id, &requested.connection_id, profile)
         })
         .transpose()?;
 
@@ -382,7 +378,9 @@ mod tests {
     fn admitted_choice_carries_exact_validated_credential_identity() {
         let (provider, auth, page, request) = fixture();
         let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
-        let identity = choice.credential_identity().expect("authenticated connection");
+        let identity = choice
+            .credential_identity()
+            .expect("authenticated connection");
         assert_eq!(identity.provider_id(), "openai");
         assert_eq!(identity.connection_id(), "api");
         assert_eq!(identity.profile_id(), "personal");
