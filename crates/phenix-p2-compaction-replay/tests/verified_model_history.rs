@@ -255,6 +255,8 @@ fn tool_source() -> Vec<Event> {
     events[8].run = "run-3".into();
     events[4].call_id = "t1".into();
     events[5].call_id = "t1".into();
+    events[5].data =
+        phenix_basic_contracts::encode(&phenix_basic_contracts::ToolCompletion::Succeeded).unwrap();
     events
 }
 fn tool_request() -> ModelRequest {
@@ -370,8 +372,7 @@ fn tool_failure_status_must_match_authoritative_session_message() {
     let mut journal = tool_source();
     journal[5].text = "tool failed".into();
     journal[5].data =
-        phenix_basic_contracts::encode(&phenix_basic_contracts::ToolCompletion { failed: true })
-            .unwrap();
+        phenix_basic_contracts::encode(&phenix_basic_contracts::ToolCompletion::Failed).unwrap();
     let cp = tool_checkpoint(&journal);
     let view = compacted_view(&cp, &journal, 4096).unwrap();
     let mut request = tool_request();

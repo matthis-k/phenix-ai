@@ -303,17 +303,12 @@ pub fn acp_decode(request: ClientInput) -> Result<Submission, BasicError> {
     }
 }
 
-/// The journal stores typed tool completion metadata. Both ACP versions use
-/// the same result, including legacy payload-free successful tool events.
+/// The journal stores an explicit typed tool completion status.
 #[cfg(feature = "acp")]
 fn acp_tool_failed(data: &Blob) -> Result<bool, BasicError> {
-    if data.0.is_empty() {
-        Ok(false)
-    } else {
-        decode::<ToolCompletion>(data)
-            .map(|result| result.failed)
-            .map_err(|_| error(ErrorCode::InvalidReply, "invalid tool completion metadata"))
-    }
+    decode::<ToolCompletion>(data)
+        .map(|outcome| matches!(outcome, ToolCompletion::Failed))
+        .map_err(|_| error(ErrorCode::InvalidReply, "invalid tool completion metadata"))
 }
 
 /// Serialize only typed ACP v1 SessionNotification payloads across the native
@@ -569,7 +564,7 @@ mod tests {
                 event(EventKind::ToolStarted, Blob(vec![]), "call-1", "read"),
                 event(
                     EventKind::ToolFinished,
-                    encode(&ToolCompletion { failed: true }).unwrap(),
+                    encode(&ToolCompletion::Failed).unwrap(),
                     "call-1",
                     "failed",
                 ),
@@ -789,7 +784,12 @@ mod tests {
             })
         };
         for (failed, expected) in [(false, "completed"), (true, "failed")] {
-            let data = encode(&ToolCompletion { failed }).unwrap();
+            let completion = if failed {
+                ToolCompletion::Failed
+            } else {
+                ToolCompletion::Succeeded
+            };
+            let data = encode(&completion).unwrap();
             let frames = render(data).unwrap();
             assert_eq!(frames.len(), 1);
             let frame: serde_json::Value = serde_json::from_str(&frames[0]).unwrap();
@@ -806,14 +806,10 @@ mod tests {
                 Some("call-1"),
             );
         }
-        // Preserve old durable journals with payload-free ToolFinished entries.
-        let legacy = render(Blob(vec![])).unwrap();
-        let legacy: serde_json::Value = serde_json::from_str(&legacy[0]).unwrap();
+        // Payload-free ToolFinished must not be interpreted as success.
         assert_eq!(
-            legacy
-                .pointer("/update/status")
-                .and_then(|status| status.as_str()),
-            Some("completed"),
+            render(Blob(vec![])).unwrap_err().code,
+            ErrorCode::InvalidReply,
         );
         assert_eq!(
             render(Blob(vec![0xff])).unwrap_err().code,

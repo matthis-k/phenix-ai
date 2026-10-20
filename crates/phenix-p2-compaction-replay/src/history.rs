@@ -242,13 +242,11 @@ pub fn assemble_verified_basic_request(
                 {
                     return Err(TranscriptProblem::UnalignedHistory);
                 }
-                let failed = if event.data.0.is_empty() {
-                    false // Pre-payload journal entries represent success.
-                } else {
+                let failed = matches!(
                     decode::<ToolCompletion>(&event.data)
-                        .map_err(|_| TranscriptProblem::UnalignedSource)?
-                        .failed
-                };
+                        .map_err(|_| TranscriptProblem::UnalignedSource)?,
+                    ToolCompletion::Failed
+                );
                 if failed {
                     if !message.text.is_empty()
                         || message.error.as_deref() != Some(event.text.as_str())

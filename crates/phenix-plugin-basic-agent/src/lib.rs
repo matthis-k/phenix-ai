@@ -620,10 +620,12 @@ mod plugin {
                 .pending
                 .retain(|pending| pending.id != call.id);
             running.session = checkpoint(host, running.session.clone())?;
-            let data = phenix_basic_contracts::encode(&ToolCompletion {
-                failed: failure.is_some(),
-            })
-            .map_err(CallError::Kernel)?;
+            let completion = if failure.is_some() {
+                ToolCompletion::Failed
+            } else {
+                ToolCompletion::Succeeded
+            };
+            let data = phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
             event_with_data(
                 host,
                 &running.input.session,
