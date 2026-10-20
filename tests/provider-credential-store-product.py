@@ -115,9 +115,19 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     assert status == 0 and result == dict(kind="success", value=dict(bytes=list(first_secret)))
     result, status = invoke("revoke", boundary, granted=resource(boundary))
     assert status == 0 and result == dict(kind="success", value={})
+    # Invalid identities cannot reach a credential provider as domain values:
+    # the typed Portable decoder rejects them at the plugin boundary first.
     for size in [38, 64]:
         oversized = dict(provider_id="a" * size, connection_id="b" * size, profile_id="c" * size)
-        domain("import", dict(identity=oversized, secret=first_secret), "InvalidInput")
+        for operation, request in [
+            ("import", dict(identity=oversized, secret=first_secret)),
+            ("resolve", oversized),
+            ("revoke", oversized),
+        ]:
+            result, status = invoke(operation, request)
+            assert status != 0 and result["kind"] == "kernel_failure"
+            failure = result["failure"]
+            assert (failure["code"] if isinstance(failure, dict) else failure) == "SchemaRejected"
     assert not list(vault.iterdir())
 
     result, status = invoke("import", dict(identity=first, secret=first_secret))
