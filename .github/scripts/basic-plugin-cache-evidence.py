@@ -69,6 +69,9 @@ BUILD_TARGETS = {
 }
 # Feature variant I changes a check derivation, not a package derivation.
 BUILD_CHECK_TARGETS = {"I": ["p2-basic-staged-plugin"]}
+# H adds an unchanged plugin to a composition; pre-realize it so the
+# post-edit build cannot misclassify its first cold build as invalidation.
+BASELINE_EXTRA_TARGETS = {"H": ["phenix-plugin-model-http"]}
 WARM_CONTROL = [TOOLS, AGENT, MODEL, COMPOSITION]
 
 
@@ -264,12 +267,16 @@ def main():
             attr for case in args.cases if case in args.build_cases
             for attr in BUILD_CHECK_TARGETS.get(case, ())
         }
+        baseline_targets.update(
+            attr for case in args.cases if case in args.build_cases
+            for attr in BASELINE_EXTRA_TARGETS.get(case, ())
+        )
         if not args.no_warm:
             baseline_targets.update(WARM_CONTROL)
         if baseline_targets:
-            evidence["builds"]["baseline-packages"] = run_build(
-                repo, sorted(baseline_targets), target, "baseline-packages")
-            if evidence["builds"]["baseline-packages"]["build"]["exit_code"] != 0:
+            evidence["builds"]["baseline"] = run_build(
+                repo, sorted(baseline_targets), target, "baseline")
+            if evidence["builds"]["baseline"]["build"]["exit_code"] != 0:
                 error = "baseline package materialization failed"
         if baseline_check_targets and not error:
             evidence["builds"]["baseline-checks"] = run_build(
