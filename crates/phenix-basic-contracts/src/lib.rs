@@ -554,7 +554,10 @@ mod tests {
         let cancel = Submission::Cancel;
         assert!(cancel.is_cancel());
         assert!(cancel.as_dispatch().is_none());
-        assert_eq!(decode::<Submission>(&encode(&cancel).unwrap()).unwrap(), cancel);
+        assert_eq!(
+            decode::<Submission>(&encode(&cancel).unwrap()).unwrap(),
+            cancel
+        );
 
         let dispatch = Submission::Dispatch {
             action: "phenix.basic.submit".into(),
@@ -562,11 +565,15 @@ mod tests {
                 session: "s1".into(),
                 text: "hi".into(),
                 limits: Limits::default(),
-            }).unwrap(),
+            })
+            .unwrap(),
         };
         assert!(!dispatch.is_cancel());
         assert_eq!(dispatch.as_dispatch().unwrap().0, "phenix.basic.submit");
-        assert_eq!(decode::<Submission>(&encode(&dispatch).unwrap()).unwrap(), dispatch);
+        assert_eq!(
+            decode::<Submission>(&encode(&dispatch).unwrap()).unwrap(),
+            dispatch
+        );
 
         let invalid = Value::map([
             ("Cancel", Value::Null),

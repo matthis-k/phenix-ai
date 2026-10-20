@@ -902,7 +902,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                                 line: pending_line,
                             },
                         ))?;
-                        if cancellation.cancel {
+                        if cancellation.is_cancel() {
                             execution.cancel().map_err(|e| format!("{e:?}"))?;
                         }
                     }
