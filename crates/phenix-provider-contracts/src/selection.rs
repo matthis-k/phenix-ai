@@ -353,4 +353,51 @@ mod tests {
         assert_eq!(selected.selection().profile_id.as_deref(), Some("personal"));
         assert_ne!(selected.selection(), &changed);
     }
+
+    #[test]
+    fn admitted_choice_carries_exact_validated_credential_identity() {
+        let (provider, auth, page, request) = fixture();
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let identity = choice.credential_identity().expect("authenticated connection");
+        assert_eq!(identity.provider_id(), "openai");
+        assert_eq!(identity.connection_id(), "api");
+        assert_eq!(identity.profile_id(), "personal");
+        assert_eq!(
+            identity,
+            &CredentialIdentity::new("openai", "api", "personal").unwrap()
+        );
+
+        let (mut provider, mut auth, mut page, mut request) = fixture();
+        provider.connections[0].auth_methods.clear();
+        auth.profiles.clear();
+        page.profile_id = None;
+        request.profile_id = None;
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        assert!(choice.credential_identity().is_none());
+    }
+
+    #[test]
+    fn authenticated_selection_rejects_identity_unrepresentable_by_secret_store() {
+        let (provider, mut auth, mut page, mut request) = fixture();
+        auth.profiles[0].id = "work.team".into();
+        page.profile_id = Some("work.team".into());
+        request.profile_id = Some("work.team".into());
+        assert_eq!(
+            validate_model_selection(&provider, &auth, &page, &request, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::InvalidInput
+        );
+
+        let (mut provider, mut auth, page, mut request) = fixture();
+        provider.id = "org.provider".into();
+        auth.provider_id = provider.id.clone();
+        request.provider_id = provider.id.clone();
+        assert_eq!(
+            validate_model_selection(&provider, &auth, &page, &request, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::InvalidInput
+        );
+    }
 }
