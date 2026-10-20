@@ -1709,6 +1709,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-workspace-selection"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "phenix-workspace-contracts",
+]
+
+[[package]]
 name = "phenix-plugin-storage-fixture"
 version = "0.1.0"
 dependencies = [
@@ -1764,6 +1773,14 @@ dependencies = [
  "serde_json",
  "sse-parse",
  "url",
+]
+
+[[package]]
+name = "phenix-workspace-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
 ]
 
 [[package]]
