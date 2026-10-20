@@ -88,13 +88,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello".into())],
         tools: vec![ToolInfo {
             id: "read".into(),
             description: "Read a file".into(),
