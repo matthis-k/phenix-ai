@@ -49,12 +49,12 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             return Err(error(ErrorCode::ModelFailed, "scripted model failure"));
         }
         let plan = prompt
-            .text
+            .text()
             .strip_prefix("tools:")
             .map(|input| (input, ["uppercase", "length"]))
             .or_else(|| {
                 prompt
-                    .text
+                    .text()
                     .strip_prefix("tools-fail:")
                     .map(|input| (input, ["fail", "length"]))
             });
