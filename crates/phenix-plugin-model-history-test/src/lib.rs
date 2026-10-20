@@ -26,7 +26,7 @@ fn previous_fact<'a>(history: &'a [Message], key: &str) -> Option<(usize, &'a st
             if message.role() != Role::User {
                 return None;
             }
-            let (found, value) = fact(&message.text())?;
+            let (found, value) = fact(message.text())?;
             (found == key).then_some((index, value))
         })
 }
@@ -137,7 +137,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         return Err(error(ErrorCode::ModelFailed, "verification model failure"));
     } else if let Some(text) = prompt.text().strip_prefix("echo:") {
         (format!("echo:{text}"), vec![])
-    } else if let Some((key, value)) = fact(&prompt.text()) {
+    } else if let Some((key, value)) = fact(prompt.text()) {
         (format!("stored:{key}={value}"), vec![])
     } else if let Some(key) = prompt.text().strip_prefix("recall:") {
         if key.is_empty() {
