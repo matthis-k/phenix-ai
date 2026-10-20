@@ -327,10 +327,7 @@ mod tests {
         let mut history = vec![message(Role::User, "tools:hello")];
         let calls = complete(&request(history.clone())).unwrap().calls;
         assert_eq!(calls.len(), 1);
-        history.push(Message {
-            calls,
-            ..message(Role::Assistant, "")
-        });
+        history.push(Message::assistant("", calls));
         let mut result = message(Role::Tool, "HELLO");
         result.call_id = "history-tool-1".into();
         history.push(result);
