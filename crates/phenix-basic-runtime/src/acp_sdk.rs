@@ -112,12 +112,12 @@ struct CredentialRevokeRequest {
 }
 
 impl CredentialRevokeRequest {
-    fn identity(&self) -> CredentialIdentity {
-        CredentialIdentity {
-            provider_id: self.provider_id.clone(),
-            connection_id: self.connection_id.clone(),
-            profile_id: self.profile_id.clone(),
-        }
+    fn identity(&self) -> Result<CredentialIdentity, ProviderError> {
+        CredentialIdentity::new(
+            self.provider_id.clone(),
+            self.connection_id.clone(),
+            self.profile_id.clone(),
+        )
     }
 }
 
@@ -593,9 +593,9 @@ impl Controller {
             .ok_or_else(acp::Error::method_not_found)?;
         let identity = &management.identity;
         Ok(serde_json::json!({
-            "provider_id": identity.provider_id,
-            "connection_id": identity.connection_id,
-            "profile_id": identity.profile_id,
+            "provider_id": identity.provider_id(),
+            "connection_id": identity.connection_id(),
+            "profile_id": identity.profile_id(),
             "import": true,
             "revoke": true,
         }))
@@ -644,11 +644,12 @@ impl Controller {
         &self,
         mut request: CredentialImportRequest,
     ) -> acp::Result<serde_json::Value> {
-        let identity = CredentialIdentity {
-            provider_id: request.provider_id.clone(),
-            connection_id: request.connection_id.clone(),
-            profile_id: request.profile_id.clone(),
-        };
+        let identity = CredentialIdentity::new(
+            request.provider_id.clone(),
+            request.connection_id.clone(),
+            request.profile_id.clone(),
+        )
+        .map_err(|_| invalid("invalid credential identity"))?;
         // Check the identity before allocating/copying the supplied secret.
         let management = self
             .credentials
@@ -679,7 +680,9 @@ impl Controller {
         &self,
         request: CredentialRevokeRequest,
     ) -> acp::Result<serde_json::Value> {
-        let identity = request.identity();
+        let identity = request
+            .identity()
+            .map_err(|_| invalid("invalid credential identity"))?;
         self.credential_operation("revoke", &identity, &identity.to_value())
     }
 

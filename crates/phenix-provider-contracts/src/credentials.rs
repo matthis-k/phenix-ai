@@ -1,17 +1,112 @@
 //! Non-journaled credential-provider operations. These are management/transport
 //! imports, never Model tools, ordinary configuration or frontend event data.
 use super::{ProviderError, ProviderErrorCode};
-use phenix_sdk::{contract, Blob, Code, Failure, Portable, StaticSchema, Value};
+use phenix_sdk::{contract, Blob, Code, Failure, Portable, StaticField, StaticSchema, Value};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+/// Validated, immutable scope identity: only checked constructors and strict
+/// wire/serde decoding can create it. Values are selectors, never grants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "UntrustedCredentialIdentity")]
 pub struct CredentialIdentity {
-    pub provider_id: String,
-    pub connection_id: String,
-    pub profile_id: String,
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UntrustedCredentialIdentity {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+}
+
+impl TryFrom<UntrustedCredentialIdentity> for CredentialIdentity {
+    type Error = String;
+    fn try_from(raw: UntrustedCredentialIdentity) -> Result<Self, Self::Error> {
+        Self::new(raw.provider_id, raw.connection_id, raw.profile_id).map_err(|error| error.message)
+    }
+}
+
+impl Portable for CredentialIdentity {
+    const SCHEMA: StaticSchema = StaticSchema::Struct(&[
+        StaticField {
+            name: "connection_id",
+            schema: StaticSchema::String,
+        },
+        StaticField {
+            name: "profile_id",
+            schema: StaticSchema::String,
+        },
+        StaticField {
+            name: "provider_id",
+            schema: StaticSchema::String,
+        },
+    ]);
+
+    fn to_value(&self) -> Value {
+        Value::map([
+            ("connection_id", self.connection_id.to_value()),
+            ("profile_id", self.profile_id.to_value()),
+            ("provider_id", self.provider_id.to_value()),
+        ])
+    }
+
+    fn from_value(value: Value) -> Result<Self, Failure> {
+        let Value::Map(mut fields) = value else {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "credential identity must be a struct",
+            ));
+        };
+        let mut take = |key| {
+            fields
+                .remove(key)
+                .ok_or_else(|| {
+                    Failure::new(Code::SchemaRejected, "missing credential identity field")
+                })
+                .and_then(String::from_value)
+        };
+        let connection = take("connection_id")?;
+        let profile = take("profile_id")?;
+        let provider = take("provider_id")?;
+        if !fields.is_empty() {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "unknown credential identity field",
+            ));
+        }
+        Self::new(provider, connection, profile)
+            .map_err(|_| Failure::new(Code::SchemaRejected, "invalid credential identity"))
+    }
 }
 
 impl CredentialIdentity {
+    pub fn new(
+        provider_id: impl Into<String>,
+        connection_id: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
+        let identity = Self {
+            provider_id: provider_id.into(),
+            connection_id: connection_id.into(),
+            profile_id: profile_id.into(),
+        };
+        identity.resource()?;
+        Ok(identity)
+    }
+
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+    pub fn connection_id(&self) -> &str {
+        &self.connection_id
+    }
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
     /// Exact credential resource; a provider-list/session grant is insufficient.
     /// Encoding each component avoids collisions between dotted/underscored IDs.
     pub fn resource(&self) -> Result<String, ProviderError> {
@@ -71,11 +166,11 @@ impl CredentialIdentity {
         if components.len() != 3 {
             return Err(invalid());
         }
-        let identity = Self {
-            provider_id: decode(components[0]).ok_or_else(invalid)?,
-            connection_id: decode(components[1]).ok_or_else(invalid)?,
-            profile_id: decode(components[2]).ok_or_else(invalid)?,
-        };
+        let identity = Self::new(
+            decode(components[0]).ok_or_else(invalid)?,
+            decode(components[1]).ok_or_else(invalid)?,
+            decode(components[2]).ok_or_else(invalid)?,
+        )?;
         if identity.resource()?.as_str() != resource {
             return Err(invalid());
         }
@@ -151,11 +246,7 @@ mod tests {
     use super::*;
 
     fn identity(provider: &str, connection: &str, profile: &str) -> CredentialIdentity {
-        CredentialIdentity {
-            provider_id: provider.into(),
-            connection_id: connection.into(),
-            profile_id: profile.into(),
-        }
+        CredentialIdentity::new(provider, connection, profile).unwrap()
     }
 
     #[test]
@@ -169,7 +260,7 @@ mod tests {
             identity("a", "api", "personal").resource().unwrap()
         );
         for invalid in ["", "../secret", "a.b", "a/b"] {
-            assert!(identity("a", "api", invalid).resource().is_err());
+            assert!(CredentialIdentity::new("a", "api", invalid).is_err());
         }
     }
 
@@ -208,17 +299,58 @@ mod tests {
         );
         for sizes in [(64, 49, 1), (38, 38, 38), (64, 64, 64), (65, 1, 1)] {
             assert_eq!(
-                identity(
-                    &"a".repeat(sizes.0),
-                    &"b".repeat(sizes.1),
-                    &"c".repeat(sizes.2)
+                CredentialIdentity::new(
+                    "a".repeat(sizes.0),
+                    "b".repeat(sizes.1),
+                    "c".repeat(sizes.2)
                 )
-                .resource()
                 .unwrap_err()
                 .code,
                 ProviderErrorCode::InvalidInput
             );
         }
+    }
+
+    #[test]
+    fn no_invalid_credential_identity_can_be_deserialized() {
+        let original = identity("openai", "api", "personal");
+        assert_eq!(
+            CredentialIdentity::from_value(original.to_value()).unwrap(),
+            original
+        );
+        assert_eq!(
+            serde_json::from_value::<CredentialIdentity>(serde_json::to_value(&original).unwrap())
+                .unwrap(),
+            original
+        );
+
+        let bad_wire = Value::map([
+            ("provider_id", Value::String("../other".into())),
+            ("connection_id", Value::String("api".into())),
+            ("profile_id", Value::String("personal".into())),
+        ]);
+        assert!(CredentialIdentity::from_value(bad_wire).is_err());
+        assert!(
+            serde_json::from_value::<CredentialIdentity>(serde_json::json!({
+                "provider_id": "../other",
+                "connection_id": "api",
+                "profile_id": "personal"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn extra_credential_identity_fields_are_never_accepted() {
+        assert!(
+            serde_json::from_value::<CredentialIdentity>(serde_json::json!({
+                "provider_id": "openai",
+                "connection_id": "api",
+                "profile_id": "personal",
+                "scope_override": "phenix.providers.admin"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
