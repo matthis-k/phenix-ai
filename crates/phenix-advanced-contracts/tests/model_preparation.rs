@@ -83,7 +83,7 @@ fn unchanged_request_is_a_valid_non_authoritative_graph_handoff() {
 #[test]
 fn forged_or_stale_source_never_activates_prepared_model() {
     let (mut input, proposal) = fixture();
-    input.original.history[3].text = "different turn".into();
+    *input.original.history[3].text_mut() = "different turn".into();
     assert_eq!(
         validate_model_preparation_proposal(&input, &proposal).unwrap_err(),
         ModelPreparationProblem::SourceChanged

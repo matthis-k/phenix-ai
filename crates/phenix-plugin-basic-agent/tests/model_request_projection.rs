@@ -57,10 +57,10 @@ fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs(
     // A plugin may propose a derived request, but the authoritative Basic
     // session and pending tool provenance remain unchanged.
     let mut projection = request.clone();
-    projection.history[0].text.push_str(" (modified)");
+    projection.history[0].text_mut().push_str(" (modified)");
     projection.context.clear();
     projection.tools.clear();
-    assert_eq!(history[0].text, "read the file");
+    assert_eq!(history[0].text(), "read the file");
     assert_eq!(context.len(), 1);
     assert_eq!(tools.len(), 1);
 }

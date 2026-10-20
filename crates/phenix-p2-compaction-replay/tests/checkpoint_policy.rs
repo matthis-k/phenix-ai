@@ -98,7 +98,7 @@ fn proposes_complete_cited_prefix_without_modifying_authoritative_history() {
 fn refuses_incomplete_turns_and_unverified_history() {
     let (request, mut journal) = source();
     let mut forged = request.clone();
-    forged.history[0].text = "invented".into();
+    *forged.history[0].text_mut() = "invented".into();
     assert!(matches!(
         plan_verified_checkpoint(&forged, &journal, None, policy()),
         Err(PlanProblem::UnverifiedHistory),
@@ -211,7 +211,7 @@ fn repeated_source_proposal_is_noop_without_spending_a_revision() {
     );
     assert_eq!(repeated, Ok(None));
     let mut changed_session = request.clone();
-    changed_session.history[0].text = "forged earlier turn".into();
+    *changed_session.history[0].text_mut() = "forged earlier turn".into();
     assert!(matches!(
         plan_verified_checkpoint(
             &changed_session,

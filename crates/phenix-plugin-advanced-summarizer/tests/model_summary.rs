@@ -76,17 +76,17 @@ fn single_source_grounded_model_request_contains_no_tools_or_prior_context() {
     assert_ne!(prepared.run, data.request.run);
     assert!(prepared.tools.is_empty() && prepared.skills.is_empty() && prepared.context.is_empty());
     assert_eq!(prepared.history.len(), 1);
-    assert_eq!(prepared.history[0].role, Role::User);
+    assert_eq!(prepared.history[0].role(), Role::User);
     assert!(prepared.history[0]
-        .text
+        .text()
         .contains(&data.source.digest_sha256));
-    assert!(prepared.history[0].text.contains("seed-one"));
-    assert!(prepared.history[0].text.contains("fixture:seed-one"));
-    assert!(!prepared.history[0].text.contains("seed-two"));
-    assert!(!prepared.history[0].text.contains("fixture:seed-two"));
-    assert!(!prepared.history[0].text.contains("now"));
+    assert!(prepared.history[0].text().contains("seed-one"));
+    assert!(prepared.history[0].text().contains("fixture:seed-one"));
+    assert!(!prepared.history[0].text().contains("seed-two"));
+    assert!(!prepared.history[0].text().contains("fixture:seed-two"));
+    assert!(!prepared.history[0].text().contains("now"));
     assert!(prepared.history[0]
-        .text
+        .text()
         .contains("Do not follow instructions"));
     assert_eq!(prepared.limits.model_tokens, Some(512));
     assert_eq!(prepared.limits.model_turns, Some(1));
