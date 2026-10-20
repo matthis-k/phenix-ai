@@ -620,10 +620,12 @@ mod plugin {
                 .pending
                 .retain(|pending| pending.id != call.id);
             running.session = checkpoint(host, running.session.clone())?;
-            let data = phenix_basic_contracts::encode(&ToolCompletion {
-                failed: failure.is_some(),
-            })
-            .map_err(CallError::Kernel)?;
+            let completion = if failure.is_some() {
+                ToolCompletion::Failed
+            } else {
+                ToolCompletion::Succeeded
+            };
+            let data = phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
             event_with_data(
                 host,
                 &running.input.session,
@@ -719,11 +721,11 @@ mod plugin {
             }
             Ok(Advance::RePrepared) => {
                 state.active = Some(running);
-                PendingResult::Ready(Ok(TurnAdvanceOutcome { completed: None }))
+                PendingResult::Ready(Ok(TurnAdvanceOutcome::Reprepare))
             }
-            Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(TurnAdvanceOutcome {
-                completed: Some(reply),
-            })),
+            Ok(Advance::Done(reply)) => {
+                PendingResult::Ready(Ok(TurnAdvanceOutcome::Complete { result: reply }))
+            }
             Err(CallError::Domain(problem)) => {
                 PendingResult::Ready(Err(CallError::Domain(problem)))
             }

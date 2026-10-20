@@ -19,6 +19,10 @@ use acp::{Agent, Client, ConnectionTo, Responder};
 use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
+use phenix_provider_contracts::{
+    AuthQuery, AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialSecret,
+    ModelPage, ModelQuery, ProviderError, ProviderPage, ProviderQuery,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -30,6 +34,93 @@ type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
 type PendingPrompts = Mutex<VecDeque<(String, Arc<AtomicBool>)>>;
 
+/// ACP v1 extension request: the official SDK owns its JSON-RPC dispatch.
+/// The separate launcher-owned native kernel grant is the only authority.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/list", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderListRequest {
+    scope: String,
+}
+
+/// Read-only provider queries retain exact provider/connection/profile
+/// selectors, while the controller fixes the resource and grants.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/auth/status", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderAuthStatusRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/models", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderModelsRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+    profile_id: Option<String>,
+    cursor: Option<String>,
+    limit: u64,
+}
+
+/// The only accepted write authority comes from a trusted launcher-owned
+/// composition, not a Lua feature flag or an arbitrary provider catalog.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/capabilities", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialCapabilitiesRequest {}
+
+/// Secret-bearing ACP extension. The SDK owns framing; the trusted launcher
+/// fixes the only credential resource this connection may modify.
+#[derive(Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/import", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialImportRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+    secret: String,
+}
+
+impl std::fmt::Debug for CredentialImportRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialImportRequest")
+            .field("provider_id", &self.provider_id)
+            .field("connection_id", &self.connection_id)
+            .field("profile_id", &self.profile_id)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for CredentialImportRequest {
+    fn drop(&mut self) {
+        std::mem::take(&mut self.secret).into_bytes().fill(0);
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/revoke", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialRevokeRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+}
+
+impl CredentialRevokeRequest {
+    fn identity(&self) -> Result<CredentialIdentity, ProviderError> {
+        CredentialIdentity::new(
+            self.provider_id.clone(),
+            self.connection_id.clone(),
+            self.profile_id.clone(),
+        )
+    }
+}
+
 enum Command {
     Initialize(Box<InitializeRequest>, Reply<InitializeResponse>),
     New(NewSessionRequest, Reply<NewSessionResponse>),
@@ -38,6 +129,12 @@ enum Command {
         SetSessionConfigOptionRequest,
         Reply<SetSessionConfigOptionResponse>,
     ),
+    ProviderList(ProviderListRequest, Reply<serde_json::Value>),
+    ProviderAuthStatus(ProviderAuthStatusRequest, Reply<serde_json::Value>),
+    ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
+    CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
+    CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
+    CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
 }
@@ -49,6 +146,12 @@ impl Command {
             Self::New(_, reply) => reply.respond_with_error(error),
             Self::Load(_, reply, _) => reply.respond_with_error(error),
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
+            Self::ProviderList(_, reply) => reply.respond_with_error(error),
+            Self::ProviderAuthStatus(_, reply) => reply.respond_with_error(error),
+            Self::ProviderModels(_, reply) => reply.respond_with_error(error),
+            Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
+            Self::CredentialImport(_, reply) => reply.respond_with_error(error),
+            Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
         }
@@ -184,8 +287,74 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
+struct ProviderManagement {
+    kernel: Kernel,
+    selected: Selection,
+}
+
+struct CredentialManagement {
+    kernel: Kernel,
+    importer: Selection,
+    resource: String,
+    identity: CredentialIdentity,
+}
+
+/// The credential composition is a separate control-plane grant, never an
+/// operation from the ordinary Basic session or provider-list root.
+fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+    const CONTRACT: &str = "phenix.provider.credentials@1";
+    let resource = spec
+        .resource
+        .as_deref()
+        .filter(|value| value.starts_with("phenix.credentials."))
+        .ok_or("credential management requires one explicit credential resource")?;
+    let identity = CredentialIdentity::from_resource(resource)
+        .map_err(|_| "invalid launcher credential resource")?;
+    let operations = std::collections::BTreeSet::from([
+        format!("{CONTRACT}/import"),
+        format!("{CONTRACT}/revoke"),
+    ]);
+    if spec.entry.interface != CONTRACT
+        || spec.entry.operation != "import"
+        || spec.authority.operations != operations
+        || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
+        || spec.grants.len() != 2
+        || !spec.slots.is_empty()
+        || !spec.excluded.is_empty()
+        || !spec.substitutions.is_empty()
+    {
+        return Err("credential management composition has unexpected authority".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for grant in &spec.grants {
+        if grant.caller != "root"
+            || grant.interface != CONTRACT
+            || !["import", "revoke"].contains(&grant.operation.as_str())
+            || grant.resources != std::collections::BTreeSet::from([resource.to_string()])
+            || !seen.insert(grant.operation.as_str())
+        {
+            return Err("credential management requires exact root grants".into());
+        }
+    }
+    if seen.len() != 2 {
+        return Err("credential management requires import and revoke grants".into());
+    }
+    let kernel = Prepared::prepare(spec.clone())
+        .map_err(|_| "invalid credential management composition".to_string())?
+        .load()
+        .map_err(|_| "cannot load credential management composition".to_string())?;
+    Ok(CredentialManagement {
+        kernel,
+        importer: spec.entry.clone(),
+        resource: resource.into(),
+        identity,
+    })
+}
+
 struct Controller {
     composition: Composition,
+    management: Option<ProviderManagement>,
+    credentials: Option<CredentialManagement>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -197,11 +366,15 @@ struct Controller {
 impl Controller {
     fn start(
         composition: Composition,
+        management: Option<ProviderManagement>,
+        credentials: Option<CredentialManagement>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
         Self {
             composition,
+            management,
+            credentials,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             initialized: false,
@@ -257,6 +430,54 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::ProviderList(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_list(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ProviderAuthStatus(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_auth_status(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ProviderModels(request, reply) => {
+                let result = if !self.initialized {
+                    Err(invalid("initialize required"))
+                } else {
+                    self.provider_models(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::CredentialCapabilities(_, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_capabilities()
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::CredentialImport(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_import(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::CredentialRevoke(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_revoke(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::Prompt(request, reply, peer, flag) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -270,6 +491,199 @@ impl Controller {
             }
             Command::Closed => self.closed.store(true, Ordering::Release),
         }
+    }
+
+    // The launcher preselects provider implementation and grants. These
+    // operations can never infer model entitlement from a catalog entry.
+    fn provider_read<Q: Portable, R: Portable + serde::Serialize>(
+        &self,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> acp::Result<serde_json::Value> {
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let selection = Selection {
+            interface: interface.into(),
+            operation: operation.into(),
+            provider: management.selected.provider.clone(),
+        };
+        let root = management.kernel.admit_root(selection).map_err(internal)?;
+        let value = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => value,
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                return Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": problem.code,
+                })));
+            }
+        };
+        let result = R::from_value(value).map_err(internal)?;
+        serde_json::to_value(result).map_err(internal)
+    }
+
+    fn provider_list(&self, request: ProviderListRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user" {
+            return Err(invalid("provider query must request user scope only"));
+        }
+        self.provider_read::<_, ProviderPage>(
+            "phenix.provider.catalog@1",
+            "list",
+            &ProviderQuery {
+                scope: request.scope,
+            },
+        )
+    }
+
+    fn provider_auth_status(
+        &self,
+        request: ProviderAuthStatusRequest,
+    ) -> acp::Result<serde_json::Value> {
+        if request.scope != "user"
+            || request.provider_id.is_empty()
+            || request.connection_id.is_empty()
+        {
+            return Err(invalid("invalid provider authentication query"));
+        }
+        self.provider_read::<_, AuthenticationStatus>(
+            "phenix.provider.auth@1",
+            "status",
+            &AuthQuery {
+                scope: request.scope,
+                provider_id: request.provider_id,
+                connection_id: request.connection_id,
+            },
+        )
+    }
+
+    fn provider_models(&self, request: ProviderModelsRequest) -> acp::Result<serde_json::Value> {
+        if request.scope != "user"
+            || request.provider_id.is_empty()
+            || request.connection_id.is_empty()
+            || request.limit == 0
+            || request.limit > 256
+            || request
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.len() > 1024)
+        {
+            return Err(invalid("invalid provider model query"));
+        }
+        self.provider_read::<_, ModelPage>(
+            "phenix.provider.catalog@1",
+            "models",
+            &ModelQuery {
+                scope: request.scope,
+                provider_id: request.provider_id,
+                connection_id: request.connection_id,
+                profile_id: request.profile_id,
+                cursor: request.cursor,
+                limit: request.limit,
+            },
+        )
+    }
+
+    fn credential_capabilities(&self) -> acp::Result<serde_json::Value> {
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let identity = &management.identity;
+        Ok(serde_json::json!({
+            "provider_id": identity.provider_id(),
+            "connection_id": identity.connection_id(),
+            "profile_id": identity.profile_id(),
+            "import": true,
+            "revoke": true,
+        }))
+    }
+
+    fn credential_operation(
+        &self,
+        operation: &str,
+        identity: &CredentialIdentity,
+        value: &Value,
+    ) -> acp::Result<serde_json::Value> {
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        // Identity is an untrusted selector. It never widens the fixed
+        // launcher-owned credential resource or its root grants.
+        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
+            return Err(invalid("credential identity is not authorized"));
+        }
+        let selected = Selection {
+            operation: operation.into(),
+            ..management.importer.clone()
+        };
+        let root = management
+            .kernel
+            .admit_root(selected)
+            .map_err(|_| internal("credential operation not admitted"))?;
+        match root
+            .invoke(value)
+            .map_err(|_| internal("credential operation failed"))?
+        {
+            Outcome::Success(_) => Ok(serde_json::json!({ "ok": true })),
+            Outcome::Domain(value) => {
+                let error = ProviderError::from_value(value)
+                    .map_err(|_| internal("credential operation failed"))?;
+                Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": error.code,
+                })))
+            }
+        }
+    }
+
+    fn credential_import(
+        &self,
+        mut request: CredentialImportRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = CredentialIdentity::new(
+            request.provider_id.clone(),
+            request.connection_id.clone(),
+            request.profile_id.clone(),
+        )
+        .map_err(|_| invalid("invalid credential identity"))?;
+        // Check the identity before allocating/copying the supplied secret.
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
+            return Err(invalid("credential identity is not authorized"));
+        }
+        let secret = CredentialSecret::new(std::mem::take(&mut request.secret).into_bytes())
+            .map_err(|_| invalid("invalid credential secret"))?;
+        let payload = CredentialImport {
+            identity: identity.clone(),
+            secret,
+        };
+        let mut value = payload.to_value();
+        let response = self.credential_operation("import", &identity, &value);
+        // The canonical Value cannot own CredentialSecret's Drop behavior.
+        // Overwrite its serialized payload copy even on domain or host denial.
+        if let Value::Map(fields) = &mut value {
+            if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
+                bytes.fill(0);
+            }
+        }
+        response
+    }
+
+    fn credential_revoke(
+        &self,
+        request: CredentialRevokeRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = request
+            .identity()
+            .map_err(|_| invalid("invalid credential identity"))?;
+        self.credential_operation("revoke", &identity, &identity.to_value())
     }
 
     /// The selected Model is an installed composition binding, not client configuration.
@@ -494,11 +908,39 @@ impl Controller {
         for (_, kernel) in self.sessions {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
+        if let Some(management) = self.management {
+            management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        }
+        if let Some(credentials) = self.credentials {
+            credentials
+                .kernel
+                .shutdown()
+                .map_err(|_| "credential cleanup failed")?;
+        }
         Ok(())
     }
 }
 
-pub(super) fn run(composition: &Composition) -> Result<(), String> {
+pub(super) fn run(
+    composition: &Composition,
+    management: Option<&Composition>,
+    credentials: Option<&Composition>,
+) -> Result<(), String> {
+    let management = management
+        .map(|spec| -> Result<ProviderManagement, String> {
+            if spec.entry.interface != "phenix.provider.catalog@1" || spec.entry.operation != "list"
+            {
+                return Err("ACP management composition must select provider catalog list".into());
+            }
+            let selected = spec.entry.clone();
+            let kernel = Prepared::prepare(spec.clone())
+                .map_err(|e| format!("{e:?}"))?
+                .load()
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(ProviderManagement { kernel, selected })
+        })
+        .transpose()?;
+    let credentials = credentials.map(prepare_credentials).transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -506,6 +948,8 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let queued: Arc<PendingPrompts> = Arc::new(Mutex::new(VecDeque::new()));
     let controller = Controller::start(
         composition.clone(),
+        management,
+        credentials,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
@@ -516,6 +960,12 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
     let new = tx.clone();
     let load = tx.clone();
     let set_config = tx.clone();
+    let provider_list = tx.clone();
+    let provider_auth_status = tx.clone();
+    let provider_models = tx.clone();
+    let credential_capabilities = tx.clone();
+    let credential_import = tx.clone();
+    let credential_revoke = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
     let pending_prompts = Arc::clone(&queued);
@@ -545,6 +995,54 @@ pub(super) fn run(composition: &Composition) -> Result<(), String> {
         .on_receive_request(
             async move |request: SetSessionConfigOptionRequest, reply, _peer| {
                 submit(&set_config, Command::SetConfig(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderListRequest, reply, _peer| {
+                submit(&provider_list, Command::ProviderList(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderAuthStatusRequest, reply, _peer| {
+                submit(
+                    &provider_auth_status,
+                    Command::ProviderAuthStatus(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderModelsRequest, reply, _peer| {
+                submit(&provider_models, Command::ProviderModels(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialCapabilitiesRequest, reply, _peer| {
+                submit(
+                    &credential_capabilities,
+                    Command::CredentialCapabilities(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialImportRequest, reply, _peer| {
+                submit(
+                    &credential_import,
+                    Command::CredentialImport(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialRevokeRequest, reply, _peer| {
+                submit(
+                    &credential_revoke,
+                    Command::CredentialRevoke(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )

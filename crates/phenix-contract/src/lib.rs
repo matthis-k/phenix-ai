@@ -8,7 +8,7 @@ pub mod state;
 pub mod static_schema;
 pub use reference::*;
 pub use state::*;
-pub use static_schema::{StaticField, StaticSchema};
+pub use static_schema::{StaticField, StaticSchema, StaticVariant};
 mod portable;
 pub use portable::Blob;
 pub mod value;

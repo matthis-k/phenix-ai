@@ -8,13 +8,16 @@
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
+pub mod adapter;
+pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions};
+
 pub mod credentials;
 pub use credentials::{
     CredentialIdentity, CredentialImport, CredentialSecret, ProviderCredentials,
 };
 
 pub mod selection;
-pub use selection::{validate_model_selection, ModelSelection};
+pub use selection::{validate_model_selection, AdmittedModelChoice, ModelSelection};
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum ProviderErrorCode {
@@ -56,6 +59,8 @@ pub enum AuthenticationKind {
     ApiKey,
     OAuthAuthorizationCode,
     OAuthDeviceCode,
+    /// A plugin-owned authentication method with a standard UI challenge.
+    Plugin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -63,6 +68,8 @@ pub struct AuthenticationMethod {
     pub id: String,
     pub label: String,
     pub kind: AuthenticationKind,
+    /// Describes plugin-owned behavior, never an authority grant.
+    pub adapter: AdapterBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -75,7 +82,20 @@ pub enum DiscoveryKind {
 pub struct DiscoverySource {
     pub id: String,
     pub kind: DiscoveryKind,
-    /// Empty for a declared static catalog. Never infer a /models URL.
+    /// Optional network URL. Declared catalogs and plugin-owned dynamic
+    /// discovery need no URL; never infer a /models endpoint.
+    pub endpoint: Option<String>,
+    /// The discovery plugin's decoder or static-catalog implementation.
+    pub adapter: AdapterBinding,
+}
+
+/// An inference protocol contributed by a provider plugin.
+///
+/// `id` is a provider-domain protocol identifier, not a kernel operation.
+/// The endpoint overrides the connection's default for this protocol only.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProtocolBinding {
+    pub id: String,
     pub endpoint: Option<String>,
 }
 
@@ -83,9 +103,10 @@ pub struct DiscoverySource {
 pub struct ConnectionDescriptor {
     pub id: String,
     pub label: String,
-    /// Explicit model protocol identifiers, not an inferred URL format.
-    pub protocols: Vec<String>,
-    /// Transport endpoint or base URL when applicable.
+    /// Protocol-specific configuration, resolved by provider plugins.
+    pub protocols: Vec<ProtocolBinding>,
+    /// Optional network base URL. In-process models need none; individual
+    /// protocol bindings may specify their own explicit endpoints.
     pub base_url: Option<String>,
     /// An empty list means no authentication is required.
     pub auth_methods: Vec<AuthenticationMethod>,
@@ -106,6 +127,14 @@ pub struct AuthQuery {
     pub connection_id: String,
 }
 
+/// A profile is either authenticated or carries the provider's reason
+/// why it cannot be used. Successful profiles cannot contain an error reason.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum CredentialProfileStatus {
+    Authenticated,
+    Unavailable { reason: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct CredentialProfile {
     /// Stable identity scoped to one provider + connection.
@@ -113,9 +142,8 @@ pub struct CredentialProfile {
     pub label: String,
     /// References a declared AuthenticationMethod ID.
     pub method_id: String,
-    /// Provider-authoritative validity, not a frontend credential guess.
-    pub valid: bool,
-    pub reason: Option<String>,
+    /// Provider-authoritative status, not credential-presence evidence.
+    pub status: CredentialProfileStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -163,12 +191,15 @@ impl AuthenticationStatus {
         let Some(profile) = matches.next() else {
             return false;
         };
-        profile.valid
+        matches!(profile.status, CredentialProfileStatus::Authenticated)
             && matches.next().is_none()
-            && connection
-                .auth_methods
-                .iter()
-                .any(|method| method.id == profile.method_id)
+            && {
+                let mut methods = connection
+                    .auth_methods
+                    .iter()
+                    .filter(|method| method.id == profile.method_id);
+                methods.next().is_some() && methods.next().is_none()
+            }
     }
 }
 
@@ -180,20 +211,67 @@ pub struct AuthStart {
     pub method_id: String,
 }
 
+/// An authentication challenge with its required fields in the variant.
+/// There is no representable combination of a browser challenge without a
+/// browser URL, a device challenge without a user code, or an API-key
+/// challenge with an unrelated URL.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub enum ChallengeKind {
-    ApiKeyInput,
-    OpenBrowser,
-    DeviceAuthorization,
+pub enum AuthChallenge {
+    ApiKeyInput {
+        attempt_id: String,
+        prompt: String,
+    },
+    OpenBrowser {
+        attempt_id: String,
+        url: String,
+    },
+    DeviceAuthorization {
+        attempt_id: String,
+        verification_url: String,
+        user_code: String,
+    },
 }
 
+/// An attempt is scoped to one provider, connection and account flow.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct AuthChallenge {
+pub struct AuthAttemptQuery {
+    pub scope: String,
+    pub provider_id: String,
+    pub connection_id: String,
     pub attempt_id: String,
-    pub kind: ChallengeKind,
-    /// Only the provider-approved authorization/verification URL.
-    pub url: Option<String>,
-    pub prompt: Option<String>,
+}
+
+/// An authenticated account selected by a completed login flow. The
+/// success payload has no validity flag or error reason, unlike a catalog
+/// profile whose current validity can subsequently change.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct AuthenticatedProfile {
+    pub id: String,
+    pub label: String,
+    pub method_id: String,
+}
+
+impl AuthenticatedProfile {
+    pub fn into_credential_profile(self) -> CredentialProfile {
+        CredentialProfile {
+            id: self.id,
+            label: self.label,
+            method_id: self.method_id,
+            status: CredentialProfileStatus::Authenticated,
+        }
+    }
+}
+
+/// Polling produces an exhaustive lifecycle state; registration and
+/// credential presence are not substitutes for successful authentication.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum AuthAttemptState {
+    AwaitingInput { challenge: AuthChallenge },
+    Pending,
+    Completed { profile: AuthenticatedProfile },
+    Failed { reason: ProviderError },
+    Expired,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -247,6 +325,8 @@ pub trait ProviderCatalog {
 pub trait ProviderAuth {
     fn status(&self, request: AuthQuery) -> Result<AuthenticationStatus, ProviderError>;
     fn begin(&self, request: AuthStart) -> Result<AuthChallenge, ProviderError>;
+    fn poll(&self, request: AuthAttemptQuery) -> Result<AuthAttemptState, ProviderError>;
+    fn cancel(&self, request: AuthAttemptQuery) -> Result<AuthAttemptState, ProviderError>;
 }
 
 #[plugin(
@@ -269,13 +349,23 @@ mod tests {
         ConnectionDescriptor {
             id: "api".into(),
             label: "API".into(),
-            protocols: vec!["openai-chat".into(), "openai-responses".into()],
+            protocols: vec![
+                ProtocolBinding {
+                    id: "openai-chat".into(),
+                    endpoint: None,
+                },
+                ProtocolBinding {
+                    id: "openai-responses".into(),
+                    endpoint: Some("https://example.test/v1/responses".into()),
+                },
+            ],
             base_url: Some("https://example.test/v1".into()),
             auth_methods: methods,
             model_sources: vec![DiscoverySource {
                 id: "api-models".into(),
                 kind: DiscoveryKind::Dynamic,
                 endpoint: Some("https://example.test/v1/models".into()),
+                adapter: AdapterBinding::from_typed("openai.models", &()).unwrap(),
             }],
         }
     }
@@ -285,6 +375,7 @@ mod tests {
             id: id.into(),
             label: id.into(),
             kind,
+            adapter: AdapterBinding::from_typed("test.auth", &()).unwrap(),
         }
     }
 
@@ -293,8 +384,13 @@ mod tests {
             id: id.into(),
             label: id.into(),
             method_id: method_id.into(),
-            valid,
-            reason: None,
+            status: if valid {
+                CredentialProfileStatus::Authenticated
+            } else {
+                CredentialProfileStatus::Unavailable {
+                    reason: "invalid".into(),
+                }
+            },
         }
     }
 
@@ -320,11 +416,15 @@ mod tests {
         assert!(state.profile_is_valid_for("example", &connection, "personal"));
         assert!(state.ready_for("example", &connection));
         state.profiles.push(profile("work", "key", true));
-        state.profiles[1].valid = false;
+        state.profiles[1].status = CredentialProfileStatus::Unavailable {
+            reason: "revoked".into(),
+        };
         assert!(!state.profile_is_valid_for("example", &connection, "personal"));
         assert!(state.profile_is_valid_for("example", &connection, "work"));
         assert!(state.ready_for("example", &connection));
-        state.profiles[2].valid = false;
+        state.profiles[2].status = CredentialProfileStatus::Unavailable {
+            reason: "revoked".into(),
+        };
         assert!(!state.ready_for("example", &descriptor(vec![key])));
         state.profiles.push(profile("subscription", "oauth", true));
         assert!(state.ready_for("example", &descriptor(vec![oauth])));
@@ -397,5 +497,83 @@ mod tests {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
         assert_eq!(metadata.definitions.len(), 3);
+    }
+
+    #[test]
+    fn authentication_completion_cannot_contain_an_unavailable_profile() {
+        let successful = AuthAttemptState::Completed {
+            profile: AuthenticatedProfile {
+                id: "personal".into(),
+                label: "Personal".into(),
+                method_id: "oauth".into(),
+            },
+        };
+        let wire = successful.to_value();
+        assert!(AuthAttemptState::SCHEMA.owned().unwrap().accepts(&wire));
+        assert_eq!(AuthAttemptState::from_value(wire).unwrap(), successful);
+        let AuthAttemptState::Completed { profile } = successful else {
+            unreachable!("fixture is completed");
+        };
+        assert_eq!(
+            profile.into_credential_profile().status,
+            CredentialProfileStatus::Authenticated,
+        );
+    }
+
+    #[test]
+    fn credential_profile_status_is_exclusive_and_roundtrips() {
+        for status in [
+            CredentialProfileStatus::Authenticated,
+            CredentialProfileStatus::Unavailable {
+                reason: "expired".into(),
+            },
+        ] {
+            let encoded = status.to_value();
+            assert!(CredentialProfileStatus::SCHEMA
+                .owned()
+                .unwrap()
+                .accepts(&encoded));
+            assert_eq!(
+                CredentialProfileStatus::from_value(encoded).unwrap(),
+                status
+            );
+        }
+        let conflicting = Value::map([
+            ("Authenticated", Value::Null),
+            (
+                "Unavailable",
+                Value::map([("reason", Value::String("expired".into()))]),
+            ),
+        ]);
+        assert!(CredentialProfileStatus::from_value(conflicting).is_err());
+    }
+
+    #[test]
+    fn challenge_variants_require_their_own_fields() {
+        for challenge in [
+            AuthChallenge::ApiKeyInput {
+                attempt_id: "attempt-1".into(),
+                prompt: "Enter an API key".into(),
+            },
+            AuthChallenge::OpenBrowser {
+                attempt_id: "attempt-2".into(),
+                url: "https://example.test/authorize".into(),
+            },
+            AuthChallenge::DeviceAuthorization {
+                attempt_id: "attempt-3".into(),
+                verification_url: "https://example.test/device".into(),
+                user_code: "ABCD".into(),
+            },
+        ] {
+            let value = challenge.to_value();
+            assert!(AuthChallenge::SCHEMA.owned().unwrap().accepts(&value));
+            assert_eq!(AuthChallenge::from_value(value).unwrap(), challenge);
+        }
+        let missing_url = Value::map([(
+            "OpenBrowser",
+            Value::map([("attempt_id", Value::String("attempt-2".into()))]),
+        )]);
+        assert!(!AuthChallenge::SCHEMA.owned().unwrap().accepts(&missing_url));
+        assert!(AuthChallenge::from_value(missing_url).is_err());
     }
 }

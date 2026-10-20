@@ -92,11 +92,7 @@ mod tests {
 
     #[test]
     fn selectors_do_not_grant_service_access() {
-        let identity = CredentialIdentity {
-            provider_id: "openai".into(),
-            connection_id: "api".into(),
-            profile_id: "personal".into(),
-        };
+        let identity = CredentialIdentity::new("openai", "api", "personal").unwrap();
         let resource = identity.resource().unwrap();
         assert!(authorize(&identity, Some(&resource)).is_ok());
         for actual in [None, Some("phenix.session.s1"), Some("phenix.providers.s1")] {
@@ -105,10 +101,7 @@ mod tests {
                 ProviderErrorCode::Denied
             );
         }
-        let other = CredentialIdentity {
-            profile_id: "work".into(),
-            ..identity
-        };
+        let other = CredentialIdentity::new("openai", "api", "work").unwrap();
         assert_eq!(
             entry(&other, Some(&resource)).unwrap_err().code,
             ProviderErrorCode::Denied

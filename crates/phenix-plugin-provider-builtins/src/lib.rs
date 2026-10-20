@@ -69,8 +69,8 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthChallenge, AuthQuery, AuthStart, ModelQuery, ProviderAuth, ProviderCatalog,
-        ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
+        ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -183,6 +183,34 @@ mod plugin {
         Err(CallError::Domain(error(
             ProviderErrorCode::Unavailable,
             "provider authentication backend is not installed",
+        )))
+    }
+
+    #[provide(ProviderAuth::poll)]
+    fn poll(
+        _: &mut State,
+        host: &Host<'_>,
+        request: AuthAttemptQuery,
+    ) -> CallResult<AuthAttemptState, ProviderError> {
+        check(host, &request.scope)?;
+        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        Err(CallError::Domain(error(
+            ProviderErrorCode::NotFound,
+            "no authentication attempt registered",
+        )))
+    }
+
+    #[provide(ProviderAuth::cancel)]
+    fn cancel(
+        _: &mut State,
+        host: &Host<'_>,
+        request: AuthAttemptQuery,
+    ) -> CallResult<AuthAttemptState, ProviderError> {
+        check(host, &request.scope)?;
+        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        Err(CallError::Domain(error(
+            ProviderErrorCode::NotFound,
+            "no authentication attempt registered",
         )))
     }
 }

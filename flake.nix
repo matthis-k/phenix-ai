@@ -275,6 +275,91 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
+      environmentContractsSource = subset (publicPaths ++ [ ./crates/phenix-environment-contracts ]);
+      environmentContractsBinary = rust.buildRustPackage {
+        pname = "phenix-environment-contracts";
+        version = "0.1.0";
+        src = environmentContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-environment-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-environment-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      environmentDefinitions = definitionPackage "phenix-environment-contracts"
+        "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
+      environmentPluginSource = subset (publicPaths ++ [
+        ./crates/phenix-environment-contracts
+        ./crates/phenix-plugin-environment
+      ]);
+      environmentPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-environment";
+        version = "0.1.0";
+        src = environmentPluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-environment" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-environment" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_environment.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      environmentProductCheck = pkgs.runCommand "phenix-environment-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/environment-product.py} ${kernel}/bin/phenix-kernel ${environmentPlugin} ${environmentDefinitions} "$out"
+        test -s "$out/evidence.json"
+      '';
+      workspaceContractsSource = subset (publicPaths ++ [ ./crates/phenix-workspace-contracts ]);
+      workspaceContractsBinary = rust.buildRustPackage {
+        pname = "phenix-workspace-contracts";
+        version = "0.1.0";
+        src = workspaceContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-workspace-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-workspace-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      workspaceDefinitions = definitionPackage "phenix-workspace-contracts"
+        "${workspaceContractsBinary}/bin/phenix-workspace-contracts" false;
+      workspacePluginSource = subset (publicPaths ++ [
+        ./crates/phenix-workspace-contracts
+        ./crates/phenix-plugin-workspace-selection
+        ./crates/phenix-basic-contracts
+      ]);
+      workspacePlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-workspace-selection";
+        version = "0.1.0";
+        src = workspacePluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-workspace-selection" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-workspace-selection" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_workspace_selection.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      workspaceProductCheck = pkgs.runCommand "phenix-workspace-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/workspace-product.py} ${kernel}/bin/phenix-kernel ${workspacePlugin} ${storageSqlite} ${workspaceDefinitions} ${basicDefinitions} "$out"
+        test -s "$out/evidence.json"
+      '';
       providerBuiltinsPluginSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-builtins
         ./crates/phenix-provider-builtins
@@ -974,6 +1059,8 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-environment-contracts
         ./crates/phenix-basic-runtime
         ./tests/generation-identity-v2.json
       ];
@@ -1066,6 +1153,43 @@
       };
       basicComposition = pkgs.writeText "phenix-basic-composition.json"
         (builtins.toJSON basicCompositionSpec);
+      # Opt-in, read-only ACP provider management uses the same compiled
+      # native plugin and typed definitions as the kernel product test, with
+      # an independent resource and exact root operations. The default Basic
+      # composition remains byte-for-byte unchanged.
+      providerManagementComposition = pkgs.writeText "phenix-provider-management.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.catalog@1";
+            operation = "list";
+            provider = "phenix.provider.builtins";
+          };
+          artifacts = [ "${providerBuiltinsPlugin}" ];
+          definitions = [ "${providerDefinitions}" ];
+          slots = [];
+          grants = map (binding: {
+            caller = "root";
+            interface = binding.interface;
+            operation = binding.operation;
+            resources = [ "phenix.providers.user" ];
+          }) [
+            { interface = "phenix.provider.catalog@1"; operation = "list"; }
+            { interface = "phenix.provider.auth@1"; operation = "status"; }
+            { interface = "phenix.provider.catalog@1"; operation = "models"; }
+          ];
+          excluded = [];
+          substitutions = [];
+          authority = {
+            operations = [
+              "phenix.provider.catalog@1/list"
+              "phenix.provider.auth@1/status"
+              "phenix.provider.catalog@1/models"
+            ];
+            resources = [ "phenix.providers.user" ];
+          };
+          resource = "phenix.providers.user";
+        });
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
       basicHttpCompositionSpec = basicCompositionSpec // {
@@ -1620,6 +1744,8 @@
         test -s "$out/terminal-sessions.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
+        python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} $out
+        test -s "$out/acp-provider-management.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         # A caller that sets neither the explicit variable nor HOME must still
         # resolve the XDG state default instead of failing session ownership.
@@ -1629,6 +1755,17 @@
         grep -F 'answer: mock:hello' $out/terminal-default.txt
         test -s "$XDG_STATE_HOME/phenix/basic.sqlite"
         echo '{"format":"phenix.basic.host-smoke.v1","terminal":true,"jsonl":true,"default_state_path":true,"acp_v1_session_reload":true,"p1_accepted":false}' > $out/evidence.json
+      '';
+      # Separate acceptance keeps the credential plugin out of ordinary Basic
+      # dependency closures and never stores test secrets in Nix outputs.
+      basicCredentialAcpCheck = pkgs.runCommand "phenix-basic-acp-credentials-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-credential-management-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} \
+          ${providerCredentialStore} ${providerDefinitions} ${providerManagementComposition} "$out"
+        test -s "$out/acp-credential-management.json"
       '';
       basicPendingHttpProductCheck = pkgs.runCommand "phenix-basic-pending-http-product" {
         nativeBuildInputs = [ pkgs.python3 ];
@@ -2017,6 +2154,8 @@
         ln -s ${authoringCheck} $out/authoring
         ln -s ${graphCheck} $out/graph
         ln -s ${basicContractsCheck} $out/basic-contracts
+        ln -s ${environmentProductCheck} $out/environment
+        ln -s ${workspaceProductCheck} $out/workspace
         ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${httpModelCheck} $out/http-model
         ln -s ${basicToolsCheck} $out/basic-tools
@@ -2082,6 +2221,10 @@
         phenix-plugin-provider-credential-files = providerCredentialStore;
         phenix-plugin-provider-secret-service = providerSecretService;
         phenix-provider-contracts = providerDefinitions;
+        phenix-environment-contracts = environmentDefinitions;
+        phenix-plugin-environment = environmentPlugin;
+        phenix-workspace-contracts = workspaceDefinitions;
+        phenix-plugin-workspace-selection = workspacePlugin;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
         phenix-plugin-basic-tools = basicTools;
@@ -2123,6 +2266,13 @@
           text = ''
             ${basicSqliteEnvironment "basic.sqlite"}
             exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} "$@"
+          '';
+        };
+        phenix-basic-managed-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-managed-acp";
+          text = ''
+            ${basicSqliteEnvironment "basic.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicComposition} --provider-management ${providerManagementComposition} "$@"
           '';
         };
         # The executable reads credentials only at invocation. Nothing secret
@@ -2175,6 +2325,8 @@
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
+        environment-product = environmentProductCheck;
+        workspace-product = workspaceProductCheck;
         provider-contracts = providerContractsCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
@@ -2194,6 +2346,7 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
         basic-streaming = basicStreamingCheck;
         basic-http-product = basicHttpProductCheck;

@@ -2,7 +2,7 @@
 //! revisioned Storage fixture (not a durable SQLite acceptance test).
 use phenix_basic_contracts::{
     encode, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, Scope, SessionSnapshot,
-    StorageEdit, StorageTransaction, ToolCall,
+    StorageEdit, StorageTransaction, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Portable};
 use phenix_kernel::{
@@ -213,8 +213,9 @@ fn main() {
         ReconcileTool {
             session: session.into(),
             call_id: "call-1".into(),
-            text: "PROMPT".into(),
-            error: None,
+            outcome: ToolOutcome::Succeeded {
+                text: "PROMPT".into(),
+            },
         },
     )
     .unwrap()

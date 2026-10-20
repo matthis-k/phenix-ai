@@ -71,7 +71,73 @@ These are implementation entry points for existing [management issue #891](https
 | R-N4c effective selection | `crates/phenix-provider-contracts/src/selection.rs`, the existing Basic Session/Storage plugins, `crates/phenix-basic-runtime/src/acp_sdk.rs` | Runtime validates current catalog + credential profile, stores an effective scoped selection with revision CAS, and applies it only to later turns. Standard ACP session config reflects the admitted session choice. | Conflict, stale catalog, revoked profile, cross-session/connection spoofing, restart and two-client race. Run `tests/acp-stdio-product.py` and independent ACP SDK interop |
 | R-N4d client/distribution | [Client N4](https://github.com/matthis-k/phenix-ai.nvim/blob/main/spec/p1-p2-client-roadmap.md), [distribution D4](https://github.com/matthis-k/phenix-nvim/blob/main/spec/p1-p2-distribution-roadmap.md) | Expose only operations actually admitted by the host. Pin accepted runtime, then client, then distribution; test an installed fake provider before manual live-provider setup. | `:Phenix auth` -> `:Phenix model` -> prompt -> restart, zero secret disclosure and no fallback to a different account |
 
+### Provider plugin ownership and legacy removal
+
+A provider enters the runtime only through an installed, selected plugin.
+Provider plugins may contribute multiple connections and choose local in-process
+models, literal-loopback HTTP, or remote HTTPS. Declared static model lists and
+plugin-owned dynamic discovery are both valid. No remote URL is required for an
+in-process connection, and no endpoint can be inferred from its protocol name.
+Model discovery and authentication remain provider operations, not kernel logic.
+
+A provider descriptor is metadata, not proof of a usable model. Actual model
+selection requires a fresh, account-scoped catalog, an authorized Model binding
+and a real executable provider. Plugins may expose zero, one or several auth
+methods. Explicit composition selects provider contributions; the provider
+catalog aggregation work must reject duplicate full provider identities and
+unselected bindings. No hardcoded provider allowlist belongs in the kernel,
+client or provider contract library.
+
+**Legacy removal gate:** replace `crates/phenix-plugin-model-http/src/request.rs`
+environment-driven connection and secret loading, `phenix-basic-http`'s
+environment-driven launch defaults and the parallel HTTP-model composition with
+the provider-selected execution path. Delete those old branches and their
+variables, rather than shipping compatibility aliases, when the new selected
+Model provider passes the existing HTTP/ACP streaming, cancellation and
+authorization tests. Retain their test scenarios as the new provider product
+acceptance. The preexisting code remains until that replacement exists; this
+roadmap entry is not implementation acceptance.
+
+The completed gate must demonstrate independently contributed offline and
+online provider plugins in one composition, no-auth and API-key connections,
+a provider-owned dynamic catalog, deterministic duplicate-ID rejection, typed
+unavailable states, remote plaintext and loopback-hostname rejection, and exact
+credential-origin binding. A registered but unimplemented model must not
+appear as selectable.
+
 First acceptance slice is read-only R-N4a, then credential/action admission. The existing provider contract tests and packaged runtime checks must fail on the missing behavior before the corresponding production integration is accepted. [Client #78](https://github.com/matthis-k/phenix-ai.nvim/pull/78) already handles pushed ACP catalog removal; client picker invalidation and distribution pinning are separate client/distribution PRs. They do not prove any R-N4a–c host operation. N5 unprivileged Neovim editor integrations may proceed in parallel. Do not treat a passing fixture UI as a completed auth or model-selection product.
+
+### Runtime environment locations
+
+`phenix.environment@1` is an optional plugin import. Its default native
+implementation resolves a resource-bound snapshot with a launch cwd hint,
+config, state, data, cache and optional runtime directory. Each plugin asks
+for its own namespace through `resolve_for(host, "Environment", namespace)`.
+This provider computes locations but never creates directories, opens files,
+changes process cwd, stores configuration or grants filesystem authority.
+
+On Linux, the default provider follows absolute XDG home variables with
+HOME-based fallbacks; it ignores relative variables and does not invent an
+XDG runtime directory. The launch cwd is a hint, not an authorized project
+root. Workspace selection and changes remain project/session configuration
+owned by selected plugins, without `chdir` for the entire process. A
+filesystem/tool provider must validate its resource grant and resolve paths
+within its admitted workspace before every effect.
+
+The kernel remains unaware of XDG, project filenames, config precedence and
+SQLite schema. The selected runtime/project/session configuration providers
+own effective values and revision CAS under #891; Storage and ProjectStorage
+providers own durable bytes. Plugin packages own bundled assets. The product
+host resolves pinned plugin sources to verified native package paths before
+passing the one v3 composition to the kernel. Never use paths returned by an
+Environment import as a substitute for those artifact paths.
+
+Acceptance for the default provider is a native, separately composed
+Environment contract/product test with absolute and relative XDG roots,
+optional runtime, denied foreign resource, namespace traversal and zero
+filesystem effects. Adoption by Basic SQLite, per-session cwd overrides and
+config mutations are separate integration work and are not claimed by
+this directory-resolution slice.
 
 ## P2 advanced agent
 

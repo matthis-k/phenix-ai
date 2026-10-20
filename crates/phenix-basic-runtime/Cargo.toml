@@ -11,9 +11,12 @@ acp_v2_preview = []
 
 [dependencies]
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-environment-contracts = { path = "../phenix-environment-contracts" }
+phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 phenix-contract.workspace = true
 phenix-kernel = { path = "../phenix-kernel" }
 phenix-sdk = { path = "../phenix-sdk" }
+serde.workspace = true
 serde_json.workspace = true
 agent-client-protocol = { version = "=3.3.0", features = ["stdio", "unstable_protocol_v2"] }
 futures = { version = "0.3", features = ["executor"] }

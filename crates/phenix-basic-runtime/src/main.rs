@@ -34,14 +34,15 @@ fn sqlite_default_name(name: Option<&str>) -> Result<&str, String> {
 }
 
 fn sqlite_state_base(xdg: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
-    // XDG paths must be absolute. Empty or relative values are treated as
-    // unset, so a malformed optional XDG setting cannot break a valid HOME.
-    xdg.filter(|path| path.is_absolute())
-        .or_else(|| {
-            home.filter(|path| path.is_absolute())
-                .map(|path| path.join(".local/state"))
-        })
-        .ok_or_else(|| "Basic SQLite requires absolute XDG_STATE_HOME or HOME".into())
+    // Use the same pure policy as the selected Environment provider.
+    phenix_environment_contracts::local::state_root(
+        &phenix_environment_contracts::local::DirectoryInputs {
+            home,
+            state: xdg,
+            ..Default::default()
+        },
+    )
+    .map_err(|_| "Basic SQLite requires absolute XDG_STATE_HOME or HOME".into())
 }
 
 fn ensure_default_sqlite_path() -> Result<(), String> {
@@ -234,15 +235,15 @@ fn begin_submission<'a>(
     input: Submission,
     scope: ScopedRequest,
 ) -> Result<GraphExecution<'a>, String> {
-    if input.cancel {
+    let Submission::Dispatch { action, payload } = input else {
         return Err("no active graph execution to cancel".into());
-    }
-    if input.action != "phenix.basic.submit" {
+    };
+    if action != "phenix.basic.submit" {
         return Err("frontend selected an unknown Basic action".into());
     }
-    let value = Value::decode(&input.payload.0).map_err(|e| format!("{e:?}"))?;
+    let value = Value::decode(&payload.0).map_err(|e| format!("{e:?}"))?;
     kernel
-        .begin_action_scoped(&input.action, &value, scope)
+        .begin_action_scoped(&action, &value, scope)
         .map_err(|e| format!("{e:?}"))
 }
 
@@ -696,7 +697,7 @@ fn run_console(
                     line: line?,
                 },
             ))?;
-            if submission.cancel {
+            if submission.is_cancel() {
                 let current = active
                     .as_mut()
                     .ok_or("no active graph execution to cancel")?;
@@ -859,7 +860,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 line,
             },
         ))?;
-        if input.cancel {
+        if input.is_cancel() {
             // Cancelling a session without an active run cannot affect another
             // session's graph or mutate its durable checkpoint.
             continue;
@@ -902,7 +903,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                                 line: pending_line,
                             },
                         ))?;
-                        if cancellation.cancel {
+                        if cancellation.is_cancel() {
                             execution.cancel().map_err(|e| format!("{e:?}"))?;
                         }
                     }
@@ -989,17 +990,37 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION for terminal]".into());
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json]".into());
     }
     ensure_default_sqlite_path()?;
+
+    // Management compositions are launcher-owned. Client requests cannot
+    // supply a package path, composition or native authority grant.
+    let mut management: Option<Composition> = None;
+    let mut credentials: Option<Composition> = None;
+    if args[1] == "acp" {
+        if !(args.len() - 3).is_multiple_of(2) {
+            return Err("ACP management flags require a composition file".into());
+        }
+        for flag in args[3..].chunks_exact(2) {
+            let target = match flag[0].as_str() {
+                "--provider-management" => &mut management,
+                "--provider-credentials" => &mut credentials,
+                _ => return Err("unknown ACP management flag".into()),
+            };
+            if target.is_some() {
+                return Err("duplicate ACP management flag".into());
+            }
+            let data = std::fs::read(&flag[1]).map_err(|e| e.to_string())?;
+            *target = Some(serde_json::from_slice(&data).map_err(|e| e.to_string())?);
+        }
+    }
     let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
         args[4].as_str()
-    } else if args.len() == 3 {
+    } else if args.len() == 3 || args[1] == "acp" {
         "s1"
     } else {
-        return Err(
-            "session selection requires terminal COMPOSITION.json --session SESSION".into(),
-        );
+        return Err("terminal session arguments are invalid".into());
     };
     let path = Path::new(&args[2]);
     let config = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -1041,7 +1062,7 @@ fn run() -> Result<(), String> {
     };
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
-        "acp" => acp_sdk::run(&composition),
+        "acp" => acp_sdk::run(&composition, management.as_ref(), credentials.as_ref()),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(
             &composition,
