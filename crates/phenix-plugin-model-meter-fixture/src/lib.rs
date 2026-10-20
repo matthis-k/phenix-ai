@@ -30,7 +30,7 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
     if request
         .history
         .last()
-        .is_some_and(|message| message.text == "meter-stale")
+        .is_some_and(|message| message.text() == "meter-stale")
     {
         fingerprint = "0".repeat(64);
     }
@@ -41,8 +41,8 @@ pub fn measure(request: &ModelRequest) -> Result<ModelTokenMeasurement, ModelTok
         .history
         .iter()
         .rev()
-        .find(|message| message.role == Role::User)
-        .map(|message| message.text.as_str());
+        .find(|message| message.role() == Role::User)
+        .map(|message| message.text());
     let compacted = request
         .context
         .iter()
@@ -86,14 +86,14 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         .history
         .iter()
         .rev()
-        .find(|message| message.role == Role::User)
+        .find(|message| message.role() == Role::User)
         .ok_or_else(|| error(ErrorCode::InvalidInput, "missing user message"))?;
     let count = measure(request)
         .map_err(|_| error(ErrorCode::ModelFailed, "fixture measurement failed"))?;
     // Native acceptance probes the exact request that survived source
     // verification and selected-provider metering. This branch exists only
     // in the verification Model, never in production Model adapters.
-    let text = if prompt.text == "auto-compact-again" {
+    let text = if prompt.text() == "auto-compact-again" {
         let cited = request
             .context
             .iter()
@@ -103,7 +103,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             request.history.len(),
             cited,
         )
-    } else if prompt.text == "auto-compact" {
+    } else if prompt.text() == "auto-compact" {
         let cited = request
             .context
             .iter()
@@ -113,7 +113,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             request.history.len(),
             cited,
         )
-    } else if prompt.text == "inspect-compaction" {
+    } else if prompt.text() == "inspect-compaction" {
         let cited = request
             .context
             .iter()
@@ -124,7 +124,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             cited,
         )
     } else {
-        format!("fixture:{}", prompt.text)
+        format!("fixture:{}", prompt.text())
     };
     Ok(ModelReply {
         usage: Usage {
@@ -194,9 +194,9 @@ mod plugin {
         })?;
         let last = input.request.history.last();
         if last.is_none_or(|msg| {
-            msg.text != "auto-compact"
-                && msg.text != "auto-invalid-citation"
-                && msg.text != "auto-compact-again"
+            msg.text() != "auto-compact"
+                && msg.text() != "auto-invalid-citation"
+                && msg.text() != "auto-compact-again"
         }) || input.journal.len() < 10
             || input.journal[0].text != "seed-one"
             || input.journal[4].text != "seed-two"
@@ -207,7 +207,7 @@ mod plugin {
             }));
         }
         let mut source = input.source;
-        if last.is_some_and(|msg| msg.text == "auto-invalid-citation") {
+        if last.is_some_and(|msg| msg.text() == "auto-invalid-citation") {
             source.digest_sha256 = "f".repeat(64);
         }
         Ok(CompactionSummary {
@@ -234,14 +234,14 @@ mod plugin {
             .history
             .iter()
             .rev()
-            .find(|message| message.role == phenix_basic_contracts::Role::User);
-        if latest.is_some_and(|message| message.text == "kernel-error-begin") {
+            .find(|message| message.role() == phenix_basic_contracts::Role::User);
+        if latest.is_some_and(|message| message.text() == "kernel-error-begin") {
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
                 "fixture Model failed before pending admission",
             ));
         }
-        if latest.is_some_and(|message| message.text == "kernel-error-poll") {
+        if latest.is_some_and(|message| message.text() == "kernel-error-poll") {
             state.pending_test_model_error = true;
             return PendingResult::Pending;
         }
