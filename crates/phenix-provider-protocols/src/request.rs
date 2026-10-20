@@ -1,5 +1,5 @@
 use crate::invalid;
-use phenix_basic_contracts::{error, BasicError, ErrorCode, ModelRequest, Role};
+use phenix_basic_contracts::{error, BasicError, ErrorCode, Message, ModelRequest, ToolOutcome};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
@@ -80,8 +80,7 @@ enum PreparedMessage {
     },
     Tool {
         call_id: String,
-        text: String,
-        error: Option<String>,
+        outcome: ToolOutcome,
     },
 }
 
@@ -115,25 +114,23 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
     let mut has_user = false;
     let mut messages = vec![];
     for message in &request.history {
-        match message.role() {
-            Role::User => {
-                if !pending.is_empty()
-                    || !message.calls().is_empty()
-                    || !message.call_id().is_empty()
-                    || message.error().is_some()
-                {
+        match message {
+            Message::User { text } => {
+                if !pending.is_empty() {
                     return Err(bad("invalid user history"));
                 }
                 has_user = true;
-                messages.push(PreparedMessage::User(message.text().to_owned()));
+                messages.push(PreparedMessage::User(text.clone()));
             }
-            Role::Assistant => {
-                if !pending.is_empty() || !message.call_id().is_empty() || message.error().is_some()
-                {
+            Message::Assistant {
+                text,
+                calls: tool_calls,
+            } => {
+                if !pending.is_empty() {
                     return Err(bad("invalid assistant history"));
                 }
                 let mut calls = vec![];
-                for call in message.calls() {
+                for call in tool_calls {
                     if call.id.is_empty()
                         || !function_name(&call.tool)
                         || !pending.insert(call.id.clone())
@@ -149,18 +146,17 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
                     });
                 }
                 messages.push(PreparedMessage::Assistant {
-                    text: message.text().to_owned(),
+                    text: text.clone(),
                     calls,
                 });
             }
-            Role::Tool => {
-                if !message.calls().is_empty() || !pending.remove(message.call_id()) {
+            Message::Tool { call_id, outcome } => {
+                if !pending.remove(call_id.as_str()) {
                     return Err(bad("unmatched tool history"));
                 }
                 messages.push(PreparedMessage::Tool {
-                    call_id: message.call_id().to_owned(),
-                    text: message.text().to_owned(),
-                    error: message.error().map(str::to_owned),
+                    call_id: call_id.clone(),
+                    outcome: outcome.clone(),
                 });
             }
         }
@@ -185,8 +181,15 @@ fn tool_arguments(arguments: &Value) -> String {
     json!({"value": arguments}).to_string()
 }
 
-fn tool_error(text: &str, error: &str) -> String {
-    json!({"error": error, "output": text}).to_string()
+fn tool_error(output: &str, reason: &str) -> String {
+    json!({"error": reason, "output": output}).to_string()
+}
+
+fn tool_output(outcome: &ToolOutcome) -> String {
+    match outcome {
+        ToolOutcome::Succeeded { text } => text.clone(),
+        ToolOutcome::Failed { output, reason } => tool_error(output, reason),
+    }
 }
 
 fn chat_body(
@@ -216,15 +219,8 @@ fn chat_body(
                 }
                 msgs.push(value);
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let content = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                msgs.push(json!({"role":"tool","tool_call_id":call_id,"content":content}));
+            PreparedMessage::Tool { call_id, outcome } => {
+                msgs.push(json!({"role":"tool","tool_call_id":call_id,"content":tool_output(outcome)}));
             }
         }
     }
@@ -265,16 +261,8 @@ fn responses_body(
                         "name":call.tool, "arguments":tool_arguments(&call.arguments)}));
                 }
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let output = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                input
-                    .push(json!({"type":"function_call_output","call_id":call_id,"output":output}));
+            PreparedMessage::Tool { call_id, outcome } => {
+                input.push(json!({"type":"function_call_output","call_id":call_id,"output":tool_output(outcome)}));
             }
         }
     }
@@ -323,17 +311,9 @@ fn anthropic_body(
                 }
                 msgs.push(json!({"role":"assistant", "content":content}));
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let content = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                let mut block =
-                    json!({"type":"tool_result","tool_use_id":call_id,"content":content});
-                if error.is_some() {
+            PreparedMessage::Tool { call_id, outcome } => {
+                let mut block = json!({"type":"tool_result","tool_use_id":call_id,"content":tool_output(outcome)});
+                if matches!(outcome, ToolOutcome::Failed { .. }) {
                     block["is_error"] = json!(true);
                 }
                 // All results for the preceding assistant tool-use batch must
