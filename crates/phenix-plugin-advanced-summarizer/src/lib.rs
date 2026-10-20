@@ -125,13 +125,7 @@ pub fn prepare_model_request(
         // selected Model must not journal speculative summary deltas into
         // the Basic source ledger.
         run: format!("summary-{}", &input.source.digest_sha256[..16]),
-        history: vec![Message {
-            role: Role::User,
-            text: prompt,
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user(prompt)],
         tools: vec![],
         skills: vec![],
         context: vec![],
