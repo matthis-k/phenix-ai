@@ -22,6 +22,9 @@ ci.mkFlakeCheckConfig {
       ".#phenix-basic-contracts"
       ".#phenix-plugin-event-journal"
       ".#phenix-plugin-storage-sqlite"
+      # Experiment: build the existing Basic composition dependency closure
+      # once in the shared writer instead of independently in every shard.
+      ".#phenix-basic-composition"
     ];
     checkHints = {
       "m1-shipping" = { isolate = true; weight = 240; };
