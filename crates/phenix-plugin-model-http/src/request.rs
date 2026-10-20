@@ -64,7 +64,54 @@ fn configured_credential(
     }
 }
 
+// The checked path is consumed once the controller resolves the selected
+// credential root; the legacy HTTP environment preset remains a separate
+// explicit composition mode until the management/Model handoff is installed.
 impl Config {
+    #[allow(dead_code)]
+    pub(crate) fn from_checked_binding(
+        binding: &phenix_provider_contracts::HttpModelBinding,
+        credential: Option<(
+            &phenix_provider_contracts::CredentialIdentity,
+            &phenix_provider_contracts::CredentialSecret,
+        )>,
+        provider_max_tokens: Option<u64>,
+    ) -> Result<Self, BasicError> {
+        match (binding.credential_identity(), credential.as_ref()) {
+            (None, None) => {}
+            (Some(expected), Some((actual, _))) if expected == *actual => {}
+            _ => {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "credential identity does not match selected provider connection and profile",
+                ));
+            }
+        }
+        let protocol = Protocol::parse(binding.protocol_id())?;
+        let endpoint = endpoint_url(binding.endpoint())?;
+        let secret = credential
+            .map(|(_, key)| {
+                std::str::from_utf8(key.expose_for_authorized_provider())
+                    .map(str::to_owned)
+                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
+            })
+            .transpose()?;
+        if secret
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.chars().any(char::is_control))
+        {
+            return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
+        }
+        Ok(Self {
+            endpoint,
+            model: binding.model_id().into(),
+            protocol,
+            provider_max_tokens,
+            credential: secret,
+            ca_file: None,
+        })
+    }
+
     pub fn load() -> Result<Self, BasicError> {
         let endpoint = env::var("PHENIX_MODEL_HTTP_ENDPOINT")
             .map_err(|_| failed("HTTP model endpoint is not configured"))?;
@@ -95,33 +142,19 @@ impl Config {
     }
 }
 
-#[cfg(test)]
-mod credential_tests {
-    use super::*;
-
-    #[test]
-    fn explicit_http_credential_errors_never_fall_back_to_no_auth() {
-        assert_eq!(
-            configured_credential(Err(env::VarError::NotPresent)).unwrap(),
-            None
-        );
-        assert_eq!(
-            configured_credential(Ok("fixture-key".into())).unwrap(),
-            Some("fixture-key".into())
-        );
-        for bad in ["", "\n", "key\r", "key\u{0000}"] {
-            assert_eq!(
-                configured_credential(Ok(bad.into())).unwrap_err().code,
-                ErrorCode::InvalidInput,
-            );
-        }
-        assert_eq!(
-            configured_credential(Err(env::VarError::NotUnicode(std::ffi::OsString::from(
-                "not-unicode"
-            ),)))
-            .unwrap_err()
-            .code,
-            ErrorCode::InvalidInput,
-        );
+impl std::fmt::Debug for Config {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Config")
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("protocol", &self.protocol)
+            .field("provider_max_tokens", &self.provider_max_tokens)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("ca_file", &self.ca_file)
+            .finish()
     }
 }

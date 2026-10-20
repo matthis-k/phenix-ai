@@ -59,10 +59,19 @@ BUILD_TARGETS = {
     "B": [TOOLS, COMPOSITION],
     "C": [AGENT, COMPOSITION],
     "D": [MODEL, COMPOSITION],
+    # Test representative real consumers of the changed shared contracts/SDK.
+    # This is deliberately narrower than the complete reverse dependency graph.
+    "E": [TOOLS, AGENT, MODEL, COMPOSITION],
+    "F": [TOOLS, AGENT, MODEL, COMPOSITION],
     "G": [COMPOSITION],
     "H": ["phenix-basic-verification-composition"],
     "J": ["phenix-core-example-plugins"],
 }
+# Feature variant I changes a check derivation, not a package derivation.
+BUILD_CHECK_TARGETS = {"I": ["p2-basic-staged-plugin"]}
+# H adds an unchanged plugin to a composition; pre-realize it so the
+# post-edit build cannot misclassify its first cold build as invalidation.
+BASELINE_EXTRA_TARGETS = {"H": ["phenix-plugin-model-http"]}
 WARM_CONTROL = [TOOLS, AGENT, MODEL, COMPOSITION]
 
 
@@ -161,9 +170,11 @@ def is_dependent(consumer, provider, graph):
     return False
 
 
-def run_build(root, attrs, output, label):
+def run_build(root, attrs, output, label, kind="packages"):
+    if kind not in ("packages", "checks"):
+        raise ValueError("unsupported Nix output kind: " + kind)
     output.mkdir(parents=True, exist_ok=True)
-    targets = ["%s#packages.%s.%s" % (root, SYSTEM, x) for x in attrs]
+    targets = ["%s#%s.%s.%s" % (root, kind, SYSTEM, x) for x in attrs]
     dry, dry_time = call(["nix", "build", "--dry-run", "--no-link", *targets],
                          root, timeout=900, check=False)
     built, built_time = call(["nix", "build", "--no-link", "--json",
@@ -182,7 +193,7 @@ def run_build(root, attrs, output, label):
     # "already present" only after a prior identical build/known output,
     # not merely because its derivation path was stable.
     return {
-        "targets": attrs, "dry_run": dry_time,
+        "targets": attrs, "target_kind": kind, "dry_run": dry_time,
         "build": built_time, "realized_outputs": outputs,
         "local_build_logs": local, "substitution_logs": copied + downloaded,
         "classification_note": "No matching log entry is UNKNOWN, not a cache hit",
@@ -200,6 +211,14 @@ def main():
     parser.add_argument("--build-cases", nargs="+", choices=sorted(CASES),
                         default=["B", "C", "D", "G", "H", "J"])
     args = parser.parse_args()
+    if args.build:
+        selected = sorted(set(args.cases) & set(args.build_cases))
+        unsupported = [case for case in selected
+                       if case not in BUILD_TARGETS and case not in BUILD_CHECK_TARGETS]
+        if unsupported:
+            parser.error("no physical build targets for cases: " + ", ".join(unsupported))
+        if not selected:
+            parser.error("--build requires at least one selected --build-cases case")
     repo = Path(subprocess.check_output(
         ["git", "rev-parse", "--show-toplevel"], text=True).strip()).resolve()
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
@@ -244,13 +263,27 @@ def main():
             attr for case in args.cases if case in args.build_cases
             for attr in BUILD_TARGETS.get(case, ())
         }
+        baseline_check_targets = {
+            attr for case in args.cases if case in args.build_cases
+            for attr in BUILD_CHECK_TARGETS.get(case, ())
+        }
+        baseline_targets.update(
+            attr for case in args.cases if case in args.build_cases
+            for attr in BASELINE_EXTRA_TARGETS.get(case, ())
+        )
         if not args.no_warm:
             baseline_targets.update(WARM_CONTROL)
         if baseline_targets:
             evidence["builds"]["baseline"] = run_build(
                 repo, sorted(baseline_targets), target, "baseline")
             if evidence["builds"]["baseline"]["build"]["exit_code"] != 0:
-                error = "baseline materialization failed"
+                error = "baseline package materialization failed"
+        if baseline_check_targets and not error:
+            evidence["builds"]["baseline-checks"] = run_build(
+                repo, sorted(baseline_check_targets), target, "baseline-checks",
+                kind="checks")
+            if evidence["builds"]["baseline-checks"]["build"]["exit_code"] != 0:
+                error = "baseline check materialization failed"
     try:
         with tempfile.TemporaryDirectory(prefix="phenix-nix-isolation-") as temporary:
             # Avoid changing or restoring tracked files in the original checkout.
@@ -309,11 +342,26 @@ def main():
                     }
                     evidence["cases"][case] = record
                     if args.build and case in args.build_cases:
-                        attrs = BUILD_TARGETS.get(case, [])
-                        if attrs:
-                            evidence["builds"][case] = run_build(root, attrs, target, case)
-                            if evidence["builds"][case]["build"]["exit_code"] != 0:
-                                record["status"] = "fail"
+                        kind = "checks" if case in BUILD_CHECK_TARGETS else "packages"
+                        attrs = (BUILD_CHECK_TARGETS if kind == "checks" else BUILD_TARGETS)[case]
+                        identities_before = baseline_checks if kind == "checks" else baseline
+                        identities_after = after_checks if kind == "checks" else after
+                        if any(identities_before[a] == identities_after[a] for a in attrs):
+                            raise AssertionError(
+                                "physical probe %s selected an unchanged %s target" % (case, kind))
+                        build_record = run_build(root, attrs, target, case, kind=kind)
+                        build_record["target_derivations"] = {
+                            attr: {"baseline": identities_before[attr],
+                                   "edited": identities_after[attr]}
+                            for attr in attrs
+                        }
+                        build_record["status"] = (
+                            "pass" if build_record["build"]["exit_code"] == 0
+                            and build_record["realized_outputs"] else "fail"
+                        )
+                        evidence["builds"][case] = build_record
+                        if build_record["status"] != "pass":
+                            record["status"] = "fail"
                 finally:
                     call(["git", "worktree", "remove", "--force", str(root)],
                          repo, timeout=120)

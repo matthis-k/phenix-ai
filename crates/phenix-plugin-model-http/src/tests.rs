@@ -392,3 +392,154 @@ fn legacy_http_provider_max_tokens_parser_rejects_invalid_values() {
         ErrorCode::InvalidInput
     );
 }
+
+fn bound_http_choice(authenticated: bool) -> phenix_provider_contracts::HttpModelBinding {
+    use phenix_provider_contracts::{
+        bind_http_model, validate_model_selection, AuthenticationKind, AuthenticationMethod,
+        AuthenticationStatus, ConnectionDescriptor, CredentialProfile, CredentialProfileStatus,
+        ModelOrigin, ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderModel,
+    };
+    let endpoint = if authenticated {
+        "https://api.openai.com/v1/chat/completions"
+    } else {
+        "http://127.0.0.1:8080/v1/chat/completions"
+    };
+    let provider = ProviderDescriptor {
+        id: "fixture".into(),
+        label: "Fixture".into(),
+        connections: vec![ConnectionDescriptor {
+            id: "api".into(),
+            label: "API".into(),
+            protocols: vec![ProtocolBinding {
+                id: "openai-chat".into(),
+                endpoint: Some(endpoint.into()),
+            }],
+            base_url: None,
+            auth_methods: if authenticated {
+                vec![AuthenticationMethod {
+                    id: "key".into(),
+                    label: "API key".into(),
+                    kind: AuthenticationKind::ApiKey,
+                    adapter: phenix_provider_contracts::AdapterBinding::from_typed("key", &())
+                        .unwrap(),
+                }]
+            } else {
+                Vec::new()
+            },
+            model_sources: Vec::new(),
+        }],
+    };
+    let auth = AuthenticationStatus {
+        provider_id: "fixture".into(),
+        connection_id: "api".into(),
+        profiles: if authenticated {
+            vec![CredentialProfile {
+                id: "primary".into(),
+                label: "Primary".into(),
+                method_id: "key".into(),
+                status: CredentialProfileStatus::Authenticated,
+            }]
+        } else {
+            Vec::new()
+        },
+    };
+    let profile_id = authenticated.then(|| "primary".into());
+    let page = ModelPage {
+        profile_id: profile_id.clone(),
+        models: vec![ProviderModel {
+            id: "model-a".into(),
+            label: "Model A".into(),
+            connection_id: "api".into(),
+            protocol_id: "openai-chat".into(),
+            endpoint_id: "chat".into(),
+            capabilities: vec!["tools".into()],
+            origin: ModelOrigin::Discovered,
+            selectable: true,
+        }],
+        next_cursor: None,
+        revision: 2,
+    };
+    let selection = ModelSelection {
+        provider_id: "fixture".into(),
+        connection_id: "api".into(),
+        profile_id,
+        model_id: "model-a".into(),
+        protocol_id: "openai-chat".into(),
+        endpoint_id: "chat".into(),
+        catalog_revision: 2,
+    };
+    let admitted = validate_model_selection(&provider, &auth, &page, &selection, true).unwrap();
+    bind_http_model(&provider, admitted).unwrap()
+}
+
+#[test]
+fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
+    use phenix_provider_contracts::CredentialSecret;
+    let choice = bound_http_choice(true);
+    let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
+    let config = request::Config::from_checked_binding(
+        &choice,
+        Some((choice.credential_identity().unwrap(), &key)),
+        None,
+    )
+    .unwrap();
+    assert_eq!(config.model, "model-a");
+    assert_eq!(
+        config.endpoint,
+        "https://api.openai.com/v1/chat/completions"
+    );
+    assert_eq!(
+        config.protocol,
+        phenix_provider_protocols::Protocol::OpenaiChat
+    );
+    assert_eq!(config.credential.as_deref(), Some("selected-account-token"));
+
+    // A valid secret from a *different* named account must not be bound to
+    // this model merely because the bytes are available to the controller.
+    let foreign =
+        phenix_provider_contracts::CredentialIdentity::new("fixture", "api", "other-account")
+            .unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(&choice, Some((&foreign, &key)), None)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+
+    assert_eq!(
+        request::Config::from_checked_binding(&choice, None, None)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+    let no_auth = bound_http_choice(false);
+    let config = request::Config::from_checked_binding(&no_auth, None, None).unwrap();
+    assert_eq!(config.credential, None);
+    assert_eq!(
+        request::Config::from_checked_binding(
+            &no_auth,
+            Some((choice.credential_identity().unwrap(), &key)),
+            None,
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn checked_transport_rejects_non_utf8_secret_without_environment_fallback() {
+    use phenix_provider_contracts::CredentialSecret;
+    let binding = bound_http_choice(true);
+    let key = CredentialSecret::new(vec![0xff, 0xfe]).unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(
+            &binding,
+            Some((binding.credential_identity().unwrap(), &key)),
+            Some(512),
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
+}
