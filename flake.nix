@@ -317,6 +317,49 @@
         python ${./tests/environment-product.py} ${kernel}/bin/phenix-kernel ${environmentPlugin} ${environmentDefinitions} "$out"
         test -s "$out/evidence.json"
       '';
+      workspaceContractsSource = subset (publicPaths ++ [ ./crates/phenix-workspace-contracts ]);
+      workspaceContractsBinary = rust.buildRustPackage {
+        pname = "phenix-workspace-contracts";
+        version = "0.1.0";
+        src = workspaceContractsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-workspace-contracts" ];
+        cargoTestFlags = [ "-p" "phenix-workspace-contracts" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+      };
+      workspaceDefinitions = definitionPackage "phenix-workspace-contracts"
+        "${workspaceContractsBinary}/bin/phenix-workspace-contracts" false;
+      workspacePluginSource = subset (publicPaths ++ [
+        ./crates/phenix-workspace-contracts
+        ./crates/phenix-plugin-workspace-selection
+        ./crates/phenix-basic-contracts
+      ]);
+      workspacePlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-workspace-selection";
+        version = "0.1.0";
+        src = workspacePluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-workspace-selection" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-workspace-selection" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_workspace_selection.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      workspaceProductCheck = pkgs.runCommand "phenix-workspace-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/workspace-product.py} ${kernel}/bin/phenix-kernel ${workspacePlugin} ${storageSqlite} ${workspaceDefinitions} ${basicDefinitions} "$out"
+        test -s "$out/evidence.json"
+      '';
       providerBuiltinsPluginSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-builtins
         ./crates/phenix-provider-builtins
@@ -2112,6 +2155,7 @@
         ln -s ${graphCheck} $out/graph
         ln -s ${basicContractsCheck} $out/basic-contracts
         ln -s ${environmentProductCheck} $out/environment
+        ln -s ${workspaceProductCheck} $out/workspace
         ln -s ${scriptedModelCheck} $out/scripted-model
         ln -s ${httpModelCheck} $out/http-model
         ln -s ${basicToolsCheck} $out/basic-tools
@@ -2179,6 +2223,8 @@
         phenix-provider-contracts = providerDefinitions;
         phenix-environment-contracts = environmentDefinitions;
         phenix-plugin-environment = environmentPlugin;
+        phenix-workspace-contracts = workspaceDefinitions;
+        phenix-plugin-workspace-selection = workspacePlugin;
         phenix-plugin-model-scripted = scriptedModel;
         phenix-plugin-model-http = httpModel;
         phenix-plugin-basic-tools = basicTools;
@@ -2280,6 +2326,7 @@
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
         environment-product = environmentProductCheck;
+        workspace-product = workspaceProductCheck;
         provider-contracts = providerContractsCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
