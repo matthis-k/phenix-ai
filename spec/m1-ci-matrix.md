@@ -143,6 +143,29 @@ the previous 4 GiB snapshot case. This demonstrates cross-run store reuse,
 signed-substitution experiment is still outstanding and must not be inferred.
 
 
+
+### New-workspace-package full-matrix cost (20 October 2026)
+
+The [environment PR #1013 shard-04](https://github.com/matthis-k/phenix-ai/actions/runs/39370862576/job/118458988881)
+passed on head `5a1b9914`, but the job lasted approximately **14m08s**
+(04:44:00–04:58:09 UTC). Its completed job log contains:
+
+- **105** Nix `building '/nix/store/…drv'` events (local realization).
+- **12** Nix `copying path` events (substitution), and no matching Nix
+  `downloading '/nix/store/…'` events.
+- Roughly **1,120** Rust `Compiling … v` output lines; not a count of unique
+  crates or distinct derivations.
+
+This is an observed **full-matrix shard** after adding workspace packages and
+changing `Cargo.lock`, not the isolated B/C/G single-plugin edit experiment.
+It does not prove which local builds were avoidable or establish the cause of
+invalidation. In particular, verify Cargo-lock/source-closure effects using
+exact Nix `inputDrvs` and compare warm and cold stores before attributing
+the delay to the orchestrator. The shard alone exceeded the sub-10-minute CI
+target. Remote signed-cache substitution remains unverified.
+
+
+
 ## Current CI principles and applied assessment (15 October 2026)
 
 This section supersedes the **historical candidate/cutover status** recorded below, not its benchmark measurements or uncompleted optimization tasks. It is an engineering guide, not a second validation authority. The [M1 roadmap](m1-roadmap.md) remains the milestone tracker. A generated CI workflow and `flake.nix` remain the source of executable check definitions.
