@@ -413,7 +413,7 @@ fn main() {
         .unwrap();
         assert_eq!(interrupted.revision, 2);
         assert_eq!(interrupted.status, RunStatus::Indeterminate);
-        assert_eq!(restored.history[0].text, "prompt");
+        assert_eq!(restored.history[0].text(), "prompt");
         assert_eq!(restored.pending.len(), 2);
         let a: EventPage = call(
             &kernel,
@@ -507,7 +507,7 @@ fn main() {
         assert_eq!(two.status, RunStatus::Running);
         assert!(two.pending.is_empty());
         assert_eq!(two.history.len(), 3);
-        assert_eq!(two.history[2].call_id, "c2");
+        assert_eq!(two.history[2].call_id(), "c2");
         fs::write(
             output.join("sqlite-restart.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
