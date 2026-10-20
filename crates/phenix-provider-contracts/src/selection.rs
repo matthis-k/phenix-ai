@@ -422,4 +422,70 @@ mod tests {
             ProviderErrorCode::InvalidInput
         );
     }
+
+    #[test]
+    fn http_binding_requires_explicit_selected_protocol_endpoint() {
+        let (provider, auth, page, request) = fixture();
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Unavailable
+        );
+
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let bound = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(bound.endpoint(), "https://api.openai.com/v1/responses");
+        assert_eq!(bound.model_id(), "o-series");
+        assert_eq!(bound.protocol_id(), "openai-responses");
+        assert_eq!(
+            bound.credential_identity().unwrap().profile_id(),
+            "personal"
+        );
+    }
+
+    #[test]
+    fn http_binding_rejects_changed_registration_and_cross_origin_targets() {
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/other".into());
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
+
+        for endpoint in [
+            "https://other-origin.example/v1/responses",
+            "http://other-origin.example/v1/responses",
+            "https://alice:secret@api.openai.com/v1/responses",
+            "https://api.openai.com/v1/responses#fragment",
+        ] {
+            let (mut provider, auth, page, request) = fixture();
+            provider.connections[0].protocols[0].endpoint = Some(endpoint.into());
+            let admitted =
+                validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+            assert!(bind_http_model(&provider, admitted).is_err(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn explicit_credential_free_local_protocol_still_has_no_profile() {
+        let (mut provider, mut auth, mut page, mut request) = fixture();
+        provider.connections[0].auth_methods.clear();
+        provider.connections[0].base_url = Some("http://127.0.0.1:11434/v1".into());
+        provider.connections[0].protocols[0].endpoint =
+            Some("http://127.0.0.1:11434/v1/responses".into());
+        auth.profiles.clear();
+        page.profile_id = None;
+        request.profile_id = None;
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let bound = bind_http_model(&provider, admitted).unwrap();
+        assert!(bound.credential_identity().is_none());
+        assert_eq!(bound.endpoint(), "http://127.0.0.1:11434/v1/responses");
+    }
 }
