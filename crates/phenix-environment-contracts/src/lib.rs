@@ -2,6 +2,7 @@
 //!
 //! Paths are hints for selected filesystem/configuration providers, not
 //! capabilities, filesystem handles or permission to access those paths.
+pub mod local;
 use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 

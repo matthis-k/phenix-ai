@@ -34,14 +34,15 @@ fn sqlite_default_name(name: Option<&str>) -> Result<&str, String> {
 }
 
 fn sqlite_state_base(xdg: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
-    // XDG paths must be absolute. Empty or relative values are treated as
-    // unset, so a malformed optional XDG setting cannot break a valid HOME.
-    xdg.filter(|path| path.is_absolute())
-        .or_else(|| {
-            home.filter(|path| path.is_absolute())
-                .map(|path| path.join(".local/state"))
-        })
-        .ok_or_else(|| "Basic SQLite requires absolute XDG_STATE_HOME or HOME".into())
+    // Use the same pure policy as the selected Environment provider.
+    phenix_environment_contracts::local::state_root(
+        &phenix_environment_contracts::local::DirectoryInputs {
+            home,
+            state: xdg,
+            ..Default::default()
+        },
+    )
+    .map_err(|_| "Basic SQLite requires absolute XDG_STATE_HOME or HOME".into())
 }
 
 fn ensure_default_sqlite_path() -> Result<(), String> {

@@ -1379,6 +1379,7 @@ dependencies = [
  "futures",
  "phenix-basic-contracts",
  "phenix-contract",
+ "phenix-environment-contracts",
  "phenix-kernel",
  "phenix-provider-contracts",
  "phenix-sdk",
