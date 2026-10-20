@@ -1,6 +1,6 @@
 //! Native black-box gate for the independently packaged scripted model.
 use phenix_basic_contracts::{
-    BasicError, ErrorCode, Limits, Message, ModelReply, ModelRequest, Role, ToolInfo,
+    BasicError, ErrorCode, Limits, Message, ModelReply, ModelRequest, ToolInfo,
 };
 use phenix_contract::{Authority, Code, Portable};
 use phenix_kernel::{
@@ -13,7 +13,7 @@ fn request(text: &str) -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message::user(text.into())],
+        history: vec![Message::user(text)],
         tools: ["uppercase", "length"]
             .map(|id| ToolInfo {
                 id: id.into(),
@@ -80,8 +80,8 @@ fn main() {
     let first = invoke(&kernel, &scripted).unwrap().unwrap();
     assert_eq!(first.calls.len(), 2);
     scripted.history.push(Message::assistant(String::new(), first.calls));
-    scripted.history.push(Message::tool("call-1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
-    scripted.history.push(Message::tool("call-2".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
+    scripted.history.push(Message::tool("call-1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
+    scripted.history.push(Message::tool("call-2", phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
     assert_eq!(
         invoke(&kernel, &scripted).unwrap().unwrap().text,
         "mock:call-1:HELLO|call-2:5"
