@@ -277,8 +277,6 @@ def main():
                 kind="checks")
             if evidence["builds"]["baseline-checks"]["build"]["exit_code"] != 0:
                 error = "baseline check materialization failed"
-        if error:
-            raise SystemExit(error)
     try:
         with tempfile.TemporaryDirectory(prefix="phenix-nix-isolation-") as temporary:
             # Avoid changing or restoring tracked files in the original checkout.
@@ -350,8 +348,10 @@ def main():
                                    "edited": identities_after[attr]}
                             for attr in attrs
                         }
-                        build_record["status"] = ("pass" if build_record["build"]["exit_code"] == 0
-                                                  else "fail")
+                        build_record["status"] = (
+                            "pass" if build_record["build"]["exit_code"] == 0
+                            and build_record["realized_outputs"] else "fail"
+                        )
                         evidence["builds"][case] = build_record
                         if build_record["status"] != "pass":
                             record["status"] = "fail"
