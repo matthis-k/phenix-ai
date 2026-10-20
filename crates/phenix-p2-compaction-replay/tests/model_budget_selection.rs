@@ -55,13 +55,7 @@ fn request(summary: &str) -> ModelRequest {
         run: "current-run".into(),
         // The request builder retains authoritative session messages. Journal
         // Event is intentionally not reconstructed into lossy model history.
-        history: vec![Message {
-            role: Role::User,
-            text: "authoritative session input".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("authoritative session input")],
         tools: vec![],
         skills: vec![],
         context: vec![phenix_basic_contracts::ContextItem {
