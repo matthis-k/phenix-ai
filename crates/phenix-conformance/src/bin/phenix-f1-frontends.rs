@@ -80,7 +80,7 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
     assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
     assert!(!accepted.is_cancel());
     let prompt: PromptSubmitted =
-        phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
+        phenix_basic_contracts::decode(accepted.as_dispatch().unwrap().1).unwrap();
     assert_eq!(prompt.session, "s1");
     assert_eq!(prompt.text, "hello");
     assert_eq!(
