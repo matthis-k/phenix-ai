@@ -7,12 +7,20 @@ use phenix_plugin_basic_agent::project_model_request;
 fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs() {
     let history = vec![
         Message::user("read the file"),
-        Message::assistant("reading", vec![ToolCall {
+        Message::assistant(
+            "reading",
+            vec![ToolCall {
                 id: "c1".into(),
                 tool: "read".into(),
                 arguments: r#"{"path":"a.rs"}"#.into(),
-            }]),
-        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "fn main() {}".into() }),
+            }],
+        ),
+        Message::tool(
+            "c1",
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "fn main() {}".into(),
+            },
+        ),
         Message::user("now fix the code"),
     ];
     let tools = vec![ToolInfo {

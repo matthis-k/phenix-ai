@@ -128,7 +128,8 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
                 messages.push(PreparedMessage::User(message.text().to_owned()));
             }
             Role::Assistant => {
-                if !pending.is_empty() || !message.call_id().is_empty() || message.error().is_some() {
+                if !pending.is_empty() || !message.call_id().is_empty() || message.error().is_some()
+                {
                     return Err(bad("invalid assistant history"));
                 }
                 let mut calls = vec![];

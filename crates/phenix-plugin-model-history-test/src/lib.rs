@@ -38,7 +38,8 @@ fn linked_tool_result(history: &[Message]) -> Option<&str> {
         if assistant.role() != Role::Assistant || result.role() != Role::Tool {
             return None;
         }
-        assistant.calls()
+        assistant
+            .calls()
             .iter()
             .any(|call| call.id == result.call_id() && call.tool == "uppercase")
             .then_some(result)
@@ -119,7 +120,11 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         return Err(invalid("invalid latest user turn"));
     }
 
-    let (text, calls) = if request.history.last().is_some_and(|m| m.role() == Role::Tool) {
+    let (text, calls) = if request
+        .history
+        .last()
+        .is_some_and(|m| m.role() == Role::Tool)
+    {
         let reply = match prompt.text() {
             "tools:hello" => tool_continuation(&request.history, start)?,
             "tools-fail:hello" => failing_tool_continuation(&request.history, start)?,
@@ -327,7 +332,9 @@ mod tests {
         history.push(Message::assistant("", calls));
         let result = Message::tool(
             "history-tool-1",
-            phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() },
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
         );
         history.push(result);
         assert_eq!(

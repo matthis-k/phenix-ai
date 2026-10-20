@@ -205,15 +205,33 @@ mod tests {
         assert_eq!(first.calls.len(), 2);
         assert_eq!(first.calls[0].id, "call-1");
         assert_eq!(first.calls[1].tool, "length");
-        input.history.push(Message::assistant(String::new(), first.calls));
-        input.history.push(Message::tool("call-1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
+        input
+            .history
+            .push(Message::assistant(String::new(), first.calls));
+        input.history.push(Message::tool(
+            "call-1",
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        ));
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
-        input.history.push(Message::tool("call-2", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "failed".into() }));
+        input.history.push(Message::tool(
+            "call-2",
+            phenix_basic_contracts::ToolOutcome::Failed {
+                output: String::new(),
+                reason: "failed".into(),
+            },
+        ));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:HELLO|call-2:error:failed"
         );
-        *input.history.last_mut().unwrap().tool_call_id_mut().unwrap() = "call-1".into();
+        *input
+            .history
+            .last_mut()
+            .unwrap()
+            .tool_call_id_mut()
+            .unwrap() = "call-1".into();
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
     }
 
@@ -230,9 +248,20 @@ mod tests {
         assert_eq!(first.calls.len(), 2);
         assert_eq!(first.calls[0].tool, "fail");
         assert_eq!(first.calls[1].tool, "length");
-        input.history.push(Message::assistant(String::new(), first.calls));
-        input.history.push(Message::tool("call-1", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "scripted failure".into() }));
-        input.history.push(Message::tool("call-2", phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
+        input
+            .history
+            .push(Message::assistant(String::new(), first.calls));
+        input.history.push(Message::tool(
+            "call-1",
+            phenix_basic_contracts::ToolOutcome::Failed {
+                output: String::new(),
+                reason: "scripted failure".into(),
+            },
+        ));
+        input.history.push(Message::tool(
+            "call-2",
+            phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() },
+        ));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:error:scripted failure|call-2:5"

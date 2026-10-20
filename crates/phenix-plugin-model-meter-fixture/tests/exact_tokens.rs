@@ -65,9 +65,8 @@ fn exact_fixture_counts_tools_skills_context_and_previous_turns() {
     changed.context[0].text.push_str("more");
     assert!(measure(&changed).unwrap().input_tokens > baseline.input_tokens);
     changed = base;
-    changed.history.insert(
-        0,
-        Message::assistant("extra historical message", vec![]),
-    );
+    changed
+        .history
+        .insert(0, Message::assistant("extra historical message", vec![]));
     assert!(measure(&changed).unwrap().input_tokens > baseline.input_tokens);
 }

@@ -40,7 +40,10 @@ pub fn reconcile_snapshot(
         .position(|call| call.id == resolution.call_id)
         .ok_or_else(|| error(ErrorCode::NotFound, "pending tool call not found"))?;
     snapshot.pending.remove(position);
-    snapshot.history.push(Message::tool(resolution.call_id.clone(), resolution.outcome.clone()));
+    snapshot.history.push(Message::tool(
+        resolution.call_id.clone(),
+        resolution.outcome.clone(),
+    ));
     if snapshot.pending.is_empty() {
         snapshot.status = RunStatus::Running;
     }

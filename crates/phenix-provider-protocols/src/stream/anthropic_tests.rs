@@ -176,12 +176,21 @@ fn anthropic_request_encodes_system_tools_and_full_history() {
         text: "Phenix".into(),
     }];
     request.history.extend([
-        Message::assistant(String::new(), vec![ToolCall {
+        Message::assistant(
+            String::new(),
+            vec![ToolCall {
                 id: "c1".into(),
                 tool: "uppercase".into(),
                 arguments: r#""aß""#.into(),
-            }]),
-        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
+            }],
+        ),
+        Message::tool(
+            "c1",
+            phenix_basic_contracts::ToolOutcome::Failed {
+                output: String::new(),
+                reason: "tool failed".into(),
+            },
+        ),
     ]);
     // Anthropic requires a positive output budget on every wire request.
     request.limits.model_tokens = Some(128);
