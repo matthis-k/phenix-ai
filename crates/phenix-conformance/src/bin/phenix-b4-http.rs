@@ -1,7 +1,7 @@
 //! Real pending native Model with independently hosted HTTP and journal providers.
 use phenix_basic_contracts::{
     BasicError, ContextItem, ErrorCode, EventPage, JournalQuery, Limits, Message, ModelReply,
-    ModelRequest, Skill, ToolCall, ToolInfo,
+    ModelRequest, Skill, ToolCall, ToolInfo, ToolOutcome,
 };
 use phenix_contract::{Authority, Portable};
 use phenix_kernel::{
