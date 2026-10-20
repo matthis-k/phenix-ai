@@ -422,6 +422,7 @@
         ./crates/phenix-plugin-provider-credential-files
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
         ./crates/phenix-provider-credential-files
       ]);
       providerCredentialStore = rust.buildRustPackage {
@@ -452,6 +453,7 @@
         ./crates/phenix-plugin-provider-secret-service
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerSecretService = rust.buildRustPackage {
         pname = "phenix-plugin-provider-secret-service";
@@ -532,6 +534,7 @@
       providerContractsSource = subset (publicPaths ++ [
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
       ]);
       providerContractsBinary = rust.buildRustPackage {
         pname = "phenix-provider-contracts";
