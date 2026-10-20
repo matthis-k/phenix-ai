@@ -48,12 +48,10 @@ fn checkpoint(events: &[Event]) -> CompactionCheckpoint {
     }
 }
 fn message(role: Role, text: &str) -> Message {
-    Message {
-        role,
-        text: text.into(),
-        calls: vec![],
-        call_id: String::new(),
-        error: None,
+    match role {
+        Role::User => Message::user(text),
+        Role::Assistant => Message::assistant(text, vec![]),
+        Role::Tool => panic!("tool fixtures require a call ID and explicit outcome"),
     }
 }
 fn original_request() -> ModelRequest {
