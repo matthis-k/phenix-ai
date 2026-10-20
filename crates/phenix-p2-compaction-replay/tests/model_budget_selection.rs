@@ -100,7 +100,10 @@ fn newest_fitting_checkpoint_is_selected_with_full_request_token_measurement() {
         |full_request| {
             // The selected adapter receives the complete assembled request,
             // not a standalone summary or its journal event bytes.
-            assert_eq!(full_request.history[0].text(), "authoritative session input");
+            assert_eq!(
+                full_request.history[0].text(),
+                "authoritative session input"
+            );
             assert_eq!(full_request.context.len(), 1);
             let tokens = if full_request.context[0].text.starts_with("longer") {
                 120
