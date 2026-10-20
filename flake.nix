@@ -421,6 +421,7 @@
       providerCredentialStoreSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-credential-files
         ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
         ./crates/phenix-provider-credential-files
       ]);
       providerCredentialStore = rust.buildRustPackage {
@@ -450,6 +451,7 @@
       providerSecretServiceSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-secret-service
         ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
       ]);
       providerSecretService = rust.buildRustPackage {
         pname = "phenix-plugin-provider-secret-service";
@@ -527,7 +529,10 @@
           touch $out/verified
         '';
       };
-      providerContractsSource = subset (publicPaths ++ [ ./crates/phenix-provider-contracts ]);
+      providerContractsSource = subset (publicPaths ++ [
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+      ]);
       providerContractsBinary = rust.buildRustPackage {
         pname = "phenix-provider-contracts";
         version = "0.1.0";
@@ -820,6 +825,7 @@
         ./crates/phenix-plugin-model-http).overrideAttrs (old: {
           src = subset (publicPaths ++ [
             ./crates/phenix-basic-contracts
+            ./crates/phenix-provider-contracts
             ./crates/phenix-provider-protocols
             ./crates/phenix-plugin-model-http
           ]);
@@ -1060,6 +1066,7 @@
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
         ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
         ./crates/phenix-environment-contracts
         ./crates/phenix-basic-runtime
         ./tests/generation-identity-v2.json
