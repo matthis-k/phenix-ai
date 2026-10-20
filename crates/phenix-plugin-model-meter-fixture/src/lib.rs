@@ -245,7 +245,7 @@ mod plugin {
             state.pending_test_model_error = true;
             return PendingResult::Pending;
         }
-        if request.history.len() == 1 && request.history[0].text.contains("SOURCE_EVENTS_JSON:") {
+        if request.history.len() == 1 && request.history[0].text().contains("SOURCE_EVENTS_JSON:") {
             if state.pending_summary {
                 return PendingResult::QuiescentFailure(Failure::new(
                     Code::PluginFailed,
@@ -253,9 +253,9 @@ mod plugin {
                 ));
             }
             state.pending_summary_tools = request.history[0]
-                .text
+                .text()
                 .contains("malicious-summary-fixture");
-            state.pending_summary_hold = request.history[0].text.contains("hold-summary-fixture");
+            state.pending_summary_hold = request.history[0].text().contains("hold-summary-fixture");
             if state.pending_summary_hold {
                 // Verification fixture only: native acceptance observes that
                 // the selected child is genuinely pending before it cancels
