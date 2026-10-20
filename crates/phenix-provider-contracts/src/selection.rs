@@ -50,6 +50,112 @@ impl AdmittedModelChoice {
     }
 }
 
+/// A complete, explicitly configured HTTP destination for one admitted model.
+///
+/// This is non-secret execution metadata, **not** a credential or kernel grant.
+/// The transport must independently check current profile entitlement, native
+/// provider binding, selected credential root, and request authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpModelBinding {
+    choice: AdmittedModelChoice,
+    endpoint: phenix_provider_protocols::ValidatedEndpoint,
+}
+
+impl HttpModelBinding {
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint.url
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.choice.selection().model_id
+    }
+
+    pub fn protocol_id(&self) -> &str {
+        &self.choice.protocol().id
+    }
+
+    pub fn credential_identity(&self) -> Option<&CredentialIdentity> {
+        self.choice.credential_identity()
+    }
+
+    pub fn selection(&self) -> &ModelSelection {
+        self.choice.selection()
+    }
+}
+
+/// Resolve only the explicitly registered endpoint for the selected protocol.
+/// An inference path must not guess `/chat/completions`, `/responses` or a
+/// connection's protocol from an endpoint URL or a model name.
+///
+/// Recheck the *current* registration even if the admission choice was checked
+/// against an earlier descriptor; that choice cannot outlive registry changes
+/// silently. Runtime authorization and credential freshness remain mandatory.
+pub fn bind_http_model(
+    provider: &ProviderDescriptor,
+    admitted: AdmittedModelChoice,
+) -> Result<HttpModelBinding, ProviderError> {
+    if provider.id != admitted.selection().provider_id {
+        return Err(selection_error(
+            ProviderErrorCode::Denied,
+            "selected provider changed",
+        ));
+    }
+    let mut matches = provider
+        .connections
+        .iter()
+        .filter(|connection| connection.id == admitted.selection().connection_id);
+    let connection = matches.next().ok_or_else(|| {
+        selection_error(ProviderErrorCode::NotFound, "selected connection is no longer installed")
+    })?;
+    if matches.next().is_some() {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "ambiguous selected connection",
+        ));
+    }
+    let mut protocols = connection
+        .protocols
+        .iter()
+        .filter(|protocol| protocol.id == admitted.protocol().id);
+    let protocol = protocols.next().ok_or_else(|| {
+        selection_error(ProviderErrorCode::NotFound, "selected protocol is no longer installed")
+    })?;
+    if protocols.next().is_some() || protocol != admitted.protocol() {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "selected protocol registration changed",
+        ));
+    }
+    let url = protocol.endpoint.as_deref().ok_or_else(|| {
+        selection_error(
+            ProviderErrorCode::Unavailable,
+            "selected protocol has no explicit inference endpoint",
+        )
+    })?;
+    let checked = phenix_provider_protocols::validate_endpoint(
+        url,
+        phenix_provider_protocols::EndpointMode::LocalLoopback,
+    )
+    .map_err(|_| selection_error(ProviderErrorCode::InvalidInput, "unsafe inference endpoint"))?;
+    if let Some(base) = connection.base_url.as_deref() {
+        let authorized_origin = phenix_provider_protocols::validate_endpoint(
+            base,
+            phenix_provider_protocols::EndpointMode::LocalLoopback,
+        )
+        .map_err(|_| selection_error(ProviderErrorCode::InvalidInput, "unsafe provider origin"))?;
+        if !phenix_provider_protocols::same_credential_origin(&authorized_origin, &checked) {
+            return Err(selection_error(
+                ProviderErrorCode::Denied,
+                "inference endpoint changed credential origin",
+            ));
+        }
+    }
+    Ok(HttpModelBinding {
+        choice: admitted,
+        endpoint: checked,
+    })
+}
+
 fn selection_error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
         code,
