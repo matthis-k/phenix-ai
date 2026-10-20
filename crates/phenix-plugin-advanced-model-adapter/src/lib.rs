@@ -112,7 +112,7 @@ mod plugin {
             run: run.into(),
             kind: EventKind::AssistantReply,
             call_id: String::new(),
-            text: message.text,
+            text: message.text().into(),
             data: payload,
         };
         finish(
