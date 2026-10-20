@@ -102,13 +102,7 @@ fn main() {
     let mut running = fresh.clone();
     running.run = "r1".into();
     running.status = RunStatus::Running;
-    running.history.push(Message {
-        role: Role::User,
-        text: "prompt".into(),
-        calls: vec![],
-        call_id: String::new(),
-        error: None,
-    });
+    running.history.push(Message::user("prompt".into()));
     running.pending.push(ToolCall {
         id: "call-1".into(),
         tool: "uppercase".into(),
