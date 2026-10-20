@@ -1,7 +1,7 @@
 //! Native ABI gate for session snapshots over an independently selected
 //! revisioned Storage fixture (not a durable SQLite acceptance test).
 use phenix_basic_contracts::{
-    encode, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, Scope, SessionSnapshot,
+    encode, BasicError, ErrorCode, Message, ReconcileTool, RunStatus, Scope, SessionSnapshot,
     StorageEdit, StorageTransaction, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Portable};
@@ -102,7 +102,7 @@ fn main() {
     let mut running = fresh.clone();
     running.run = "r1".into();
     running.status = RunStatus::Running;
-    running.history.push(Message::user("prompt".into()));
+    running.history.push(Message::user("prompt"));
     running.pending.push(ToolCall {
         id: "call-1".into(),
         tool: "uppercase".into(),
