@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 serde_json.workspace = true
 curl = { version = "0.4", default-features = false }
 

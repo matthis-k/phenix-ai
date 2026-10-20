@@ -17,7 +17,10 @@ pub use credentials::{
 };
 
 pub mod selection;
-pub use selection::{validate_model_selection, AdmittedModelChoice, ModelSelection};
+pub use selection::{
+    bind_http_model, validate_model_selection, AdmittedModelChoice, HttpModelBinding,
+    ModelSelection,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum ProviderErrorCode {
