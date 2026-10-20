@@ -135,7 +135,10 @@ impl std::fmt::Debug for Config {
             .field("model", &self.model)
             .field("protocol", &self.protocol)
             .field("provider_max_tokens", &self.provider_max_tokens)
-            .field("credential", &self.credential.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("ca_file", &self.ca_file)
             .finish()
     }
