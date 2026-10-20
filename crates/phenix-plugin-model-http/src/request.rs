@@ -57,19 +57,26 @@ impl Config {
     #[allow(dead_code)]
     pub(crate) fn from_checked_binding(
         binding: &phenix_provider_contracts::HttpModelBinding,
-        credential: Option<&phenix_provider_contracts::CredentialSecret>,
+        credential: Option<(
+            &phenix_provider_contracts::CredentialIdentity,
+            &phenix_provider_contracts::CredentialSecret,
+        )>,
         provider_max_tokens: Option<u64>,
     ) -> Result<Self, BasicError> {
-        if binding.credential_identity().is_some() != credential.is_some() {
-            return Err(error(
-                ErrorCode::InvalidInput,
-                "selected connection credential context is missing or unexpected",
-            ));
+        match (binding.credential_identity(), credential.as_ref()) {
+            (None, None) => {}
+            (Some(expected), Some((actual, _))) if expected == *actual => {}
+            _ => {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "credential identity does not match selected provider connection and profile",
+                ));
+            }
         }
         let protocol = Protocol::parse(binding.protocol_id())?;
         let endpoint = endpoint_url(binding.endpoint())?;
         let secret = credential
-            .map(|key| {
+            .map(|(_, key)| {
                 std::str::from_utf8(key.expose_for_authorized_provider())
                     .map(str::to_owned)
                     .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
