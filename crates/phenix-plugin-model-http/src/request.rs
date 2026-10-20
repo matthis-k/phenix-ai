@@ -50,7 +50,47 @@ pub(crate) fn configured_max_tokens(
     }
 }
 
+// The checked path is consumed once the controller resolves the selected
+// credential root; the legacy HTTP environment preset remains a separate
+// explicit composition mode until the management/Model handoff is installed.
 impl Config {
+    #[allow(dead_code)]
+    pub(crate) fn from_checked_binding(
+        binding: &phenix_provider_contracts::HttpModelBinding,
+        credential: Option<&phenix_provider_contracts::CredentialSecret>,
+        provider_max_tokens: Option<u64>,
+    ) -> Result<Self, BasicError> {
+        if binding.credential_identity().is_some() != credential.is_some() {
+            return Err(error(
+                ErrorCode::InvalidInput,
+                "selected connection credential context is missing or unexpected",
+            ));
+        }
+        let protocol = Protocol::parse(binding.protocol_id())?;
+        let endpoint = endpoint_url(binding.endpoint())?;
+        let secret = credential
+            .map(|key| {
+                std::str::from_utf8(key.expose_for_authorized_provider())
+                    .map(str::to_owned)
+                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
+            })
+            .transpose()?;
+        if secret
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.chars().any(char::is_control))
+        {
+            return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
+        }
+        Ok(Self {
+            endpoint,
+            model: binding.model_id().into(),
+            protocol,
+            provider_max_tokens,
+            credential: secret,
+            ca_file: None,
+        })
+    }
+
     pub fn load() -> Result<Self, BasicError> {
         let endpoint = env::var("PHENIX_MODEL_HTTP_ENDPOINT")
             .map_err(|_| failed("HTTP model endpoint is not configured"))?;
@@ -84,5 +124,19 @@ impl Config {
             credential,
             ca_file: env::var("PHENIX_MODEL_HTTP_CA_FILE").ok(),
         })
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Config")
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("protocol", &self.protocol)
+            .field("provider_max_tokens", &self.provider_max_tokens)
+            .field("credential", &self.credential.as_ref().map(|_| "[REDACTED]"))
+            .field("ca_file", &self.ca_file)
+            .finish()
     }
 }
