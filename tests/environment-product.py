@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-environment-") as temporary:
         expected = str(root / directory / "phenix" / "sample.plugin")
         # Portable Option<String> wraps Some(value) in a one-element list.
         assert paths[field] == ([expected] if field == "runtime" else expected), paths
-        assert not (root / field / "phenix").exists()
+        assert not (root / directory / "phenix").exists()
 
     wrong, code = invoke(dict(resource="phenix.session.s2", namespace="sample.plugin"))
     assert code == 0 and wrong["kind"] == "domain_error", wrong
