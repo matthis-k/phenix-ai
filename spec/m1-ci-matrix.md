@@ -142,6 +142,25 @@ the previous 4 GiB snapshot case. This demonstrates cross-run store reuse,
 **not** substitution from a signed remote binary cache. An independent
 signed-substitution experiment is still outstanding and must not be inferred.
 
+### Failed-shard rerun after shared-cache eviction (20 October 2026)
+
+[PR #996 matrix run 39373733776](https://github.com/matthis-k/phenix-ai/actions/runs/39373733776)
+does not constitute a passing exact-head release. On attempt 1, shard-01
+failed while downloading `flake-check-plan` because the GitHub artifact
+endpoint returned `ECONNRESET`. The shared writer and four other shards
+passed. Attempts 2 and 3 retried the failed jobs, but the read-only Nix
+cache action found neither the exact merge-revision cache key nor a
+matching prefix. `prebuild-local` then rejected all seven unavailable
+shared store outputs before running shard checks.
+
+This is a cache-lifecycle/retry failure, not evidence that a changed Basic
+plugin rebuilt an unrelated package. A failed-shard-only rerun cannot recover
+once its shared cache is unavailable. For release evidence, run the complete
+workflow on the current head so the writer and shards share a fresh cache, or
+first implement and verify a fail-closed cache-miss recovery path in
+`phenix-flake-ci`. Keep the restoration/compilation distinction visible.
+Do not relax `prebuild-local`, drop shard-01, or count this run as green.
+
 
 
 ### New-workspace-package full-matrix cost (20 October 2026)
