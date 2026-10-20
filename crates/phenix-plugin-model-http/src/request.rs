@@ -50,6 +50,20 @@ pub(crate) fn configured_max_tokens(
     }
 }
 
+/// An absent setting permits a deliberately credential-free local provider.
+/// An explicitly supplied but unusable value must never become no-auth.
+fn configured_credential(
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, BasicError> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Ok(secret) if !secret.is_empty() && !secret.chars().any(char::is_control) => {
+            Ok(Some(secret))
+        }
+        _ => Err(error(ErrorCode::InvalidInput, "invalid HTTP credential")),
+    }
+}
+
 // The checked path is consumed once the controller resolves the selected
 // credential root; the legacy HTTP environment preset remains a separate
 // explicit composition mode until the management/Model handoff is installed.
@@ -116,13 +130,7 @@ impl Config {
                 "invalid HTTP model configuration",
             ));
         }
-        let credential = env::var("PHENIX_MODEL_HTTP_API_KEY").ok();
-        if credential
-            .as_ref()
-            .is_some_and(|s| s.chars().any(char::is_control))
-        {
-            return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
-        }
+        let credential = configured_credential(env::var("PHENIX_MODEL_HTTP_API_KEY"))?;
         Ok(Self {
             endpoint,
             model,

@@ -1,5 +1,190 @@
 # M1 CI matrix rollout
 
+## Incremental Nix isolation verification (19 October 2026)
+
+This section extends the current CI acceptance evidence; it is **not** another
+source of truth for Nix dependencies or check names. The canonical dependency
+and check inventory remain the exact-head `flake.nix`. All distributed-build
+orchestration, worker credentials and shared-cache publication remain in the
+pinned `phenix-flake-ci` library.
+
+### Baseline and scope
+
+- Baseline `main`: `45d77ae6508a2fc8b8fa39bbc0f6d08f12e825c4`.
+- `flake.lock` pins Nixpkgs `e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3`.
+  Cargo lockfiles: `Cargo.lock`, `examples/Cargo.lock`.
+- Trusted main remote Nix check workflow:
+  [39201091225](https://github.com/matthis-k/phenix-ai/actions/runs/39201091225)
+  passed, 7m54s end-to-end.
+  Prior trusted main run
+  [39197830049](https://github.com/matthis-k/phenix-ai/actions/runs/39197830049)
+  passed, 5m43s end-to-end.
+  Worker topology: 4 ephemeral Tailscale `ssh-ng` builders, 2 slots each.
+- Latest main independent official ACP interop:
+  [39201091104](https://github.com/matthis-k/phenix-ai/actions/runs/39201091104)
+  passed, 6m47s end-to-end.
+- Trusted shared-store publication was **skipped** on run 39201091225;
+  its passing result is not proof of an external binary cache upload.
+  The GitHub Actions cache save and remote-worker transfers are separate
+  mechanisms from public signed binary-cache substitution.
+
+### Reproducible diagnostics
+
+```sh
+# Fast diagnostic: canonical package/check drv identities and Nix inputDrvs
+bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+  --output incremental-ci-evidence
+
+# Opt-in slower diagnostic: materialize selected packages, capture real Nix
+# build/substitution logs, and replay unchanged installables on one runner
+bash .github/scripts/test-basic-plugin-cache-isolation.sh \
+  --build --output incremental-ci-build-evidence
+```
+
+The harness uses detached, disposable Git worktrees. Source mutation cannot
+overwrite tracked files in the original checkout. Cases A–J compare all
+evaluated Nix package and check identities and inspect actual `inputDrvs`.
+An explicit small set of package guards catches unintended coupling; the
+canonical graph comes from Nix rather than a parallel handwritten graph.
+Machine-readable JSON, dry-run plans and actual `nix build` logs are
+retained by the existing cache-isolation workflow as Actions artifacts.
+
+A source edit changing a derivation name alone is **not** a cache hit:
+the evidence must separately report actual local compilation, substitute
+transfer, or an already-present output. A second build in the same job (K)
+does not establish cross-run cache reuse on a fresh runner (L). Cross-run
+**GitHub Actions Nix-store restoration** has since been demonstrated in a
+separate clean PR-runner experiment. That result must never be confused with
+signed remote binary-cache substitution, which remains unverified. No PR test
+receives Tailscale secrets or binary-cache write access.
+
+### Measured source-edit rebuilds
+
+Three opt-in push trials passed on 19 October 2026. Each runner first realized
+the selected unedited package targets. The probe then changed one input in a
+disposable Git worktree and measured the resulting physical Nix build. Build
+counts below are parsed from Nix's local build log, **not** from changed
+derivation identities. No production source edit was merged.
+
+| Experiment | Exact-head workflow | Baseline local builds / substitutions | Edited local builds | Edited build time | Edited substitutions | Result |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| B: Basic Tools source | [39206321443](https://github.com/matthis-k/phenix-ai/actions/runs/39206321443), `323e3659` | 233 / 526 (345.639s baseline) | `phenix-plugin-basic-tools`, `phenix-basic-composition` | 28.013s | 0 | PASS |
+| C: Basic Agent source | [39206556341](https://github.com/matthis-k/phenix-ai/actions/runs/39206556341), `4cfcc130` | 233 / 526 (374.519s baseline) | `phenix-plugin-basic-agent`, `phenix-basic-composition` | 30.970s | 0 | PASS |
+| G: composition configuration | [39206551354](https://github.com/matthis-k/phenix-ai/actions/runs/39206551354), `2f42d4de` | 233 / 526 (301.541s baseline) | `phenix-basic-composition` only | 0.195s | 0 | PASS |
+
+The baseline was intentionally a cold materialization in each isolated
+workflow. Its 233 builds and 526 substitutions are **not** changes caused by
+the edit and must not be included in incremental rebuild counts. B and C
+changed 18 package derivation identities and 26 check derivations each; G
+changed 17 package identities and 23 check derivations. These include
+downstream compositions/checks not physically built by the narrow probe.
+All three tests reported no missing required changed packages and no
+unexpected changes to guarded independent Basic packages.
+
+These are targeted package-level experiments, not the total time to execute
+the full test matrix. Scenario K's identical replay and L's fresh-runner
+read-only **Actions-store restoration** have separate measured evidence.
+External signed binary-cache substitution was not exercised by either.
+
+### Outstanding acceptance evidence
+
+See [incremental-build PR #996](https://github.com/matthis-k/phenix-ai/pull/996)
+for the experiment commits and exact-head run IDs. Only completed, inspected
+runs may be described as verified. The scenario matrix must be updated with
+actual changed/rebuilt derivations and outputs, cache restore/substitution,
+wall time and failure classification before marking the PR ready. Do not
+infer full-suite performance from these narrow diagnostic checks.
+
+### Experiment isolation and cleanup rules
+
+Incremental-build probes must be reversible diagnostics, never persistent source
+changes or an alternate CI topology.
+
+1. **Clean working tree:** run source/config mutations only inside detached,
+   disposable Git worktrees. Remove them in a `finally`/exit trap on success,
+   failure, cancellation or timeout; report a failed cleanup as a test failure.
+   The primary checkout, `flake.lock`, tracked test fixtures and production
+   source must remain unchanged.
+2. **Branch lifecycle:** opt-in `[cache-probe]` commits may exist only on
+   dedicated disposable probe branches. After capturing the exact commit SHA,
+   run URL, required artifacts and measurements, delete those probe branches.
+   Never merge or cherry-pick source-edit triggers into `main` or the
+   evidence-harness PR. The reviewed harness branch itself stays until merge.
+3. **Cache isolation:** probes run credential-free and must not write to the
+   trusted main binary cache, reuse a production cache-publishing identity or
+   modify builder configuration. A local store, restored Actions snapshot,
+   portable file cache and signed remote binary cache are distinct mechanisms;
+   name which one was tested. Do not publish experimental outputs as trusted
+   artifacts.
+4. **Evidence retention:** retain immutable run links, tested SHAs, original
+   Nix derivation identities, build/substitution logs, wall and runner-minutes,
+   and machine-readable pass/fail classification. Preserve failures as well as
+   successes. Before artifact expiry, summarize accepted evidence here without
+   copying transient source edits or generated Nix store paths into the repo.
+5. **Acceptance cleanup:** remove experiment-only workflows, temporary
+   triggers, disposable branches and worktrees once scenarios are accepted.
+   Retain only useful regression checks and the canonical `flake.nix` check
+   inventory. Verify no new privileged PR path, runner secret, cache writer,
+   test bypass, or unexplained baseline change survives the experiment.
+
+Scenario K's identical replay completed successfully in
+[the isolated run 39207618373](https://github.com/matthis-k/phenix-ai/actions/runs/39207618373):
+the harness asserts identical realized outputs and **zero** local builds or
+substitutions on the repeat. It establishes same-run warm reuse only.
+Scenario L (fresh-runner **Actions Nix-store restoration**) is verified by
+[the 2m50s PR run 39210162210](https://github.com/matthis-k/phenix-ai/actions/runs/39210162210):
+its shared writer restored ~1.28 GB of compressed trusted-main Actions cache
+from revision `3376890d`; each of five independent shards then restored the
+new PR snapshot read-only and verified seven prebuilt outputs locally without
+recompiling any of those outputs. All 74 exact-head Nix checks passed. The
+unchanged `phenix-contract-check` was not rebuilt on those shards, unlike
+the previous 4 GiB snapshot case. This demonstrates cross-run store reuse,
+**not** substitution from a signed remote binary cache. An independent
+signed-substitution experiment is still outstanding and must not be inferred.
+
+### Failed-shard rerun after shared-cache eviction (20 October 2026)
+
+[PR #996 matrix run 39373733776](https://github.com/matthis-k/phenix-ai/actions/runs/39373733776)
+does not constitute a passing exact-head release. On attempt 1, shard-01
+failed while downloading `flake-check-plan` because the GitHub artifact
+endpoint returned `ECONNRESET`. The shared writer and four other shards
+passed. Attempts 2 and 3 retried the failed jobs, but the read-only Nix
+cache action found neither the exact merge-revision cache key nor a
+matching prefix. `prebuild-local` then rejected all seven unavailable
+shared store outputs before running shard checks.
+
+This is a cache-lifecycle/retry failure, not evidence that a changed Basic
+plugin rebuilt an unrelated package. A failed-shard-only rerun cannot recover
+once its shared cache is unavailable. For release evidence, run the complete
+workflow on the current head so the writer and shards share a fresh cache, or
+first implement and verify a fail-closed cache-miss recovery path in
+`phenix-flake-ci`. Keep the restoration/compilation distinction visible.
+Do not relax `prebuild-local`, drop shard-01, or count this run as green.
+
+
+
+### New-workspace-package full-matrix cost (20 October 2026)
+
+The [environment PR #1013 shard-04](https://github.com/matthis-k/phenix-ai/actions/runs/39370862576/job/118458988881)
+passed on head `5a1b9914`, but the job lasted approximately **14m08s**
+(04:44:00–04:58:09 UTC). Its completed job log contains:
+
+- **105** Nix `building '/nix/store/…drv'` events (local realization).
+- **12** Nix `copying path` events (substitution), and no matching Nix
+  `downloading '/nix/store/…'` events.
+- Roughly **1,120** Rust `Compiling … v` output lines; not a count of unique
+  crates or distinct derivations.
+
+This is an observed **full-matrix shard** after adding workspace packages and
+changing `Cargo.lock`, not the isolated B/C/G single-plugin edit experiment.
+It does not prove which local builds were avoidable or establish the cause of
+invalidation. In particular, verify Cargo-lock/source-closure effects using
+exact Nix `inputDrvs` and compare warm and cold stores before attributing
+the delay to the orchestrator. The shard alone exceeded the sub-10-minute CI
+target. Remote signed-cache substitution remains unverified.
+
+
+
 ## Current CI principles and applied assessment (15 October 2026)
 
 This section supersedes the **historical candidate/cutover status** recorded below, not its benchmark measurements or uncompleted optimization tasks. It is an engineering guide, not a second validation authority. The [M1 roadmap](m1-roadmap.md) remains the milestone tracker. A generated CI workflow and `flake.nix` remain the source of executable check definitions.
