@@ -1,13 +1,13 @@
 //! P2-3aj RED: a *second* state-triggered Basic node admits Model only
 //! after an independently contributed preparer has committed the handoff.
 use super::{verify_staged_model_candidate, GRAPH};
-use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Limits, Message, ModelRequest};
 
 fn source() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message::user("answer".into())],
+        history: vec![Message::user("answer")],
         tools: vec![],
         skills: vec![],
         context: vec![],
