@@ -66,6 +66,13 @@ struct ProviderModelsRequest {
     limit: u64,
 }
 
+/// The only accepted write authority comes from a trusted launcher-owned
+/// composition, not a Lua feature flag or an arbitrary provider catalog.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/capabilities", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialCapabilitiesRequest {}
+
 /// Secret-bearing ACP extension. The SDK owns framing; the trusted launcher
 /// fixes the only credential resource this connection may modify.
 #[derive(Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
@@ -125,6 +132,7 @@ enum Command {
     ProviderList(ProviderListRequest, Reply<serde_json::Value>),
     ProviderAuthStatus(ProviderAuthStatusRequest, Reply<serde_json::Value>),
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
+    CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
     CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
@@ -141,6 +149,7 @@ impl Command {
             Self::ProviderList(_, reply) => reply.respond_with_error(error),
             Self::ProviderAuthStatus(_, reply) => reply.respond_with_error(error),
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
+            Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
             Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
@@ -287,6 +296,7 @@ struct CredentialManagement {
     kernel: Kernel,
     importer: Selection,
     resource: String,
+    identity: CredentialIdentity,
 }
 
 /// The credential composition is a separate control-plane grant, never an
@@ -298,6 +308,8 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         .as_deref()
         .filter(|value| value.starts_with("phenix.credentials."))
         .ok_or("credential management requires one explicit credential resource")?;
+    let identity = CredentialIdentity::from_resource(resource)
+        .map_err(|_| "invalid launcher credential resource")?;
     let operations = std::collections::BTreeSet::from([
         format!("{CONTRACT}/import"),
         format!("{CONTRACT}/revoke"),
@@ -335,6 +347,7 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         kernel,
         importer: spec.entry.clone(),
         resource: resource.into(),
+        identity,
     })
 }
 
@@ -438,6 +451,14 @@ impl Controller {
                     Err(invalid("initialize required"))
                 } else {
                     self.provider_models(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::CredentialCapabilities(_, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_capabilities()
                 };
                 let _ = reply.respond_with_result(result);
             }
@@ -563,6 +584,21 @@ impl Controller {
                 limit: request.limit,
             },
         )
+    }
+
+    fn credential_capabilities(&self) -> acp::Result<serde_json::Value> {
+        let management = self
+            .credentials
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let identity = &management.identity;
+        Ok(serde_json::json!({
+            "provider_id": identity.provider_id,
+            "connection_id": identity.connection_id,
+            "profile_id": identity.profile_id,
+            "import": true,
+            "revoke": true,
+        }))
     }
 
     fn credential_operation(
@@ -924,6 +960,7 @@ pub(super) fn run(
     let provider_list = tx.clone();
     let provider_auth_status = tx.clone();
     let provider_models = tx.clone();
+    let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
     let credential_revoke = tx.clone();
     let prompt = tx.clone();
@@ -976,6 +1013,15 @@ pub(super) fn run(
         .on_receive_request(
             async move |request: ProviderModelsRequest, reply, _peer| {
                 submit(&provider_models, Command::ProviderModels(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialCapabilitiesRequest, reply, _peer| {
+                submit(
+                    &credential_capabilities,
+                    Command::CredentialCapabilities(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )

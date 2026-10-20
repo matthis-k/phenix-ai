@@ -104,6 +104,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
 
     # Ordinary Basic cannot reach credential operations without an independent grant.
     child = initialized(None)
+    unavailable = call(child, 8, "_phenix/credentials/capabilities", {})
+    assert unavailable["error"]["code"] == -32601
     blocked = call(child, 2, "_phenix/credentials/import", dict(**account, secret=secret))
     assert blocked["error"]["code"] == -32601, blocked.get("error", {}).get("code")
     close(child)
@@ -123,6 +125,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     assert secret not in bad.stdout + bad.stderr
 
     child = initialized(config_file)
+    granted = call(child, 8, "_phenix/credentials/capabilities", {})
+    assert granted["result"] == dict(**account, **{"import": True, "revoke": True})
     providers = call(child, 7, "_phenix/providers/list", {"scope": "user"})
     assert providers["result"]["revision"] > 0
     assert "openai" in {item["id"] for item in providers["result"]["providers"]}
@@ -165,6 +169,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "resolve_unavailable_to_acp": True,
     "restart": True,
     "strict_composition_grants": True,
+    "capabilities_identify_exact_authorized_profile": True,
+    "capabilities_unavailable_without_grant": True,
     "catalog_coexists_without_credential_authority": True,
     "stored_secret_is_not_verified_auth": True,
     "secret_redacted": True,

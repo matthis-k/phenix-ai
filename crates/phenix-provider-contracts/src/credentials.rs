@@ -44,6 +44,43 @@ impl CredentialIdentity {
         }
         Ok(format!("phenix.credentials.{}", encoded.join(".")))
     }
+
+    /// Recover the exact non-secret identity from an already authorized
+    /// resource. This is display/capability metadata, never a credential
+    /// lookup or an authority grant.
+    pub fn from_resource(resource: &str) -> Result<Self, ProviderError> {
+        fn decode(item: &str) -> Option<String> {
+            if item.is_empty() || !item.len().is_multiple_of(2) || item.len() > 128 {
+                return None;
+            }
+            let mut result = Vec::with_capacity(item.len() / 2);
+            for pair in item.as_bytes().chunks_exact(2) {
+                let text = std::str::from_utf8(pair).ok()?;
+                result.push(u8::from_str_radix(text, 16).ok()?);
+            }
+            String::from_utf8(result).ok()
+        }
+        let invalid = || ProviderError {
+            code: ProviderErrorCode::InvalidInput,
+            message: "invalid credential identity".into(),
+        };
+        let encoded = resource
+            .strip_prefix("phenix.credentials.")
+            .ok_or_else(invalid)?;
+        let components = encoded.split('.').collect::<Vec<_>>();
+        if components.len() != 3 {
+            return Err(invalid());
+        }
+        let identity = Self {
+            provider_id: decode(components[0]).ok_or_else(invalid)?,
+            connection_id: decode(components[1]).ok_or_else(invalid)?,
+            profile_id: decode(components[2]).ok_or_else(invalid)?,
+        };
+        if identity.resource()?.as_str() != resource {
+            return Err(invalid());
+        }
+        Ok(identity)
+    }
 }
 
 /// Secret bytes deliberately have no serde/config serialization or Clone.
@@ -133,6 +170,29 @@ mod tests {
         );
         for invalid in ["", "../secret", "a.b", "a/b"] {
             assert!(identity("a", "api", invalid).resource().is_err());
+        }
+    }
+
+    #[test]
+    fn launcher_resource_can_be_decoded_without_widening_identity() {
+        let selected = identity("openai", "api", "personal");
+        let resource = selected.resource().unwrap();
+        assert_eq!(
+            CredentialIdentity::from_resource(&resource).unwrap(),
+            selected
+        );
+        for invalid in [
+            "",
+            "phenix.credentials.openai.api.personal",
+            "phenix.credentials.6f70.617069",
+            "phenix.credentials.6f70.617069.706572736f6e616c.extra",
+            "phenix.credentials.4F70.617069.706572736f6e616c",
+            "phenix.credentials.2e.617069.706572736f6e616c",
+        ] {
+            assert_eq!(
+                CredentialIdentity::from_resource(invalid).unwrap_err().code,
+                ProviderErrorCode::InvalidInput,
+            );
         }
     }
 
