@@ -88,6 +88,11 @@ def execute():
             raise RuntimeError("probe branch moved; refusing deletion: " + name)
         present.append((name, path))
     for name, path in present:
+        # Narrow the preflight/delete race: an agent may have resumed work
+        # after our first inventory. This is not a general branch GC.
+        status, ref = request("GET", path)
+        if status == 404 or ref["object"]["sha"] != EXPECTED[name]:
+            raise RuntimeError("historical ref moved before deletion: " + name)
         status, _ = request("DELETE", path)
         if status not in (200, 204):
             raise RuntimeError("unexpected deletion response for " + name)
