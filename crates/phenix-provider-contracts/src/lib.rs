@@ -17,7 +17,7 @@ pub use credentials::{
 };
 
 pub mod selection;
-pub use selection::{validate_model_selection, ModelSelection};
+pub use selection::{validate_model_selection, AdmittedModelChoice, ModelSelection};
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum ProviderErrorCode {
@@ -127,6 +127,14 @@ pub struct AuthQuery {
     pub connection_id: String,
 }
 
+/// A profile is either authenticated or carries the provider's reason
+/// why it cannot be used. Successful profiles cannot contain an error reason.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum CredentialProfileStatus {
+    Authenticated,
+    Unavailable { reason: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct CredentialProfile {
     /// Stable identity scoped to one provider + connection.
@@ -134,9 +142,8 @@ pub struct CredentialProfile {
     pub label: String,
     /// References a declared AuthenticationMethod ID.
     pub method_id: String,
-    /// Provider-authoritative validity, not a frontend credential guess.
-    pub valid: bool,
-    pub reason: Option<String>,
+    /// Provider-authoritative status, not credential-presence evidence.
+    pub status: CredentialProfileStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -184,12 +191,15 @@ impl AuthenticationStatus {
         let Some(profile) = matches.next() else {
             return false;
         };
-        profile.valid
+        matches!(profile.status, CredentialProfileStatus::Authenticated)
             && matches.next().is_none()
-            && connection
-                .auth_methods
-                .iter()
-                .any(|method| method.id == profile.method_id)
+            && {
+                let mut methods = connection
+                    .auth_methods
+                    .iter()
+                    .filter(|method| method.id == profile.method_id);
+                methods.next().is_some() && methods.next().is_none()
+            }
     }
 }
 
@@ -220,6 +230,48 @@ pub enum AuthChallenge {
         verification_url: String,
         user_code: String,
     },
+}
+
+/// An attempt is scoped to one provider, connection and account flow.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct AuthAttemptQuery {
+    pub scope: String,
+    pub provider_id: String,
+    pub connection_id: String,
+    pub attempt_id: String,
+}
+
+/// An authenticated account selected by a completed login flow. The
+/// success payload has no validity flag or error reason, unlike a catalog
+/// profile whose current validity can subsequently change.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct AuthenticatedProfile {
+    pub id: String,
+    pub label: String,
+    pub method_id: String,
+}
+
+impl AuthenticatedProfile {
+    pub fn into_credential_profile(self) -> CredentialProfile {
+        CredentialProfile {
+            id: self.id,
+            label: self.label,
+            method_id: self.method_id,
+            status: CredentialProfileStatus::Authenticated,
+        }
+    }
+}
+
+/// Polling produces an exhaustive lifecycle state; registration and
+/// credential presence are not substitutes for successful authentication.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum AuthAttemptState {
+    AwaitingInput { challenge: AuthChallenge },
+    Pending,
+    Completed { profile: AuthenticatedProfile },
+    Failed { reason: ProviderError },
+    Expired,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -273,6 +325,8 @@ pub trait ProviderCatalog {
 pub trait ProviderAuth {
     fn status(&self, request: AuthQuery) -> Result<AuthenticationStatus, ProviderError>;
     fn begin(&self, request: AuthStart) -> Result<AuthChallenge, ProviderError>;
+    fn poll(&self, request: AuthAttemptQuery) -> Result<AuthAttemptState, ProviderError>;
+    fn cancel(&self, request: AuthAttemptQuery) -> Result<AuthAttemptState, ProviderError>;
 }
 
 #[plugin(
@@ -330,8 +384,13 @@ mod tests {
             id: id.into(),
             label: id.into(),
             method_id: method_id.into(),
-            valid,
-            reason: None,
+            status: if valid {
+                CredentialProfileStatus::Authenticated
+            } else {
+                CredentialProfileStatus::Unavailable {
+                    reason: "invalid".into(),
+                }
+            },
         }
     }
 
@@ -357,11 +416,15 @@ mod tests {
         assert!(state.profile_is_valid_for("example", &connection, "personal"));
         assert!(state.ready_for("example", &connection));
         state.profiles.push(profile("work", "key", true));
-        state.profiles[1].valid = false;
+        state.profiles[1].status = CredentialProfileStatus::Unavailable {
+            reason: "revoked".into(),
+        };
         assert!(!state.profile_is_valid_for("example", &connection, "personal"));
         assert!(state.profile_is_valid_for("example", &connection, "work"));
         assert!(state.ready_for("example", &connection));
-        state.profiles[2].valid = false;
+        state.profiles[2].status = CredentialProfileStatus::Unavailable {
+            reason: "revoked".into(),
+        };
         assert!(!state.ready_for("example", &descriptor(vec![key])));
         state.profiles.push(profile("subscription", "oauth", true));
         assert!(state.ready_for("example", &descriptor(vec![oauth])));
@@ -434,6 +497,55 @@ mod tests {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
         assert_eq!(metadata.definitions.len(), 3);
+    }
+
+    #[test]
+    fn authentication_completion_cannot_contain_an_unavailable_profile() {
+        let successful = AuthAttemptState::Completed {
+            profile: AuthenticatedProfile {
+                id: "personal".into(),
+                label: "Personal".into(),
+                method_id: "oauth".into(),
+            },
+        };
+        let wire = successful.to_value();
+        assert!(AuthAttemptState::SCHEMA.owned().unwrap().accepts(&wire));
+        assert_eq!(AuthAttemptState::from_value(wire).unwrap(), successful);
+        let AuthAttemptState::Completed { profile } = successful else {
+            unreachable!("fixture is completed");
+        };
+        assert_eq!(
+            profile.into_credential_profile().status,
+            CredentialProfileStatus::Authenticated,
+        );
+    }
+
+    #[test]
+    fn credential_profile_status_is_exclusive_and_roundtrips() {
+        for status in [
+            CredentialProfileStatus::Authenticated,
+            CredentialProfileStatus::Unavailable {
+                reason: "expired".into(),
+            },
+        ] {
+            let encoded = status.to_value();
+            assert!(CredentialProfileStatus::SCHEMA
+                .owned()
+                .unwrap()
+                .accepts(&encoded));
+            assert_eq!(
+                CredentialProfileStatus::from_value(encoded).unwrap(),
+                status
+            );
+        }
+        let conflicting = Value::map([
+            ("Authenticated", Value::Null),
+            (
+                "Unavailable",
+                Value::map([("reason", Value::String("expired".into()))]),
+            ),
+        ]);
+        assert!(CredentialProfileStatus::from_value(conflicting).is_err());
     }
 
     #[test]
