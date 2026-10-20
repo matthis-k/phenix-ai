@@ -548,4 +548,31 @@ mod tests {
         );
         assert!(Blob::from_value(Value::List(vec![])).is_err());
     }
+
+    #[test]
+    fn submission_variants_exclude_cancel_with_action_and_payload() {
+        let cancel = Submission::Cancel;
+        assert!(cancel.is_cancel());
+        assert!(cancel.as_dispatch().is_none());
+        assert_eq!(decode::<Submission>(&encode(&cancel).unwrap()).unwrap(), cancel);
+
+        let dispatch = Submission::Dispatch {
+            action: "phenix.basic.submit".into(),
+            payload: encode(&PromptSubmitted {
+                session: "s1".into(),
+                text: "hi".into(),
+                limits: Limits::default(),
+            }).unwrap(),
+        };
+        assert!(!dispatch.is_cancel());
+        assert_eq!(dispatch.as_dispatch().unwrap().0, "phenix.basic.submit");
+        assert_eq!(decode::<Submission>(&encode(&dispatch).unwrap()).unwrap(), dispatch);
+
+        let invalid = Value::map([
+            ("Cancel", Value::Null),
+            ("Dispatch", Value::Map(Default::default())),
+        ]);
+        assert!(!Submission::SCHEMA.owned().unwrap().accepts(&invalid));
+        assert!(Submission::from_value(invalid).is_err());
+    }
 }

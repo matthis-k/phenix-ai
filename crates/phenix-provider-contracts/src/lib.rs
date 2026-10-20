@@ -435,4 +435,33 @@ mod tests {
         assert_eq!(metadata.execution, MetadataExecution::None);
         assert_eq!(metadata.definitions.len(), 3);
     }
+
+    #[test]
+    fn challenge_variants_require_their_own_fields() {
+        for challenge in [
+            AuthChallenge::ApiKeyInput {
+                attempt_id: "attempt-1".into(),
+                prompt: "Enter an API key".into(),
+            },
+            AuthChallenge::OpenBrowser {
+                attempt_id: "attempt-2".into(),
+                url: "https://example.test/authorize".into(),
+            },
+            AuthChallenge::DeviceAuthorization {
+                attempt_id: "attempt-3".into(),
+                verification_url: "https://example.test/device".into(),
+                user_code: "ABCD".into(),
+            },
+        ] {
+            let value = challenge.to_value();
+            assert!(AuthChallenge::SCHEMA.owned().unwrap().accepts(&value));
+            assert_eq!(AuthChallenge::from_value(value).unwrap(), challenge);
+        }
+        let missing_url = Value::map([(
+            "OpenBrowser",
+            Value::map([("attempt_id", Value::String("attempt-2".into()))]),
+        )]);
+        assert!(!AuthChallenge::SCHEMA.owned().unwrap().accepts(&missing_url));
+        assert!(AuthChallenge::from_value(missing_url).is_err());
+    }
 }
