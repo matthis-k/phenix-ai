@@ -1,19 +1,19 @@
 //! P2 graph-extraction prerequisite: preserve the exact authoritative
 //! Basic-to-Model request value without calling a model or a second loop.
-use phenix_basic_contracts::{ContextItem, Limits, Message, Role, Skill, ToolCall, ToolInfo};
+use phenix_basic_contracts::{ContextItem, Limits, Message, Skill, ToolCall, ToolInfo};
 use phenix_plugin_basic_agent::project_model_request;
 
 #[test]
 fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs() {
     let history = vec![
-        Message::user("read the file".into()),
-        Message::assistant("reading".into(), vec![ToolCall {
+        Message::user("read the file"),
+        Message::assistant("reading", vec![ToolCall {
                 id: "c1".into(),
                 tool: "read".into(),
                 arguments: r#"{"path":"a.rs"}"#.into(),
             }]),
-        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "fn main() {}".into() }),
-        Message::user("now fix the code".into()),
+        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "fn main() {}".into() }),
+        Message::user("now fix the code"),
     ];
     let tools = vec![ToolInfo {
         id: "read".into(),
@@ -59,7 +59,7 @@ fn projection_retains_entire_authoritative_pending_turn_without_mutating_inputs(
 
 #[test]
 fn projection_is_not_a_scheduler_or_agent_run() {
-    let history = vec![Message::user("hello".into())];
+    let history = vec![Message::user("hello")];
     let limits = Limits::default();
     let first = project_model_request("s2", "run-1", &history, &[], &[], &[], &limits);
     let second = project_model_request("s2", "run-1", &history, &[], &[], &[], &limits);
