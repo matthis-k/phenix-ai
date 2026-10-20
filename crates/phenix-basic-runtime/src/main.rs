@@ -234,15 +234,15 @@ fn begin_submission<'a>(
     input: Submission,
     scope: ScopedRequest,
 ) -> Result<GraphExecution<'a>, String> {
-    if input.cancel {
+    let Submission::Dispatch { action, payload } = input else {
         return Err("no active graph execution to cancel".into());
-    }
-    if input.action != "phenix.basic.submit" {
+    };
+    if action != "phenix.basic.submit" {
         return Err("frontend selected an unknown Basic action".into());
     }
-    let value = Value::decode(&input.payload.0).map_err(|e| format!("{e:?}"))?;
+    let value = Value::decode(&payload.0).map_err(|e| format!("{e:?}"))?;
     kernel
-        .begin_action_scoped(&input.action, &value, scope)
+        .begin_action_scoped(&action, &value, scope)
         .map_err(|e| format!("{e:?}"))
 }
 
@@ -696,7 +696,7 @@ fn run_console(
                     line: line?,
                 },
             ))?;
-            if submission.cancel {
+            if submission.is_cancel() {
                 let current = active
                     .as_mut()
                     .ok_or("no active graph execution to cancel")?;
@@ -859,7 +859,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 line,
             },
         ))?;
-        if input.cancel {
+        if input.is_cancel() {
             // Cancelling a session without an active run cannot affect another
             // session's graph or mutate its durable checkpoint.
             continue;

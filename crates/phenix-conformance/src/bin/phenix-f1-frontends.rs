@@ -77,9 +77,9 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(accepted.action, "phenix.basic.submit");
+    assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
     assert!(!accepted.cancel);
-    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
+    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.as_dispatch().unwrap().1).unwrap();
     assert_eq!(prompt.session, "s1");
     assert_eq!(prompt.text, "hello");
     assert_eq!(
@@ -101,7 +101,7 @@ fn verify(path: String, defs: String, provider: &str, jsonl: bool) {
     )
     .unwrap()
     .unwrap();
-    assert!(canceled.cancel);
+    assert!(canceled.is_cancel());
     let output: Vec<String> = invoke(
         &kernel,
         provider,
