@@ -66,13 +66,21 @@ mod provider {
                 "wrong graph change event",
             ));
         }
-        let source = BasicPendingModelRequest::get::locate(host, "Source")?
+        let source_snapshot = BasicPendingModelRequest::get::locate(host, "Source")?
             .read(host)
-            .map_err(host_failure)?
-            .value
-            .as_ref()
-            .clone()
-            .ok_or_else(|| {
+            .map_err(host_failure)?;
+        // Notification epochs are global and may include other cell commits.
+        // Cite the pending request's actual last-write epoch, not the
+        // coalesced graph notification epoch. Never prepare a newer request
+        // on behalf of an older notification.
+        let source_epoch = source_snapshot.epoch.0;
+        if source_epoch == 0 || source_epoch > notification.epoch {
+            return Err(invalid(
+                ModelPreparationProblem::SourceChanged,
+                "pending Basic request revision does not belong to this graph change",
+            ));
+        }
+        let source = source_snapshot.value.as_ref().clone().ok_or_else(|| {
                 invalid(
                     ModelPreparationProblem::SourceChanged,
                     "no pending Basic request",
@@ -113,7 +121,7 @@ mod provider {
         let mut draft = selected.edit(host).map_err(host_failure)?;
         *draft = Some(proposal.candidate);
         draft.commit(host).map_err(host_failure)?;
-        PreparationReceipt::new(notification.epoch, input.original_sha256)
+        PreparationReceipt::new(source_epoch, input.original_sha256)
             .map_err(|problem| invalid(problem, "invalid source-bound preparation receipt"))
     }
 }
