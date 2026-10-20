@@ -311,13 +311,7 @@ mod plugin {
         session.run = run.clone();
         session.status = RunStatus::Running;
         session.checkpoint = next;
-        session.history.push(Message {
-            role: Role::User,
-            text: input.text.clone(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        });
+        session.history.push(Message::user(input.text.clone()));
         session = checkpoint(host, session)?;
         event(
             host,
@@ -525,13 +519,7 @@ mod plugin {
         }
 
         if response.calls.is_empty() {
-            running.session.history.push(Message {
-                role: Role::Assistant,
-                text: response.text.clone(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            });
+            running.session.history.push(Message::assistant(response.text.clone(), vec![]));
             running.session.status = RunStatus::Completed;
             checkpoint(host, running.session.clone())?;
             event(
@@ -576,13 +564,7 @@ mod plugin {
                 return Err(CallError::Domain(problem));
             }
         }
-        running.session.history.push(Message {
-            role: Role::Assistant,
-            text: response.text,
-            calls: response.calls.clone(),
-            call_id: String::new(),
-            error: None,
-        });
+        running.session.history.push(Message::assistant(response.text, response.calls.clone()));
         running.session.pending = response.calls.clone();
         running.session = checkpoint(host, running.session.clone())?;
 
@@ -608,13 +590,7 @@ mod plugin {
                 Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
                 Err(other) => return Err(other),
             };
-            running.session.history.push(Message {
-                role: Role::Tool,
-                text: text.clone(),
-                calls: vec![],
-                call_id: call.id.clone(),
-                error: failure.clone(),
-            });
+            running.session.history.push(Message::tool(call.id.clone(), match failure.clone() { Some(reason) => ToolOutcome::Failed { output: text.clone().clone(), reason }, None => ToolOutcome::Succeeded { text: text.clone() } }));
             running
                 .session
                 .pending
