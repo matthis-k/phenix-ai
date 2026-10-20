@@ -220,7 +220,9 @@ fn chat_body(
                 msgs.push(value);
             }
             PreparedMessage::Tool { call_id, outcome } => {
-                msgs.push(json!({"role":"tool","tool_call_id":call_id,"content":tool_output(outcome)}));
+                msgs.push(
+                    json!({"role":"tool","tool_call_id":call_id,"content":tool_output(outcome)}),
+                );
             }
         }
     }
@@ -406,14 +408,16 @@ mod tests {
                     reason: "denied".into(),
                 },
             ] {
-                let failed = matches!(outcome, ToolOutcome::Failed { .. });
+                let failed = matches!(&outcome, ToolOutcome::Failed { .. });
                 let request = tool_history(outcome);
                 let encoded = encode_protocol(&request, "test-model", protocol).unwrap();
                 let body: Value = serde_json::from_slice(&encoded).unwrap();
                 let output = match protocol {
                     crate::Protocol::OpenaiChat => &body["messages"][2]["content"],
                     crate::Protocol::OpenaiResponses => &body["input"][3]["output"],
-                    crate::Protocol::AnthropicMessages => &body["messages"][2]["content"][0]["content"],
+                    crate::Protocol::AnthropicMessages => {
+                        &body["messages"][2]["content"][0]["content"]
+                    }
                 };
                 if failed {
                     assert_eq!(
@@ -421,7 +425,7 @@ mod tests {
                         json!({"error":"denied","output":"partial"})
                     );
                 } else {
-                    assert_eq!(output, "HELLO");
+                    assert_eq!(output.as_str(), Some("HELLO"));
                 }
                 if protocol == crate::Protocol::AnthropicMessages {
                     assert_eq!(
