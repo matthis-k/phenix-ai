@@ -8,13 +8,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello".into())],
         tools: vec![ToolInfo {
             id: "uppercase".into(),
             description: "Uppercase".into(),
@@ -44,24 +38,12 @@ fn complete_history_and_scalar_argument_envelope_are_preserved() {
     let mut request = request();
     request.limits.model_tokens = Some(99);
     request.history.extend([
-        Message {
-            role: Role::Assistant,
-            text: String::new(),
-            calls: vec![ToolCall {
+        Message::assistant(String::new(), vec![ToolCall {
                 id: "c1".into(),
                 tool: "uppercase".into(),
                 arguments: r#""aß""#.into(),
-            }],
-            call_id: String::new(),
-            error: None,
-        },
-        Message {
-            role: Role::Tool,
-            text: String::new(),
-            calls: vec![],
-            call_id: "c1".into(),
-            error: Some("tool failed".into()),
-        },
+            }]),
+        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
     ]);
     let encoded: Value =
         serde_json::from_slice(&request::encode(&request, "fixture").unwrap()).unwrap();
@@ -191,13 +173,7 @@ fn incomplete_and_malformed_streams_cannot_be_successful_replies() {
 #[test]
 fn unmatched_tool_history_and_zero_limits_reject_before_transport() {
     let mut request = request();
-    request.history.push(Message {
-        role: Role::Tool,
-        text: "x".into(),
-        calls: vec![],
-        call_id: "missing".into(),
-        error: None,
-    });
+    request.history.push(Message::tool("missing".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "x".into() }));
     assert_eq!(
         request::encode(&request, "fixture").unwrap_err().code,
         ErrorCode::InvalidInput
@@ -336,10 +312,7 @@ fn anthropic_groups_batched_tool_results_without_inventing_user_turns() {
     use phenix_provider_protocols::{request::encode_protocol_with_max_tokens, Protocol};
     let mut request = request();
     request.history.extend([
-        Message {
-            role: Role::Assistant,
-            text: String::new(),
-            calls: vec![
+        Message::assistant(String::new(), vec![
                 ToolCall {
                     id: "c1".into(),
                     tool: "uppercase".into(),
@@ -350,24 +323,9 @@ fn anthropic_groups_batched_tool_results_without_inventing_user_turns() {
                     tool: "uppercase".into(),
                     arguments: r#""world""#.into(),
                 },
-            ],
-            call_id: String::new(),
-            error: None,
-        },
-        Message {
-            role: Role::Tool,
-            text: "HELLO".into(),
-            calls: vec![],
-            call_id: "c1".into(),
-            error: None,
-        },
-        Message {
-            role: Role::Tool,
-            text: String::new(),
-            calls: vec![],
-            call_id: "c2".into(),
-            error: Some("failed".into()),
-        },
+            ]),
+        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }),
+        Message::tool("c2".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "failed".into() }),
     ]);
     let body: Value = serde_json::from_slice(
         &encode_protocol_with_max_tokens(
