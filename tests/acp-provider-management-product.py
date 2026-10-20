@@ -75,17 +75,17 @@ def probe(managed: bool):
     # The installed provider plugin and ACP query preserve exact, documented
     # targets. They are metadata only, not a ready account or inference grant.
     assert {p["id"]: p["endpoint"] for p in openai["api"]["protocols"]} == {
-        "openai-responses": "https://api.openai.com/v1/responses",
-        "openai-chat": "https://api.openai.com/v1/chat/completions",
+        "openai-responses": ["https://api.openai.com/v1/responses"],
+        "openai-chat": ["https://api.openai.com/v1/chat/completions"],
     }
     assert openai["chatgpt"]["protocols"][0]["endpoint"] is None
     router = providers["openrouter"]["connections"][0]
     assert {p["id"]: p["endpoint"] for p in router["protocols"]} == {
-        "openai-chat": "https://openrouter.ai/api/v1/chat/completions",
-        "openai-responses": "https://openrouter.ai/api/v1/responses",
+        "openai-chat": ["https://openrouter.ai/api/v1/chat/completions"],
+        "openai-responses": ["https://openrouter.ai/api/v1/responses"],
     }
     assert providers["anthropic"]["connections"][0]["protocols"][0]["endpoint"] == (
-        "https://api.anthropic.com/v1/messages"
+        ["https://api.anthropic.com/v1/messages"]
     )
     assert all("secret" not in json.dumps(p).lower() for p in providers.values())
 
