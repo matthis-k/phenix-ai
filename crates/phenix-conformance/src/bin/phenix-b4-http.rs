@@ -51,17 +51,8 @@ fn request(mode: &str) -> ModelRequest {
         session: if mode == "denied" { "s2" } else { "s1" }.into(),
         run: "r1".into(),
         history: vec![
-            Message {
-                role: Role::User,
-                text: "prior".into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Assistant,
-                text: String::new(),
-                calls: vec![
+            Message::user("prior".into()),
+            Message::assistant(String::new(), vec![
                     ToolCall {
                         id: "prior-1".into(),
                         tool: "uppercase".into(),
@@ -72,31 +63,10 @@ fn request(mode: &str) -> ModelRequest {
                         tool: "length".into(),
                         arguments: r#""old""#.into(),
                     },
-                ],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Tool,
-                text: "OLD".into(),
-                calls: vec![],
-                call_id: "prior-1".into(),
-                error: None,
-            },
-            Message {
-                role: Role::Tool,
-                text: String::new(),
-                calls: vec![],
-                call_id: "prior-2".into(),
-                error: Some("prior tool failed".into()),
-            },
-            Message {
-                role: Role::User,
-                text: mode.into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
+                ]),
+            Message::tool("prior-1".into(), ToolOutcome::Succeeded { text: "OLD".into() }),
+            Message::tool("prior-2".into(), ToolOutcome::Failed { output: String::new(), reason: "prior tool failed".into() }),
+            Message::user(mode.into()),
         ],
         tools: ["uppercase", "length"]
             .into_iter()
