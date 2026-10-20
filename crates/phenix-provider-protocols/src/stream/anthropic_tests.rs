@@ -1,12 +1,12 @@
 use super::*;
-use phenix_basic_contracts::{Limits, Message, ModelRequest, Role, ToolInfo};
+use phenix_basic_contracts::{Limits, Message, ModelRequest, ToolInfo};
 use serde_json::json;
 
 fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message::user("hello".into())],
+        history: vec![Message::user("hello")],
         tools: vec![
             ToolInfo {
                 id: "uppercase".into(),
@@ -181,7 +181,7 @@ fn anthropic_request_encodes_system_tools_and_full_history() {
                 tool: "uppercase".into(),
                 arguments: r#""aß""#.into(),
             }]),
-        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
+        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
     ]);
     // Anthropic requires a positive output budget on every wire request.
     request.limits.model_tokens = Some(128);
