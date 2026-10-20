@@ -802,16 +802,66 @@ mod tests {
         validate_registrations(&providers).unwrap();
 
         let expected = [
-            ("openai", "api", OPENAI_RESPONSES, "https://api.openai.com/v1/responses"),
-            ("openai", "api", OPENAI_CHAT, "https://api.openai.com/v1/chat/completions"),
-            ("openrouter", "api", OPENAI_CHAT, "https://openrouter.ai/api/v1/chat/completions"),
-            ("openrouter", "api", OPENAI_RESPONSES, "https://openrouter.ai/api/v1/responses"),
-            ("anthropic", "api", ANTHROPIC_MESSAGES, "https://api.anthropic.com/v1/messages"),
-            ("opencode-zen", "api", OPENAI_CHAT, "https://opencode.ai/zen/v1/chat/completions"),
-            ("opencode-zen", "api", OPENAI_RESPONSES, "https://opencode.ai/zen/v1/responses"),
-            ("opencode-go", "api", OPENAI_CHAT, "https://opencode.ai/zen/go/v1/chat/completions"),
-            ("opencode-go", "api", OPENAI_RESPONSES, "https://opencode.ai/zen/go/v1/responses"),
-            ("zai", "standard", OPENAI_CHAT, "https://api.z.ai/api/paas/v4/chat/completions"),
+            (
+                "openai",
+                "api",
+                OPENAI_RESPONSES,
+                "https://api.openai.com/v1/responses",
+            ),
+            (
+                "openai",
+                "api",
+                OPENAI_CHAT,
+                "https://api.openai.com/v1/chat/completions",
+            ),
+            (
+                "openrouter",
+                "api",
+                OPENAI_CHAT,
+                "https://openrouter.ai/api/v1/chat/completions",
+            ),
+            (
+                "openrouter",
+                "api",
+                OPENAI_RESPONSES,
+                "https://openrouter.ai/api/v1/responses",
+            ),
+            (
+                "anthropic",
+                "api",
+                ANTHROPIC_MESSAGES,
+                "https://api.anthropic.com/v1/messages",
+            ),
+            (
+                "opencode-zen",
+                "api",
+                OPENAI_CHAT,
+                "https://opencode.ai/zen/v1/chat/completions",
+            ),
+            (
+                "opencode-zen",
+                "api",
+                OPENAI_RESPONSES,
+                "https://opencode.ai/zen/v1/responses",
+            ),
+            (
+                "opencode-go",
+                "api",
+                OPENAI_CHAT,
+                "https://opencode.ai/zen/go/v1/chat/completions",
+            ),
+            (
+                "opencode-go",
+                "api",
+                OPENAI_RESPONSES,
+                "https://opencode.ai/zen/go/v1/responses",
+            ),
+            (
+                "zai",
+                "standard",
+                OPENAI_CHAT,
+                "https://api.z.ai/api/paas/v4/chat/completions",
+            ),
         ];
 
         for (provider_id, connection_id, protocol_id, endpoint) in expected {
@@ -834,7 +884,10 @@ mod tests {
         // The subscription OAuth flow has no installed authorized transport.
         let chatgpt = &providers[0].connections[1];
         assert_eq!(chatgpt.id, "chatgpt");
-        assert!(chatgpt.protocols.iter().all(|protocol| protocol.endpoint.is_none()));
+        assert!(chatgpt
+            .protocols
+            .iter()
+            .all(|protocol| protocol.endpoint.is_none()));
 
         // Anthropic wire shape does not imply this gateway accepts x-api-key
         // instead of the gateway's account-bound bearer authentication.
@@ -844,11 +897,9 @@ mod tests {
                 .find(|provider| provider.id == provider_id)
                 .unwrap()
                 .connections[0];
-            assert!(
-                connection.protocols.iter().any(|protocol| {
-                    protocol.id == ANTHROPIC_MESSAGES && protocol.endpoint.is_none()
-                })
-            );
+            assert!(connection.protocols.iter().any(|protocol| {
+                protocol.id == ANTHROPIC_MESSAGES && protocol.endpoint.is_none()
+            }));
         }
     }
 }
