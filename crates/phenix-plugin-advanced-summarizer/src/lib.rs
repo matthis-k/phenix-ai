@@ -51,7 +51,7 @@ pub fn prepare_model_request(
             .request
             .history
             .last()
-            .is_none_or(|message| message.role != Role::User)
+            .is_none_or(|message| message.role() != Role::User)
     {
         return Err(invalid(
             "summary source does not match the authoritative request",
