@@ -375,6 +375,7 @@ pub struct SessionSnapshot {
 /// A tool effect has exactly one reconciled outcome. A failed result
 /// explicitly carries both any partial output and its error reason.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum ToolOutcome {
     Succeeded { text: String },
     Failed { output: String, reason: String },
@@ -701,6 +702,18 @@ mod tests {
         .is_err());
         assert!(serde_json::from_str::<Message>(
             r#"{"Tool":{"call_id":"c1","outcome":{"Succeeded":{"text":"ok"}},"error":"denied"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ToolOutcome>(
+            r#"{"Succeeded":{"text":"ok","reason":"denied"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ToolOutcome>(
+            r#"{"Failed":{"output":"","reason":"denied","text":"ok"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Tool":{"call_id":"c1","outcome":{"Succeeded":{"text":"ok","reason":"denied"}}}}"#
         )
         .is_err());
     }
