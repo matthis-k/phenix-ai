@@ -40,13 +40,7 @@ pub fn reconcile_snapshot(
         .position(|call| call.id == resolution.call_id)
         .ok_or_else(|| error(ErrorCode::NotFound, "pending tool call not found"))?;
     snapshot.pending.remove(position);
-    snapshot.history.push(Message {
-        role: Role::Tool,
-        text: resolution.outcome.text().into(),
-        calls: vec![],
-        call_id: resolution.call_id.clone(),
-        error: resolution.outcome.error().map(str::to_owned),
-    });
+    snapshot.history.push(Message::tool(resolution.call_id.clone(), match resolution.outcome.error().map(str::to_owned) { Some(reason) => ToolOutcome::Failed { output: resolution.outcome.text().into().clone(), reason }, None => ToolOutcome::Succeeded { text: resolution.outcome.text().into() } }));
     if snapshot.pending.is_empty() {
         snapshot.status = RunStatus::Running;
     }
