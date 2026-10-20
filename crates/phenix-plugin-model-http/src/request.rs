@@ -116,9 +116,9 @@ mod credential_tests {
             );
         }
         assert_eq!(
-            configured_credential(Err(env::VarError::NotUnicode(
-                std::ffi::OsString::from("not-unicode"),
-            )))
+            configured_credential(Err(env::VarError::NotUnicode(std::ffi::OsString::from(
+                "not-unicode"
+            ),)))
             .unwrap_err()
             .code,
             ErrorCode::InvalidInput,
