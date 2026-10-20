@@ -1,8 +1,7 @@
 //! Session aggregate over selected revision-checked Storage.
 //! The kernel provides admission and cancellation, not durable session logic.
 use phenix_basic_contracts::{
-    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot,
-    ToolOutcome, Usage,
+    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot, Usage,
 };
 
 const RECORD: &str = "session.snapshot.v1";
@@ -183,7 +182,7 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_basic_contracts::ToolCall;
+    use phenix_basic_contracts::{ToolCall, ToolOutcome};
 
     #[test]
     fn interrupted_tool_recovery_requires_explicit_call_id() {
