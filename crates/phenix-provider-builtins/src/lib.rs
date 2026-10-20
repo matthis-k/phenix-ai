@@ -79,7 +79,10 @@ fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> Pr
 }
 
 /// Registration is offline and does not imply account entitlement or model
-/// availability. OAuth is only usable after provider-approved authorization.
+/// availability. Explicit inference URLs are provider-documented protocol
+/// locations, not active transports; actual models must still be mapped to a
+/// supported protocol, authenticated account, fresh catalog and runtime grant.
+/// OAuth is only usable after provider-approved authorization.
 pub fn registrations() -> Vec<ProviderDescriptor> {
     vec![
         ProviderDescriptor {
@@ -92,11 +95,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     protocols: vec![
                         ProtocolBinding {
                             id: OPENAI_RESPONSES.into(),
-                            endpoint: None,
+                            endpoint: Some("https://api.openai.com/v1/responses".into()),
                         },
                         ProtocolBinding {
                             id: OPENAI_CHAT.into(),
-                            endpoint: None,
+                            endpoint: Some("https://api.openai.com/v1/chat/completions".into()),
                         },
                     ],
                     base_url: Some("https://api.openai.com/v1".into()),
@@ -152,11 +155,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://openrouter.ai/api/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://openrouter.ai/api/v1/responses".into()),
                     },
                 ],
                 base_url: Some("https://openrouter.ai/api/v1".into()),
@@ -189,7 +192,7 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 label: "Anthropic API".into(),
                 protocols: vec![ProtocolBinding {
                     id: ANTHROPIC_MESSAGES.into(),
-                    endpoint: None,
+                    endpoint: Some("https://api.anthropic.com/v1/messages".into()),
                 }],
                 base_url: Some("https://api.anthropic.com/v1".into()),
                 auth_methods: vec![AuthenticationMethod {
@@ -222,11 +225,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/v1/responses".into()),
                     },
                     ProtocolBinding {
                         id: ANTHROPIC_MESSAGES.into(),
@@ -264,11 +267,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/go/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/go/v1/responses".into()),
                     },
                     ProtocolBinding {
                         id: ANTHROPIC_MESSAGES.into(),
@@ -305,7 +308,7 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 label: "Z.ai API".into(),
                 protocols: vec![ProtocolBinding {
                     id: OPENAI_CHAT.into(),
-                    endpoint: None,
+                    endpoint: Some("https://api.z.ai/api/paas/v4/chat/completions".into()),
                 }],
                 base_url: Some("https://api.z.ai/api/paas/v4".into()),
                 auth_methods: vec![AuthenticationMethod {
