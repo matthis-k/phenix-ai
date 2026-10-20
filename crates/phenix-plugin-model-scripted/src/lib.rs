@@ -167,13 +167,7 @@ mod tests {
         ModelRequest {
             session: "s1".into(),
             run: "r1".into(),
-            history: vec![Message {
-                role: Role::User,
-                text: text.into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            }],
+            history: vec![Message::user(text.into())],
             tools: vec![
                 ToolInfo {
                     id: "uppercase".into(),
@@ -211,28 +205,10 @@ mod tests {
         assert_eq!(first.calls.len(), 2);
         assert_eq!(first.calls[0].id, "call-1");
         assert_eq!(first.calls[1].tool, "length");
-        input.history.push(Message {
-            role: Role::Assistant,
-            text: String::new(),
-            calls: first.calls,
-            call_id: String::new(),
-            error: None,
-        });
-        input.history.push(Message {
-            role: Role::Tool,
-            text: "HELLO".into(),
-            calls: vec![],
-            call_id: "call-1".into(),
-            error: None,
-        });
+        input.history.push(Message::assistant(String::new(), first.calls));
+        input.history.push(Message::tool("call-1".into(), ToolOutcome::Succeeded { text: "HELLO".into() }));
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
-        input.history.push(Message {
-            role: Role::Tool,
-            text: String::new(),
-            calls: vec![],
-            call_id: "call-2".into(),
-            error: Some("failed".into()),
-        });
+        input.history.push(Message::tool("call-2".into(), ToolOutcome::Failed { output: String::new(), reason: "failed".into() }));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:HELLO|call-2:error:failed"
@@ -254,27 +230,9 @@ mod tests {
         assert_eq!(first.calls.len(), 2);
         assert_eq!(first.calls[0].tool, "fail");
         assert_eq!(first.calls[1].tool, "length");
-        input.history.push(Message {
-            role: Role::Assistant,
-            text: String::new(),
-            calls: first.calls,
-            call_id: String::new(),
-            error: None,
-        });
-        input.history.push(Message {
-            role: Role::Tool,
-            text: String::new(),
-            calls: vec![],
-            call_id: "call-1".into(),
-            error: Some("scripted failure".into()),
-        });
-        input.history.push(Message {
-            role: Role::Tool,
-            text: "5".into(),
-            calls: vec![],
-            call_id: "call-2".into(),
-            error: None,
-        });
+        input.history.push(Message::assistant(String::new(), first.calls));
+        input.history.push(Message::tool("call-1".into(), ToolOutcome::Failed { output: String::new(), reason: "scripted failure".into() }));
+        input.history.push(Message::tool("call-2".into(), ToolOutcome::Succeeded { text: "5".into() }));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:error:scripted failure|call-2:5"
