@@ -13,6 +13,7 @@ use phenix_basic_contracts::{
     encode, error, BasicError, ClientInput, ErrorCode, EventKind, Limits, PromptSubmitted,
     RenderRequest, Submission,
 };
+#[cfg(any(feature = "acp", test))]
 use phenix_sdk::Blob;
 use serde::{Deserialize, Serialize};
 
@@ -26,19 +27,14 @@ fn prompt(session: String, text: String, limits: Limits) -> Result<Submission, B
         limits,
     })
     .map_err(|_| error(ErrorCode::InvalidInput, "invalid prompt payload"))?;
-    Ok(Submission {
+    Ok(Submission::Dispatch {
         action: "phenix.basic.submit".into(),
         payload,
-        cancel: false,
     })
 }
 
 fn cancellation() -> Submission {
-    Submission {
-        action: "phenix.basic.submit".into(),
-        payload: Blob(vec![]),
-        cancel: true,
-    }
+    Submission::Cancel
 }
 
 pub fn terminal_decode(request: ClientInput) -> Result<Submission, BasicError> {
@@ -495,8 +491,9 @@ mod tests {
             }
         }))
         .unwrap();
-        assert_eq!(accepted.action, "phenix.basic.submit");
-        let payload: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
+        assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
+        let payload: PromptSubmitted =
+            phenix_basic_contracts::decode(accepted.as_dispatch().unwrap().1).unwrap();
         assert_eq!(payload.text, "hello\nworld");
         assert_eq!(payload.session, "s1");
 
@@ -515,17 +512,15 @@ mod tests {
         }))
         .unwrap();
         let resource_payload: PromptSubmitted =
-            phenix_basic_contracts::decode(&resource.payload).unwrap();
+            phenix_basic_contracts::decode(resource.as_dispatch().unwrap().1).unwrap();
         assert_eq!(
             resource_payload.text,
             "read this reference\nResource link: design notes (file:///tmp/design.md)"
         );
 
-        assert!(
-            decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
-                .unwrap()
-                .cancel
-        );
+        assert!(decode(serde_json::json!({"cancel": {"sessionId": "s1"}}))
+            .unwrap()
+            .is_cancel());
         let refused = decode(serde_json::json!({
             "prompt": {"sessionId": "s2", "prompt": [{"type": "text", "text": "other"}]}
         }))
@@ -640,8 +635,9 @@ mod tests {
             }
         }))
         .unwrap();
-        assert_eq!(submitted.action, "phenix.basic.submit");
-        let turn: PromptSubmitted = phenix_basic_contracts::decode(&submitted.payload).unwrap();
+        assert_eq!(submitted.as_dispatch().unwrap().0, "phenix.basic.submit");
+        let turn: PromptSubmitted =
+            phenix_basic_contracts::decode(submitted.as_dispatch().unwrap().1).unwrap();
         assert_eq!(turn.session, "s1");
         assert_eq!(
             turn.text,
@@ -678,8 +674,7 @@ mod tests {
             "cancel_v2": {"sessionId": "s1"}
         }))
         .unwrap();
-        assert!(cancelled.cancel);
-        assert_eq!(cancelled.action, "phenix.basic.submit");
+        assert!(cancelled.is_cancel());
         assert_eq!(
             decode(serde_json::json!({
                 "cancel_v2": {"sessionId": "s2"}
@@ -701,7 +696,7 @@ mod tests {
             "cancel": {"sessionId": "s1"}
         }))
         .unwrap();
-        assert!(v1_cancelled.cancel);
+        assert!(v1_cancelled.is_cancel());
         assert_eq!(
             decode(serde_json::json!({
                 "prompt": {
@@ -710,7 +705,9 @@ mod tests {
                 }
             }))
             .unwrap()
-            .action,
+            .as_dispatch()
+            .unwrap()
+            .0,
             "phenix.basic.submit"
         );
     }
@@ -728,7 +725,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(line, json);
-        assert_eq!(line.action, "phenix.basic.submit");
+        assert_eq!(line.as_dispatch().unwrap().0, "phenix.basic.submit");
         assert_eq!(
             terminal_decode(ClientInput {
                 session: "s1".into(),

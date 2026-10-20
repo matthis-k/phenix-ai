@@ -719,11 +719,11 @@ mod plugin {
             }
             Ok(Advance::RePrepared) => {
                 state.active = Some(running);
-                PendingResult::Ready(Ok(TurnAdvanceOutcome { completed: None }))
+                PendingResult::Ready(Ok(TurnAdvanceOutcome::Reprepare))
             }
-            Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(TurnAdvanceOutcome {
-                completed: Some(reply),
-            })),
+            Ok(Advance::Done(reply)) => {
+                PendingResult::Ready(Ok(TurnAdvanceOutcome::Complete { result: reply }))
+            }
             Err(CallError::Domain(problem)) => {
                 PendingResult::Ready(Err(CallError::Domain(problem)))
             }

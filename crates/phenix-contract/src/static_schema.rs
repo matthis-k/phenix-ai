@@ -12,12 +12,18 @@ pub enum StaticSchema {
     Option(&'static StaticSchema),
     Struct(&'static [StaticField]),
     Variants(&'static [&'static str]),
+    Tagged(&'static [StaticVariant]),
     Ref(&'static StaticSchema),
 }
 #[derive(Clone, Copy, Debug)]
 pub struct StaticField {
     pub name: &'static str,
     pub schema: StaticSchema,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct StaticVariant {
+    pub name: &'static str,
+    pub schema: Option<StaticSchema>,
 }
 /// Canonical schema bytes, with no wire profile prefix or padding in `bytes()`.
 #[derive(Clone, Copy)]
@@ -111,6 +117,29 @@ impl SchemaBytes {
                         );
                     }
                     self.text(names[i]);
+                    i += 1;
+                }
+            }
+            StaticSchema::Tagged(variants) => {
+                assert!(!variants.is_empty(), "empty tagged variants");
+                self.byte(7);
+                self.count(2);
+                self.text("Tagged");
+                self.byte(8);
+                self.count(variants.len());
+                let mut i = 0;
+                while i < variants.len() {
+                    if i > 0 {
+                        assert!(
+                            compare(variants[i - 1].name, variants[i].name) < 0,
+                            "tagged variants must be sorted and unique"
+                        );
+                    }
+                    self.key(variants[i].name);
+                    match variants[i].schema {
+                        Some(schema) => self.schema(schema, depth + 1),
+                        None => self.byte(0),
+                    }
                     i += 1;
                 }
             }

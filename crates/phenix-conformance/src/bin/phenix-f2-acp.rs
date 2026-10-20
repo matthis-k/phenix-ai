@@ -74,8 +74,9 @@ fn main() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(accepted.action, "phenix.basic.submit");
-    let prompt: PromptSubmitted = phenix_basic_contracts::decode(&accepted.payload).unwrap();
+    assert_eq!(accepted.as_dispatch().unwrap().0, "phenix.basic.submit");
+    let prompt: PromptSubmitted =
+        phenix_basic_contracts::decode(accepted.as_dispatch().unwrap().1).unwrap();
     assert_eq!(prompt.text, "hello");
     assert_eq!(prompt.session, "s1");
     let resource: Submission = call(
@@ -90,7 +91,7 @@ fn main() {
     .unwrap()
     .unwrap();
     let resource_prompt: PromptSubmitted =
-        phenix_basic_contracts::decode(&resource.payload).unwrap();
+        phenix_basic_contracts::decode(resource.as_dispatch().unwrap().1).unwrap();
     assert_eq!(
         resource_prompt.text,
         "Resource link: notes (file:///tmp/notes.md)"
@@ -105,7 +106,7 @@ fn main() {
     )
     .unwrap()
     .unwrap();
-    assert!(cancel.cancel);
+    assert!(cancel.is_cancel());
     assert_eq!(
         call::<Submission>(
             &kernel,

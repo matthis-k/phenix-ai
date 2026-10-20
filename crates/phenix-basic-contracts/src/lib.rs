@@ -150,10 +150,11 @@ pub struct RunResult {
 /// A re-preparation commits a watched request and allows the kernel's existing
 /// graph scheduling to trigger another Model wave; it is not an Answer.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct TurnAdvanceOutcome {
-    /// None signals a committed re-preparation wave, not a terminal answer.
-    /// Some carries the completed, authoritative Basic turn result.
-    pub completed: Option<RunResult>,
+pub enum TurnAdvanceOutcome {
+    /// A committed preparation wave, never an answer.
+    Reprepare,
+    /// A terminal, authoritative Basic turn result.
+    Complete { result: RunResult },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -311,10 +312,23 @@ pub struct ClientInput {
     pub line: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct Submission {
-    pub action: String,
-    pub payload: Blob,
-    pub cancel: bool,
+pub enum Submission {
+    /// An admitted action with its payload; this cannot be a cancellation.
+    Dispatch { action: String, payload: Blob },
+    /// Control-plane cancellation has no action identifier or payload.
+    Cancel,
+}
+impl Submission {
+    pub fn as_dispatch(&self) -> Option<(&str, &Blob)> {
+        match self {
+            Self::Dispatch { action, payload } => Some((action, payload)),
+            Self::Cancel => None,
+        }
+    }
+
+    pub fn is_cancel(&self) -> bool {
+        matches!(self, Self::Cancel)
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct RenderRequest {
@@ -453,20 +467,20 @@ mod tests {
     use super::*;
     #[test]
     fn internal_reprepare_is_distinct_from_a_completed_turn() {
-        let reprepare = TurnAdvanceOutcome { completed: None };
+        let reprepare = TurnAdvanceOutcome::Reprepare;
         assert_eq!(
             decode::<TurnAdvanceOutcome>(&encode(&reprepare).unwrap()).unwrap(),
             reprepare
         );
-        let complete = TurnAdvanceOutcome {
-            completed: Some(RunResult {
+        let complete = TurnAdvanceOutcome::Complete {
+            result: RunResult {
                 session: "s1".into(),
                 run: "run-1".into(),
                 answer: String::new(),
                 model_turns: 1,
                 tool_calls: 0,
                 usage: Usage::default(),
-            }),
+            },
         };
         assert_ne!(reprepare, complete);
         assert_eq!(
@@ -534,5 +548,39 @@ mod tests {
             PromptSubmitted::SCHEMA.owned().unwrap()
         );
         assert!(Blob::from_value(Value::List(vec![])).is_err());
+    }
+
+    #[test]
+    fn submission_variants_exclude_cancel_with_action_and_payload() {
+        let cancel = Submission::Cancel;
+        assert!(cancel.is_cancel());
+        assert!(cancel.as_dispatch().is_none());
+        assert_eq!(
+            decode::<Submission>(&encode(&cancel).unwrap()).unwrap(),
+            cancel
+        );
+
+        let dispatch = Submission::Dispatch {
+            action: "phenix.basic.submit".into(),
+            payload: encode(&PromptSubmitted {
+                session: "s1".into(),
+                text: "hi".into(),
+                limits: Limits::default(),
+            })
+            .unwrap(),
+        };
+        assert!(!dispatch.is_cancel());
+        assert_eq!(dispatch.as_dispatch().unwrap().0, "phenix.basic.submit");
+        assert_eq!(
+            decode::<Submission>(&encode(&dispatch).unwrap()).unwrap(),
+            dispatch
+        );
+
+        let invalid = Value::map([
+            ("Cancel", Value::Null),
+            ("Dispatch", Value::Map(Default::default())),
+        ]);
+        assert!(!Submission::SCHEMA.owned().unwrap().accepts(&invalid));
+        assert!(Submission::from_value(invalid).is_err());
     }
 }

@@ -157,3 +157,69 @@ fn definition_only_plugin_emits_independent_canonical_bytes() {
     assert!(decoded.properties.is_empty());
     assert_eq!(decoded.encode().unwrap(), bytes);
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable)]
+enum TaggedResult {
+    Finished { output: String, tokens: u64 },
+    Reprepare,
+}
+
+#[test]
+fn tagged_variants_are_schema_checked_and_canonical() {
+    use phenix_sdk::{StaticSchema, Value};
+    let schema = TaggedResult::SCHEMA.owned().unwrap();
+    let expected = ValueSchema::Tagged(std::collections::BTreeMap::from([
+        (
+            "Finished".into(),
+            Some(ValueSchema::Struct(std::collections::BTreeMap::from([
+                ("output".into(), ValueSchema::String),
+                ("tokens".into(), ValueSchema::U64),
+            ]))),
+        ),
+        ("Reprepare".into(), None),
+    ]));
+    assert_eq!(schema, expected);
+    assert_eq!(TaggedResult::SCHEMA.id().unwrap(), expected.id().unwrap());
+    assert_eq!(
+        TaggedResult::SCHEMA.encode().bytes(),
+        expected.encode().unwrap()
+    );
+
+    for value in [
+        TaggedResult::Reprepare,
+        TaggedResult::Finished {
+            output: "hello".into(),
+            tokens: 9,
+        },
+    ] {
+        let raw = value.to_value();
+        assert!(schema.accepts(&raw));
+        assert_eq!(TaggedResult::from_value(raw).unwrap(), value);
+    }
+    for malformed in [
+        Value::Map(Default::default()),
+        Value::map([
+            ("Reprepare", Value::Null),
+            ("Finished", Value::Map(Default::default())),
+        ]),
+        Value::map([("Reprepare", Value::String("non-null".into()))]),
+        Value::map([("Unknown", Value::Null)]),
+        Value::map([(
+            "Finished",
+            Value::map([("output", Value::String("missing tokens".into()))]),
+        )]),
+        Value::map([(
+            "Finished",
+            Value::map([
+                ("output", Value::String("wrong".into())),
+                ("tokens", Value::String("nine".into())),
+            ]),
+        )]),
+    ] {
+        assert!(!schema.accepts(&malformed));
+        assert!(TaggedResult::from_value(malformed).is_err());
+    }
+
+    // The static projection remains the sole canonical schema.
+    assert!(matches!(TaggedResult::SCHEMA, StaticSchema::Tagged(_)));
+}

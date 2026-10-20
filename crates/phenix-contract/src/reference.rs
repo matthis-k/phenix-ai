@@ -72,6 +72,9 @@ pub enum ValueSchema {
     Option(Box<ValueSchema>),
     Struct(BTreeMap<String, ValueSchema>),
     Variants(Vec<String>),
+    /// Closed, tagged sum; exactly one selected variant owns its payload.
+    /// None describes a unit variant, Some describes the variant payload.
+    Tagged(BTreeMap<String, Option<ValueSchema>>),
     Ref(SchemaId),
 }
 
@@ -88,6 +91,19 @@ impl ValueSchema {
                         return Err(invalid("invalid schema field name"));
                     }
                     schema.validate(depth + 1)?;
+                }
+            }
+            Self::Tagged(variants) => {
+                if variants.is_empty() {
+                    return Err(invalid("empty tagged variants"));
+                }
+                for (name, payload) in variants {
+                    if !identifier(name) {
+                        return Err(invalid("invalid tagged variant name"));
+                    }
+                    if let Some(schema) = payload {
+                        schema.validate(depth + 1)?;
+                    }
                 }
             }
             Self::Variants(names)
@@ -124,6 +140,20 @@ impl ValueSchema {
             Self::Variants(names) => pair(
                 "Variants",
                 Value::List(names.iter().cloned().map(Value::String).collect()),
+            ),
+            Self::Tagged(variants) => pair(
+                "Tagged",
+                Value::Map(
+                    variants
+                        .iter()
+                        .map(|(name, schema)| {
+                            (
+                                name.clone(),
+                                schema.as_ref().map_or(Value::Null, Self::descriptor),
+                            )
+                        })
+                        .collect(),
+                ),
             ),
             Self::Ref(id) => pair("Ref", Value::Bytes(id.as_bytes().to_vec())),
         }
@@ -175,6 +205,21 @@ impl ValueSchema {
                                 })
                                 .collect::<Result<_, _>>()?,
                         ),
+                        ("Tagged", Value::Map(variants)) => ValueSchema::Tagged(
+                            variants
+                                .into_iter()
+                                .map(|(name, v)| {
+                                    Ok((
+                                        name,
+                                        if v == Value::Null {
+                                            None
+                                        } else {
+                                            Some(parse(v)?)
+                                        },
+                                    ))
+                                })
+                                .collect::<Result<_, Failure>>()?,
+                        ),
                         ("Ref", Value::Bytes(id)) => ValueSchema::Ref(SchemaId::from_bytes(&id)?),
                         _ => return Err(invalid("invalid composite schema")),
                     }
@@ -208,6 +253,14 @@ impl ValueSchema {
                         .all(|(k, s)| values.get(k).is_some_and(|v| s.accepts(v)))
             }
             (Self::Variants(names), Value::String(name)) => names.contains(name),
+            (Self::Tagged(variants), Value::Map(value)) if value.len() == 1 => value
+                .iter()
+                .next()
+                .is_some_and(|(name, payload)| match variants.get(name) {
+                    Some(None) => *payload == Value::Null,
+                    Some(Some(schema)) => schema.accepts(payload),
+                    None => false,
+                }),
             (Self::Ref(schema), Value::Ref(location)) => schema == &location.schema,
             _ => false,
         }

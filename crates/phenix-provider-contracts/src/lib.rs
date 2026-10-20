@@ -201,20 +201,25 @@ pub struct AuthStart {
     pub method_id: String,
 }
 
+/// An authentication challenge with its required fields in the variant.
+/// There is no representable combination of a browser challenge without a
+/// browser URL, a device challenge without a user code, or an API-key
+/// challenge with an unrelated URL.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub enum ChallengeKind {
-    ApiKeyInput,
-    OpenBrowser,
-    DeviceAuthorization,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct AuthChallenge {
-    pub attempt_id: String,
-    pub kind: ChallengeKind,
-    /// Only the provider-approved authorization/verification URL.
-    pub url: Option<String>,
-    pub prompt: Option<String>,
+pub enum AuthChallenge {
+    ApiKeyInput {
+        attempt_id: String,
+        prompt: String,
+    },
+    OpenBrowser {
+        attempt_id: String,
+        url: String,
+    },
+    DeviceAuthorization {
+        attempt_id: String,
+        verification_url: String,
+        user_code: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
@@ -429,5 +434,34 @@ mod tests {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
         assert_eq!(metadata.definitions.len(), 3);
+    }
+
+    #[test]
+    fn challenge_variants_require_their_own_fields() {
+        for challenge in [
+            AuthChallenge::ApiKeyInput {
+                attempt_id: "attempt-1".into(),
+                prompt: "Enter an API key".into(),
+            },
+            AuthChallenge::OpenBrowser {
+                attempt_id: "attempt-2".into(),
+                url: "https://example.test/authorize".into(),
+            },
+            AuthChallenge::DeviceAuthorization {
+                attempt_id: "attempt-3".into(),
+                verification_url: "https://example.test/device".into(),
+                user_code: "ABCD".into(),
+            },
+        ] {
+            let value = challenge.to_value();
+            assert!(AuthChallenge::SCHEMA.owned().unwrap().accepts(&value));
+            assert_eq!(AuthChallenge::from_value(value).unwrap(), challenge);
+        }
+        let missing_url = Value::map([(
+            "OpenBrowser",
+            Value::map([("attempt_id", Value::String("attempt-2".into()))]),
+        )]);
+        assert!(!AuthChallenge::SCHEMA.owned().unwrap().accepts(&missing_url));
+        assert!(AuthChallenge::from_value(missing_url).is_err());
     }
 }
