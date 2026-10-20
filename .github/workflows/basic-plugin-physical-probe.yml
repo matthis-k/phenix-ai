@@ -13,7 +13,7 @@ permissions:
 jobs:
   physical-evidence:
     if: github.head_ref == 'ci/physical-incremental-evidence-20261020'
-    name: Physical source-edit Nix materialization D/E/F/H/I/J
+    name: Controlled H-only Nix materialization
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
@@ -29,11 +29,11 @@ jobs:
             accept-flake-config = true
       - name: Validate collector
         run: python3 -m py_compile .github/scripts/basic-plugin-cache-evidence.py
-      - name: Realize baseline and six independent disposable edits
+      - name: Pre-realize optional HTTP Model then change verification composition
         run: |
           bash .github/scripts/test-basic-plugin-cache-isolation.sh \
-            --build --no-warm --cases D E F H I J \
-            --build-cases D E F H I J \
+            --build --no-warm --cases H \
+            --build-cases H \
             --output physical-ci-evidence
       - name: Retain success or failure evidence and actual Nix logs
         if: always()
