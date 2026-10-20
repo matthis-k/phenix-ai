@@ -26,6 +26,7 @@ pub struct AdmittedModelChoice {
     requested: ModelSelection,
     model: ProviderModel,
     protocol: ProtocolBinding,
+    credential_identity: Option<CredentialIdentity>,
 }
 
 impl AdmittedModelChoice {
@@ -39,6 +40,13 @@ impl AdmittedModelChoice {
 
     pub fn protocol(&self) -> &ProtocolBinding {
         &self.protocol
+    }
+
+    /// The exact non-secret profile identity bound during admission.
+    /// None means the selected connection explicitly requires no authentication.
+    /// Possession of this value is not a grant to resolve a secret.
+    pub fn credential_identity(&self) -> Option<&CredentialIdentity> {
+        self.credential_identity.as_ref()
     }
 }
 
@@ -122,6 +130,21 @@ pub fn validate_model_selection(
         ));
     }
 
+    // The native credential contract has a stricter bounded identity than
+    // the catalog's display IDs. Refuse choices that could not later resolve
+    // their exact authorized profile without substituting another account.
+    let credential_identity = requested
+        .profile_id
+        .as_deref()
+        .map(|profile| {
+            CredentialIdentity::new(
+                &requested.provider_id,
+                &requested.connection_id,
+                profile,
+            )
+        })
+        .transpose()?;
+
     // A model ID may have several explicitly distinct protocol bindings, but
     // an ambiguous duplicate of the same complete binding is never admitted.
     let mut matches = page.models.iter().filter(|model| {
@@ -168,6 +191,7 @@ pub fn validate_model_selection(
         requested: requested.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
+        credential_identity,
     })
 }
 
