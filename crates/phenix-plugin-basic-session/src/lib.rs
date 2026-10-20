@@ -1,7 +1,7 @@
 //! Session aggregate over selected revision-checked Storage.
 //! The kernel provides admission and cancellation, not durable session logic.
 use phenix_basic_contracts::{
-    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot, Usage,
+    error, BasicError, ErrorCode, Message, ReconcileTool, RunStatus, SessionSnapshot, Usage,
 };
 
 const RECORD: &str = "session.snapshot.v1";
@@ -40,13 +40,10 @@ pub fn reconcile_snapshot(
         .position(|call| call.id == resolution.call_id)
         .ok_or_else(|| error(ErrorCode::NotFound, "pending tool call not found"))?;
     snapshot.pending.remove(position);
-    snapshot.history.push(Message {
-        role: Role::Tool,
-        text: resolution.outcome.text().into(),
-        calls: vec![],
-        call_id: resolution.call_id.clone(),
-        error: resolution.outcome.error().map(str::to_owned),
-    });
+    snapshot.history.push(Message::tool(
+        resolution.call_id.clone(),
+        resolution.outcome.clone(),
+    ));
     if snapshot.pending.is_empty() {
         snapshot.status = RunStatus::Running;
     }
@@ -182,7 +179,7 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_basic_contracts::{ToolCall, ToolOutcome};
+    use phenix_basic_contracts::{Role, ToolCall, ToolOutcome};
 
     #[test]
     fn interrupted_tool_recovery_requires_explicit_call_id() {
@@ -243,7 +240,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state.status, RunStatus::Indeterminate);
-        assert_eq!(state.history[0].role, Role::Tool);
+        assert_eq!(state.history[0].role(), Role::Tool);
         reconcile_snapshot(
             &mut state,
             &ReconcileTool {
@@ -258,7 +255,7 @@ mod tests {
         .unwrap();
         assert_eq!(state.status, RunStatus::Running);
         assert_eq!(state.pending.len(), 0);
-        assert_eq!(state.history[1].call_id, "b");
-        assert_eq!(state.history[1].error.as_deref(), Some("tool failed"));
+        assert_eq!(state.history[1].call_id(), "b");
+        assert_eq!(state.history[1].error(), Some("tool failed"));
     }
 }

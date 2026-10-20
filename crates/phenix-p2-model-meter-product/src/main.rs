@@ -4,7 +4,7 @@ use phenix_advanced_contracts::{
     validate_model_token_measurement, ModelTokenMeasurement, ModelTokenProblem,
 };
 use phenix_basic_contracts::{
-    ContextItem, Limits, Message, ModelReply, ModelRequest, Role, Skill, ToolInfo,
+    ContextItem, Limits, Message, ModelReply, ModelRequest, Skill, ToolInfo,
 };
 use phenix_contract::{Authority, Portable, Value};
 use phenix_kernel::{
@@ -88,13 +88,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello")],
         tools: vec![ToolInfo {
             id: "read".into(),
             description: "Read a file".into(),

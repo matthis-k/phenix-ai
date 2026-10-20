@@ -5,19 +5,13 @@ use phenix_advanced_contracts::{
     model_request_sha256, validate_model_token_measurement, ModelTokenMeasurement,
     ModelTokenProblem,
 };
-use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Role, Skill, ToolInfo};
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 
 fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "Explain the result".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("Explain the result")],
         tools: vec![ToolInfo {
             id: "read".into(),
             description: "Read a file".into(),
@@ -56,7 +50,7 @@ fn count_binds_to_every_part_of_submitted_request() {
         Ok(())
     );
     let mut altered = original.clone();
-    altered.history[0].text.push('!');
+    altered.history[0].text_mut().push('!');
     assert_eq!(
         validate_model_token_measurement(&altered, &count, "test-model-v1", 50),
         Err(ModelTokenProblem::RequestChanged)

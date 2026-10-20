@@ -19,12 +19,10 @@ fn event(sequence: u64, run: u64, kind: EventKind, text: &str) -> Event {
     }
 }
 fn message(role: Role, text: &str) -> Message {
-    Message {
-        role,
-        text: text.into(),
-        calls: vec![],
-        call_id: String::new(),
-        error: None,
+    match role {
+        Role::User => Message::user(text),
+        Role::Assistant => Message::assistant(text, vec![]),
+        Role::Tool => panic!("tool fixtures require a call ID and explicit outcome"),
     }
 }
 fn source() -> (ModelRequest, Vec<Event>) {
@@ -100,7 +98,7 @@ fn proposes_complete_cited_prefix_without_modifying_authoritative_history() {
 fn refuses_incomplete_turns_and_unverified_history() {
     let (request, mut journal) = source();
     let mut forged = request.clone();
-    forged.history[0].text = "invented".into();
+    *forged.history[0].text_mut() = "invented".into();
     assert!(matches!(
         plan_verified_checkpoint(&forged, &journal, None, policy()),
         Err(PlanProblem::UnverifiedHistory),
@@ -213,7 +211,7 @@ fn repeated_source_proposal_is_noop_without_spending_a_revision() {
     );
     assert_eq!(repeated, Ok(None));
     let mut changed_session = request.clone();
-    changed_session.history[0].text = "forged earlier turn".into();
+    *changed_session.history[0].text_mut() = "forged earlier turn".into();
     assert!(matches!(
         plan_verified_checkpoint(
             &changed_session,
@@ -244,27 +242,23 @@ fn never_summarizes_unattested_legacy_tool_turns() {
     }
     request.history.insert(
         3,
-        Message {
-            role: Role::Assistant,
-            text: String::new(),
-            calls: vec![phenix_basic_contracts::ToolCall {
+        Message::assistant(
+            String::new(),
+            vec![phenix_basic_contracts::ToolCall {
                 id: "t1".into(),
                 tool: "uppercase".into(),
                 arguments: r#""secret""#.into(),
             }],
-            call_id: String::new(),
-            error: None,
-        },
+        ),
     );
     request.history.insert(
         4,
-        Message {
-            role: Role::Tool,
-            text: "HELLO".into(),
-            calls: vec![],
-            call_id: "t1".into(),
-            error: None,
-        },
+        Message::tool(
+            "t1",
+            phenix_basic_contracts::ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        ),
     );
     let planned = plan_verified_checkpoint(&request, &journal, None, policy());
     assert!(matches!(planned, Err(PlanProblem::UnverifiedHistory)));

@@ -1,7 +1,7 @@
 use phenix_advanced_contracts::{
     model_request_sha256, validate_model_preparation_proposal, ModelPreparationInput,
 };
-use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Limits, Message, ModelRequest};
 use phenix_plugin_advanced_preparer_noop::unchanged_proposal;
 
 #[test]
@@ -9,13 +9,7 @@ fn selected_noop_proposal_keeps_authoritative_source_bytes() {
     let request = ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello")],
         tools: vec![],
         skills: vec![],
         context: vec![],
