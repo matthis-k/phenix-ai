@@ -26,6 +26,7 @@ pub struct AdmittedModelChoice {
     requested: ModelSelection,
     model: ProviderModel,
     protocol: ProtocolBinding,
+    credential_identity: Option<CredentialIdentity>,
 }
 
 impl AdmittedModelChoice {
@@ -39,6 +40,13 @@ impl AdmittedModelChoice {
 
     pub fn protocol(&self) -> &ProtocolBinding {
         &self.protocol
+    }
+
+    /// The exact non-secret profile identity bound during admission.
+    /// None means the selected connection explicitly requires no authentication.
+    /// Possession of this value is not a grant to resolve a secret.
+    pub fn credential_identity(&self) -> Option<&CredentialIdentity> {
+        self.credential_identity.as_ref()
     }
 }
 
@@ -122,6 +130,17 @@ pub fn validate_model_selection(
         ));
     }
 
+    // The native credential contract has a stricter bounded identity than
+    // the catalog's display IDs. Refuse choices that could not later resolve
+    // their exact authorized profile without substituting another account.
+    let credential_identity = requested
+        .profile_id
+        .as_deref()
+        .map(|profile| {
+            CredentialIdentity::new(&requested.provider_id, &requested.connection_id, profile)
+        })
+        .transpose()?;
+
     // A model ID may have several explicitly distinct protocol bindings, but
     // an ambiguous duplicate of the same complete binding is never admitted.
     let mut matches = page.models.iter().filter(|model| {
@@ -168,6 +187,7 @@ pub fn validate_model_selection(
         requested: requested.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
+        credential_identity,
     })
 }
 
@@ -352,5 +372,54 @@ mod tests {
         changed.profile_id = Some("work".into());
         assert_eq!(selected.selection().profile_id.as_deref(), Some("personal"));
         assert_ne!(selected.selection(), &changed);
+    }
+
+    #[test]
+    fn admitted_choice_carries_exact_validated_credential_identity() {
+        let (provider, auth, page, request) = fixture();
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let identity = choice
+            .credential_identity()
+            .expect("authenticated connection");
+        assert_eq!(identity.provider_id(), "openai");
+        assert_eq!(identity.connection_id(), "api");
+        assert_eq!(identity.profile_id(), "personal");
+        assert_eq!(
+            identity,
+            &CredentialIdentity::new("openai", "api", "personal").unwrap()
+        );
+
+        let (mut provider, mut auth, mut page, mut request) = fixture();
+        provider.connections[0].auth_methods.clear();
+        auth.profiles.clear();
+        page.profile_id = None;
+        request.profile_id = None;
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        assert!(choice.credential_identity().is_none());
+    }
+
+    #[test]
+    fn authenticated_selection_rejects_identity_unrepresentable_by_secret_store() {
+        let (provider, mut auth, mut page, mut request) = fixture();
+        auth.profiles[0].id = "work.team".into();
+        page.profile_id = Some("work.team".into());
+        request.profile_id = Some("work.team".into());
+        assert_eq!(
+            validate_model_selection(&provider, &auth, &page, &request, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::InvalidInput
+        );
+
+        let (mut provider, mut auth, page, mut request) = fixture();
+        provider.id = "org.provider".into();
+        auth.provider_id = provider.id.clone();
+        request.provider_id = provider.id.clone();
+        assert_eq!(
+            validate_model_selection(&provider, &auth, &page, &request, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::InvalidInput
+        );
     }
 }

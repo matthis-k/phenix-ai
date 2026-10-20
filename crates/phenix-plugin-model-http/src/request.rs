@@ -50,6 +50,20 @@ pub(crate) fn configured_max_tokens(
     }
 }
 
+/// An absent setting permits a deliberately credential-free local provider.
+/// An explicitly supplied but unusable value must never become no-auth.
+fn configured_credential(
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, BasicError> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Ok(secret) if !secret.is_empty() && !secret.chars().any(char::is_control) => {
+            Ok(Some(secret))
+        }
+        _ => Err(error(ErrorCode::InvalidInput, "invalid HTTP credential")),
+    }
+}
+
 impl Config {
     pub fn load() -> Result<Self, BasicError> {
         let endpoint = env::var("PHENIX_MODEL_HTTP_ENDPOINT")
@@ -69,13 +83,7 @@ impl Config {
                 "invalid HTTP model configuration",
             ));
         }
-        let credential = env::var("PHENIX_MODEL_HTTP_API_KEY").ok();
-        if credential
-            .as_ref()
-            .is_some_and(|s| s.chars().any(char::is_control))
-        {
-            return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
-        }
+        let credential = configured_credential(env::var("PHENIX_MODEL_HTTP_API_KEY"))?;
         Ok(Self {
             endpoint,
             model,
@@ -84,5 +92,36 @@ impl Config {
             credential,
             ca_file: env::var("PHENIX_MODEL_HTTP_CA_FILE").ok(),
         })
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_http_credential_errors_never_fall_back_to_no_auth() {
+        assert_eq!(
+            configured_credential(Err(env::VarError::NotPresent)).unwrap(),
+            None
+        );
+        assert_eq!(
+            configured_credential(Ok("fixture-key".into())).unwrap(),
+            Some("fixture-key".into())
+        );
+        for bad in ["", "\n", "key\r", "key\u{0000}"] {
+            assert_eq!(
+                configured_credential(Ok(bad.into())).unwrap_err().code,
+                ErrorCode::InvalidInput,
+            );
+        }
+        assert_eq!(
+            configured_credential(Err(env::VarError::NotUnicode(std::ffi::OsString::from(
+                "not-unicode"
+            ),)))
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput,
+        );
     }
 }

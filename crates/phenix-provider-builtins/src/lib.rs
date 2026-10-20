@@ -79,7 +79,10 @@ fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> Pr
 }
 
 /// Registration is offline and does not imply account entitlement or model
-/// availability. OAuth is only usable after provider-approved authorization.
+/// availability. Explicit inference URLs are provider-documented protocol
+/// locations, not active transports; actual models must still be mapped to a
+/// supported protocol, authenticated account, fresh catalog and runtime grant.
+/// OAuth is only usable after provider-approved authorization.
 pub fn registrations() -> Vec<ProviderDescriptor> {
     vec![
         ProviderDescriptor {
@@ -92,11 +95,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                     protocols: vec![
                         ProtocolBinding {
                             id: OPENAI_RESPONSES.into(),
-                            endpoint: None,
+                            endpoint: Some("https://api.openai.com/v1/responses".into()),
                         },
                         ProtocolBinding {
                             id: OPENAI_CHAT.into(),
-                            endpoint: None,
+                            endpoint: Some("https://api.openai.com/v1/chat/completions".into()),
                         },
                     ],
                     base_url: Some("https://api.openai.com/v1".into()),
@@ -152,11 +155,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://openrouter.ai/api/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://openrouter.ai/api/v1/responses".into()),
                     },
                 ],
                 base_url: Some("https://openrouter.ai/api/v1".into()),
@@ -189,7 +192,7 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 label: "Anthropic API".into(),
                 protocols: vec![ProtocolBinding {
                     id: ANTHROPIC_MESSAGES.into(),
-                    endpoint: None,
+                    endpoint: Some("https://api.anthropic.com/v1/messages".into()),
                 }],
                 base_url: Some("https://api.anthropic.com/v1".into()),
                 auth_methods: vec![AuthenticationMethod {
@@ -222,11 +225,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/v1/responses".into()),
                     },
                     ProtocolBinding {
                         id: ANTHROPIC_MESSAGES.into(),
@@ -264,11 +267,11 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 protocols: vec![
                     ProtocolBinding {
                         id: OPENAI_CHAT.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/go/v1/chat/completions".into()),
                     },
                     ProtocolBinding {
                         id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
+                        endpoint: Some("https://opencode.ai/zen/go/v1/responses".into()),
                     },
                     ProtocolBinding {
                         id: ANTHROPIC_MESSAGES.into(),
@@ -305,7 +308,7 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
                 label: "Z.ai API".into(),
                 protocols: vec![ProtocolBinding {
                     id: OPENAI_CHAT.into(),
-                    endpoint: None,
+                    endpoint: Some("https://api.z.ai/api/paas/v4/chat/completions".into()),
                 }],
                 base_url: Some("https://api.z.ai/api/paas/v4".into()),
                 auth_methods: vec![AuthenticationMethod {
@@ -527,7 +530,7 @@ mod tests {
                 .protocols,
             vec![ProtocolBinding {
                 id: ANTHROPIC_MESSAGES.into(),
-                endpoint: None,
+                endpoint: Some("https://api.anthropic.com/v1/messages".into()),
             }]
         );
         validate_registrations(&all).unwrap();
@@ -791,5 +794,112 @@ mod tests {
                     .iter()
                     .all(|method| !method.id.is_empty()))
             ));
+    }
+
+    #[test]
+    fn documented_protocol_endpoints_are_explicit_and_origin_scoped() {
+        let providers = registrations();
+        validate_registrations(&providers).unwrap();
+
+        let expected = [
+            (
+                "openai",
+                "api",
+                OPENAI_RESPONSES,
+                "https://api.openai.com/v1/responses",
+            ),
+            (
+                "openai",
+                "api",
+                OPENAI_CHAT,
+                "https://api.openai.com/v1/chat/completions",
+            ),
+            (
+                "openrouter",
+                "api",
+                OPENAI_CHAT,
+                "https://openrouter.ai/api/v1/chat/completions",
+            ),
+            (
+                "openrouter",
+                "api",
+                OPENAI_RESPONSES,
+                "https://openrouter.ai/api/v1/responses",
+            ),
+            (
+                "anthropic",
+                "api",
+                ANTHROPIC_MESSAGES,
+                "https://api.anthropic.com/v1/messages",
+            ),
+            (
+                "opencode-zen",
+                "api",
+                OPENAI_CHAT,
+                "https://opencode.ai/zen/v1/chat/completions",
+            ),
+            (
+                "opencode-zen",
+                "api",
+                OPENAI_RESPONSES,
+                "https://opencode.ai/zen/v1/responses",
+            ),
+            (
+                "opencode-go",
+                "api",
+                OPENAI_CHAT,
+                "https://opencode.ai/zen/go/v1/chat/completions",
+            ),
+            (
+                "opencode-go",
+                "api",
+                OPENAI_RESPONSES,
+                "https://opencode.ai/zen/go/v1/responses",
+            ),
+            (
+                "zai",
+                "standard",
+                OPENAI_CHAT,
+                "https://api.z.ai/api/paas/v4/chat/completions",
+            ),
+        ];
+
+        for (provider_id, connection_id, protocol_id, endpoint) in expected {
+            let connection = providers
+                .iter()
+                .find(|provider| provider.id == provider_id)
+                .unwrap()
+                .connections
+                .iter()
+                .find(|connection| connection.id == connection_id)
+                .unwrap();
+            let configured = connection
+                .protocols
+                .iter()
+                .find(|protocol| protocol.id == protocol_id)
+                .unwrap();
+            assert_eq!(configured.endpoint.as_deref(), Some(endpoint));
+        }
+
+        // The subscription OAuth flow has no installed authorized transport.
+        let chatgpt = &providers[0].connections[1];
+        assert_eq!(chatgpt.id, "chatgpt");
+        assert!(chatgpt
+            .protocols
+            .iter()
+            .all(|protocol| protocol.endpoint.is_none()));
+
+        // Anthropic wire shape does not imply this gateway accepts x-api-key
+        // instead of the gateway's account-bound bearer authentication.
+        for provider_id in ["opencode-zen", "opencode-go"] {
+            let connection = &providers
+                .iter()
+                .find(|provider| provider.id == provider_id)
+                .unwrap()
+                .connections[0];
+            assert!(connection.protocols.iter().any(|protocol| {
+                protocol.id == ANTHROPIC_MESSAGES && protocol.endpoint.is_none()
+            }));
+        }
     }
 }
