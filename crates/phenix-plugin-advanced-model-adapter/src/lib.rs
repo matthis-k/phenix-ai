@@ -38,7 +38,7 @@ mod plugin {
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
-        Message, Model, ModelReply, ModelRequest, Role, Scope,
+        Message, Model, ModelReply, ModelRequest, Scope,
     };
     use phenix_p2_compaction_replay::{
         admit_compaction, assemble_verified_tail_request, checkpoint_pressure, span_for_events,
