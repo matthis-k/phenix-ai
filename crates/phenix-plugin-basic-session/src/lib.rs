@@ -40,7 +40,7 @@ pub fn reconcile_snapshot(
         .position(|call| call.id == resolution.call_id)
         .ok_or_else(|| error(ErrorCode::NotFound, "pending tool call not found"))?;
     snapshot.pending.remove(position);
-    snapshot.history.push(Message::tool(resolution.call_id.clone(), match resolution.outcome.error().map(str::to_owned) { Some(reason) => ToolOutcome::Failed { output: resolution.outcome.text().into().clone(), reason }, None => ToolOutcome::Succeeded { text: resolution.outcome.text().into() } }));
+    snapshot.history.push(Message::tool(resolution.call_id.clone(), resolution.outcome.clone()));
     if snapshot.pending.is_empty() {
         snapshot.status = RunStatus::Running;
     }
@@ -237,7 +237,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state.status, RunStatus::Indeterminate);
-        assert_eq!(state.history[0].role, Role::Tool);
+        assert_eq!(state.history[0].role(), Role::Tool);
         reconcile_snapshot(
             &mut state,
             &ReconcileTool {
@@ -252,7 +252,7 @@ mod tests {
         .unwrap();
         assert_eq!(state.status, RunStatus::Running);
         assert_eq!(state.pending.len(), 0);
-        assert_eq!(state.history[1].call_id, "b");
-        assert_eq!(state.history[1].error.as_deref(), Some("tool failed"));
+        assert_eq!(state.history[1].call_id(), "b");
+        assert_eq!(state.history[1].error(), Some("tool failed"));
     }
 }
