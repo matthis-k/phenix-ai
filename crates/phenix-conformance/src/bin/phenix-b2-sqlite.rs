@@ -3,7 +3,7 @@
 use phenix_basic_contracts::{
     BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery, Message,
     ReconcileTool, Role, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
-    StoredRecord, ToolCall,
+    StoredRecord, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Blob, Portable};
 use phenix_kernel::{
