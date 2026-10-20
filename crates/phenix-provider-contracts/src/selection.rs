@@ -105,7 +105,10 @@ pub fn bind_http_model(
         .iter()
         .filter(|connection| connection.id == admitted.selection().connection_id);
     let connection = matches.next().ok_or_else(|| {
-        selection_error(ProviderErrorCode::NotFound, "selected connection is no longer installed")
+        selection_error(
+            ProviderErrorCode::NotFound,
+            "selected connection is no longer installed",
+        )
     })?;
     if matches.next().is_some() {
         return Err(selection_error(
@@ -118,7 +121,10 @@ pub fn bind_http_model(
         .iter()
         .filter(|protocol| protocol.id == admitted.protocol().id);
     let protocol = protocols.next().ok_or_else(|| {
-        selection_error(ProviderErrorCode::NotFound, "selected protocol is no longer installed")
+        selection_error(
+            ProviderErrorCode::NotFound,
+            "selected protocol is no longer installed",
+        )
     })?;
     if protocols.next().is_some() || protocol != admitted.protocol() {
         return Err(selection_error(
