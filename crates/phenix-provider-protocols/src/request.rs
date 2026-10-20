@@ -115,24 +115,24 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
     let mut has_user = false;
     let mut messages = vec![];
     for message in &request.history {
-        match message.role {
+        match message.role() {
             Role::User => {
                 if !pending.is_empty()
-                    || !message.calls.is_empty()
-                    || !message.call_id.is_empty()
-                    || message.error.is_some()
+                    || !message.calls().is_empty()
+                    || !message.call_id().is_empty()
+                    || message.error().is_some()
                 {
                     return Err(bad("invalid user history"));
                 }
                 has_user = true;
-                messages.push(PreparedMessage::User(message.text.clone()));
+                messages.push(PreparedMessage::User(message.text().to_owned()));
             }
             Role::Assistant => {
-                if !pending.is_empty() || !message.call_id.is_empty() || message.error.is_some() {
+                if !pending.is_empty() || !message.call_id().is_empty() || message.error().is_some() {
                     return Err(bad("invalid assistant history"));
                 }
                 let mut calls = vec![];
-                for call in &message.calls {
+                for call in message.calls() {
                     if call.id.is_empty()
                         || !function_name(&call.tool)
                         || !pending.insert(call.id.clone())
@@ -148,18 +148,18 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
                     });
                 }
                 messages.push(PreparedMessage::Assistant {
-                    text: message.text.clone(),
+                    text: message.text().to_owned(),
                     calls,
                 });
             }
             Role::Tool => {
-                if !message.calls.is_empty() || !pending.remove(&message.call_id) {
+                if !message.calls().is_empty() || !pending.remove(&message.call_id()) {
                     return Err(bad("unmatched tool history"));
                 }
                 messages.push(PreparedMessage::Tool {
-                    call_id: message.call_id.clone(),
-                    text: message.text.clone(),
-                    error: message.error.clone(),
+                    call_id: message.call_id().to_owned(),
+                    text: message.text().to_owned(),
+                    error: message.error().map(str::to_owned),
                 });
             }
         }
