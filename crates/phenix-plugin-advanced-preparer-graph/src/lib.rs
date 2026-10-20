@@ -80,7 +80,11 @@ mod provider {
                 "pending Basic request revision does not belong to this graph change",
             ));
         }
-        let source = source_snapshot.value.as_ref().clone().ok_or_else(|| {
+        let source = source_snapshot
+            .value
+            .as_ref()
+            .clone()
+            .ok_or_else(|| {
                 invalid(
                     ModelPreparationProblem::SourceChanged,
                     "no pending Basic request",
