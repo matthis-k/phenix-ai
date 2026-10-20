@@ -9,13 +9,7 @@ fn selected_noop_proposal_keeps_authoritative_source_bytes() {
     let request = ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello".into())],
         tools: vec![],
         skills: vec![],
         context: vec![],
