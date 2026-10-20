@@ -530,7 +530,7 @@ mod tests {
                 .protocols,
             vec![ProtocolBinding {
                 id: ANTHROPIC_MESSAGES.into(),
-                endpoint: None,
+                endpoint: Some("https://api.anthropic.com/v1/messages".into()),
             }]
         );
         validate_registrations(&all).unwrap();
