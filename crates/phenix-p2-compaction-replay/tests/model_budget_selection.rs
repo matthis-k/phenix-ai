@@ -1,7 +1,7 @@
 //! RED P2-3e: model-token selection counts the *assembled request* through
 //! its selected Model adapter, never raw event bytes or guessed tokens.
 use phenix_advanced_contracts::CompactionCheckpoint;
-use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest};
 use phenix_p2_compaction_replay::{
     select_model_view, span_for_events, ModelSelectionError, ReplayProblem, ViewProblem,
 };
