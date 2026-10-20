@@ -13,7 +13,7 @@ fn usage(request: &ModelRequest, text: &str, calls: &[ToolCall]) -> Usage {
     let input = request
         .history
         .iter()
-        .map(|message| message.text.len())
+        .map(|message| message.text().len())
         .sum::<usize>();
     let output = text.len()
         + calls
@@ -36,16 +36,16 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     let start = request
         .history
         .iter()
-        .rposition(|message| message.role == Role::User)
+        .rposition(|message| message.role() == Role::User)
         .ok_or_else(|| invalid("missing user prompt"))?;
     let prompt = &request.history[start];
-    if !prompt.calls.is_empty() || !prompt.call_id.is_empty() || prompt.error.is_some() {
+    if !prompt.calls().is_empty() || !prompt.call_id().is_empty() || prompt.error().is_some() {
         return Err(invalid("invalid user message"));
     }
     let tail = &request.history[start + 1..];
 
     let (text, calls) = if tail.is_empty() {
-        if prompt.text == "model-error" {
+        if prompt.text() == "model-error" {
             return Err(error(ErrorCode::ModelFailed, "scripted model failure"));
         }
         let plan = prompt
@@ -75,31 +75,31 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 .collect();
             (String::new(), calls)
         } else {
-            (format!("mock:{}", prompt.text), Vec::new())
+            (format!("mock:{}", prompt.text()), Vec::new())
         }
     } else {
         let (assistant, results) = tail
             .split_first()
             .ok_or_else(|| invalid("missing assistant tool calls"))?;
-        if assistant.role != Role::Assistant
-            || assistant.calls.is_empty()
-            || !assistant.call_id.is_empty()
-            || assistant.error.is_some()
+        if assistant.role() != Role::Assistant
+            || assistant.calls().is_empty()
+            || !assistant.call_id().is_empty()
+            || assistant.error().is_some()
         {
             return Err(invalid("missing assistant tool calls"));
         }
         let mut expected = BTreeSet::new();
-        for call in &assistant.calls {
+        for call in assistant.calls() {
             if call.id.is_empty() || !expected.insert(call.id.as_str()) {
                 return Err(invalid("duplicate or empty assistant call id"));
             }
         }
         let mut seen = BTreeSet::new();
         for result in results {
-            if result.role != Role::Tool
-                || !result.calls.is_empty()
-                || !expected.contains(result.call_id.as_str())
-                || !seen.insert(result.call_id.as_str())
+            if result.role() != Role::Tool
+                || !result.calls().is_empty()
+                || !expected.contains(result.call_id())
+                || !seen.insert(result.call_id())
             {
                 return Err(invalid("unexpected or duplicate tool result"));
             }
@@ -108,14 +108,14 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             return Err(invalid("missing tool result"));
         }
         let mut responses = Vec::new();
-        for call in &assistant.calls {
+        for call in assistant.calls() {
             let item = results
                 .iter()
-                .find(|item| item.call_id == call.id)
+                .find(|item| item.call_id() == call.id)
                 .ok_or_else(|| invalid("missing tool result"))?;
-            responses.push(match &item.error {
+            responses.push(match item.error() {
                 Some(error) => format!("{}:error:{}", call.id, error),
-                None => format!("{}:{}", call.id, item.text),
+                None => format!("{}:{}", call.id, item.text()),
             });
         }
         (format!("mock:{}", responses.join("|")), Vec::new())
@@ -206,14 +206,14 @@ mod tests {
         assert_eq!(first.calls[0].id, "call-1");
         assert_eq!(first.calls[1].tool, "length");
         input.history.push(Message::assistant(String::new(), first.calls));
-        input.history.push(Message::tool("call-1".into(), ToolOutcome::Succeeded { text: "HELLO".into() }));
+        input.history.push(Message::tool("call-1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }));
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
-        input.history.push(Message::tool("call-2".into(), ToolOutcome::Failed { output: String::new(), reason: "failed".into() }));
+        input.history.push(Message::tool("call-2".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "failed".into() }));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:HELLO|call-2:error:failed"
         );
-        input.history.last_mut().unwrap().call_id = "call-1".into();
+        *input.history.last_mut().unwrap().tool_call_id_mut().unwrap() = "call-1".into();
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
     }
 
@@ -231,8 +231,8 @@ mod tests {
         assert_eq!(first.calls[0].tool, "fail");
         assert_eq!(first.calls[1].tool, "length");
         input.history.push(Message::assistant(String::new(), first.calls));
-        input.history.push(Message::tool("call-1".into(), ToolOutcome::Failed { output: String::new(), reason: "scripted failure".into() }));
-        input.history.push(Message::tool("call-2".into(), ToolOutcome::Succeeded { text: "5".into() }));
+        input.history.push(Message::tool("call-1".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "scripted failure".into() }));
+        input.history.push(Message::tool("call-2".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "5".into() }));
         assert_eq!(
             complete(&input).unwrap().text,
             "mock:call-1:error:scripted failure|call-2:5"
@@ -244,7 +244,7 @@ mod tests {
         let mut input = request("tools:hi");
         input.tools.pop();
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidInput);
-        input.history[0].text = "model-error".into();
+        *input.history[0].text_mut() = "model-error".into();
         assert_eq!(complete(&input).unwrap_err().code, ErrorCode::ModelFailed);
     }
 }
