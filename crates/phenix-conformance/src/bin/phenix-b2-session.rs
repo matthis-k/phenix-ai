@@ -217,8 +217,8 @@ fn main() {
     assert_eq!(resolved.status, RunStatus::Running);
     assert_eq!(resolved.revision, 3);
     assert!(resolved.pending.is_empty());
-    assert_eq!(resolved.history.last().unwrap().text, "PROMPT");
-    assert_eq!(resolved.history.last().unwrap().call_id, "call-1");
+    assert_eq!(resolved.history.last().unwrap().text(), "PROMPT");
+    assert_eq!(resolved.history.last().unwrap().call_id(), "call-1");
 
     fs::write(
         output.join("session.json"),
