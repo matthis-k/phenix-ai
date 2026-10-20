@@ -94,6 +94,7 @@ pub struct ToolCall {
 /// Invalid cross-role fields do not exist in the wire schema. Model history
 /// remains untrusted until the consumer verifies sequencing and call IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Message {
     User { text: String },
     Assistant { text: String, calls: Vec<ToolCall> },
@@ -623,6 +624,69 @@ mod tests {
             decode::<TurnAdvanceOutcome>(&encode(&complete).unwrap()).unwrap(),
             complete
         );
+    }
+
+    #[test]
+    fn message_roles_reject_cross_role_wire_fields() {
+        let cases = [
+            Message::user("hello"),
+            Message::assistant("answer", vec![]),
+            Message::tool(
+                "tool-1",
+                ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "denied".into(),
+                },
+            ),
+        ];
+        for message in cases {
+            let value = message.to_value();
+            assert!(Message::SCHEMA.owned().unwrap().accepts(&value));
+            assert_eq!(Message::from_value(value).unwrap(), message);
+            assert_eq!(
+                serde_json::from_str::<Message>(&serde_json::to_string(&message).unwrap()).unwrap(),
+                message
+            );
+        }
+
+        let invalid = Value::map([(
+            "User",
+            Value::map([
+                ("text", Value::String("hello".into())),
+                ("calls", Value::List(vec![])),
+            ]),
+        )]);
+        assert!(!Message::SCHEMA.owned().unwrap().accepts(&invalid));
+        assert!(Message::from_value(invalid).is_err());
+
+        let ambiguous = Value::map([
+            ("User", Value::map([("text", Value::String("hi".into()))])),
+            (
+                "Tool",
+                Value::map([
+                    ("call_id", Value::String("c1".into())),
+                    (
+                        "outcome",
+                        ToolOutcome::Succeeded { text: "done".into() }.to_value(),
+                    ),
+                ]),
+            ),
+        ]);
+        assert!(!Message::SCHEMA.owned().unwrap().accepts(&ambiguous));
+        assert!(Message::from_value(ambiguous).is_err());
+
+        assert!(serde_json::from_str::<Message>(
+            r#"{"User":{"text":"hello","calls":[]}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Assistant":{"text":"ok","calls":[],"call_id":"c1"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Tool":{"call_id":"c1","outcome":{"Succeeded":{"text":"ok"}},"error":"denied"}}"#
+        )
+        .is_err());
     }
 
     #[test]
