@@ -38,8 +38,7 @@ fn linked_tool_result(history: &[Message]) -> Option<&str> {
         if assistant.role() != Role::Assistant || result.role() != Role::Tool {
             return None;
         }
-        assistant
-            .calls
+        assistant.calls()
             .iter()
             .any(|call| call.id == result.call_id() && call.tool == "uppercase")
             .then_some(result)
@@ -326,8 +325,10 @@ mod tests {
         let calls = complete(&request(history.clone())).unwrap().calls;
         assert_eq!(calls.len(), 1);
         history.push(Message::assistant("", calls));
-        let mut result = message(Role::Tool, "HELLO");
-        result.call_id() = "history-tool-1".into();
+        let result = Message::tool(
+            "history-tool-1",
+            phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() },
+        );
         history.push(result);
         assert_eq!(
             complete(&request(history.clone())).unwrap().text,
