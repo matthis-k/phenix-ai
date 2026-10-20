@@ -86,3 +86,34 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_http_credential_errors_never_fall_back_to_no_auth() {
+        assert_eq!(
+            configured_credential(Err(env::VarError::NotPresent)).unwrap(),
+            None
+        );
+        assert_eq!(
+            configured_credential(Ok("fixture-key".into())).unwrap(),
+            Some("fixture-key".into())
+        );
+        for bad in ["", "\n", "key\r", "key\u{0000}"] {
+            assert_eq!(
+                configured_credential(Ok(bad.into())).unwrap_err().code,
+                ErrorCode::InvalidInput,
+            );
+        }
+        assert_eq!(
+            configured_credential(Err(env::VarError::NotUnicode(
+                std::ffi::OsString::from("not-unicode"),
+            )))
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput,
+        );
+    }
+}
