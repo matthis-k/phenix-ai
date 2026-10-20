@@ -1,7 +1,7 @@
 //! Session aggregate over selected revision-checked Storage.
 //! The kernel provides admission and cancellation, not durable session logic.
 use phenix_basic_contracts::{
-    error, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, SessionSnapshot, Usage,
+    error, BasicError, ErrorCode, Message, ReconcileTool, RunStatus, SessionSnapshot, Usage,
 };
 
 const RECORD: &str = "session.snapshot.v1";
