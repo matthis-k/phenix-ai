@@ -119,7 +119,7 @@ mod plugin {
         error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
         CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
         GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
-        ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope,
         Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
         ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
     };
