@@ -1,6 +1,6 @@
 use crate::{request, stream::Stream};
 use phenix_basic_contracts::{
-    ContextItem, ErrorCode, Limits, Message, ModelRequest, Role, Skill, ToolCall, ToolInfo,
+    ContextItem, ErrorCode, Limits, Message, ModelRequest, Skill, ToolCall, ToolInfo,
 };
 use serde_json::{json, Value};
 
@@ -8,7 +8,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message::user("hello".into())],
+        history: vec![Message::user("hello")],
         tools: vec![ToolInfo {
             id: "uppercase".into(),
             description: "Uppercase".into(),
@@ -43,7 +43,7 @@ fn complete_history_and_scalar_argument_envelope_are_preserved() {
                 tool: "uppercase".into(),
                 arguments: r#""aß""#.into(),
             }]),
-        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
+        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "tool failed".into() }),
     ]);
     let encoded: Value =
         serde_json::from_slice(&request::encode(&request, "fixture").unwrap()).unwrap();
@@ -173,7 +173,7 @@ fn incomplete_and_malformed_streams_cannot_be_successful_replies() {
 #[test]
 fn unmatched_tool_history_and_zero_limits_reject_before_transport() {
     let mut request = request();
-    request.history.push(Message::tool("missing".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "x".into() }));
+    request.history.push(Message::tool("missing", phenix_basic_contracts::ToolOutcome::Succeeded { text: "x".into() }));
     assert_eq!(
         request::encode(&request, "fixture").unwrap_err().code,
         ErrorCode::InvalidInput
@@ -324,8 +324,8 @@ fn anthropic_groups_batched_tool_results_without_inventing_user_turns() {
                     arguments: r#""world""#.into(),
                 },
             ]),
-        Message::tool("c1".into(), phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }),
-        Message::tool("c2".into(), phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "failed".into() }),
+        Message::tool("c1", phenix_basic_contracts::ToolOutcome::Succeeded { text: "HELLO".into() }),
+        Message::tool("c2", phenix_basic_contracts::ToolOutcome::Failed { output: String::new(), reason: "failed".into() }),
     ]);
     let body: Value = serde_json::from_slice(
         &encode_protocol_with_max_tokens(
