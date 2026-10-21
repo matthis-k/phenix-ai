@@ -1794,7 +1794,7 @@
         test -s "$out/terminal-sessions.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
-        python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} $out
+        python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} ${basicHttpComposition} $out
         test -s "$out/acp-provider-management.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         # A caller that sets neither the explicit variable nor HOME must still
