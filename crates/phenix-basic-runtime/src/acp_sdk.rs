@@ -481,6 +481,16 @@ fn native_model_option_id(selection: &ModelSelection) -> acp::Result<String> {
         .map_err(internal)
 }
 
+/// One controller model-menu refresh must have a global bound, not one
+/// budget independently repeated for every provider and connection.
+fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
+    if *used >= maximum {
+        return Err(invalid("provider model selection exceeded discovery budget"));
+    }
+    *used += 1;
+    Ok(())
+}
+
 /// Only explicitly unavailable/not-yet-discovered provider catalogs are
 /// absent choices. A transport/authority denial, malformed typed reply or
 /// conflicting revision must not be confused with an empty model list.
@@ -537,6 +547,8 @@ impl ProviderManagement {
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut offered = Vec::new();
+        let mut inspected_connections = 0;
+        let mut inspected_pages = 0;
         for provider in listed.providers {
             if provider.connections.len() > 32 || !ids.insert(provider.id.clone()) {
                 return Err(invalid("ambiguous or oversized provider selection"));
@@ -554,6 +566,7 @@ impl ProviderManagement {
             }
             let mut connections = std::collections::BTreeSet::new();
             for connection in &exact.connections {
+                charge_model_option_budget(&mut inspected_connections, 32)?;
                 if !connections.insert(&connection.id) {
                     return Err(invalid("duplicate provider connection"));
                 }
@@ -577,9 +590,15 @@ impl ProviderManagement {
                         connection_id: connection.id.clone(),
                     },
                 )?;
+                if let Some(profile_id) = profile.as_deref() {
+                    if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                        continue;
+                    }
+                }
                 let mut collected = ModelPageAccumulator::default();
                 let mut cursor = None;
                 let full = loop {
+                    charge_model_option_budget(&mut inspected_pages, 128)?;
                     let Some(page) = self.optional_model_page(&ModelQuery {
                         scope: "user".into(),
                         provider_id: exact.id.clone(),
@@ -1872,6 +1891,15 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_picker_budgets_all_connections_and_pages_globally() {
+        let mut inspected = 0;
+        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
+        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
+        assert!(charge_model_option_budget(&mut inspected, 2).is_err());
+        assert_eq!(inspected, 2);
+    }
 
     #[test]
     fn absent_discovery_never_becomes_a_false_model_offer() {
