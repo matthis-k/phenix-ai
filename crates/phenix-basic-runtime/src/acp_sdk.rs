@@ -20,9 +20,10 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthQuery, AuthenticationStatus, CredentialIdentity,
-    CredentialImport, CredentialSecret, HttpModelBinding, ModelPage, ModelQuery, ModelSelection,
-    ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
+    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
+    ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
+    ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -610,6 +611,37 @@ fn installed_model_provider(composition: &Composition) -> Option<&str> {
     Some(selected.provider.as_str())
 }
 
+// HttpModelInstall's Portable encoding contains a temporary copy of the
+// resolved credential. Scrub all embedded Bytes on every success/error path.
+// CredentialSecret owns and zeroizes the original independently.
+fn scrub_portable_secret_bytes(value: &mut Value) {
+    match value {
+        Value::Bytes(bytes) => bytes.fill(0),
+        Value::List(items) => {
+            for item in items {
+                scrub_portable_secret_bytes(item);
+            }
+        }
+        Value::Map(fields) => {
+            for item in fields.values_mut() {
+                scrub_portable_secret_bytes(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Only the launcher-installed exact session storage root may opt in to
+/// persisted selected-model intent. This does not infer authority from an ACP
+/// request or an unrelated model slot.
+fn has_model_selection_storage(spec: &Composition) -> bool {
+    spec.grants.iter().any(|grant| {
+        grant.caller == "root"
+            && grant.interface == "phenix.basic.storage@1"
+            && grant.operation == "read"
+    })
+}
+
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
@@ -617,6 +649,7 @@ struct Controller {
     resolver: Option<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
+    selected_http_seen: std::collections::BTreeSet<String>,
     initialized: bool,
     issued: u64,
     queued: Arc<PendingPrompts>,
@@ -639,6 +672,7 @@ impl Controller {
             resolver,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
+            selected_http_seen: std::collections::BTreeSet::new(),
             initialized: false,
             issued: 0,
             queued,
@@ -1037,6 +1071,74 @@ impl Controller {
         Ok(LoadSessionResponse::new().config_options(self.model_options()))
     }
 
+    /// Controller-only, same-session Model authorization. A persisted choice
+    /// is an intent: every new turn must revalidate it, resolve exactly its
+    /// currently granted credential and install that native HTTP transport.
+    /// A denied or stale choice prevents the turn; it never falls back to
+    /// environment Model routing.
+    fn install_current_http_model(
+        &self,
+        session: &str,
+        desired: &ModelSelection,
+    ) -> acp::Result<()> {
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(|| invalid("current provider management is unavailable"))?;
+        let binding = management.current_http_binding(desired)?;
+        let credential = match (binding.credential_identity(), binding.authentication_kind()) {
+            (None, None) => None,
+            (Some(identity), Some(AuthenticationKind::ApiKey)) => {
+                // Scope derivation is not a grant. The separate model resolver
+                // kernel must also possess the exact launcher-owned root.
+                binding
+                    .resolution_scope_for(identity)
+                    .map_err(provider_rejection)?;
+                let resolver = self
+                    .resolver
+                    .as_ref()
+                    .ok_or_else(|| invalid("selected API-key resolver is not installed"))?;
+                let secret = resolver
+                    .resolve_for(identity)
+                    .map_err(|_| invalid("selected API-key resolution was denied"))?;
+                Some((identity.clone(), secret))
+            }
+            _ => return Err(invalid("selected model authentication is unsupported")),
+        };
+        // Refuse changed registration/revocation while resolving the secret.
+        // Neither the original choice nor the secret-store reply are grants.
+        if management.current_http_binding(desired)? != binding {
+            return Err(invalid(
+                "selected model authentication changed before install",
+            ));
+        }
+        let install = HttpModelInstall::from_checked(&binding, session.into(), credential, None)
+            .map_err(provider_rejection)?;
+        let kernel = self
+            .sessions
+            .get(session)
+            .ok_or_else(|| invalid("unknown selected model session"))?;
+        let provider = installed_model_provider(&self.composition)
+            .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
+        let root = kernel
+            .admit_root(Selection {
+                interface: "phenix.provider.http-model-session@1".into(),
+                operation: "install".into(),
+                provider: provider.into(),
+            })
+            .map_err(|_| invalid("selected Model install grant is unavailable"))?;
+        let mut payload = install.to_value();
+        let result = root.invoke(&payload);
+        scrub_portable_secret_bytes(&mut payload);
+        match result.map_err(internal)? {
+            Outcome::Success(value) => <() as Portable>::from_value(value).map_err(internal),
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                Err(provider_rejection(problem))
+            }
+        }
+    }
+
     fn prompt(
         &mut self,
         request: PromptRequest,
@@ -1047,6 +1149,22 @@ impl Controller {
         let Some(kernel) = self.sessions.get(&session) else {
             return Err(invalid("unknown ACP session"));
         };
+        if has_model_selection_storage(&self.composition) {
+            match super::model_selection_state::read(kernel, &self.composition, &session)
+                .map_err(internal)?
+            {
+                Some((stored, _revision)) => {
+                    // A once-selected native transport cannot silently return
+                    // to legacy preset routing when its record disappears.
+                    self.selected_http_seen.insert(session.clone());
+                    self.install_current_http_model(&session, &stored)?;
+                }
+                None if self.selected_http_seen.contains(&session) => {
+                    return Err(invalid("selected model record was withdrawn"));
+                }
+                None => {}
+            }
+        }
         // The SDK has already decoded the JSON-RPC envelope into a typed
         // PromptRequest. The native frontend maps only that schema payload
         // into Phenix's typed Submission action.
@@ -1483,6 +1601,32 @@ mod tests {
         assert!(huge.push(empty_continuation, &None).is_err());
         huge.pages = 64;
         assert!(huge.push(fixture(7, None, None), &None).is_err());
+    }
+
+    #[test]
+    fn native_model_credential_value_is_scrubbed_recursively() {
+        let mut payload = Value::Map(std::collections::BTreeMap::from([
+            (
+                "auth".into(),
+                Value::List(vec![Value::Map(std::collections::BTreeMap::from([(
+                    "secret".into(),
+                    Value::Bytes(b"fixture-private-api-key".to_vec()),
+                )]))]),
+            ),
+            ("model".into(), Value::String("selected".into())),
+        ]));
+        scrub_portable_secret_bytes(&mut payload);
+        let Value::Map(fields) = payload else {
+            panic!("expected map");
+        };
+        let Value::List(auth) = &fields["auth"] else {
+            panic!("expected auth list");
+        };
+        let Value::Map(inner) = &auth[0] else {
+            panic!("expected auth map");
+        };
+        assert_eq!(inner["secret"], Value::Bytes(vec![0; 23]));
+        assert_eq!(fields["model"], Value::String("selected".into()));
     }
 
     #[test]
