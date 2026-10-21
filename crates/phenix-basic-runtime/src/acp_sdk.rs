@@ -20,10 +20,9 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthQuery, AuthenticationStatus,
-    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, ModelPage,
-    ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
-    ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, AuthQuery, AuthenticationStatus, CredentialIdentity,
+    CredentialImport, CredentialSecret, HttpModelBinding, ModelPage, ModelQuery, ModelSelection,
+    ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -308,20 +307,21 @@ struct ModelPageAccumulator {
 }
 
 impl ModelPageAccumulator {
-    fn push(
-        &mut self,
-        page: ModelPage,
-        profile: &Option<String>,
-    ) -> acp::Result<Option<String>> {
+    fn push(&mut self, page: ModelPage, profile: &Option<String>) -> acp::Result<Option<String>> {
         if self.pages >= 64
             || page.revision == 0
             || self.revision.is_some_and(|prev| prev != page.revision)
             || &page.profile_id != profile
             || page.models.len() > 256
-            || self.models.len().checked_add(page.models.len())
+            || self
+                .models
+                .len()
+                .checked_add(page.models.len())
                 .is_none_or(|count| count > 4096)
         {
-            return Err(invalid("provider catalog page changed or exceeded its budget"));
+            return Err(invalid(
+                "provider catalog page changed or exceeded its budget",
+            ));
         }
         self.pages += 1;
         self.revision = Some(page.revision);
@@ -344,7 +344,9 @@ impl ModelPageAccumulator {
             profile_id: profile,
             models: self.models,
             next_cursor: None,
-            revision: self.revision.ok_or_else(|| invalid("missing model catalog"))?,
+            revision: self
+                .revision
+                .ok_or_else(|| invalid("missing model catalog"))?,
         })
     }
 }
@@ -388,13 +390,20 @@ impl ProviderManagement {
         let listed: ProviderPage = self.read(
             "phenix.provider.catalog@1",
             "list",
-            &ProviderQuery { scope: SCOPE.into() },
+            &ProviderQuery {
+                scope: SCOPE.into(),
+            },
         )?;
         if listed.revision == 0 {
             return Err(invalid("provider list has no current revision"));
         }
-        let mut candidates = listed.providers.iter().filter(|p| p.id == desired.provider_id);
-        let provided = candidates.next().ok_or_else(|| invalid("unknown selected provider"))?;
+        let mut candidates = listed
+            .providers
+            .iter()
+            .filter(|p| p.id == desired.provider_id);
+        let provided = candidates
+            .next()
+            .ok_or_else(|| invalid("unknown selected provider"))?;
         if candidates.next().is_some() {
             return Err(invalid("ambiguous selected provider"));
         }
@@ -437,10 +446,8 @@ impl ProviderManagement {
             cursor = collected.push(page, &desired.profile_id)?;
             if cursor.is_none() {
                 let complete = collected.complete(desired.profile_id.clone())?;
-                let checked = validate_model_selection(
-                    &described, &auth, &complete, desired, true,
-                )
-                .map_err(internal)?;
+                let checked = validate_model_selection(&described, &auth, &complete, desired, true)
+                    .map_err(internal)?;
                 return bind_http_model(&described, checked).map_err(internal);
             }
         }
@@ -1389,14 +1396,31 @@ mod tests {
             revision,
         };
         let mut acc = ModelPageAccumulator::default();
-        assert_eq!(acc.push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into())).unwrap(), Some("cursor-1".into()));
-        assert!(acc.push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into())).is_err());
-        assert!(acc.push(fixture(8, Some("a"), None), &Some("a".into())).is_err());
-        assert!(acc.push(fixture(7, Some("other"), None), &Some("a".into())).is_err());
-        assert!(acc.push(fixture(7, Some("a"), Some("")), &Some("a".into())).is_err());
+        assert_eq!(
+            acc.push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into()))
+                .unwrap(),
+            Some("cursor-1".into())
+        );
+        assert!(acc
+            .push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(8, Some("a"), None), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(7, Some("other"), None), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(7, Some("a"), Some("")), &Some("a".into()))
+            .is_err());
 
         let mut clean = ModelPageAccumulator::default();
-        assert_eq!(clean.push(fixture(7, Some("a"), None), &Some("a".into())).unwrap(), None);
+        assert_eq!(
+            clean
+                .push(fixture(7, Some("a"), None), &Some("a".into()))
+                .unwrap(),
+            None
+        );
         let page = clean.complete(Some("a".into())).unwrap();
         assert_eq!(page.models.len(), 1);
         assert_eq!(page.revision, 7);
