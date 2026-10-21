@@ -503,7 +503,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 3);
+        assert_eq!(metadata.definitions.len(), 4);
     }
 
     #[test]
