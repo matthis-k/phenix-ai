@@ -23,7 +23,7 @@ use phenix_provider_contracts::{
     bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
     CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
     ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
-    ProviderPage, ProviderQuery, CredentialProfileStatus,
+    ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -1221,8 +1221,8 @@ impl Controller {
                 .as_ref()
                 .ok_or_else(|| invalid("selected model management is unavailable"))?;
             let native = management.authorized_http_offers(self.resolver.as_ref())?;
-            let chosen = match recorded {
-                Some((selection, _revision)) => native_model_option_id(&selection)?,
+            let chosen = match &recorded {
+                Some((selection, _revision)) => native_model_option_id(selection)?,
                 None => effective.clone().unwrap_or_default(),
             };
             if recorded.is_none() {
