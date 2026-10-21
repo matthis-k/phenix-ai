@@ -24,6 +24,7 @@ pub struct ModelSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmittedModelChoice {
     requested: ModelSelection,
+    connection: ConnectionDescriptor,
     model: ProviderModel,
     protocol: ProtocolBinding,
     credential_identity: Option<CredentialIdentity>,
@@ -114,6 +115,15 @@ pub fn bind_http_model(
         return Err(selection_error(
             ProviderErrorCode::Conflict,
             "ambiguous selected connection",
+        ));
+    }
+    // Admission is pinned to the full installed connection registration.
+    // Matching IDs and the selected protocol alone cannot authorize a stale
+    // account method or a changed endpoint registration.
+    if connection != &admitted.connection {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "selected connection registration changed",
         ));
     }
     let mut protocols = connection
@@ -297,6 +307,7 @@ pub fn validate_model_selection(
     }
     Ok(AdmittedModelChoice {
         requested: requested.clone(),
+        connection: connection.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
         credential_identity,
@@ -555,6 +566,35 @@ mod tests {
         assert_eq!(
             bound.credential_identity().unwrap().profile_id(),
             "personal"
+        );
+    }
+
+    #[test]
+    fn http_binding_invalidates_admission_when_connection_auth_or_origin_changes() {
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+
+        // A former authenticated choice cannot outlive a connection that
+        // stopped requiring authentication, even when its protocol is unchanged.
+        provider.connections[0].auth_methods.clear();
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
+
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+
+        // An origin-equivalent base URL is still a different registration.
+        // The consumer must revalidate against the current descriptor.
+        provider.connections[0].base_url = Some("https://api.openai.com/v2".into());
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Conflict
         );
     }
 
