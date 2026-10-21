@@ -871,9 +871,7 @@ fn can_switch_native_model(spec: &Composition) -> bool {
     let Some(resource) = spec.resource.as_deref() else {
         return false;
     };
-    if installed_model_provider(spec).is_none()
-        || !spec.authority.resources.contains(resource)
-    {
+    if installed_model_provider(spec).is_none() || !spec.authority.resources.contains(resource) {
         return false;
     }
     [
@@ -1991,9 +1989,13 @@ mod tests {
             spec.authority.operations.insert(operation.into());
         }
         assert!(can_switch_native_model(&spec));
-        spec.authority.operations.remove("phenix.basic.storage@1/transact");
+        spec.authority
+            .operations
+            .remove("phenix.basic.storage@1/transact");
         assert!(!can_switch_native_model(&spec));
-        spec.authority.operations.insert("phenix.basic.storage@1/transact".into());
+        spec.authority
+            .operations
+            .insert("phenix.basic.storage@1/transact".into());
         spec.grants.push(spec.grants[0].clone());
         assert!(!can_switch_native_model(&spec));
     }
