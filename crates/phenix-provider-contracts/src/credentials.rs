@@ -388,13 +388,18 @@ mod tests {
             scope.authority.resources,
             [expected_resource.clone()].into()
         );
-        assert!(!scope.authority.resources.contains(&personal.resource().unwrap()));
-        assert!(!scope.authority.operations.contains(
-            <ProviderCredentials::import as Operation>::KEY
-        ));
-        assert!(!scope.authority.operations.contains(
-            <ProviderCredentials::revoke as Operation>::KEY
-        ));
+        assert!(!scope
+            .authority
+            .resources
+            .contains(&personal.resource().unwrap()));
+        assert!(!scope
+            .authority
+            .operations
+            .contains(<ProviderCredentials::import as Operation>::KEY));
+        assert!(!scope
+            .authority
+            .operations
+            .contains(<ProviderCredentials::revoke as Operation>::KEY));
         // Constructing a scope never grants it; the running kernel still
         // requires matching trusted composition grants and caller authority.
     }
