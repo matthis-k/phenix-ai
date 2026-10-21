@@ -110,7 +110,11 @@ fn request(mode: &str) -> ModelRequest {
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 8, "MODE HTTP JOURNAL SQLITE BASIC_DEFINITIONS PROVIDER_DEFINITIONS OUTPUT");
+    assert_eq!(
+        args.len(),
+        8,
+        "MODE HTTP JOURNAL SQLITE BASIC_DEFINITIONS PROVIDER_DEFINITIONS OUTPUT"
+    );
     let mode = &args[1];
     let output = Path::new(&args[7]);
     fs::create_dir_all(output).unwrap();
