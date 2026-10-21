@@ -1418,6 +1418,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-http-selected-product"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-contract",
+ "phenix-kernel",
+ "phenix-provider-contracts",
+]
+
+[[package]]
 name = "phenix-kernel"
 version = "0.1.0"
 dependencies = [
