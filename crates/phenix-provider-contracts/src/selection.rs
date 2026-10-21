@@ -794,8 +794,8 @@ mod tests {
         );
         assert_eq!(
             request_scope.authority.operations,
-            [<super::super::credentials::ProviderCredentials::resolve as Operation>::KEY
-                .into()].into()
+            [<super::super::credentials::ProviderCredentials::resolve as Operation>::KEY.into()]
+                .into()
         );
         assert_eq!(
             request_scope.authority.resources,
