@@ -1142,6 +1142,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn private_model_resolver_composition_has_one_exact_resolve_only_grant() {
+        let identity = CredentialIdentity::new("openai", "api", "personal").unwrap();
+        let resource = identity.resource().unwrap();
+        let contract = "phenix.provider.credentials@1";
+        let spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": contract, "operation": "resolve",
+                      "provider": "phenix.provider.credential-files"},
+            "artifacts": [], "definitions": [], "slots": [],
+            "grants": [{"caller": "root", "interface": contract,
+                        "operation": "resolve", "resources": [resource]}],
+            "excluded": [], "substitutions": [],
+            "authority": {
+                "operations": ["phenix.provider.credentials@1/resolve"],
+                "resources": [resource]
+            },
+            "resource": resource
+        }))
+        .unwrap();
+        assert_eq!(validate_model_resolver_spec(&spec).unwrap(), identity);
+
+        let mut excessive = spec.clone();
+        excessive
+            .authority
+            .operations
+            .insert("phenix.provider.credentials@1/import".into());
+        assert!(validate_model_resolver_spec(&excessive).is_err());
+
+        let mut excessive = spec.clone();
+        excessive.grants.push(excessive.grants[0].clone());
+        assert!(validate_model_resolver_spec(&excessive).is_err());
+
+        let mut foreign = spec.clone();
+        foreign.resource = Some(
+            CredentialIdentity::new("openai", "api", "work")
+                .unwrap()
+                .resource()
+                .unwrap(),
+        );
+        assert!(validate_model_resolver_spec(&foreign).is_err());
+
+        let mut forged = spec.clone();
+        forged.entry.operation = "revoke".into();
+        assert!(validate_model_resolver_spec(&forged).is_err());
+    }
+
+    #[test]
     fn queued_cancel_targets_first_matching_session() {
         let oldest = Arc::new(AtomicBool::new(false));
         let another = Arc::new(AtomicBool::new(false));
