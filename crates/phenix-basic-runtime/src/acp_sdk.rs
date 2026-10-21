@@ -1228,7 +1228,10 @@ impl Controller {
             for entry in native {
                 options.push(SessionConfigSelectOption::new(entry.id, entry.label));
             }
-            if !options.iter().any(|option| option.value.to_string() == chosen) {
+            if !options
+                .iter()
+                .any(|option| option.value.to_string() == chosen)
+            {
                 return Err(invalid("effective selected model is no longer offered"));
             }
             chosen
