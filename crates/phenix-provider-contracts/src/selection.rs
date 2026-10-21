@@ -823,6 +823,73 @@ mod tests {
     }
 
     #[test]
+    fn checked_model_install_binds_exact_account_and_exclusive_auth_kind() {
+        let (mut provider, auth, page, requested) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let chosen = validate_model_selection(&provider, &auth, &page, &requested, true).unwrap();
+        let binding = bind_http_model(&provider, chosen).unwrap();
+        let personal = CredentialIdentity::new("openai", "api", "personal").unwrap();
+        let foreign = CredentialIdentity::new("openai", "api", "work").unwrap();
+        let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
+        assert_eq!(
+            HttpModelInstall::from_checked(&binding, "s1".into(), Some((foreign, key)), None)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
+        );
+        let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
+        let installed = HttpModelInstall::from_checked(
+            &binding,
+            "s1".into(),
+            Some((personal.clone(), key)),
+            Some(128),
+        )
+        .unwrap();
+        let (session, endpoint, model, protocol, max_tokens, authorization) =
+            installed.into_parts();
+        assert_eq!(session, "s1");
+        assert_eq!(endpoint, "https://api.openai.com/v1/responses");
+        assert_eq!(model, "o-series");
+        assert_eq!(protocol, "openai-responses");
+        assert_eq!(max_tokens, Some(128));
+        match authorization {
+            HttpModelAuthorization::ApiKey { identity, secret } => {
+                assert_eq!(identity, personal);
+                assert_eq!(
+                    secret.expose_for_authorized_provider(),
+                    b"selected-fixture-key"
+                );
+            }
+            HttpModelAuthorization::CredentialFree => panic!("authenticated choice lost key"),
+        }
+
+        let (mut local, mut no_auth, mut models, mut request) = fixture();
+        local.connections[0].auth_methods.clear();
+        local.connections[0].base_url = Some("http://127.0.0.1:11434/v1".into());
+        local.connections[0].protocols[0].endpoint =
+            Some("http://127.0.0.1:11434/v1/responses".into());
+        no_auth.profiles.clear();
+        models.profile_id = None;
+        request.profile_id = None;
+        let choice = validate_model_selection(&local, &no_auth, &models, &request, true).unwrap();
+        let binding = bind_http_model(&local, choice).unwrap();
+        let local_install =
+            HttpModelInstall::from_checked(&binding, "s1".into(), None, None).unwrap();
+        assert!(matches!(
+            local_install.into_parts().5,
+            HttpModelAuthorization::CredentialFree
+        ));
+        let key = CredentialSecret::new(b"unrelated-key".to_vec()).unwrap();
+        assert_eq!(
+            HttpModelInstall::from_checked(&binding, "s1".into(), Some((personal, key)), None)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
+        );
+    }
+
+    #[test]
     fn explicit_credential_free_local_protocol_still_has_no_profile() {
         let (mut provider, mut auth, mut page, mut request) = fixture();
         provider.connections[0].auth_methods.clear();
