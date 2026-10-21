@@ -60,6 +60,17 @@ def request(method, url):
         raise
 
 
+def open_pr_heads():
+    # A truncated inventory is never evidence that a branch is unused.
+    all_prs = request("GET", "/pulls?state=open&per_page=100")[1]
+    if not isinstance(all_prs, list) or len(all_prs) >= 100:
+        raise RuntimeError("cannot establish full open-PR inventory")
+    return {
+        item["head"]["ref"] for item in all_prs
+        if item["head"]["repo"] and item["head"]["repo"]["full_name"] == REPO
+    }
+
+
 def execute():
     if (
         os.getenv("GITHUB_REPOSITORY") != REPO
@@ -67,14 +78,7 @@ def execute():
         or os.getenv("GITHUB_REF") != "refs/heads/main"
     ):
         raise RuntimeError("branch cleanup requires trusted main-only push")
-    all_prs = request("GET", "/pulls?state=open&per_page=100")[1]
-    if len(all_prs) >= 100:
-        raise RuntimeError("cannot establish full open-PR inventory")
-    active_heads = {
-        item["head"]["ref"] for item in all_prs
-        if item["head"]["repo"] and item["head"]["repo"]["full_name"] == REPO
-    }
-    if active_heads.intersection(EXPECTED):
+    if open_pr_heads().intersection(EXPECTED):
         raise RuntimeError("a historical probe is an active pull-request head")
     present = []
     # Complete read-only preflight before the first deletion.
@@ -88,8 +92,11 @@ def execute():
             raise RuntimeError("probe branch moved; refusing deletion: " + name)
         present.append((name, path))
     for name, path in present:
-        # Narrow the preflight/delete race: an agent may have resumed work
-        # after our first inventory. This is not a general branch GC.
+        # An open PR might have been created after the initial inventory.
+        # Recheck before every destructive operation. GitHub's delete-ref API
+        # is not conditional, so an unavoidable final race still exists.
+        if name in open_pr_heads():
+            raise RuntimeError("probe became an active PR head: " + name)
         status, ref = request("GET", path)
         if status == 404 or ref["object"]["sha"] != EXPECTED[name]:
             raise RuntimeError("historical ref moved before deletion: " + name)
