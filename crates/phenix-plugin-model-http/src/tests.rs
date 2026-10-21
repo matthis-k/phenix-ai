@@ -629,9 +629,11 @@ fn preset_http_credentials_use_clearing_secret_storage_and_reject_bad_inputs() {
         .unwrap()
         .expect("configured credential");
     assert_eq!(key.expose_for_authorized_provider(), b"fixture-secret");
-    assert!(request::configured_credential(Err(std::env::VarError::NotPresent))
-        .unwrap()
-        .is_none());
+    assert!(
+        request::configured_credential(Err(std::env::VarError::NotPresent))
+            .unwrap()
+            .is_none()
+    );
     for invalid in ["", "line\nfeed", "bad\0nul"] {
         assert_eq!(
             request::configured_credential(Ok(invalid.into()))
