@@ -46,7 +46,10 @@ impl HttpModelInstall {
             || binding.model_id().trim().is_empty()
             || provider_max_tokens == Some(0)
         {
-            return Err(problem(ProviderErrorCode::InvalidInput, "invalid selected model install"));
+            return Err(problem(
+                ProviderErrorCode::InvalidInput,
+                "invalid selected model install",
+            ));
         }
         let authorization = match (
             binding.credential_identity(),
@@ -62,7 +65,12 @@ impl HttpModelInstall {
                     secret,
                 }
             }
-            _ => return Err(problem(ProviderErrorCode::Denied, "selected model credentials denied")),
+            _ => {
+                return Err(problem(
+                    ProviderErrorCode::Denied,
+                    "selected model credentials denied",
+                ))
+            }
         };
         Ok(Self {
             session,
@@ -78,7 +86,14 @@ impl HttpModelInstall {
     /// value does not skip host scope, endpoint, protocol or secret validation.
     pub fn into_parts(
         self,
-    ) -> (String, String, String, String, Option<u64>, HttpModelAuthorization) {
+    ) -> (
+        String,
+        String,
+        String,
+        String,
+        Option<u64>,
+        HttpModelAuthorization,
+    ) {
         (
             self.session,
             self.endpoint,
