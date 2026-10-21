@@ -38,10 +38,7 @@ impl ModelConfiguration {
         }
     }
 
-    pub(crate) fn take_for_turn(
-        &mut self,
-        session: &str,
-    ) -> Result<request::Config, BasicError> {
+    pub(crate) fn take_for_turn(&mut self, session: &str) -> Result<request::Config, BasicError> {
         match self {
             Self::Preset => request::Config::load(),
             Self::Selected(pending) => pending.remove(session).ok_or_else(|| {
