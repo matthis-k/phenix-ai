@@ -63,8 +63,12 @@ class Server(BaseHTTPRequestHandler):
             assert self.headers.get("x-api-key") == "fixture-token"
             assert self.headers.get("anthropic-version") == "2023-06-01"
         else:
-            assert self.headers.get("Authorization") == "Bearer fixture-token"
-        assert body["model"] == "fixture-model" and body["stream"] is True
+            assert self.headers.get("Authorization") == (
+                None if mode == "selected" else "Bearer fixture-token"
+            )
+        assert body["model"] == (
+            "selected-fixture" if mode == "selected" else "fixture-model"
+        ) and body["stream"] is True
         assert body["stream_options"]["include_usage"] is True
         assert body["max_completion_tokens"] == (1 if mode == "limit" else 32)
         assert "Use Rust" in body["messages"][0]["content"]
@@ -142,6 +146,12 @@ def run(mode, endpoint, ca=None):
     env.pop("PHENIX_MODEL_HTTP_CA_FILE", None)
     if ca:
         env["PHENIX_MODEL_HTTP_CA_FILE"] = str(ca)
+    if mode == "selected":
+        # Native selected session config must override wrong environment preset.
+        env["PHENIX_SELECTED_HTTP_ENDPOINT"] = endpoint
+        env["PHENIX_MODEL_HTTP_ENDPOINT"] = "http://127.0.0.1:1/not-selected"
+        env["PHENIX_MODEL_HTTP_MODEL"] = "wrong-preset-model"
+        env["PHENIX_MODEL_HTTP_API_KEY"] = "wrong-preset-key"
     before = len(requests)
     subprocess.run([binary, mode, model, journal, storage, definitions, provider_definitions, output], env=env, check=True, timeout=30)
     if mode in ("denied", "zero", "bad-config", "tls-untrusted"):
@@ -153,6 +163,10 @@ def run(mode, endpoint, ca=None):
 endpoint = f"http://127.0.0.1:{http.server_port}/completions"
 for mode in ["denied", "zero", "stream", "multi", "cancel", "status", "redirect", "provider-error", "malformed", "truncated", "no-usage", "limit", "timeout"]:
     run(mode, endpoint)
+# The install/control contract is tested only against OpenAI Chat wire here;
+# the independently composed Responses and Anthropic fixtures remain unchanged.
+if not responses and not anthropic:
+    run("selected", endpoint)
 run("bad-config", "file:///tmp/forbidden-model")
 # A credentialed Model must reject non-loopback plaintext before transport.
 run("bad-config", "http://192.0.2.42/completions")
