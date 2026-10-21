@@ -3,11 +3,13 @@ on:
   pull_request:
     paths:
       - .github/scripts/cleanup-incremental-probe-branches.py
+      - .github/scripts/test_cleanup_incremental_probe_branches.py
       - .github/workflows/cleanup-incremental-probes.yml
   push:
     branches: [main]
     paths:
       - .github/scripts/cleanup-incremental-probe-branches.py
+      - .github/scripts/test_cleanup_incremental_probe_branches.py
       - .github/workflows/cleanup-incremental-probes.yml
 
 jobs:
@@ -21,6 +23,7 @@ jobs:
           persist-credentials: false
       - run: python3 -m py_compile .github/scripts/cleanup-incremental-probe-branches.py
       - run: python3 .github/scripts/cleanup-incremental-probe-branches.py
+      - run: python3 .github/scripts/test_cleanup_incremental_probe_branches.py
   cleanup:
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'matthis-k/phenix-ai'
