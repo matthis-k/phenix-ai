@@ -1068,7 +1068,8 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
-        Ok(NewSessionResponse::new(session).config_options(self.model_options(&session)?))
+        let options = self.model_options(&session)?;
+        Ok(NewSessionResponse::new(session).config_options(options))
     }
 
     fn load_session(
