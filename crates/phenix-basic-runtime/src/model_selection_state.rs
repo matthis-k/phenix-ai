@@ -64,6 +64,9 @@ fn checked_routing_state(
         (None, None) => Ok(None),
         (Some(selected), Some(witness)) => {
             checked_witness(&witness)?;
+            if selected.revision != witness.revision {
+                return Err("selected model and native routing witness revisions differ".into());
+            }
             unpack(selected).map(Some)
         }
         (None, Some(_)) => Err("native routing witness exists without selected model".into()),
@@ -200,6 +203,9 @@ pub(crate) fn compare_and_swap(
         checked_witness(record)?;
     }
     let witness_expected = current_witness.as_ref().map_or(0, |record| record.revision);
+    if witness_expected != expected {
+        return Err("native witness revision disagrees with selected model CAS".into());
+    }
     let witness_next = witness_expected
         .checked_add(1)
         .ok_or("native routing witness revision overflow")?;
@@ -276,7 +282,7 @@ mod tests {
             data: basic::encode(&selected()).unwrap(),
         };
         let witness = StoredRecord {
-            revision: 3,
+            revision: 4,
             data: basic::encode(&RoutingWitness::NativeSelected).unwrap(),
         };
         assert_eq!(checked_routing_state(None, None).unwrap(), None);
@@ -288,6 +294,9 @@ mod tests {
                 .unwrap(),
             (selected(), 4)
         );
+        let mut conflicting = witness.clone();
+        conflicting.revision = 3;
+        assert!(checked_routing_state(Some(selection.clone()), Some(conflicting)).is_err());
         let mut corrupt = witness.clone();
         corrupt.data = phenix_contract::Blob(vec![0, 255, 17]);
         assert!(checked_routing_state(Some(selection.clone()), Some(corrupt)).is_err());
