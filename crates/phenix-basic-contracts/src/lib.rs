@@ -272,6 +272,42 @@ pub struct ToolPage {
     pub revision: u64,
     pub next: Option<CatalogCursor>,
 }
+
+impl ToolPage {
+    /// A page is untrusted until checked against the original session query.
+    /// The catalog's native producer may be replaced by a dynamic plugin; a
+    /// cursor cannot switch sessions, skip tools or invent a revision.
+    pub fn validate_for(&self, request: &ToolQuery) -> Result<(), BasicError> {
+        if request.limit == 0 {
+            return Err(error(ErrorCode::InvalidInput, "catalog page size must be positive"));
+        }
+        if let Some(previous) = &request.cursor {
+            if previous.session != request.session || previous.query != request.query {
+                return Err(error(ErrorCode::InvalidCursor, "foreign catalog cursor"));
+            }
+            if previous.revision != self.revision {
+                return Err(error(ErrorCode::InvalidCursor, "stale catalog cursor"));
+            }
+        }
+        let count = u64::try_from(self.tools.len())
+            .map_err(|_| error(ErrorCode::InvalidReply, "catalog page is oversized"))?;
+        if self.revision == 0 || count > request.limit {
+            return Err(error(ErrorCode::InvalidReply, "invalid catalog page size or revision"));
+        }
+        if let Some(next) = &self.next {
+            let offset = request.cursor.as_ref().map_or(0, |cursor| cursor.offset);
+            if count == 0
+                || next.session != request.session
+                || next.query != request.query
+                || next.revision != self.revision
+                || offset.checked_add(count) != Some(next.offset)
+            {
+                return Err(error(ErrorCode::InvalidReply, "invalid catalog continuation"));
+            }
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct ToolRequest {
     pub session: String,
