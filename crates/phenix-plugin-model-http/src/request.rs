@@ -80,7 +80,10 @@ impl Config {
         // Provider-admitted metadata is not automatically valid transport
         // configuration. Reject invalid scalar values before secret handling.
         if binding.model_id().trim().is_empty() {
-            return Err(error(ErrorCode::InvalidInput, "invalid selected HTTP model"));
+            return Err(error(
+                ErrorCode::InvalidInput,
+                "invalid selected HTTP model",
+            ));
         }
         if provider_max_tokens == Some(0) {
             return Err(error(
