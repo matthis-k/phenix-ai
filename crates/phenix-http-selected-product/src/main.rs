@@ -8,11 +8,11 @@ use phenix_kernel::{
     Call, Outcome, Poll,
 };
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AdapterBinding, ApiKeyOptions,
-    AuthenticationKind, AuthenticationMethod, AuthenticationStatus, ConnectionDescriptor,
-    CredentialIdentity, CredentialProfile, CredentialProfileStatus, CredentialSecret,
-    HttpModelInstall, ModelOrigin, ModelPage, ModelSelection, ProtocolBinding,
-    ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
+    bind_http_model, validate_model_selection, AdapterBinding, ApiKeyOptions, AuthenticationKind,
+    AuthenticationMethod, AuthenticationStatus, ConnectionDescriptor, CredentialIdentity,
+    CredentialProfile, CredentialProfileStatus, CredentialSecret, HttpModelInstall, ModelOrigin,
+    ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderError,
+    ProviderErrorCode, ProviderModel,
 };
 use std::{
     collections::BTreeSet,
@@ -127,13 +127,8 @@ fn checked_install(endpoint: &str, session: &str, authenticated: bool) -> HttpMo
                 .code,
             ProviderErrorCode::Denied
         );
-        HttpModelInstall::from_checked(
-            &bound,
-            session.into(),
-            Some((correct, new_secret())),
-            None,
-        )
-        .unwrap()
+        HttpModelInstall::from_checked(&bound, session.into(), Some((correct, new_secret())), None)
+            .unwrap()
     } else {
         HttpModelInstall::from_checked(&bound, session.into(), None, None).unwrap()
     }
