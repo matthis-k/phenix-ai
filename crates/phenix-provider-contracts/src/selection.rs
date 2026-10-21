@@ -559,6 +559,35 @@ mod tests {
     }
 
     #[test]
+    fn http_binding_invalidates_admission_when_connection_auth_or_origin_changes() {
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+
+        // A former authenticated choice cannot outlive a connection that
+        // stopped requiring authentication, even when its protocol is unchanged.
+        provider.connections[0].auth_methods.clear();
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
+
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+
+        // An origin-equivalent base URL is still a different registration.
+        // The consumer must revalidate against the current descriptor.
+        provider.connections[0].base_url = Some("https://api.openai.com/v2".into());
+        assert_eq!(
+            bind_http_model(&provider, admitted).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
+    }
+
+    #[test]
     fn http_binding_rejects_changed_registration_and_cross_origin_targets() {
         let (mut provider, auth, page, request) = fixture();
         provider.connections[0].protocols[0].endpoint =
