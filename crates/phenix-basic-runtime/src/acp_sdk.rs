@@ -428,6 +428,20 @@ impl ModelCredentialResolver {
     }
 }
 
+/// P1 installs exactly one authoritative Model slot. Multiple mappings
+/// (including identical duplicates) are not a selectable model catalog:
+/// client model IDs must never resolve through first-match routing.
+fn installed_model_provider(composition: &Composition) -> Option<&str> {
+    let mut bindings = composition.slots.iter().filter(|binding| {
+        binding.caller == "phenix.basic.agent" && binding.slot == "Model" && binding.index == 0
+    });
+    let selected = bindings.next()?;
+    if bindings.next().is_some() {
+        return None;
+    }
+    Some(selected.provider.as_str())
+}
+
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
@@ -770,26 +784,20 @@ impl Controller {
     /// ACP's standard session config options let any frontend render the effective
     /// model, even while this P1 composition has only one eligible binding.
     fn model_options(&self) -> Vec<SessionConfigOption> {
-        self.composition
-            .slots
-            .iter()
-            .filter(|binding| {
-                binding.caller == "phenix.basic.agent"
-                    && binding.slot == "Model"
-                    && binding.index == 0
-            })
-            .map(|binding| {
+        installed_model_provider(&self.composition)
+            .map(|provider| {
                 SessionConfigOption::select(
                     "model",
                     "Model",
-                    binding.provider.clone(),
+                    provider.to_owned(),
                     vec![SessionConfigSelectOption::new(
-                        binding.provider.clone(),
-                        binding.provider.clone(),
+                        provider.to_owned(),
+                        provider.to_owned(),
                     )],
                 )
                 .category(SessionConfigOptionCategory::Model)
             })
+            .into_iter()
             .collect()
     }
 
@@ -804,12 +812,7 @@ impl Controller {
             SessionConfigOptionValue::ValueId { value } => value.to_string(),
             _ => return Err(invalid("unsupported model configuration value")),
         };
-        let admitted = self.composition.slots.iter().any(|binding| {
-            binding.caller == "phenix.basic.agent"
-                && binding.slot == "Model"
-                && binding.index == 0
-                && binding.provider == chosen
-        });
+        let admitted = installed_model_provider(&self.composition) == Some(chosen.as_str());
         if request.config_id.to_string() != "model" || !admitted {
             return Err(invalid("unavailable or unauthorized model"));
         }
@@ -1229,6 +1232,45 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_exact_model_slot_is_advertisable_or_selectable() {
+        let mut spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": "phenix.basic.input@1", "operation": "submit",
+                      "provider": "phenix.basic.agent"},
+            "artifacts": [], "definitions": [],
+            "slots": [{
+                "caller": "phenix.basic.agent", "slot": "Model", "index": 0,
+                "provider": "phenix.model.http", "export": "Model"
+            }],
+            "grants": [], "excluded": [], "substitutions": [],
+            "authority": {"operations": [], "resources": []},
+            "resource": "phenix.session.s1"
+        }))
+        .unwrap();
+
+        assert_eq!(installed_model_provider(&spec), Some("phenix.model.http"));
+        // An unrelated plugin slot does not change the installed model.
+        let mut other = spec.slots[0].clone();
+        other.caller = "phenix.plugin.context".into();
+        spec.slots.push(other);
+        assert_eq!(installed_model_provider(&spec), Some("phenix.model.http"));
+
+        // A second matching Model slot is ambiguous even if identical.
+        spec.slots.push(spec.slots[0].clone());
+        assert_eq!(installed_model_provider(&spec), None);
+        spec.slots.pop();
+
+        // A distinct conflicting Model provider must fail closed as well.
+        let mut conflict = spec.slots[0].clone();
+        conflict.provider = "phenix.model.other".into();
+        spec.slots.push(conflict);
+        assert_eq!(installed_model_provider(&spec), None);
+        spec.slots
+            .retain(|slot| slot.caller != "phenix.basic.agent");
+        assert_eq!(installed_model_provider(&spec), None);
+    }
 
     #[test]
     fn private_model_resolver_composition_has_one_exact_resolve_only_grant() {
