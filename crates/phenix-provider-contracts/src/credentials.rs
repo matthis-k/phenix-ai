@@ -140,6 +140,25 @@ impl CredentialIdentity {
         Ok(format!("phenix.credentials.{}", encoded.join(".")))
     }
 
+    /// Request one exact, explicitly selected credential root for a native
+    /// `ProviderCredentials::resolve` import. This is authority attenuation,
+    /// not authority creation: the kernel still rejects absent grants and
+    /// caller scopes that do not already authorize this resource and operation.
+    ///
+    /// Never include this scope in ordinary ModelRequest, journal, ACP wire
+    /// payloads or a Basic graph-wide session resource set.
+    pub fn resolve_scope(&self) -> Result<phenix_sdk::ScopedRequest, ProviderError> {
+        use phenix_sdk::{Authority, Operation, ScopedRequest};
+        let resource = self.resource()?;
+        Ok(ScopedRequest {
+            authority: Authority {
+                operations: [<ProviderCredentials::resolve as Operation>::KEY.into()].into(),
+                resources: [resource.clone()].into(),
+            },
+            resource: Some(resource),
+        })
+    }
+
     /// Recover the exact non-secret identity from an already authorized
     /// resource. This is display/capability metadata, never a credential
     /// lookup or an authority grant.
@@ -351,6 +370,38 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn resolution_scope_is_one_exact_operation_and_credential_identity() {
+        use phenix_sdk::{Operation, ScopedRequest};
+        let work = identity("openai", "api", "work");
+        let personal = identity("openai", "api", "personal");
+        let scope: ScopedRequest = work.resolve_scope().unwrap();
+        let expected_resource = work.resource().unwrap();
+        assert_eq!(scope.resource.as_deref(), Some(expected_resource.as_str()));
+        assert_eq!(
+            scope.authority.operations,
+            [<ProviderCredentials::resolve as Operation>::KEY.into()].into()
+        );
+        assert_eq!(
+            scope.authority.resources,
+            [expected_resource.clone()].into()
+        );
+        assert!(!scope
+            .authority
+            .resources
+            .contains(&personal.resource().unwrap()));
+        assert!(!scope
+            .authority
+            .operations
+            .contains(<ProviderCredentials::import as Operation>::KEY));
+        assert!(!scope
+            .authority
+            .operations
+            .contains(<ProviderCredentials::revoke as Operation>::KEY));
+        // Constructing a scope never grants it; the running kernel still
+        // requires matching trusted composition grants and caller authority.
     }
 
     #[test]
