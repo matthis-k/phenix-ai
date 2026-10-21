@@ -92,13 +92,19 @@ impl Config {
         let (_, endpoint, model, protocol, provider_max_tokens, authentication) =
             install.into_parts();
         if model.trim().is_empty() || provider_max_tokens == Some(0) {
-            return Err(error(ErrorCode::InvalidInput, "invalid selected HTTP model"));
+            return Err(error(
+                ErrorCode::InvalidInput,
+                "invalid selected HTTP model",
+            ));
         }
         let endpoint = endpoint_url(&endpoint)?;
         let protocol = Protocol::parse(&protocol)?;
         let credential = match authentication {
             HttpModelAuthorization::CredentialFree => None,
-            HttpModelAuthorization::ApiKey { identity: _, secret } => {
+            HttpModelAuthorization::ApiKey {
+                identity: _,
+                secret,
+            } => {
                 let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
                     .ok()
                     .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
