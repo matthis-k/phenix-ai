@@ -20,8 +20,10 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    AuthQuery, AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialSecret,
-    ModelPage, ModelQuery, ProviderError, ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, AuthQuery, AuthenticationStatus,
+    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, ModelPage,
+    ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
+    ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -290,6 +292,140 @@ fn bounded_transport(
 struct ProviderManagement {
     kernel: Kernel,
     selected: Selection,
+}
+
+// Trusted catalog reads are made through the launcher's already-admitted
+// control-plane kernel. Selector values never select a provider implementation
+// or create new native grants.
+impl ProviderManagement {
+    fn read<Q: Portable, R: Portable>(
+        &self,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> acp::Result<R> {
+        let root = self
+            .kernel
+            .admit_root(Selection {
+                interface: interface.into(),
+                operation: operation.into(),
+                provider: self.selected.provider.clone(),
+            })
+            .map_err(internal)?;
+        let value = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => value,
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                return Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "format": "phenix.provider.error.v1",
+                    "code": problem.code,
+                })));
+            }
+        };
+        R::from_value(value).map_err(internal)
+    }
+
+    /// Controller-only preflight. Never treat UI-discovered models or a
+    /// preflight result as an executable kernel grant. The later native
+    /// installation must recheck auth/registration, resolve the exact secret
+    /// and use the same session kernel.
+    #[allow(dead_code)]
+    fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
+        const SCOPE: &str = "user";
+        const PAGE_LIMIT: u64 = 256;
+        const MAX_PAGES: usize = 64;
+        const MAX_MODELS: usize = 4096;
+
+        let listed: ProviderPage = self.read(
+            "phenix.provider.catalog@1",
+            "list",
+            &ProviderQuery { scope: SCOPE.into() },
+        )?;
+        if listed.revision == 0 {
+            return Err(invalid("provider list has no current revision"));
+        }
+        let mut candidates = listed.providers.iter().filter(|p| p.id == desired.provider_id);
+        let provided = candidates.next().ok_or_else(|| invalid("unknown selected provider"))?;
+        if candidates.next().is_some() {
+            return Err(invalid("ambiguous selected provider"));
+        }
+        let described: ProviderDescriptor = self.read(
+            "phenix.provider.catalog@1",
+            "describe",
+            &ProviderDetailsQuery {
+                scope: SCOPE.into(),
+                provider_id: desired.provider_id.clone(),
+            },
+        )?;
+        if provided != &described {
+            return Err(invalid("provider registration changed during selection"));
+        }
+        let auth: AuthenticationStatus = self.read(
+            "phenix.provider.auth@1",
+            "status",
+            &AuthQuery {
+                scope: SCOPE.into(),
+                provider_id: desired.provider_id.clone(),
+                connection_id: desired.connection_id.clone(),
+            },
+        )?;
+
+        let mut models = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut revision = None;
+        for _ in 0..MAX_PAGES {
+            let page: ModelPage = self.read(
+                "phenix.provider.catalog@1",
+                "models",
+                &ModelQuery {
+                    scope: SCOPE.into(),
+                    provider_id: desired.provider_id.clone(),
+                    connection_id: desired.connection_id.clone(),
+                    profile_id: desired.profile_id.clone(),
+                    cursor: cursor.clone(),
+                    limit: PAGE_LIMIT,
+                },
+            )?;
+            if page.revision == 0
+                || revision.is_some_and(|prior| prior != page.revision)
+                || page.profile_id != desired.profile_id
+                || page.models.len() > PAGE_LIMIT as usize
+                || models.len().checked_add(page.models.len())
+                    .is_none_or(|count| count > MAX_MODELS)
+            {
+                return Err(invalid("provider model page changed or exceeded its budget"));
+            }
+            revision = Some(page.revision);
+            models.extend(page.models);
+            match page.next_cursor {
+                None => {
+                    let complete = ModelPage {
+                        profile_id: desired.profile_id.clone(),
+                        models,
+                        next_cursor: None,
+                        revision: page.revision,
+                    };
+                    let checked = validate_model_selection(
+                        &described, &auth, &complete, desired, true,
+                    )
+                    .map_err(internal)?;
+                    return bind_http_model(&described, checked).map_err(internal);
+                }
+                Some(next) => {
+                    if page.models.is_empty()
+                        || next.is_empty()
+                        || next.len() > 1024
+                        || !seen.insert(next.clone())
+                    {
+                        return Err(invalid("invalid or repeated provider catalog cursor"));
+                    }
+                    cursor = Some(next);
+                }
+            }
+        }
+        Err(invalid("provider model catalog exceeded page budget"))
+    }
 }
 
 struct CredentialManagement {
@@ -585,23 +721,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let selection = Selection {
-            interface: interface.into(),
-            operation: operation.into(),
-            provider: management.selected.provider.clone(),
-        };
-        let root = management.kernel.admit_root(selection).map_err(internal)?;
-        let value = match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => value,
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                return Err(acp::Error::invalid_params().data(serde_json::json!({
-                    "format": "phenix.provider.error.v1",
-                    "code": problem.code,
-                })));
-            }
-        };
-        let result = R::from_value(value).map_err(internal)?;
+        let result: R = management.read(interface, operation, query)?;
         serde_json::to_value(result).map_err(internal)
     }
 
