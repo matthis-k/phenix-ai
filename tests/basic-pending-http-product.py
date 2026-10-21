@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-binary, base_composition, http_model, destination, *options = sys.argv[1:]
+binary, base_composition, http_model, provider_definitions, destination, *options = sys.argv[1:]
 assert not options or options == ["--advanced-adapter"], options
 advanced_adapter = options == ["--advanced-adapter"]
 protocol = os.environ.get("PHENIX_MODEL_HTTP_PROTOCOL", "openai-chat")
@@ -22,6 +22,10 @@ output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 
 composition = json.loads(Path(base_composition).read_text())
+# The dynamically substituted Model exposes a provider-domain native control
+# contract even when the preset intentionally grants no install operation.
+if provider_definitions not in composition["definitions"]:
+    composition["definitions"].append(provider_definitions)
 composition["artifacts"] = [
     item for item in composition["artifacts"] if "phenix-plugin-model-scripted" not in item
 ] + [http_model]

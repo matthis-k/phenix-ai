@@ -11,7 +11,7 @@ import threading
 import time
 from model_protocol_fixture import AnthropicWire, ResponsesWire, anthropic_view, chat_view
 
-binary, model, journal, storage, definitions, output_dir = sys.argv[1:]
+binary, model, journal, storage, definitions, provider_definitions, output_dir = sys.argv[1:]
 output = Path(output_dir)
 output.mkdir(parents=True, exist_ok=True)
 requests = []
@@ -143,7 +143,7 @@ def run(mode, endpoint, ca=None):
     if ca:
         env["PHENIX_MODEL_HTTP_CA_FILE"] = str(ca)
     before = len(requests)
-    subprocess.run([binary, mode, model, journal, storage, definitions, output], env=env, check=True, timeout=30)
+    subprocess.run([binary, mode, model, journal, storage, definitions, provider_definitions, output], env=env, check=True, timeout=30)
     if mode in ("denied", "zero", "bad-config", "tls-untrusted"):
         assert len(requests) == before, (mode, requests[before:])
     else:

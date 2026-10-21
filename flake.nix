@@ -840,10 +840,10 @@
       } ''
         mkdir -p $out
         export PYTHONPATH=${./tests}
-        python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out
         test -s "$out/http-model.json"
-        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out/responses
-        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out/anthropic
+        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/responses
+        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/anthropic
       '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
@@ -1203,6 +1203,7 @@
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
       basicHttpCompositionSpec = basicCompositionSpec // {
+        definitions = basicCompositionSpec.definitions ++ [ "${providerDefinitions}" ];
         artifacts =
           builtins.filter (item: item != "${scriptedModel}") basicCompositionSpec.artifacts
           ++ [ "${httpModel}" ];
@@ -1679,7 +1680,7 @@
       } ''
         mkdir -p "$out"
         python ${./tests/basic-pending-http-product.py} \
-          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} "$out" --advanced-adapter
+          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} ${providerDefinitions} "$out" --advanced-adapter
         test -s "$out/pending-basic-http.json"
       '';
       # Only a test composition co-binds Model and Meter to the same fixture.
@@ -1782,11 +1783,11 @@
       } ''
         mkdir -p $out
         export PYTHONPATH=${./tests}
-        python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out
         test -s "$out/pending-basic-http.json"
-        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/responses
-        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/anthropic
-        python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out/responses
+        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out/anthropic
+        python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out
         test -s "$out/acp-pending-http.json"
       '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
