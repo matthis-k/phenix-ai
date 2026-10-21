@@ -24,6 +24,7 @@ pub struct ModelSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmittedModelChoice {
     requested: ModelSelection,
+    connection: ConnectionDescriptor,
     model: ProviderModel,
     protocol: ProtocolBinding,
     credential_identity: Option<CredentialIdentity>,
@@ -114,6 +115,15 @@ pub fn bind_http_model(
         return Err(selection_error(
             ProviderErrorCode::Conflict,
             "ambiguous selected connection",
+        ));
+    }
+    // Admission is pinned to the full installed connection registration.
+    // Matching IDs and the selected protocol alone cannot authorize a stale
+    // account method or a changed endpoint registration.
+    if connection != &admitted.connection {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "selected connection registration changed",
         ));
     }
     let mut protocols = connection
@@ -297,6 +307,7 @@ pub fn validate_model_selection(
     }
     Ok(AdmittedModelChoice {
         requested: requested.clone(),
+        connection: connection.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
         credential_identity,
