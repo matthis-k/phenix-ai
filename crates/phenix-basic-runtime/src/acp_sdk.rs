@@ -23,7 +23,7 @@ use phenix_provider_contracts::{
     bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
     CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
     ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
-    ProviderPage, ProviderQuery,
+    ProviderErrorCode, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -481,7 +481,41 @@ fn native_model_option_id(selection: &ModelSelection) -> acp::Result<String> {
         .map_err(internal)
 }
 
+/// Only explicitly unavailable/not-yet-discovered provider catalogs are
+/// absent choices. A transport/authority denial, malformed typed reply or
+/// conflicting revision must not be confused with an empty model list.
+fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
+    matches!(
+        code,
+        ProviderErrorCode::Unavailable
+            | ProviderErrorCode::AuthenticationRequired
+            | ProviderErrorCode::NotFound
+    )
+}
+
 impl ProviderManagement {
+    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
+        let root = self
+            .kernel
+            .admit_root(Selection {
+                interface: "phenix.provider.catalog@1".into(),
+                operation: "models".into(),
+                provider: self.selected.provider.clone(),
+            })
+            .map_err(internal)?;
+        match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => ModelPage::from_value(value).map(Some).map_err(internal),
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                if is_missing_model_discovery(&problem.code) {
+                    Ok(None)
+                } else {
+                    Err(provider_rejection(problem))
+                }
+            }
+        }
+    }
+
     /// Enumerate only models executable with the launcher's exact credential
     /// identity (or explicit no-auth). A stored key/profile is not itself a
     /// capability. Each choice is checked again before native install.
@@ -546,22 +580,25 @@ impl ProviderManagement {
                 let mut collected = ModelPageAccumulator::default();
                 let mut cursor = None;
                 let full = loop {
-                    let page: ModelPage = self.read(
-                        "phenix.provider.catalog@1",
-                        "models",
-                        &ModelQuery {
-                            scope: "user".into(),
-                            provider_id: exact.id.clone(),
-                            connection_id: connection.id.clone(),
-                            profile_id: profile.clone(),
-                            cursor: cursor.clone(),
-                            limit: 256,
-                        },
-                    )?;
+                    let Some(page) = self.optional_model_page(&ModelQuery {
+                        scope: "user".into(),
+                        provider_id: exact.id.clone(),
+                        connection_id: connection.id.clone(),
+                        profile_id: profile.clone(),
+                        cursor: cursor.clone(),
+                        limit: 256,
+                    })? else {
+                        // Registration without discovery is not a selectable
+                        // model or a reason to break unrelated ACP sessions.
+                        break None;
+                    };
                     cursor = collected.push(page, &profile)?;
                     if cursor.is_none() {
-                        break collected.complete(profile.clone())?;
+                        break Some(collected.complete(profile.clone())?);
                     }
+                };
+                let Some(full) = full else {
+                    continue;
                 };
                 for model in &full.models {
                     if !model.selectable || model.connection_id != connection.id {
@@ -1834,6 +1871,18 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_discovery_never_becomes_a_false_model_offer() {
+        assert!(is_missing_model_discovery(&ProviderErrorCode::Unavailable));
+        assert!(is_missing_model_discovery(
+            &ProviderErrorCode::AuthenticationRequired
+        ));
+        assert!(is_missing_model_discovery(&ProviderErrorCode::NotFound));
+        assert!(!is_missing_model_discovery(&ProviderErrorCode::Denied));
+        assert!(!is_missing_model_discovery(&ProviderErrorCode::Conflict));
+        assert!(!is_missing_model_discovery(&ProviderErrorCode::InvalidInput));
+    }
 
     #[test]
     fn native_model_ids_bind_provider_account_transport_and_catalog_revision() {
