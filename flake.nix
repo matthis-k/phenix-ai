@@ -1796,6 +1796,8 @@
         test -s "$out/acp-product.json"
         python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} ${basicHttpComposition} $out
         test -s "$out/acp-provider-management.json"
+        python ${./tests/acp-native-routing-restart-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${basicHttpComposition} $out
+        test -s "$out/native-routing-restart.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         # A caller that sets neither the explicit variable nor HOME must still
         # resolve the XDG state default instead of failing session ownership.
