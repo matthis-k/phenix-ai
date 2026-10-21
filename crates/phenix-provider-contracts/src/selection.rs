@@ -833,15 +833,19 @@ mod tests {
         let foreign = CredentialIdentity::new("openai", "api", "work").unwrap();
         let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
         assert_eq!(
-            HttpModelInstall::from_checked(
-                &binding, "s1".into(), Some((foreign, key)), None
-            ).unwrap_err().code,
+            HttpModelInstall::from_checked(&binding, "s1".into(), Some((foreign, key)), None)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Denied
         );
         let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
         let installed = HttpModelInstall::from_checked(
-            &binding, "s1".into(), Some((personal.clone(), key)), Some(128)
-        ).unwrap();
+            &binding,
+            "s1".into(),
+            Some((personal.clone(), key)),
+            Some(128),
+        )
+        .unwrap();
         let (session, endpoint, model, protocol, max_tokens, authorization) =
             installed.into_parts();
         assert_eq!(session, "s1");
@@ -852,7 +856,10 @@ mod tests {
         match authorization {
             HttpModelAuthorization::ApiKey { identity, secret } => {
                 assert_eq!(identity, personal);
-                assert_eq!(secret.expose_for_authorized_provider(), b"selected-fixture-key");
+                assert_eq!(
+                    secret.expose_for_authorized_provider(),
+                    b"selected-fixture-key"
+                );
             }
             HttpModelAuthorization::CredentialFree => panic!("authenticated choice lost key"),
         }
@@ -869,12 +876,15 @@ mod tests {
         let binding = bind_http_model(&local, choice).unwrap();
         let local_install =
             HttpModelInstall::from_checked(&binding, "s1".into(), None, None).unwrap();
-        assert!(matches!(local_install.into_parts().5, HttpModelAuthorization::CredentialFree));
+        assert!(matches!(
+            local_install.into_parts().5,
+            HttpModelAuthorization::CredentialFree
+        ));
         let key = CredentialSecret::new(b"unrelated-key".to_vec()).unwrap();
         assert_eq!(
-            HttpModelInstall::from_checked(
-                &binding, "s1".into(), Some((personal, key)), None
-            ).unwrap_err().code,
+            HttpModelInstall::from_checked(&binding, "s1".into(), Some((personal, key)), None)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Denied
         );
     }
