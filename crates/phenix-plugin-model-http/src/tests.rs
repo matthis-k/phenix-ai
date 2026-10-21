@@ -413,16 +413,25 @@ fn bound_http_choice_with_kind(
     selected_model: &str,
     kind: phenix_provider_contracts::AuthenticationKind,
 ) -> phenix_provider_contracts::HttpModelBinding {
+    bound_http_choice_with_kind_endpoint(authenticated, selected_model, kind, None)
+}
+
+fn bound_http_choice_with_kind_endpoint(
+    authenticated: bool,
+    selected_model: &str,
+    kind: phenix_provider_contracts::AuthenticationKind,
+    selected_endpoint: Option<&str>,
+) -> phenix_provider_contracts::HttpModelBinding {
     use phenix_provider_contracts::{
         bind_http_model, validate_model_selection, AuthenticationMethod, AuthenticationStatus,
         ConnectionDescriptor, CredentialProfile, CredentialProfileStatus, ModelOrigin, ModelPage,
         ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderModel,
     };
-    let endpoint = if authenticated {
+    let endpoint = selected_endpoint.unwrap_or(if authenticated {
         "https://api.openai.com/v1/chat/completions"
     } else {
         "http://127.0.0.1:8080/v1/chat/completions"
-    };
+    });
     let provider = ProviderDescriptor {
         id: "fixture".into(),
         label: "Fixture".into(),
@@ -641,5 +650,111 @@ fn preset_http_credentials_use_clearing_secret_storage_and_reject_bad_inputs() {
                 .code,
             ErrorCode::InvalidInput
         );
+    }
+}
+
+#[test]
+fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallback() {
+    use crate::transport;
+    use phenix_provider_contracts::{AuthenticationKind, CredentialSecret};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{atomic::AtomicBool, Arc, Mutex},
+        time::Duration,
+    };
+
+    for authenticated in [false, true] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!(
+            "http://127.0.0.1:{}/v1/chat/completions",
+            listener.local_addr().unwrap().port()
+        );
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(8)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(8)))
+                .unwrap();
+            let mut captured = Vec::new();
+            let mut buffer = [0u8; 4096];
+            let (headers_end, body_size) = loop {
+                let bytes = stream.read(&mut buffer).unwrap();
+                assert!(bytes > 0, "missing selected HTTP request");
+                captured.extend_from_slice(&buffer[..bytes]);
+                if let Some(index) = captured.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    let headers = std::str::from_utf8(&captured[..index]).unwrap();
+                    let expected = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .expect("HTTP request Content-Length");
+                    if captured.len() >= index + 4 + expected {
+                        break (index, expected);
+                    }
+                }
+            };
+            let headers = std::str::from_utf8(&captured[..headers_end]).unwrap();
+            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
+            assert_eq!(
+                headers.contains("Authorization: Bearer selected-fixture-key"),
+                authenticated,
+                "only the checked selected account may supply an API key"
+            );
+            let body = &captured[headers_end + 4..headers_end + 4 + body_size];
+            let payload: serde_json::Value = serde_json::from_slice(body).unwrap();
+            assert_eq!(payload["model"], "selected-fixture-model");
+            assert!(payload["messages"].is_array());
+
+            let content = concat!(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"selected-live-reply\"},",
+                "\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                content.len(),
+                content
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let binding = bound_http_choice_with_kind_endpoint(
+            authenticated,
+            "selected-fixture-model",
+            AuthenticationKind::ApiKey,
+            Some(&endpoint),
+        );
+        let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
+        let credential = authenticated.then(|| (binding.credential_identity().unwrap(), &key));
+        let config = request::Config::from_checked_binding(&binding, credential, None).unwrap();
+        let turn = request();
+        let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
+            &turn,
+            &config.model,
+            config.protocol,
+            config.provider_max_tokens,
+        )
+        .unwrap();
+        let progress = Arc::new(Mutex::new(String::new()));
+        let reply = transport::run_with_notify(
+            config,
+            body,
+            turn,
+            Arc::clone(&progress),
+            Arc::new(AtomicBool::new(false)),
+            || {},
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(reply.text, "selected-live-reply");
+        assert_eq!(&*progress.lock().unwrap(), "selected-live-reply");
     }
 }
