@@ -159,7 +159,7 @@ def probe_undiscovered_http_choices():
     def request(number, method, params):
         child.stdin.write(json.dumps(dict(
             jsonrpc="2.0", id=number, method=method, params=params
-        )) + "\\n")
+        )) + "\n")
         child.stdin.flush()
         for _ in range(20):
             line = child.stdout.readline()
