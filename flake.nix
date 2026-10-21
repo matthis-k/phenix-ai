@@ -836,6 +836,21 @@
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
         });
+      # Isolated executable provider fixture for ACP C9 product acceptance.
+      # Unlike installed registration-only builtins it deliberately publishes
+      # TWO credential-free loopback models. Never included in default Basic,
+      # user provider management, shipped client or distribution compositions.
+      c9LoopbackProvider = (basicNativePlugin
+        "phenix-plugin-provider-loopback-fixture"
+        "phenix_plugin_provider_loopback_fixture"
+        ./crates/phenix-plugin-provider-loopback-fixture).overrideAttrs (old: {
+          src = subset (publicPaths ++ [
+            ./crates/phenix-basic-contracts
+            ./crates/phenix-provider-contracts
+            ./crates/phenix-provider-protocols
+            ./crates/phenix-plugin-provider-loopback-fixture
+          ]);
+        });
       # Provider-specific real native install product: separate from generic
       # phenix-conformance so provider edits do not rebuild kernel fixtures.
       selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
@@ -1204,8 +1219,7 @@
       # native plugin and typed definitions as the kernel product test, with
       # an independent resource and exact root operations. The default Basic
       # composition remains byte-for-byte unchanged.
-      providerManagementComposition = pkgs.writeText "phenix-provider-management.json"
-        (builtins.toJSON {
+      providerManagementCompositionSpec = {
           format = "phenix.composition.v3";
           entry = {
             interface = "phenix.provider.catalog@1";
@@ -1238,7 +1252,16 @@
             resources = [ "phenix.providers.user" ];
           };
           resource = "phenix.providers.user";
-        });
+        };
+      providerManagementComposition = pkgs.writeText "phenix-provider-management.json"
+        (builtins.toJSON providerManagementCompositionSpec);
+      providerLoopbackManagementComposition = pkgs.writeText "phenix-provider-loopback-management.json"
+        (builtins.toJSON (providerManagementCompositionSpec // {
+          entry = providerManagementCompositionSpec.entry // {
+            provider = "phenix.provider.loopback-fixture";
+          };
+          artifacts = [ "${c9LoopbackProvider}" ];
+        }));
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
       basicHttpCompositionSpec = basicCompositionSpec // {
@@ -1820,6 +1843,8 @@
         test -s "$out/acp-product.json"
         python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} ${basicHttpComposition} $out
         test -s "$out/acp-provider-management.json"
+        python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} ${providerLoopbackManagementComposition} $out/c9-selected
+        test -s "$out/c9-selected/native-model-acceptance.json"
         python ${./tests/acp-native-routing-restart-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${basicHttpComposition} $out
         test -s "$out/native-routing-restart.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
