@@ -497,7 +497,9 @@ impl ProviderManagement {
             },
         )?;
         if listed.revision == 0 || listed.providers.len() > 32 {
-            return Err(invalid("provider selection catalog is invalid or too large"));
+            return Err(invalid(
+                "provider selection catalog is invalid or too large",
+            ));
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut offered = Vec::new();
@@ -527,9 +529,7 @@ impl ProviderManagement {
                     let Some(auth) = resolver.map(|source| &source.identity) else {
                         continue;
                     };
-                    if auth.provider_id() != exact.id
-                        || auth.connection_id() != connection.id
-                    {
+                    if auth.provider_id() != exact.id || auth.connection_id() != connection.id {
                         continue;
                     }
                     Some(auth.profile_id().to_owned())
@@ -593,9 +593,8 @@ impl ProviderManagement {
                         continue;
                     }
                     if binding.credential_identity().is_some()
-                        && resolver.is_none_or(|r| {
-                            binding.credential_identity() != Some(&r.identity)
-                        })
+                        && resolver
+                            .is_none_or(|r| binding.credential_identity() != Some(&r.identity))
                     {
                         continue;
                     }
@@ -604,10 +603,7 @@ impl ProviderManagement {
                     }
                     offered.push(NativeModelOffer {
                         id: native_model_option_id(&desired)?,
-                        label: format!(
-                            "{} / {} / {}",
-                            exact.label, connection.label, model.label
-                        ),
+                        label: format!("{} / {} / {}", exact.label, connection.label, model.label),
                         selected: desired,
                     });
                 }
@@ -1210,12 +1206,8 @@ impl Controller {
                 .sessions
                 .get(session)
                 .ok_or_else(|| invalid("unknown ACP session"))?;
-            let recorded = super::model_selection_state::read(
-                kernel,
-                &self.composition,
-                session,
-            )
-            .map_err(internal)?;
+            let recorded = super::model_selection_state::read(kernel, &self.composition, session)
+                .map_err(internal)?;
             let management = self
                 .management
                 .as_ref()
@@ -1250,10 +1242,10 @@ impl Controller {
             ));
             effective
         };
-        Ok(vec![
-            SessionConfigOption::select("model", "Model", chosen, options)
-                .category(SessionConfigOptionCategory::Model),
-        ])
+        Ok(vec![SessionConfigOption::select(
+            "model", "Model", chosen, options,
+        )
+        .category(SessionConfigOptionCategory::Model)])
     }
 
     fn set_config_option(
@@ -1334,7 +1326,9 @@ impl Controller {
         )
         .map_err(internal)?;
         if confirmed.as_ref().map(|(stored, _)| stored) != Some(&desired) {
-            return Err(invalid("selected model CAS receipt did not become effective"));
+            return Err(invalid(
+                "selected model CAS receipt did not become effective",
+            ));
         }
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
@@ -1885,10 +1879,13 @@ mod tests {
             ("phenix.basic.storage@1", "transact"),
             ("phenix.provider.http-model-session@1", "install"),
         ] {
-            spec.grants.push(serde_json::from_value(serde_json::json!({
-                "caller": "root", "interface": interface, "operation": operation,
-                "resources": ["phenix.session.s1"]
-            })).unwrap());
+            spec.grants.push(
+                serde_json::from_value(serde_json::json!({
+                    "caller": "root", "interface": interface, "operation": operation,
+                    "resources": ["phenix.session.s1"]
+                }))
+                .unwrap(),
+            );
         }
         assert!(can_switch_native_model(&spec));
         spec.grants.push(spec.grants[0].clone());
