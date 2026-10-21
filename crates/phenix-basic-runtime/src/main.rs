@@ -2,6 +2,7 @@
 //! only this frontend executable reads stdin and submits graph actions.
 
 mod acp_sdk;
+mod model_selection_state;
 use phenix_basic_contracts::{
     BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
