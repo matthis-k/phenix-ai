@@ -20,8 +20,9 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    AuthQuery, AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialSecret,
-    ModelPage, ModelQuery, ProviderError, ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, AuthQuery, AuthenticationStatus, CredentialIdentity,
+    CredentialImport, CredentialSecret, HttpModelBinding, ModelPage, ModelQuery, ModelSelection,
+    ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -290,6 +291,173 @@ fn bounded_transport(
 struct ProviderManagement {
     kernel: Kernel,
     selected: Selection,
+}
+
+/// Preserve the native provider's typed denial code without forwarding
+/// provider prose (which may contain identity or credential fragments).
+fn provider_rejection(problem: ProviderError) -> acp::Error {
+    acp::Error::invalid_params().data(serde_json::json!({
+        "format": "phenix.provider.error.v1",
+        "code": problem.code,
+    }))
+}
+
+// Trusted catalog reads are made through the launcher's already-admitted
+// control-plane kernel. Selector values never select a provider implementation
+// or create new native grants.
+/// Complete one provider-owned model catalog before admitting a choice.
+/// A cursor is only pagination state, never a revision or authorization token.
+#[derive(Default)]
+struct ModelPageAccumulator {
+    models: Vec<phenix_provider_contracts::ProviderModel>,
+    revision: Option<u64>,
+    cursors: std::collections::BTreeSet<String>,
+    pages: usize,
+}
+
+impl ModelPageAccumulator {
+    fn push(&mut self, page: ModelPage, profile: &Option<String>) -> acp::Result<Option<String>> {
+        if self.pages >= 64
+            || page.revision == 0
+            || self.revision.is_some_and(|prev| prev != page.revision)
+            || &page.profile_id != profile
+            || page.models.len() > 256
+            || self
+                .models
+                .len()
+                .checked_add(page.models.len())
+                .is_none_or(|count| count > 4096)
+        {
+            return Err(invalid(
+                "provider catalog page changed or exceeded its budget",
+            ));
+        }
+        self.pages += 1;
+        self.revision = Some(page.revision);
+        let next = page.next_cursor;
+        if let Some(cursor) = &next {
+            if page.models.is_empty()
+                || cursor.is_empty()
+                || cursor.len() > 1024
+                || !self.cursors.insert(cursor.clone())
+            {
+                return Err(invalid("invalid or repeated provider catalog cursor"));
+            }
+        }
+        self.models.extend(page.models);
+        Ok(next)
+    }
+
+    fn complete(self, profile: Option<String>) -> acp::Result<ModelPage> {
+        Ok(ModelPage {
+            profile_id: profile,
+            models: self.models,
+            next_cursor: None,
+            revision: self
+                .revision
+                .ok_or_else(|| invalid("missing model catalog"))?,
+        })
+    }
+}
+
+impl ProviderManagement {
+    fn read<Q: Portable, R: Portable>(
+        &self,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> acp::Result<R> {
+        let root = self
+            .kernel
+            .admit_root(Selection {
+                interface: interface.into(),
+                operation: operation.into(),
+                provider: self.selected.provider.clone(),
+            })
+            .map_err(internal)?;
+        let value = match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => value,
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                return Err(provider_rejection(problem));
+            }
+        };
+        R::from_value(value).map_err(internal)
+    }
+
+    /// Controller-only preflight. Never treat UI-discovered models or a
+    /// preflight result as an executable kernel grant. The later native
+    /// installation must recheck auth/registration, resolve the exact secret
+    /// and use the same session kernel.
+    #[allow(dead_code)]
+    fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
+        const SCOPE: &str = "user";
+
+        let listed: ProviderPage = self.read(
+            "phenix.provider.catalog@1",
+            "list",
+            &ProviderQuery {
+                scope: SCOPE.into(),
+            },
+        )?;
+        if listed.revision == 0 {
+            return Err(invalid("provider list has no current revision"));
+        }
+        let mut candidates = listed
+            .providers
+            .iter()
+            .filter(|p| p.id == desired.provider_id);
+        let provided = candidates
+            .next()
+            .ok_or_else(|| invalid("unknown selected provider"))?;
+        if candidates.next().is_some() {
+            return Err(invalid("ambiguous selected provider"));
+        }
+        let described: ProviderDescriptor = self.read(
+            "phenix.provider.catalog@1",
+            "describe",
+            &ProviderDetailsQuery {
+                scope: SCOPE.into(),
+                provider_id: desired.provider_id.clone(),
+            },
+        )?;
+        if provided != &described {
+            return Err(invalid("provider registration changed during selection"));
+        }
+        let auth: AuthenticationStatus = self.read(
+            "phenix.provider.auth@1",
+            "status",
+            &AuthQuery {
+                scope: SCOPE.into(),
+                provider_id: desired.provider_id.clone(),
+                connection_id: desired.connection_id.clone(),
+            },
+        )?;
+
+        let mut collected = ModelPageAccumulator::default();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page: ModelPage = self.read(
+                "phenix.provider.catalog@1",
+                "models",
+                &ModelQuery {
+                    scope: SCOPE.into(),
+                    provider_id: desired.provider_id.clone(),
+                    connection_id: desired.connection_id.clone(),
+                    profile_id: desired.profile_id.clone(),
+                    cursor: cursor.clone(),
+                    limit: 256,
+                },
+            )?;
+            cursor = collected.push(page, &desired.profile_id)?;
+            if cursor.is_none() {
+                let complete = collected.complete(desired.profile_id.clone())?;
+                let checked = validate_model_selection(&described, &auth, &complete, desired, true)
+                    .map_err(provider_rejection)?;
+                return bind_http_model(&described, checked).map_err(provider_rejection);
+            }
+        }
+    }
 }
 
 struct CredentialManagement {
@@ -599,23 +767,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let selection = Selection {
-            interface: interface.into(),
-            operation: operation.into(),
-            provider: management.selected.provider.clone(),
-        };
-        let root = management.kernel.admit_root(selection).map_err(internal)?;
-        let value = match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => value,
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                return Err(acp::Error::invalid_params().data(serde_json::json!({
-                    "format": "phenix.provider.error.v1",
-                    "code": problem.code,
-                })));
-            }
-        };
-        let result = R::from_value(value).map_err(internal)?;
+        let result: R = management.read(interface, operation, query)?;
         serde_json::to_value(result).map_err(internal)
     }
 
@@ -1270,6 +1422,67 @@ mod tests {
         spec.slots
             .retain(|slot| slot.caller != "phenix.basic.agent");
         assert_eq!(installed_model_provider(&spec), None);
+    }
+
+    #[test]
+    fn provider_model_pages_bound_revision_cursor_profile_and_size() {
+        use phenix_provider_contracts::{ModelOrigin, ProviderModel};
+
+        let fixture = |revision, profile: Option<&str>, next: Option<&str>| ModelPage {
+            profile_id: profile.map(str::to_owned),
+            models: vec![ProviderModel {
+                id: "selected".into(),
+                label: "Selected".into(),
+                connection_id: "local".into(),
+                protocol_id: "openai-chat".into(),
+                endpoint_id: "chat".into(),
+                capabilities: vec![],
+                origin: ModelOrigin::Declared,
+                selectable: true,
+            }],
+            next_cursor: next.map(str::to_owned),
+            revision,
+        };
+        let mut acc = ModelPageAccumulator::default();
+        assert_eq!(
+            acc.push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into()))
+                .unwrap(),
+            Some("cursor-1".into())
+        );
+        assert!(acc
+            .push(fixture(7, Some("a"), Some("cursor-1")), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(8, Some("a"), None), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(7, Some("other"), None), &Some("a".into()))
+            .is_err());
+        assert!(acc
+            .push(fixture(7, Some("a"), Some("")), &Some("a".into()))
+            .is_err());
+
+        let mut clean = ModelPageAccumulator::default();
+        assert_eq!(
+            clean
+                .push(fixture(7, Some("a"), None), &Some("a".into()))
+                .unwrap(),
+            None
+        );
+        let page = clean.complete(Some("a".into())).unwrap();
+        assert_eq!(page.models.len(), 1);
+        assert_eq!(page.revision, 7);
+        assert_eq!(page.next_cursor, None);
+
+        let mut huge = ModelPageAccumulator::default();
+        let mut oversized = fixture(7, None, None);
+        oversized.models = vec![oversized.models[0].clone(); 257];
+        assert!(huge.push(oversized, &None).is_err());
+        let mut empty_continuation = fixture(7, None, Some("cursor"));
+        empty_continuation.models.clear();
+        assert!(huge.push(empty_continuation, &None).is_err());
+        huge.pages = 64;
+        assert!(huge.push(fixture(7, None, None), &None).is_err());
     }
 
     #[test]
