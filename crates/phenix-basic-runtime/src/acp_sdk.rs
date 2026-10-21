@@ -871,7 +871,9 @@ fn can_switch_native_model(spec: &Composition) -> bool {
     let Some(resource) = spec.resource.as_deref() else {
         return false;
     };
-    if installed_model_provider(spec).is_none() {
+    if installed_model_provider(spec).is_none()
+        || !spec.authority.resources.contains(resource)
+    {
         return false;
     }
     [
@@ -881,6 +883,13 @@ fn can_switch_native_model(spec: &Composition) -> bool {
     ]
     .into_iter()
     .all(|(interface, operation)| {
+        if !spec
+            .authority
+            .operations
+            .contains(&format!("{interface}/{operation}"))
+        {
+            return false;
+        }
         spec.grants
             .iter()
             .filter(|grant| {
@@ -1972,7 +1981,19 @@ mod tests {
                 .unwrap(),
             );
         }
+        assert!(!can_switch_native_model(&spec));
+        spec.authority.resources.insert("phenix.session.s1".into());
+        for operation in [
+            "phenix.basic.storage@1/read",
+            "phenix.basic.storage@1/transact",
+            "phenix.provider.http-model-session@1/install",
+        ] {
+            spec.authority.operations.insert(operation.into());
+        }
         assert!(can_switch_native_model(&spec));
+        spec.authority.operations.remove("phenix.basic.storage@1/transact");
+        assert!(!can_switch_native_model(&spec));
+        spec.authority.operations.insert("phenix.basic.storage@1/transact".into());
         spec.grants.push(spec.grants[0].clone());
         assert!(!can_switch_native_model(&spec));
     }
