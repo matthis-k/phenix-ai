@@ -80,6 +80,19 @@ impl HttpModelBinding {
         self.choice.credential_identity()
     }
 
+    /// Selected, validated authentication method category. The method's
+    /// presence is not a credential-resolution grant, and a generic HTTP
+    /// adapter must reject methods it does not explicitly implement.
+    pub fn authentication_kind(&self) -> Option<&AuthenticationKind> {
+        let profile = self.choice.credential_profile.as_ref()?;
+        self.choice
+            .connection
+            .auth_methods
+            .iter()
+            .find(|method| method.id == profile.method_id)
+            .map(|method| &method.kind)
+    }
+
     pub fn selection(&self) -> &ModelSelection {
         self.choice.selection()
     }

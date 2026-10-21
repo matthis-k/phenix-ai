@@ -91,6 +91,18 @@ impl Config {
                 "invalid HTTP provider max tokens",
             ));
         }
+        // A stored secret is not proof that an arbitrary provider-specific
+        // OAuth or plugin flow can use this adapter's API-key headers.
+        match (binding.credential_identity(), binding.authentication_kind()) {
+            (None, None)
+            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::ApiKey)) => {}
+            _ => {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "selected HTTP authentication method is unsupported",
+                ));
+            }
+        }
         match (binding.credential_identity(), credential.as_ref()) {
             (None, None) => {}
             (Some(expected), Some((actual, _))) if expected == *actual => {}
