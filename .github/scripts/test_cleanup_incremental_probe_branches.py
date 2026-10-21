@@ -66,12 +66,17 @@ class CleanupTests(unittest.TestCase):
         deletes = []
 
         def request(method, url):
-            self.assertTrue(url.startswith(REF_PREFIX))
-            name = unquote(url[len(REF_PREFIX):])
-            self.assertIn(name, cleanup.EXPECTED)
             if method == "GET":
+                self.assertTrue(url.startswith(REF_PREFIX))
+                name = unquote(url[len(REF_PREFIX):])
+                self.assertIn(name, cleanup.EXPECTED)
                 return (200, {"object": {"sha": refs[name]}}) if name in refs else (404, None)
             self.assertEqual(method, "DELETE")
+            # GitHub REST uses the plural refs route only for mutation.
+            delete_prefix = "/git/refs/heads/"
+            self.assertTrue(url.startswith(delete_prefix), url)
+            name = unquote(url[len(delete_prefix):])
+            self.assertIn(name, cleanup.EXPECTED)
             deletes.append(name)
             del refs[name]
             return 204, None
