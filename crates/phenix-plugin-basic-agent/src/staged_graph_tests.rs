@@ -1,19 +1,13 @@
 //! P2-3aj RED: a *second* state-triggered Basic node admits Model only
 //! after an independently contributed preparer has committed the handoff.
 use super::{verify_staged_model_candidate, GRAPH};
-use phenix_basic_contracts::{Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Limits, Message, ModelRequest};
 
 fn source() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "run-1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "answer".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("answer")],
         tools: vec![],
         skills: vec![],
         context: vec![],
@@ -58,7 +52,7 @@ fn candidate_admission_rejects_every_modification_without_durable_proof() {
     modified.run = "run-other".into();
     assert!(verify_staged_model_candidate(&original, &modified).is_err());
     let mut modified = original.clone();
-    modified.history[0].text = "forged".into();
+    *modified.history[0].text_mut() = "forged".into();
     assert!(verify_staged_model_candidate(&original, &modified).is_err());
     let mut modified = original.clone();
     modified.limits.model_tokens = Some(10_000);

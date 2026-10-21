@@ -1,7 +1,7 @@
 //! RED P2-3e: model-token selection counts the *assembled request* through
 //! its selected Model adapter, never raw event bytes or guessed tokens.
 use phenix_advanced_contracts::CompactionCheckpoint;
-use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest, Role};
+use phenix_basic_contracts::{Event, EventKind, Limits, Message, ModelRequest};
 use phenix_p2_compaction_replay::{
     select_model_view, span_for_events, ModelSelectionError, ReplayProblem, ViewProblem,
 };
@@ -55,13 +55,7 @@ fn request(summary: &str) -> ModelRequest {
         run: "current-run".into(),
         // The request builder retains authoritative session messages. Journal
         // Event is intentionally not reconstructed into lossy model history.
-        history: vec![Message {
-            role: Role::User,
-            text: "authoritative session input".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("authoritative session input")],
         tools: vec![],
         skills: vec![],
         context: vec![phenix_basic_contracts::ContextItem {
@@ -106,7 +100,10 @@ fn newest_fitting_checkpoint_is_selected_with_full_request_token_measurement() {
         |full_request| {
             // The selected adapter receives the complete assembled request,
             // not a standalone summary or its journal event bytes.
-            assert_eq!(full_request.history[0].text, "authoritative session input");
+            assert_eq!(
+                full_request.history[0].text(),
+                "authoritative session input"
+            );
             assert_eq!(full_request.context.len(), 1);
             let tokens = if full_request.context[0].text.starts_with("longer") {
                 120

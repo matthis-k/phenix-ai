@@ -2,7 +2,7 @@
 //! reopen it with new native plugin instances and explicitly reconcile tools.
 use phenix_basic_contracts::{
     BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery, Message,
-    ReconcileTool, Role, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
+    ReconcileTool, RunStatus, Scope, SessionSnapshot, StorageEdit, StorageTransaction,
     StoredRecord, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Blob, Portable};
@@ -142,13 +142,7 @@ fn main() {
         running.run = "r1".into();
         running.status = RunStatus::Running;
         running.checkpoint = 7;
-        running.history.push(Message {
-            role: Role::User,
-            text: "prompt".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        });
+        running.history.push(Message::user("prompt"));
         running.pending = ["c1", "c2"]
             .into_iter()
             .map(|id| ToolCall {
@@ -419,7 +413,7 @@ fn main() {
         .unwrap();
         assert_eq!(interrupted.revision, 2);
         assert_eq!(interrupted.status, RunStatus::Indeterminate);
-        assert_eq!(restored.history[0].text, "prompt");
+        assert_eq!(restored.history[0].text(), "prompt");
         assert_eq!(restored.pending.len(), 2);
         let a: EventPage = call(
             &kernel,
@@ -513,7 +507,7 @@ fn main() {
         assert_eq!(two.status, RunStatus::Running);
         assert!(two.pending.is_empty());
         assert_eq!(two.history.len(), 3);
-        assert_eq!(two.history[2].call_id, "c2");
+        assert_eq!(two.history[2].call_id(), "c2");
         fs::write(
             output.join("sqlite-restart.json"),
             serde_json::to_vec_pretty(&serde_json::json!({

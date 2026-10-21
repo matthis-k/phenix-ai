@@ -1,5 +1,5 @@
 use crate::invalid;
-use phenix_basic_contracts::{error, BasicError, ErrorCode, ModelRequest, Role};
+use phenix_basic_contracts::{error, BasicError, ErrorCode, Message, ModelRequest, ToolOutcome};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
@@ -80,8 +80,7 @@ enum PreparedMessage {
     },
     Tool {
         call_id: String,
-        text: String,
-        error: Option<String>,
+        outcome: ToolOutcome,
     },
 }
 
@@ -115,24 +114,23 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
     let mut has_user = false;
     let mut messages = vec![];
     for message in &request.history {
-        match message.role {
-            Role::User => {
-                if !pending.is_empty()
-                    || !message.calls.is_empty()
-                    || !message.call_id.is_empty()
-                    || message.error.is_some()
-                {
+        match message {
+            Message::User { text } => {
+                if !pending.is_empty() {
                     return Err(bad("invalid user history"));
                 }
                 has_user = true;
-                messages.push(PreparedMessage::User(message.text.clone()));
+                messages.push(PreparedMessage::User(text.clone()));
             }
-            Role::Assistant => {
-                if !pending.is_empty() || !message.call_id.is_empty() || message.error.is_some() {
+            Message::Assistant {
+                text,
+                calls: tool_calls,
+            } => {
+                if !pending.is_empty() {
                     return Err(bad("invalid assistant history"));
                 }
                 let mut calls = vec![];
-                for call in &message.calls {
+                for call in tool_calls {
                     if call.id.is_empty()
                         || !function_name(&call.tool)
                         || !pending.insert(call.id.clone())
@@ -148,18 +146,17 @@ fn prepare(request: &ModelRequest) -> Result<(Vec<PreparedMessage>, Vec<Tool>), 
                     });
                 }
                 messages.push(PreparedMessage::Assistant {
-                    text: message.text.clone(),
+                    text: text.clone(),
                     calls,
                 });
             }
-            Role::Tool => {
-                if !message.calls.is_empty() || !pending.remove(&message.call_id) {
+            Message::Tool { call_id, outcome } => {
+                if !pending.remove(call_id.as_str()) {
                     return Err(bad("unmatched tool history"));
                 }
                 messages.push(PreparedMessage::Tool {
-                    call_id: message.call_id.clone(),
-                    text: message.text.clone(),
-                    error: message.error.clone(),
+                    call_id: call_id.clone(),
+                    outcome: outcome.clone(),
                 });
             }
         }
@@ -184,8 +181,15 @@ fn tool_arguments(arguments: &Value) -> String {
     json!({"value": arguments}).to_string()
 }
 
-fn tool_error(text: &str, error: &str) -> String {
-    json!({"error": error, "output": text}).to_string()
+fn tool_error(output: &str, reason: &str) -> String {
+    json!({"error": reason, "output": output}).to_string()
+}
+
+fn tool_output(outcome: &ToolOutcome) -> String {
+    match outcome {
+        ToolOutcome::Succeeded { text } => text.clone(),
+        ToolOutcome::Failed { output, reason } => tool_error(output, reason),
+    }
 }
 
 fn chat_body(
@@ -215,15 +219,10 @@ fn chat_body(
                 }
                 msgs.push(value);
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let content = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                msgs.push(json!({"role":"tool","tool_call_id":call_id,"content":content}));
+            PreparedMessage::Tool { call_id, outcome } => {
+                msgs.push(
+                    json!({"role":"tool","tool_call_id":call_id,"content":tool_output(outcome)}),
+                );
             }
         }
     }
@@ -264,16 +263,8 @@ fn responses_body(
                         "name":call.tool, "arguments":tool_arguments(&call.arguments)}));
                 }
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let output = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                input
-                    .push(json!({"type":"function_call_output","call_id":call_id,"output":output}));
+            PreparedMessage::Tool { call_id, outcome } => {
+                input.push(json!({"type":"function_call_output","call_id":call_id,"output":tool_output(outcome)}));
             }
         }
     }
@@ -322,17 +313,9 @@ fn anthropic_body(
                 }
                 msgs.push(json!({"role":"assistant", "content":content}));
             }
-            PreparedMessage::Tool {
-                call_id,
-                text,
-                error,
-            } => {
-                let content = error
-                    .as_ref()
-                    .map_or_else(|| text.clone(), |e| tool_error(text, e));
-                let mut block =
-                    json!({"type":"tool_result","tool_use_id":call_id,"content":content});
-                if error.is_some() {
+            PreparedMessage::Tool { call_id, outcome } => {
+                let mut block = json!({"type":"tool_result","tool_use_id":call_id,"content":tool_output(outcome)});
+                if matches!(outcome, ToolOutcome::Failed { .. }) {
                     block["is_error"] = json!(true);
                 }
                 // All results for the preceding assistant tool-use batch must
@@ -371,4 +354,111 @@ fn anthropic_body(
     }
     body["max_tokens"] = json!(max_tokens);
     body
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phenix_basic_contracts::{Limits, Message, ToolCall, ToolInfo};
+
+    fn tool_history(outcome: ToolOutcome) -> ModelRequest {
+        ModelRequest {
+            session: "s1".into(),
+            run: "r1".into(),
+            history: vec![
+                Message::user("hello"),
+                Message::assistant(
+                    "",
+                    vec![ToolCall {
+                        id: "call-1".into(),
+                        tool: "uppercase".into(),
+                        arguments: r#""hello""#.into(),
+                    }],
+                ),
+                Message::tool("call-1", outcome),
+            ],
+            tools: vec![ToolInfo {
+                id: "uppercase".into(),
+                description: "Uppercase".into(),
+                arguments_schema: r#"{"type":"string"}"#.into(),
+                idempotent: true,
+            }],
+            skills: vec![],
+            context: vec![],
+            limits: Limits {
+                model_tokens: Some(64),
+                ..Limits::default()
+            },
+        }
+    }
+
+    #[test]
+    fn typed_tool_outcomes_reach_each_wire_codec() {
+        for protocol in [
+            crate::Protocol::OpenaiChat,
+            crate::Protocol::OpenaiResponses,
+            crate::Protocol::AnthropicMessages,
+        ] {
+            for outcome in [
+                ToolOutcome::Succeeded {
+                    text: "HELLO".into(),
+                },
+                ToolOutcome::Failed {
+                    output: "partial".into(),
+                    reason: "denied".into(),
+                },
+            ] {
+                let failed = matches!(&outcome, ToolOutcome::Failed { .. });
+                let request = tool_history(outcome);
+                let encoded = encode_protocol(&request, "test-model", protocol).unwrap();
+                let body: Value = serde_json::from_slice(&encoded).unwrap();
+                let output = match protocol {
+                    crate::Protocol::OpenaiChat => &body["messages"][2]["content"],
+                    crate::Protocol::OpenaiResponses => &body["input"][3]["output"],
+                    crate::Protocol::AnthropicMessages => {
+                        &body["messages"][2]["content"][0]["content"]
+                    }
+                };
+                if failed {
+                    assert_eq!(
+                        serde_json::from_str::<Value>(output.as_str().unwrap()).unwrap(),
+                        json!({"error":"denied","output":"partial"})
+                    );
+                } else {
+                    assert_eq!(output.as_str(), Some("HELLO"));
+                }
+                if protocol == crate::Protocol::AnthropicMessages {
+                    assert_eq!(
+                        body["messages"][2]["content"][0]["is_error"].as_bool(),
+                        failed.then_some(true)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_results_without_corresponding_calls_are_rejected() {
+        let mut request = tool_history(ToolOutcome::Succeeded {
+            text: "HELLO".into(),
+        });
+        request.history[2] = Message::tool(
+            "unknown",
+            ToolOutcome::Succeeded {
+                text: "HELLO".into(),
+            },
+        );
+        for protocol in [
+            crate::Protocol::OpenaiChat,
+            crate::Protocol::OpenaiResponses,
+            crate::Protocol::AnthropicMessages,
+        ] {
+            assert_eq!(
+                encode_protocol(&request, "test-model", protocol)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidInput
+            );
+        }
+    }
 }

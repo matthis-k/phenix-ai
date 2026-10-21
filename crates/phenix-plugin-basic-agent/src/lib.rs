@@ -119,8 +119,8 @@ mod plugin {
         error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
         CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
         GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
-        ObserverCheckpoint, ObserverRequest, PromptSubmitted, Role, RunResult, RunStatus, Scope,
-        Session, SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo,
+        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
+        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
         ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
@@ -311,13 +311,7 @@ mod plugin {
         session.run = run.clone();
         session.status = RunStatus::Running;
         session.checkpoint = next;
-        session.history.push(Message {
-            role: Role::User,
-            text: input.text.clone(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        });
+        session.history.push(Message::user(input.text.clone()));
         session = checkpoint(host, session)?;
         event(
             host,
@@ -525,13 +519,10 @@ mod plugin {
         }
 
         if response.calls.is_empty() {
-            running.session.history.push(Message {
-                role: Role::Assistant,
-                text: response.text.clone(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            });
+            running
+                .session
+                .history
+                .push(Message::assistant(response.text.clone(), vec![]));
             running.session.status = RunStatus::Completed;
             checkpoint(host, running.session.clone())?;
             event(
@@ -576,13 +567,10 @@ mod plugin {
                 return Err(CallError::Domain(problem));
             }
         }
-        running.session.history.push(Message {
-            role: Role::Assistant,
-            text: response.text,
-            calls: response.calls.clone(),
-            call_id: String::new(),
-            error: None,
-        });
+        running
+            .session
+            .history
+            .push(Message::assistant(response.text, response.calls.clone()));
         running.session.pending = response.calls.clone();
         running.session = checkpoint(host, running.session.clone())?;
 
@@ -603,35 +591,34 @@ mod plugin {
                     call: call.clone(),
                 },
             );
-            let (text, failure) = match outcome {
-                Ok(result) => (result.text, None),
-                Err(CallError::Domain(problem)) => (String::new(), Some(problem.message)),
+            let tool_outcome = match outcome {
+                Ok(result) => ToolOutcome::Succeeded { text: result.text },
+                Err(CallError::Domain(problem)) => ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: problem.message,
+                },
                 Err(other) => return Err(other),
             };
-            running.session.history.push(Message {
-                role: Role::Tool,
-                text: text.clone(),
-                calls: vec![],
-                call_id: call.id.clone(),
-                error: failure.clone(),
-            });
+            let (completion, event_text) = match &tool_outcome {
+                ToolOutcome::Succeeded { text } => (ToolCompletion::Succeeded, text.clone()),
+                ToolOutcome::Failed { reason, .. } => (ToolCompletion::Failed, reason.clone()),
+            };
+            running
+                .session
+                .history
+                .push(Message::tool(call.id.clone(), tool_outcome));
             running
                 .session
                 .pending
                 .retain(|pending| pending.id != call.id);
             running.session = checkpoint(host, running.session.clone())?;
-            let completion = if failure.is_some() {
-                ToolCompletion::Failed
-            } else {
-                ToolCompletion::Succeeded
-            };
             let data = phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
             event_with_data(
                 host,
                 &running.input.session,
                 &running.run,
                 EventKind::ToolFinished,
-                failure.unwrap_or(text),
+                event_text,
                 &call.id,
                 data,
             )?;

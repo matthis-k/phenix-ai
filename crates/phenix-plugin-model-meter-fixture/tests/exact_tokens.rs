@@ -3,20 +3,14 @@
 use phenix_advanced_contracts::{
     model_request_sha256, validate_model_token_measurement, ModelTokenProblem,
 };
-use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Role, Skill, ToolInfo};
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 use phenix_plugin_model_meter_fixture::{complete, measure, MODEL_ID};
 
 fn request() -> ModelRequest {
     ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
-        history: vec![Message {
-            role: Role::User,
-            text: "hello".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        }],
+        history: vec![Message::user("hello")],
         tools: vec![ToolInfo {
             id: "read".into(),
             description: "Read file".into(),
@@ -71,15 +65,8 @@ fn exact_fixture_counts_tools_skills_context_and_previous_turns() {
     changed.context[0].text.push_str("more");
     assert!(measure(&changed).unwrap().input_tokens > baseline.input_tokens);
     changed = base;
-    changed.history.insert(
-        0,
-        Message {
-            role: Role::Assistant,
-            text: "extra historical message".into(),
-            calls: vec![],
-            call_id: String::new(),
-            error: None,
-        },
-    );
+    changed
+        .history
+        .insert(0, Message::assistant("extra historical message", vec![]));
     assert!(measure(&changed).unwrap().input_tokens > baseline.input_tokens);
 }
