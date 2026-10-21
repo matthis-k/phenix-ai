@@ -836,6 +836,16 @@
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
         });
+      # Provider-specific real native install product: separate from generic
+      # phenix-conformance so provider edits do not rebuild kernel fixtures.
+      selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
+        ./crates/phenix-artifact
+        ./crates/phenix-kernel
+        ./crates/phenix-basic-contracts
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-http-selected-product
+      ]));
       httpModelCheck = pkgs.runCommand "phenix-b4-http" {
         nativeBuildInputs = [ pkgs.python3 pkgs.openssl ];
       } ''
@@ -845,6 +855,8 @@
         test -s "$out/http-model.json"
         PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/responses
         PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/anthropic
+        python ${./tests/native-http-selected-product.py} ${selectedHttpModelRunner}/bin/phenix-http-selected-product ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/selected-native
+        test -s "$out/selected-native/evidence.json"
       '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
