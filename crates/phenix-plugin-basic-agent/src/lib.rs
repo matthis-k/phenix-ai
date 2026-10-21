@@ -205,15 +205,14 @@ mod plugin {
         let mut cursor: Option<CatalogCursor> = None;
         let mut visited = BTreeSet::new();
         loop {
-            let page = host.invoke::<ToolCatalog::list>(
-                "Catalog",
-                &ToolQuery {
-                    session: session.into(),
-                    query: String::new(),
-                    cursor,
-                    limit: 64,
-                },
-            )?;
+            let query = ToolQuery {
+                session: session.into(),
+                query: String::new(),
+                cursor,
+                limit: 64,
+            };
+            let page = host.invoke::<ToolCatalog::list>("Catalog", &query)?;
+            page.validate_for(&query).map_err(CallError::Domain)?;
             tools.extend(page.tools);
             cursor = page.next;
             let Some(next) = cursor.as_ref() else {
