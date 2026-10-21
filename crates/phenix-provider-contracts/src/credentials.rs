@@ -354,6 +354,33 @@ mod tests {
     }
 
     #[test]
+    fn resolution_scope_is_one_exact_operation_and_credential_identity() {
+        use phenix_sdk::{Operation, ScopedRequest};
+        let work = identity("openai", "api", "work");
+        let personal = identity("openai", "api", "personal");
+        let scope: ScopedRequest = work.resolve_scope().unwrap();
+        let expected_resource = work.resource().unwrap();
+        assert_eq!(scope.resource.as_deref(), Some(expected_resource.as_str()));
+        assert_eq!(
+            scope.authority.operations,
+            [<ProviderCredentials::resolve as Operation>::KEY.into()].into()
+        );
+        assert_eq!(
+            scope.authority.resources,
+            [expected_resource.clone()].into()
+        );
+        assert!(!scope.authority.resources.contains(&personal.resource().unwrap()));
+        assert!(!scope.authority.operations.contains(
+            <ProviderCredentials::import as Operation>::KEY
+        ));
+        assert!(!scope.authority.operations.contains(
+            <ProviderCredentials::revoke as Operation>::KEY
+        ));
+        // Constructing a scope never grants it; the running kernel still
+        // requires matching trusted composition grants and caller authority.
+    }
+
+    #[test]
     fn submitted_and_resolved_secrets_roundtrip_without_debug_leakage() {
         let request = CredentialImport {
             identity: identity("openai", "api", "personal"),
