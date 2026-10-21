@@ -80,6 +80,23 @@ impl HttpModelBinding {
         self.choice.credential_identity()
     }
 
+    /// Prepare the exact, resolve-only native credential import scope for a
+    /// checked selected account. Reject a foreign or credential-free choice
+    /// *before* invoking a credential provider. The returned scope does not
+    /// create authority: the trusted caller and kernel must already grant it.
+    pub fn resolution_scope_for(
+        &self,
+        selected: &CredentialIdentity,
+    ) -> Result<phenix_sdk::ScopedRequest, ProviderError> {
+        match self.credential_identity() {
+            Some(expected) if expected == selected => selected.resolve_scope(),
+            _ => Err(selection_error(
+                ProviderErrorCode::Denied,
+                "credential identity is not selected for this HTTP model",
+            )),
+        }
+    }
+
     /// Selected, validated authentication method category. The method's
     /// presence is not a credential-resolution grant, and a generic HTTP
     /// adapter must reject methods it does not explicitly implement.
