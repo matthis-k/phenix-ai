@@ -1201,7 +1201,7 @@ impl Controller {
     fn model_options(&self, session: &str) -> acp::Result<Vec<SessionConfigOption>> {
         let effective = self.current_model_id(session)?;
         let mut options = Vec::new();
-        let chosen = if can_switch_native_model(&self.composition) {
+        let chosen = if can_switch_native_model(&self.composition) && self.management.is_some() {
             let kernel = self
                 .sessions
                 .get(session)
@@ -1265,7 +1265,7 @@ impl Controller {
             .sessions
             .get(&session)
             .ok_or_else(|| invalid("unknown ACP session"))?;
-        let previous = if can_switch_native_model(&self.composition) {
+        let previous = if can_switch_native_model(&self.composition) && self.management.is_some() {
             super::model_selection_state::read(kernel, &self.composition, &session)
                 .map_err(internal)?
         } else {
@@ -1280,7 +1280,7 @@ impl Controller {
                 self.model_options(&session)?,
             ));
         }
-        if !can_switch_native_model(&self.composition) {
+        if !can_switch_native_model(&self.composition) || self.management.is_none() {
             return Err(invalid("unavailable or unauthorized model"));
         }
 
