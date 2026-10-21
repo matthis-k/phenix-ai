@@ -935,6 +935,30 @@
         test "$after_status" -eq 72
         observer_fixture resume
         test -s "$out/observer-restart.json"
+
+        # Independent processes with independently loaded native plugins
+        # contend for the same two-record selected-model/witness CAS.
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/native-cas.db"
+        PHENIX_CAS_WORKER=alpha ${conformanceBinary}/bin/phenix-b2-sqlite native-cas-once ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out &
+        first=$!
+        PHENIX_CAS_WORKER=beta ${conformanceBinary}/bin/phenix-b2-sqlite native-cas-once ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out &
+        second=$!
+        for i in $(seq 1 300); do
+          if test -f "$out/alpha.ready" && test -f "$out/beta.ready"; then break; fi
+          sleep 0.05
+        done
+        test -f "$out/alpha.ready"
+        test -f "$out/beta.ready"
+        touch "$out/start-cas"
+        wait "$first"
+        wait "$second"
+        test "$(grep -lx committed "$out/alpha.result" "$out/beta.result" | wc -l)" -eq 1
+        test "$(grep -lx conflict "$out/alpha.result" "$out/beta.result" | wc -l)" -eq 1
+        test "$(${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH"           "SELECT COUNT(*) FROM basic_records WHERE session='s1' AND name IN ('phenix.provider.selected-model.v1','phenix.provider.native-routing-witness.v1') AND revision=1;")" -eq 2
+        test "$(${pkgs.lib.getBin pkgs.sqlite}/bin/sqlite3 "$PHENIX_BASIC_SQLITE_PATH"           "SELECT COUNT(DISTINCT hex(data)) FROM basic_records WHERE session='s1' AND name IN ('phenix.provider.selected-model.v1','phenix.provider.native-routing-witness.v1');")" -eq 1
+        cat > "$out/native-cas-concurrent.json" <<'JSON'
+        {"format":"phenix.storage.native-cas.v1","processes":2,"committed":1,"conflicts":1,"atomic_pair":true}
+        JSON
       '';
       basicMemory = basicNativePlugin
         "phenix-plugin-basic-memory"
