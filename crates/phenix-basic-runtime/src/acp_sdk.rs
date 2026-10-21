@@ -293,6 +293,15 @@ struct ProviderManagement {
     selected: Selection,
 }
 
+/// Preserve the native provider's typed denial code without forwarding
+/// provider prose (which may contain identity or credential fragments).
+fn provider_rejection(problem: ProviderError) -> acp::Error {
+    acp::Error::invalid_params().data(serde_json::json!({
+        "format": "phenix.provider.error.v1",
+        "code": problem.code,
+    }))
+}
+
 // Trusted catalog reads are made through the launcher's already-admitted
 // control-plane kernel. Selector values never select a provider implementation
 // or create new native grants.
@@ -370,10 +379,7 @@ impl ProviderManagement {
             Outcome::Success(value) => value,
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
-                return Err(acp::Error::invalid_params().data(serde_json::json!({
-                    "format": "phenix.provider.error.v1",
-                    "code": problem.code,
-                })));
+                return Err(provider_rejection(problem));
             }
         };
         R::from_value(value).map_err(internal)
@@ -447,8 +453,8 @@ impl ProviderManagement {
             if cursor.is_none() {
                 let complete = collected.complete(desired.profile_id.clone())?;
                 let checked = validate_model_selection(&described, &auth, &complete, desired, true)
-                    .map_err(internal)?;
-                return bind_http_model(&described, checked).map_err(internal);
+                    .map_err(provider_rejection)?;
+                return bind_http_model(&described, checked).map_err(provider_rejection);
             }
         }
     }
