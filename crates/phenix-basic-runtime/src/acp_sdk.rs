@@ -1131,7 +1131,7 @@ impl Controller {
         let result = root.invoke(&payload);
         scrub_portable_secret_bytes(&mut payload);
         match result.map_err(internal)? {
-            Outcome::Success(_) => Ok(()),
+            Outcome::Success(value) => <() as Portable>::from_value(value).map_err(internal),
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
                 Err(provider_rejection(problem))
