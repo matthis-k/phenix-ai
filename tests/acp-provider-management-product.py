@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-runtime, basic, management, destination = sys.argv[1:]
+runtime, basic, management, http_basic, destination = sys.argv[1:]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 
@@ -143,6 +143,65 @@ def probe(managed: bool):
     return dict(providers=sorted(providers), revision=page["revision"])
 
 
+def probe_undiscovered_http_choices():
+    """An opt-in HTTP composition must not invent a selectable provider model.
+
+    Registration is not authentication or discovery. The only valid model
+    selection is the already-installed static HTTP binding until the plugin
+    contributes executable, authenticated choices.
+    """
+    child = subprocess.Popen(
+        [runtime, "acp", http_basic, "--provider-management", management],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, env=os.environ.copy(),
+    )
+
+    def request(number, method, params):
+        child.stdin.write(json.dumps(dict(
+            jsonrpc="2.0", id=number, method=method, params=params
+        )) + "\n")
+        child.stdin.flush()
+        for _ in range(20):
+            line = child.stdout.readline()
+            assert line, (method, child.poll(), child.stderr.read())
+            frame = json.loads(line)
+            if frame.get("method") == "session/update":
+                continue
+            assert frame.get("id") == number, frame
+            return frame
+        raise AssertionError("unexpected ACP notification loop")
+
+    initialized = request(1, "initialize", dict(
+        protocolVersion=1, clientCapabilities={}
+    ))
+    assert initialized["result"]["protocolVersion"] == 1
+    created = request(2, "session/new", dict(cwd="/tmp", mcpServers=[]))
+    assert "result" in created, created
+    session = created["result"]["sessionId"]
+    options = created["result"]["configOptions"]
+    assert len(options) == 1 and options[0]["id"] == "model", options
+    assert options[0]["currentValue"] == "phenix.model.http", options
+    assert options[0]["options"] == [{
+        "name": "phenix.model.http", "value": "phenix.model.http"
+    }], options
+    repeat = request(3, "session/set_config_option", {
+        "sessionId": session, "configId": "model", "value": "phenix.model.http"
+    })
+    assert repeat["result"]["configOptions"] == options, repeat
+    forged = request(4, "session/set_config_option", {
+        "sessionId": session, "configId": "model",
+        "value": 'phenix.native-model@1:{"provider_id":"forged"}'
+    })
+    assert forged["error"]["code"] == -32602, forged
+    child.stdin.close()
+    result = child.wait(timeout=20)
+    stderr = child.stderr.read()
+    child.stdout.close()
+    child.stderr.close()
+    assert result == 0, (result, stderr[:500])
+    return True
+
+
 # The installed ACP management process cannot be pointed at a different
 # contract/operation by an untrusted launcher option. The controller admits
 # only this one read-only typed provider catalog entry.
@@ -159,12 +218,15 @@ assert "must select provider catalog list" in denied.stderr, denied.stderr
 
 probe(False)
 report = probe(True)
+undiscovered_native_choices_denied = probe_undiscovered_http_choices()
 (output / "acp-provider-management.json").write_text(json.dumps(dict(
     format="phenix.acp.provider-management.product.v1",
     read_only=True, managed=True, unmodified_basic_denied=True,
     scope_denied=True, unknown_mutation_denied=True,
     simultaneous_basic_session=True, auth_status=True,
     missing_discovery_not_selectable=True, scoped_read_only_model_query=True,
-    no_auth_begin=True, **report,
+    no_auth_begin=True,
+    undiscovered_native_choices_denied=undiscovered_native_choices_denied,
+    **report,
 ), sort_keys=True, indent=2))
 print("Authorized read-only provider catalog via official ACP SDK verified")

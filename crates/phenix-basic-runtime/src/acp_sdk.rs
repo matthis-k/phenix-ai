@@ -23,7 +23,7 @@ use phenix_provider_contracts::{
     bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
     CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
     ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
-    ProviderPage, ProviderQuery,
+    ProviderErrorCode, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -461,6 +461,221 @@ impl ProviderManagement {
     }
 }
 
+/// A non-secret ACP option assembled from CURRENT plugin-owned provider
+/// evidence, never from an arbitrary frontend model list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeModelOffer {
+    id: String,
+    label: String,
+    selected: ModelSelection,
+}
+
+/// The complete provider/connection/account/protocol/endpoint identity is
+/// carried by the ACP option ID. JSON is already the protocol's typed wire
+/// representation; this selector is NOT an authority token. On submission,
+/// compare the whole ID with current runtime-generated offers, not decoded
+/// client claims. Distinct account choices must never alias one model name.
+fn native_model_option_id(selection: &ModelSelection) -> acp::Result<String> {
+    serde_json::to_string(selection)
+        .map(|value| format!("phenix.native-model@1:{value}"))
+        .map_err(internal)
+}
+
+/// One controller model-menu refresh must have a global bound, not one
+/// budget independently repeated for every provider and connection.
+fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
+    if *used >= maximum {
+        return Err(invalid(
+            "provider model selection exceeded discovery budget",
+        ));
+    }
+    *used += 1;
+    Ok(())
+}
+
+/// Only explicitly unavailable/not-yet-discovered provider catalogs are
+/// absent choices. A transport/authority denial, malformed typed reply or
+/// conflicting revision must not be confused with an empty model list.
+fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
+    matches!(
+        code,
+        ProviderErrorCode::Unavailable
+            | ProviderErrorCode::AuthenticationRequired
+            | ProviderErrorCode::NotFound
+    )
+}
+
+impl ProviderManagement {
+    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
+        let root = self
+            .kernel
+            .admit_root(Selection {
+                interface: "phenix.provider.catalog@1".into(),
+                operation: "models".into(),
+                provider: self.selected.provider.clone(),
+            })
+            .map_err(internal)?;
+        match root.invoke(&query.to_value()).map_err(internal)? {
+            Outcome::Success(value) => ModelPage::from_value(value).map(Some).map_err(internal),
+            Outcome::Domain(value) => {
+                let problem = ProviderError::from_value(value).map_err(internal)?;
+                if is_missing_model_discovery(&problem.code) {
+                    Ok(None)
+                } else {
+                    Err(provider_rejection(problem))
+                }
+            }
+        }
+    }
+
+    /// Enumerate only models executable with the launcher's exact credential
+    /// identity (or explicit no-auth). A stored key/profile is not itself a
+    /// capability. Each choice is checked again before native install.
+    fn authorized_http_offers(
+        &self,
+        resolver: Option<&ModelCredentialResolver>,
+    ) -> acp::Result<Vec<NativeModelOffer>> {
+        let listed: ProviderPage = self.read(
+            "phenix.provider.catalog@1",
+            "list",
+            &ProviderQuery {
+                scope: "user".into(),
+            },
+        )?;
+        if listed.revision == 0 || listed.providers.len() > 32 {
+            return Err(invalid(
+                "provider selection catalog is invalid or too large",
+            ));
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        let mut offered = Vec::new();
+        let mut inspected_connections = 0;
+        let mut inspected_pages = 0;
+        for provider in listed.providers {
+            if provider.connections.len() > 32 || !ids.insert(provider.id.clone()) {
+                return Err(invalid("ambiguous or oversized provider selection"));
+            }
+            let exact: ProviderDescriptor = self.read(
+                "phenix.provider.catalog@1",
+                "describe",
+                &ProviderDetailsQuery {
+                    scope: "user".into(),
+                    provider_id: provider.id.clone(),
+                },
+            )?;
+            if exact != provider {
+                return Err(invalid("provider changed while listing model options"));
+            }
+            let mut connections = std::collections::BTreeSet::new();
+            for connection in &exact.connections {
+                charge_model_option_budget(&mut inspected_connections, 32)?;
+                if !connections.insert(&connection.id) {
+                    return Err(invalid("duplicate provider connection"));
+                }
+                let profile = if connection.auth_methods.is_empty() {
+                    None
+                } else {
+                    let Some(auth) = resolver.map(|source| &source.identity) else {
+                        continue;
+                    };
+                    if auth.provider_id() != exact.id || auth.connection_id() != connection.id {
+                        continue;
+                    }
+                    Some(auth.profile_id().to_owned())
+                };
+                let auth: AuthenticationStatus = self.read(
+                    "phenix.provider.auth@1",
+                    "status",
+                    &AuthQuery {
+                        scope: "user".into(),
+                        provider_id: exact.id.clone(),
+                        connection_id: connection.id.clone(),
+                    },
+                )?;
+                if let Some(profile_id) = profile.as_deref() {
+                    if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                        continue;
+                    }
+                }
+                let mut collected = ModelPageAccumulator::default();
+                let mut cursor = None;
+                let full = loop {
+                    charge_model_option_budget(&mut inspected_pages, 128)?;
+                    let Some(page) = self.optional_model_page(&ModelQuery {
+                        scope: "user".into(),
+                        provider_id: exact.id.clone(),
+                        connection_id: connection.id.clone(),
+                        profile_id: profile.clone(),
+                        cursor: cursor.clone(),
+                        limit: 256,
+                    })?
+                    else {
+                        // Registration without discovery is not a selectable
+                        // model or a reason to break unrelated ACP sessions.
+                        break None;
+                    };
+                    cursor = collected.push(page, &profile)?;
+                    if cursor.is_none() {
+                        break Some(collected.complete(profile.clone())?);
+                    }
+                };
+                let Some(full) = full else {
+                    continue;
+                };
+                for model in &full.models {
+                    if !model.selectable || model.connection_id != connection.id {
+                        continue;
+                    }
+                    let desired = ModelSelection {
+                        provider_id: exact.id.clone(),
+                        connection_id: connection.id.clone(),
+                        profile_id: profile.clone(),
+                        model_id: model.id.clone(),
+                        protocol_id: model.protocol_id.clone(),
+                        endpoint_id: model.endpoint_id.clone(),
+                        catalog_revision: full.revision,
+                    };
+                    let Ok(admitted) =
+                        validate_model_selection(&exact, &auth, &full, &desired, true)
+                    else {
+                        continue;
+                    };
+                    let Ok(binding) = bind_http_model(&exact, admitted) else {
+                        continue;
+                    };
+                    // No OAuth/plugin-specific HTTP transport is implemented
+                    // here; never advertise it as an executable choice.
+                    if !matches!(
+                        binding.authentication_kind(),
+                        None | Some(AuthenticationKind::ApiKey)
+                    ) {
+                        continue;
+                    }
+                    if binding.credential_identity().is_some()
+                        && resolver
+                            .is_none_or(|r| binding.credential_identity() != Some(&r.identity))
+                    {
+                        continue;
+                    }
+                    if offered.len() >= 128 {
+                        return Err(invalid("too many selectable HTTP models"));
+                    }
+                    offered.push(NativeModelOffer {
+                        id: native_model_option_id(&desired)?,
+                        label: format!("{} / {} / {}", exact.label, connection.label, model.label),
+                        selected: desired,
+                    });
+                }
+            }
+        }
+        let mut distinct = std::collections::BTreeSet::new();
+        if offered.iter().any(|entry| !distinct.insert(&entry.id)) {
+            return Err(invalid("duplicate native model option"));
+        }
+        Ok(offered)
+    }
+}
+
 struct CredentialManagement {
     kernel: Kernel,
     importer: Selection,
@@ -647,6 +862,44 @@ fn has_model_selection_storage(spec: &Composition) -> bool {
 /// must not be silently interpreted as a switch.
 fn exact_current_model(offered: Option<&str>, requested: &str) -> bool {
     !requested.is_empty() && offered == Some(requested)
+}
+
+/// Normal Basic stays on its launcher-installed static Model. The opt-in
+/// selected HTTP composition must have all three exact native root operations
+/// before it can present a mutable model picker.
+fn can_switch_native_model(spec: &Composition) -> bool {
+    let Some(resource) = spec.resource.as_deref() else {
+        return false;
+    };
+    if installed_model_provider(spec).is_none() || !spec.authority.resources.contains(resource) {
+        return false;
+    }
+    [
+        ("phenix.basic.storage@1", "read"),
+        ("phenix.basic.storage@1", "transact"),
+        ("phenix.provider.http-model-session@1", "install"),
+    ]
+    .into_iter()
+    .all(|(interface, operation)| {
+        if !spec
+            .authority
+            .operations
+            .contains(&format!("{interface}/{operation}"))
+        {
+            return false;
+        }
+        spec.grants
+            .iter()
+            .filter(|grant| {
+                grant.caller == "root"
+                    && grant.interface == interface
+                    && grant.operation == operation
+                    && grant.resources.len() == 1
+                    && grant.resources.contains(resource)
+            })
+            .count()
+            == 1
+    })
 }
 
 struct Controller {
@@ -1008,24 +1261,60 @@ impl Controller {
         Ok(installed.map(str::to_owned))
     }
 
-    /// A single currently effective option is intentionally not an offer to
-    /// switch provider/account. Native model mutation requires a separate
-    /// revision-CAS admission path; standard ACP must not report a fabricated
-    /// success for a different model.
+    /// The UI only receives session-effective options from the authorized
+    /// provider catalog. The option ID contains the entire non-secret native
+    /// selection identity, NOT an executable capability.
     fn model_options(&self, session: &str) -> acp::Result<Vec<SessionConfigOption>> {
-        Ok(self
-            .current_model_id(session)?
-            .map(|id| {
-                SessionConfigOption::select(
-                    "model",
-                    "Model",
-                    id.clone(),
-                    vec![SessionConfigSelectOption::new(id.clone(), id)],
-                )
-                .category(SessionConfigOptionCategory::Model)
-            })
-            .into_iter()
-            .collect())
+        let effective = self.current_model_id(session)?;
+        let mut options = Vec::new();
+        let chosen = if can_switch_native_model(&self.composition) && self.management.is_some() {
+            let kernel = self
+                .sessions
+                .get(session)
+                .ok_or_else(|| invalid("unknown ACP session"))?;
+            let recorded = super::model_selection_state::read(kernel, &self.composition, session)
+                .map_err(internal)?;
+            let management = self
+                .management
+                .as_ref()
+                .ok_or_else(|| invalid("selected model management is unavailable"))?;
+            let native = management.authorized_http_offers(self.resolver.as_ref())?;
+            let chosen = match &recorded {
+                Some((selection, _revision)) => native_model_option_id(selection)?,
+                None => effective.clone().unwrap_or_default(),
+            };
+            if recorded.is_none() {
+                if let Some(legacy) = effective.as_ref() {
+                    options.push(SessionConfigSelectOption::new(
+                        legacy.clone(),
+                        legacy.clone(),
+                    ));
+                }
+            }
+            for entry in native {
+                options.push(SessionConfigSelectOption::new(entry.id, entry.label));
+            }
+            if !options
+                .iter()
+                .any(|option| option.value.to_string() == chosen)
+            {
+                return Err(invalid("effective selected model is no longer offered"));
+            }
+            chosen
+        } else {
+            let Some(effective) = effective else {
+                return Ok(Vec::new());
+            };
+            options.push(SessionConfigSelectOption::new(
+                effective.clone(),
+                effective.clone(),
+            ));
+            effective
+        };
+        Ok(vec![SessionConfigOption::select(
+            "model", "Model", chosen, options,
+        )
+        .category(SessionConfigOptionCategory::Model)])
     }
 
     fn set_config_option(
@@ -1033,17 +1322,83 @@ impl Controller {
         request: SetSessionConfigOptionRequest,
     ) -> acp::Result<SetSessionConfigOptionResponse> {
         let session = request.session_id.to_string();
-        let offered = self.current_model_id(&session)?;
         let chosen = match request.value {
             SessionConfigOptionValue::ValueId { value } => value.to_string(),
             _ => return Err(invalid("unsupported model configuration value")),
         };
-        if request.config_id.to_string() != "model"
-            || !exact_current_model(offered.as_deref(), &chosen)
-        {
+        if request.config_id.to_string() != "model" {
+            return Err(invalid("unsupported configuration option"));
+        }
+
+        let kernel = self
+            .sessions
+            .get(&session)
+            .ok_or_else(|| invalid("unknown ACP session"))?;
+        let previous = if can_switch_native_model(&self.composition) && self.management.is_some() {
+            super::model_selection_state::read(kernel, &self.composition, &session)
+                .map_err(internal)?
+        } else {
+            None
+        };
+        let current = match &previous {
+            Some((selection, _)) => Some(native_model_option_id(selection)?),
+            None => self.current_model_id(&session)?,
+        };
+        if exact_current_model(current.as_deref(), &chosen) {
+            return Ok(SetSessionConfigOptionResponse::new(
+                self.model_options(&session)?,
+            ));
+        }
+        if !can_switch_native_model(&self.composition) || self.management.is_none() {
             return Err(invalid("unavailable or unauthorized model"));
         }
-        // An exact repeat is idempotent; this does not authorize a switch.
+
+        // Only a freshly enumerated option may request mutation. No generic
+        // client-supplied JSON deserialization can create provider authority.
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(|| invalid("selected model management is unavailable"))?;
+        let offers = management.authorized_http_offers(self.resolver.as_ref())?;
+        let mut found = offers.iter().filter(|entry| entry.id == chosen);
+        let desired = found
+            .next()
+            .ok_or_else(|| invalid("unavailable or unauthorized model"))?
+            .selected
+            .clone();
+        if found.next().is_some() {
+            return Err(invalid("ambiguous native model option"));
+        }
+        // After admission, remember any attempt to install a native Model:
+        // even a later failed CAS must not silently route a no-record prompt
+        // via the legacy environment while an uncommitted Model is installed.
+        self.selected_http_seen.insert(session.clone());
+        self.install_current_http_model(&session, &desired)?;
+        let checked = management.current_http_binding(&desired)?;
+        let expected = previous.as_ref().map_or(0, |(_, revision)| *revision);
+        super::model_selection_state::compare_and_swap(
+            self.sessions
+                .get(&session)
+                .ok_or_else(|| invalid("unknown selected model session"))?,
+            &self.composition,
+            &session,
+            &checked,
+            expected,
+        )
+        .map_err(|_| invalid("selected model revision conflict or persistence denied"))?;
+        let confirmed = super::model_selection_state::read(
+            self.sessions
+                .get(&session)
+                .ok_or_else(|| invalid("unknown selected model session"))?,
+            &self.composition,
+            &session,
+        )
+        .map_err(internal)?;
+        if confirmed.as_ref().map(|(stored, _)| stored) != Some(&desired) {
+            return Err(invalid(
+                "selected model CAS receipt did not become effective",
+            ));
+        }
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
@@ -1545,6 +1900,105 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_picker_budgets_all_connections_and_pages_globally() {
+        let mut inspected = 0;
+        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
+        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
+        assert!(charge_model_option_budget(&mut inspected, 2).is_err());
+        assert_eq!(inspected, 2);
+    }
+
+    #[test]
+    fn absent_discovery_never_becomes_a_false_model_offer() {
+        assert!(is_missing_model_discovery(&ProviderErrorCode::Unavailable));
+        assert!(is_missing_model_discovery(
+            &ProviderErrorCode::AuthenticationRequired
+        ));
+        assert!(is_missing_model_discovery(&ProviderErrorCode::NotFound));
+        assert!(!is_missing_model_discovery(&ProviderErrorCode::Denied));
+        assert!(!is_missing_model_discovery(&ProviderErrorCode::Conflict));
+        assert!(!is_missing_model_discovery(
+            &ProviderErrorCode::InvalidInput
+        ));
+    }
+
+    #[test]
+    fn native_model_ids_bind_provider_account_transport_and_catalog_revision() {
+        let selection = ModelSelection {
+            provider_id: "provider".into(),
+            connection_id: "api".into(),
+            profile_id: Some("personal".into()),
+            model_id: "model".into(),
+            protocol_id: "openai-responses".into(),
+            endpoint_id: "response".into(),
+            catalog_revision: 7,
+        };
+        let id = native_model_option_id(&selection).unwrap();
+        assert!(id.starts_with("phenix.native-model@1:"));
+        assert!(!id.contains("Bearer "));
+        let mut other = selection.clone();
+        other.profile_id = Some("work".into());
+        assert_ne!(id, native_model_option_id(&other).unwrap());
+        other = selection.clone();
+        other.protocol_id = "anthropic-messages".into();
+        assert_ne!(id, native_model_option_id(&other).unwrap());
+        other = selection.clone();
+        other.catalog_revision = 8;
+        assert_ne!(id, native_model_option_id(&other).unwrap());
+    }
+
+    #[test]
+    fn mutation_requires_all_exact_launcher_roots() {
+        let mut spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": "phenix.basic.input@1", "operation": "submit",
+                      "provider": "phenix.basic.agent"},
+            "artifacts": [], "definitions": [],
+            "slots": [{
+                "caller": "phenix.basic.agent", "slot": "Model", "index": 0,
+                "provider": "phenix.model.http", "export": "Model"
+            }],
+            "grants": [], "excluded": [], "substitutions": [],
+            "authority": {"operations": [], "resources": []},
+            "resource": "phenix.session.s1"
+        }))
+        .unwrap();
+        assert!(!can_switch_native_model(&spec));
+        for (interface, operation) in [
+            ("phenix.basic.storage@1", "read"),
+            ("phenix.basic.storage@1", "transact"),
+            ("phenix.provider.http-model-session@1", "install"),
+        ] {
+            spec.grants.push(
+                serde_json::from_value(serde_json::json!({
+                    "caller": "root", "interface": interface, "operation": operation,
+                    "resources": ["phenix.session.s1"]
+                }))
+                .unwrap(),
+            );
+        }
+        assert!(!can_switch_native_model(&spec));
+        spec.authority.resources.insert("phenix.session.s1".into());
+        for operation in [
+            "phenix.basic.storage@1/read",
+            "phenix.basic.storage@1/transact",
+            "phenix.provider.http-model-session@1/install",
+        ] {
+            spec.authority.operations.insert(operation.into());
+        }
+        assert!(can_switch_native_model(&spec));
+        spec.authority
+            .operations
+            .remove("phenix.basic.storage@1/transact");
+        assert!(!can_switch_native_model(&spec));
+        spec.authority
+            .operations
+            .insert("phenix.basic.storage@1/transact".into());
+        spec.grants.push(spec.grants[0].clone());
+        assert!(!can_switch_native_model(&spec));
+    }
 
     #[test]
     fn acp_effective_model_idempotency_rejects_foreign_or_missing_choices() {
