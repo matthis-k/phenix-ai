@@ -351,10 +351,88 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     })
 }
 
+/// A separate launcher-authorized model-secret resolution root. This kernel
+/// is not selected from ACP request parameters and exposes no ACP method.
+/// The ordinary Basic session retains only its session/property resources.
+struct ModelCredentialResolver {
+    kernel: Kernel,
+    selected: Selection,
+    identity: CredentialIdentity,
+}
+
+fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity, String> {
+    const CONTRACT: &str = "phenix.provider.credentials@1";
+    const RESOLVE: &str = "phenix.provider.credentials@1/resolve";
+    let resource = spec
+        .resource
+        .as_deref()
+        .ok_or("model resolver requires an explicit credential resource")?;
+    let identity = CredentialIdentity::from_resource(resource)
+        .map_err(|_| "invalid model resolver credential resource")?;
+    let allowed_resource = std::collections::BTreeSet::from([resource.to_string()]);
+    if spec.entry.interface != CONTRACT
+        || spec.entry.operation != "resolve"
+        || spec.authority.operations != std::collections::BTreeSet::from([RESOLVE.into()])
+        || spec.authority.resources != allowed_resource
+        || spec.grants.len() != 1
+        || !spec.slots.is_empty()
+        || !spec.excluded.is_empty()
+        || !spec.substitutions.is_empty()
+    {
+        return Err("model resolver requires exactly one resolve-only root authority".into());
+    }
+    let grant = &spec.grants[0];
+    if grant.caller != "root"
+        || grant.interface != CONTRACT
+        || grant.operation != "resolve"
+        || grant.resources != allowed_resource
+    {
+        return Err("model resolver grant must match the selected credential resource".into());
+    }
+    Ok(identity)
+}
+
+fn prepare_model_resolver(spec: &Composition) -> Result<ModelCredentialResolver, String> {
+    let identity = validate_model_resolver_spec(spec)?;
+    let kernel = Prepared::prepare(spec.clone())
+        .map_err(|_| "invalid model resolver composition".to_string())?
+        .load()
+        .map_err(|_| "cannot load model resolver composition".to_string())?;
+    Ok(ModelCredentialResolver {
+        kernel,
+        selected: spec.entry.clone(),
+        identity,
+    })
+}
+
+impl ModelCredentialResolver {
+    /// Available only to the trusted controller after checking fresh model
+    /// binding and authorization. No ACP command can call this method.
+    #[allow(dead_code)]
+    fn resolve_for(&self, identity: &CredentialIdentity) -> Result<CredentialSecret, String> {
+        if *identity != self.identity {
+            return Err("model credential identity is not launcher-authorized".into());
+        }
+        let root = self
+            .kernel
+            .admit_root(self.selected.clone())
+            .map_err(|_| "model credential resolution is not admitted".to_string())?;
+        match root
+            .invoke(&identity.to_value())
+            .map_err(|_| "model credential resolution failed".to_string())?
+        {
+            Outcome::Success(value) => CredentialSecret::from_value(value)
+                .map_err(|_| "invalid credential resolution response".into()),
+            Outcome::Domain(_) => Err("model credential resolution denied".into()),
+        }
+    }
+}
+
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
     credentials: Option<CredentialManagement>,
+    resolver: Option<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     initialized: bool,
@@ -368,6 +446,7 @@ impl Controller {
         composition: Composition,
         management: Option<ProviderManagement>,
         credentials: Option<CredentialManagement>,
+        resolver: Option<ModelCredentialResolver>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
@@ -375,6 +454,7 @@ impl Controller {
             composition,
             management,
             credentials,
+            resolver,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             initialized: false,
@@ -917,6 +997,12 @@ impl Controller {
                 .shutdown()
                 .map_err(|_| "credential cleanup failed")?;
         }
+        if let Some(resolver) = self.resolver {
+            resolver
+                .kernel
+                .shutdown()
+                .map_err(|_| "model resolver cleanup failed")?;
+        }
         Ok(())
     }
 }
@@ -925,6 +1011,7 @@ pub(super) fn run(
     composition: &Composition,
     management: Option<&Composition>,
     credentials: Option<&Composition>,
+    resolver: Option<&Composition>,
 ) -> Result<(), String> {
     let management = management
         .map(|spec| -> Result<ProviderManagement, String> {
@@ -941,6 +1028,7 @@ pub(super) fn run(
         })
         .transpose()?;
     let credentials = credentials.map(prepare_credentials).transpose()?;
+    let resolver = resolver.map(prepare_model_resolver).transpose()?;
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -950,6 +1038,7 @@ pub(super) fn run(
         composition.clone(),
         management,
         credentials,
+        resolver,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
