@@ -394,6 +394,13 @@ fn legacy_http_provider_max_tokens_parser_rejects_invalid_values() {
 }
 
 fn bound_http_choice(authenticated: bool) -> phenix_provider_contracts::HttpModelBinding {
+    bound_http_choice_with_model(authenticated, "model-a")
+}
+
+fn bound_http_choice_with_model(
+    authenticated: bool,
+    selected_model: &str,
+) -> phenix_provider_contracts::HttpModelBinding {
     use phenix_provider_contracts::{
         bind_http_model, validate_model_selection, AuthenticationKind, AuthenticationMethod,
         AuthenticationStatus, ConnectionDescriptor, CredentialProfile, CredentialProfileStatus,
@@ -447,7 +454,7 @@ fn bound_http_choice(authenticated: bool) -> phenix_provider_contracts::HttpMode
     let page = ModelPage {
         profile_id: profile_id.clone(),
         models: vec![ProviderModel {
-            id: "model-a".into(),
+            id: selected_model.into(),
             label: "Model A".into(),
             connection_id: "api".into(),
             protocol_id: "openai-chat".into(),
@@ -463,7 +470,7 @@ fn bound_http_choice(authenticated: bool) -> phenix_provider_contracts::HttpMode
         provider_id: "fixture".into(),
         connection_id: "api".into(),
         profile_id,
-        model_id: "model-a".into(),
+        model_id: selected_model.into(),
         protocol_id: "openai-chat".into(),
         endpoint_id: "chat".into(),
         catalog_revision: 2,
@@ -540,6 +547,33 @@ fn checked_transport_rejects_non_utf8_secret_without_environment_fallback() {
         )
         .unwrap_err()
         .code,
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
+    use phenix_provider_contracts::CredentialSecret;
+    let choice = bound_http_choice(true);
+    let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(
+            &choice,
+            Some((choice.credential_identity().unwrap(), &key)),
+            Some(0),
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
+
+    // A provider plugin must not get to execute a catalog entry whose
+    // identifier cannot name any concrete model, even if it claims selectable.
+    let blank = bound_http_choice_with_model(false, "  ");
+    assert_eq!(
+        request::Config::from_checked_binding(&blank, None, None)
+            .unwrap_err()
+            .code,
         ErrorCode::InvalidInput
     );
 }
