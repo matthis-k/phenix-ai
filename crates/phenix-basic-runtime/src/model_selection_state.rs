@@ -12,7 +12,64 @@ use phenix_kernel::{
 use phenix_provider_contracts::{HttpModelBinding, ModelSelection};
 
 const KEY: &str = "phenix.provider.selected-model.v1";
+const ROUTING_WITNESS_KEY: &str = "phenix.provider.native-routing-witness.v1";
 
+/// A durable, non-secret witness that native model routing has been selected.
+/// It is committed atomically with the selected identity, so a missing record
+/// can never be confused with a new preset session after controller restart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RoutingWitness {
+    NativeSelected,
+}
+
+impl Portable for RoutingWitness {
+    // A one-variant durable witness needs no new contract/ABI, just a fixed
+    // tagged string that is validated when decoding. The Rust type has no
+    // invalid success variant and cannot carry secrets or provider metadata.
+    const SCHEMA: phenix_contract::StaticSchema = <String as Portable>::SCHEMA;
+
+    fn to_value(&self) -> phenix_contract::Value {
+        String::from("native-selected").to_value()
+    }
+
+    fn from_value(value: phenix_contract::Value) -> Result<Self, phenix_contract::Failure> {
+        let decoded = String::from_value(value)?;
+        if decoded == "native-selected" {
+            Ok(Self::NativeSelected)
+        } else {
+            Err(phenix_contract::Failure::new(
+                phenix_contract::Code::PluginFailed,
+                "unexpected native routing witness",
+            ))
+        }
+    }
+}
+
+fn checked_witness(record: &StoredRecord) -> Result<(), String> {
+    if record.revision == 0
+        || basic::decode::<RoutingWitness>(&record.data)
+            .map_err(|_| "invalid native routing witness".to_owned())?
+            != RoutingWitness::NativeSelected
+    {
+        return Err("invalid native routing witness".into());
+    }
+    Ok(())
+}
+
+fn checked_routing_state(
+    selected: Option<StoredRecord>,
+    witness: Option<StoredRecord>,
+) -> Result<Option<(ModelSelection, u64)>, String> {
+    match (selected, witness) {
+        (None, None) => Ok(None),
+        (Some(selected), Some(witness)) => {
+            checked_witness(&witness)?;
+            unpack(selected).map(Some)
+        }
+        (None, Some(_)) => Err("native routing witness exists without selected model".into()),
+        (Some(_), None) => Err("selected model exists without native routing witness".into()),
+    }
+}
 fn storage_provider(composition: &Composition) -> Result<&str, String> {
     let mut slots = composition.slots.iter().filter(|slot| {
         slot.caller == "phenix.basic.session" && slot.slot == "Storage" && slot.index == 0
@@ -77,9 +134,30 @@ fn unpack(record: StoredRecord) -> Result<(ModelSelection, u64), String> {
     Ok((selected, record.revision))
 }
 
+fn read_record(
+    kernel: &Kernel,
+    provider: &str,
+    session: &str,
+    key: &str,
+) -> Result<Option<StoredRecord>, String> {
+    let request = RecordKey {
+        session: session.into(),
+        key: key.into(),
+    };
+    match invoke::<_, StoredRecord>(kernel, provider, "read", &request)? {
+        Ok(record) => Ok(Some(record)),
+        Err(problem) if problem.code == ErrorCode::NotFound => Ok(None),
+        Err(problem) => Err(format!(
+            "selected model Storage read denied: {:?}",
+            problem.code
+        )),
+    }
+}
+
 /// Read an intent; NOT authentication or effective current-model evidence.
-/// The controller must refresh current provider/catalog state after each
-/// reload and before any actual HTTP Model installation.
+/// A persisted native witness makes absence/corruption of selected identity
+/// an error even after process restart. Neither record grants execution.
+/// The controller must refresh current provider/catalog state before install.
 #[allow(dead_code)]
 pub(crate) fn read(
     kernel: &Kernel,
@@ -88,15 +166,9 @@ pub(crate) fn read(
 ) -> Result<Option<(ModelSelection, u64)>, String> {
     basic::session_resource(session).map_err(|_| "invalid selected model session".to_owned())?;
     let provider = storage_provider(composition)?;
-    let request = RecordKey {
-        session: session.into(),
-        key: KEY.into(),
-    };
-    match invoke::<_, StoredRecord>(kernel, provider, "read", &request)? {
-        Ok(record) => unpack(record).map(Some),
-        Err(problem) if problem.code == ErrorCode::NotFound => Ok(None),
-        Err(problem) => Err(format!("selected model read denied: {:?}", problem.code)),
-    }
+    let selected = read_record(kernel, provider, session, KEY)?;
+    let witness = read_record(kernel, provider, session, ROUTING_WITNESS_KEY)?;
+    checked_routing_state(selected, witness)
 }
 
 /// Commit only a previously checked non-secret binding to the session's
@@ -116,21 +188,52 @@ pub(crate) fn compare_and_swap(
         .checked_add(1)
         .ok_or("model selection revision overflow")?;
     validate_intent(checked.selection())?;
+    let provider = storage_provider(composition)?;
+    let current_witness = read_record(kernel, provider, session, ROUTING_WITNESS_KEY)?;
+    if expected == 0 && current_witness.is_some() {
+        return Err("native routing witness exists without a first selected model".into());
+    }
+    if expected != 0 && current_witness.is_none() {
+        return Err("existing native model has no routing witness".into());
+    }
+    if let Some(record) = current_witness.as_ref() {
+        checked_witness(record)?;
+    }
+    let witness_expected = current_witness.as_ref().map_or(0, |record| record.revision);
+    let witness_next = witness_expected
+        .checked_add(1)
+        .ok_or("native routing witness revision overflow")?;
     let data = basic::encode(checked.selection())
         .map_err(|_| "model selection canonical encoding failed".to_owned())?;
+    let witness_data = basic::encode(&RoutingWitness::NativeSelected)
+        .map_err(|_| "native routing witness canonical encoding failed".to_owned())?;
+    // Basic Storage's atomic multi-edit CAS is the only durability source.
+    // Incomplete changes roll back together; no separate host database or
+    // independent marker write can leave an unwitnessed selected identity.
     let transaction = StorageTransaction {
         session: session.into(),
-        edits: vec![StorageEdit {
-            key: KEY.into(),
-            expected,
-            data: data.clone(),
-        }],
+        edits: vec![
+            StorageEdit {
+                key: KEY.into(),
+                expected,
+                data: data.clone(),
+            },
+            StorageEdit {
+                key: ROUTING_WITNESS_KEY.into(),
+                expected: witness_expected,
+                data: witness_data.clone(),
+            },
+        ],
     };
-    let provider = storage_provider(composition)?;
     let result: Vec<StoredRecord> = invoke(kernel, provider, "transact", &transaction)?
         .map_err(|problem| format!("selected model CAS denied: {:?}", problem.code))?;
-    if result.len() != 1 || result[0].revision != next || result[0].data != data {
-        return Err("model selection Storage returned an invalid CAS receipt".into());
+    if result.len() != 2
+        || result[0].revision != next
+        || result[0].data != data
+        || result[1].revision != witness_next
+        || result[1].data != witness_data
+    {
+        return Err("model selection Storage returned an invalid atomic CAS receipt".into());
     }
     Ok(next)
 }
@@ -164,6 +267,33 @@ mod tests {
             (choice, 3)
         );
         assert!(unpack(StoredRecord { revision: 0, data }).is_err());
+    }
+
+    #[test]
+    fn selected_model_requires_atomic_native_witness_on_every_load() {
+        let selection = StoredRecord {
+            revision: 4,
+            data: basic::encode(&selected()).unwrap(),
+        };
+        let witness = StoredRecord {
+            revision: 3,
+            data: basic::encode(&RoutingWitness::NativeSelected).unwrap(),
+        };
+        assert_eq!(checked_routing_state(None, None).unwrap(), None);
+        assert!(checked_routing_state(Some(selection.clone()), None).is_err());
+        assert!(checked_routing_state(None, Some(witness.clone())).is_err());
+        assert_eq!(
+            checked_routing_state(Some(selection.clone()), Some(witness.clone()))
+                .unwrap()
+                .unwrap(),
+            (selected(), 4)
+        );
+        let mut corrupt = witness.clone();
+        corrupt.data = phenix_contract::Blob(vec![0, 255, 17]);
+        assert!(checked_routing_state(Some(selection.clone()), Some(corrupt)).is_err());
+        let mut invalid_revision = witness;
+        invalid_revision.revision = 0;
+        assert!(checked_routing_state(Some(selection), Some(invalid_revision)).is_err());
     }
 
     #[test]
