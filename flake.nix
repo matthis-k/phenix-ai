@@ -1235,6 +1235,18 @@
             operation = "append";
             resources = [ "phenix.session.s1" ];
           }
+          # Controller-selected HTTP intent uses the same session's Storage
+          # CAS. No grant is added to ordinary Basic, other sessions, or ACP.
+          { caller = "root";
+            interface = "phenix.basic.storage@1";
+            operation = "read";
+            resources = [ "phenix.session.s1" ];
+          }
+          { caller = "root";
+            interface = "phenix.basic.storage@1";
+            operation = "transact";
+            resources = [ "phenix.session.s1" ];
+          }
         ];
       };
       basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
