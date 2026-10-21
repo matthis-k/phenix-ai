@@ -511,7 +511,12 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
         config.protocol,
         phenix_provider_protocols::Protocol::OpenaiChat
     );
-    assert_eq!(config.credential.as_deref(), Some("selected-account-token"));
+    let held: &CredentialSecret = config.credential.as_ref().expect("checked token");
+    assert_eq!(
+        held.expose_for_authorized_provider(),
+        b"selected-account-token"
+    );
+    assert!(!format!("{config:?}").contains("selected-account-token"));
 
     // A valid secret from a *different* named account must not be bound to
     // this model merely because the bytes are available to the controller.
@@ -533,7 +538,7 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     );
     let no_auth = bound_http_choice(false);
     let config = request::Config::from_checked_binding(&no_auth, None, None).unwrap();
-    assert_eq!(config.credential, None);
+    assert!(config.credential.is_none());
     assert_eq!(
         request::Config::from_checked_binding(
             &no_auth,
@@ -615,4 +620,24 @@ fn checked_http_adapter_does_not_infer_oauth_or_plugin_auth_transport_headers() 
     // Credential-free local models remain explicit and need no auth method.
     let local = bound_http_choice(false);
     assert!(request::Config::from_checked_binding(&local, None, None).is_ok());
+}
+
+#[test]
+fn preset_http_credentials_use_clearing_secret_storage_and_reject_bad_inputs() {
+    use phenix_provider_contracts::CredentialSecret;
+    let key: CredentialSecret = request::configured_credential(Ok("fixture-secret".into()))
+        .unwrap()
+        .expect("configured credential");
+    assert_eq!(key.expose_for_authorized_provider(), b"fixture-secret");
+    assert!(request::configured_credential(Err(std::env::VarError::NotPresent))
+        .unwrap()
+        .is_none());
+    for invalid in ["", "line\nfeed", "bad\0nul"] {
+        assert_eq!(
+            request::configured_credential(Ok(invalid.into()))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
 }
