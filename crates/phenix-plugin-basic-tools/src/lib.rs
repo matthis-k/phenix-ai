@@ -179,6 +179,14 @@ mod tests {
                 .code,
             ErrorCode::InvalidCursor
         );
+        // A cursor is a continuation of one session's catalog query, not
+        // a transferable offset for another session with the same query.
+        let mut foreign = page("", Some(next.clone()), 1);
+        foreign.session = "another".into();
+        assert_eq!(
+            catalog(&foreign).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
         let mut stale = next;
         stale.revision = 0;
         assert_eq!(
