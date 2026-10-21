@@ -1247,7 +1247,19 @@
             operation = "transact";
             resources = [ "phenix.session.s1" ];
           }
+          # The controller uses this root only on its existing session kernel,
+          # after provider-owned catalog/auth and exact credential checks.
+          { caller = "root";
+            interface = "phenix.provider.http-model-session@1";
+            operation = "install";
+            resources = [ "phenix.session.s1" ];
+          }
         ];
+        authority = basicCompositionSpec.authority // {
+          operations = basicCompositionSpec.authority.operations ++ [
+            "phenix.provider.http-model-session@1/install"
+          ];
+        };
       };
       basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
         (builtins.toJSON basicHttpCompositionSpec);
