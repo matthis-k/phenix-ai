@@ -485,7 +485,9 @@ fn native_model_option_id(selection: &ModelSelection) -> acp::Result<String> {
 /// budget independently repeated for every provider and connection.
 fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
     if *used >= maximum {
-        return Err(invalid("provider model selection exceeded discovery budget"));
+        return Err(invalid(
+            "provider model selection exceeded discovery budget",
+        ));
     }
     *used += 1;
     Ok(())
