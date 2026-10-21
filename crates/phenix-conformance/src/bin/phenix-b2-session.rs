@@ -1,7 +1,7 @@
 //! Native ABI gate for session snapshots over an independently selected
 //! revisioned Storage fixture (not a durable SQLite acceptance test).
 use phenix_basic_contracts::{
-    encode, BasicError, ErrorCode, Message, ReconcileTool, Role, RunStatus, Scope, SessionSnapshot,
+    encode, BasicError, ErrorCode, Message, ReconcileTool, RunStatus, Scope, SessionSnapshot,
     StorageEdit, StorageTransaction, ToolCall, ToolOutcome,
 };
 use phenix_contract::{Authority, Portable};
@@ -102,13 +102,7 @@ fn main() {
     let mut running = fresh.clone();
     running.run = "r1".into();
     running.status = RunStatus::Running;
-    running.history.push(Message {
-        role: Role::User,
-        text: "prompt".into(),
-        calls: vec![],
-        call_id: String::new(),
-        error: None,
-    });
+    running.history.push(Message::user("prompt"));
     running.pending.push(ToolCall {
         id: "call-1".into(),
         tool: "uppercase".into(),
@@ -223,8 +217,8 @@ fn main() {
     assert_eq!(resolved.status, RunStatus::Running);
     assert_eq!(resolved.revision, 3);
     assert!(resolved.pending.is_empty());
-    assert_eq!(resolved.history.last().unwrap().text, "PROMPT");
-    assert_eq!(resolved.history.last().unwrap().call_id, "call-1");
+    assert_eq!(resolved.history.last().unwrap().text(), "PROMPT");
+    assert_eq!(resolved.history.last().unwrap().call_id(), "call-1");
 
     fs::write(
         output.join("session.json"),

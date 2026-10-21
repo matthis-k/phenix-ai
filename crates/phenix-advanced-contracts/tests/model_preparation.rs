@@ -5,7 +5,7 @@ use phenix_advanced_contracts::{
     ModelPreparationInput, ModelPreparationProblem, ModelPreparationProposal,
 };
 use phenix_basic_contracts::{
-    ContextItem, Limits, Message, ModelRequest, Role, Skill, ToolCall, ToolInfo,
+    ContextItem, Limits, Message, ModelRequest, Skill, ToolCall, ToolInfo,
 };
 
 fn source() -> ModelRequest {
@@ -13,38 +13,22 @@ fn source() -> ModelRequest {
         session: "s1".into(),
         run: "run-3".into(),
         history: vec![
-            Message {
-                role: Role::User,
-                text: "read this".into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Assistant,
-                text: "running".into(),
-                calls: vec![ToolCall {
+            Message::user("read this"),
+            Message::assistant(
+                "running",
+                vec![ToolCall {
                     id: "c1".into(),
                     tool: "read".into(),
                     arguments: r#"{"path":"a.rs"}"#.into(),
                 }],
-                call_id: String::new(),
-                error: None,
-            },
-            Message {
-                role: Role::Tool,
-                text: "read result".into(),
-                calls: vec![],
-                call_id: "c1".into(),
-                error: None,
-            },
-            Message {
-                role: Role::User,
-                text: "now answer".into(),
-                calls: vec![],
-                call_id: String::new(),
-                error: None,
-            },
+            ),
+            Message::tool(
+                "c1",
+                phenix_basic_contracts::ToolOutcome::Succeeded {
+                    text: "read result".into(),
+                },
+            ),
+            Message::user("now answer"),
         ],
         tools: vec![ToolInfo {
             id: "read".into(),
@@ -99,7 +83,7 @@ fn unchanged_request_is_a_valid_non_authoritative_graph_handoff() {
 #[test]
 fn forged_or_stale_source_never_activates_prepared_model() {
     let (mut input, proposal) = fixture();
-    input.original.history[3].text = "different turn".into();
+    *input.original.history[3].text_mut() = "different turn".into();
     assert_eq!(
         validate_model_preparation_proposal(&input, &proposal).unwrap_err(),
         ModelPreparationProblem::SourceChanged

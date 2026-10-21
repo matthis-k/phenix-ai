@@ -38,7 +38,7 @@ mod plugin {
     };
     use phenix_basic_contracts::{
         error, BasicError, ErrorCode, Event, EventJournal, EventKind, JournalAppend, JournalQuery,
-        Message, Model, ModelReply, ModelRequest, Role, Scope,
+        Message, Model, ModelReply, ModelRequest, Scope,
     };
     use phenix_p2_compaction_replay::{
         admit_compaction, assemble_verified_tail_request, checkpoint_pressure, span_for_events,
@@ -98,13 +98,7 @@ mod plugin {
         if count == 0 {
             return finish(result);
         }
-        let message = Message {
-            role: Role::Assistant,
-            text: reply.text.clone(),
-            calls: reply.calls.clone(),
-            call_id: String::new(),
-            error: None,
-        };
+        let message = Message::assistant(reply.text.clone(), reply.calls.clone());
         let payload = match phenix_basic_contracts::encode(&message) {
             Ok(payload) => payload,
             Err(failure) => return PendingResult::QuiescentFailure(failure),
@@ -118,7 +112,7 @@ mod plugin {
             run: run.into(),
             kind: EventKind::AssistantReply,
             call_id: String::new(),
-            text: message.text,
+            text: message.text().into(),
             data: payload,
         };
         finish(

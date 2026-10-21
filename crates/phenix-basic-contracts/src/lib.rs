@@ -89,13 +89,108 @@ pub struct ToolCall {
     pub tool: String,
     pub arguments: String,
 }
+/// Exactly one transcript role and its role-specific payload.
+///
+/// Invalid cross-role fields do not exist in the wire schema. Model history
+/// remains untrusted until the consumer verifies sequencing and call IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub text: String,
-    pub calls: Vec<ToolCall>,
-    pub call_id: String,
-    pub error: Option<String>,
+#[serde(deny_unknown_fields)]
+pub enum Message {
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+        calls: Vec<ToolCall>,
+    },
+    Tool {
+        call_id: String,
+        outcome: ToolOutcome,
+    },
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self::User { text: text.into() }
+    }
+
+    pub fn assistant(text: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        Self::Assistant {
+            text: text.into(),
+            calls,
+        }
+    }
+
+    pub fn tool(call_id: impl Into<String>, outcome: ToolOutcome) -> Self {
+        Self::Tool {
+            call_id: call_id.into(),
+            outcome,
+        }
+    }
+
+    pub fn role(&self) -> Role {
+        match self {
+            Self::User { .. } => Role::User,
+            Self::Assistant { .. } => Role::Assistant,
+            Self::Tool { .. } => Role::Tool,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            Self::User { text } | Self::Assistant { text, .. } => text,
+            Self::Tool { outcome, .. } => outcome.text(),
+        }
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::User { text } | Self::Assistant { text, .. } => text,
+            Self::Tool {
+                outcome: ToolOutcome::Succeeded { text },
+                ..
+            } => text,
+            Self::Tool {
+                outcome: ToolOutcome::Failed { output, .. },
+                ..
+            } => output,
+        }
+    }
+
+    pub fn calls(&self) -> &[ToolCall] {
+        match self {
+            Self::Assistant { calls, .. } => calls,
+            Self::User { .. } | Self::Tool { .. } => &[],
+        }
+    }
+
+    pub fn call_id(&self) -> &str {
+        match self {
+            Self::Tool { call_id, .. } => call_id,
+            Self::User { .. } | Self::Assistant { .. } => "",
+        }
+    }
+
+    pub fn tool_call_id_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Tool { call_id, .. } => Some(call_id),
+            _ => None,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Tool { outcome, .. } => outcome.error(),
+            _ => None,
+        }
+    }
+
+    pub fn outcome(&self) -> Option<&ToolOutcome> {
+        match self {
+            Self::Tool { outcome, .. } => Some(outcome),
+            _ => None,
+        }
+    }
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct Usage {
@@ -280,6 +375,7 @@ pub struct SessionSnapshot {
 /// A tool effect has exactly one reconciled outcome. A failed result
 /// explicitly carries both any partial output and its error reason.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum ToolOutcome {
     Succeeded { text: String },
     Failed { output: String, reason: String },
@@ -546,36 +642,103 @@ mod tests {
     }
 
     #[test]
+    fn message_roles_reject_cross_role_wire_fields() {
+        let cases = [
+            Message::user("hello"),
+            Message::assistant("answer", vec![]),
+            Message::tool(
+                "tool-1",
+                ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "denied".into(),
+                },
+            ),
+        ];
+        for message in cases {
+            let value = message.to_value();
+            assert!(Message::SCHEMA.owned().unwrap().accepts(&value));
+            assert_eq!(Message::from_value(value).unwrap(), message);
+            assert_eq!(
+                serde_json::from_str::<Message>(&serde_json::to_string(&message).unwrap()).unwrap(),
+                message
+            );
+        }
+
+        let invalid = Value::map([(
+            "User",
+            Value::map([
+                ("text", Value::String("hello".into())),
+                ("calls", Value::List(vec![])),
+            ]),
+        )]);
+        assert!(!Message::SCHEMA.owned().unwrap().accepts(&invalid));
+        assert!(Message::from_value(invalid).is_err());
+
+        let ambiguous = Value::map([
+            ("User", Value::map([("text", Value::String("hi".into()))])),
+            (
+                "Tool",
+                Value::map([
+                    ("call_id", Value::String("c1".into())),
+                    (
+                        "outcome",
+                        ToolOutcome::Succeeded {
+                            text: "done".into(),
+                        }
+                        .to_value(),
+                    ),
+                ]),
+            ),
+        ]);
+        assert!(!Message::SCHEMA.owned().unwrap().accepts(&ambiguous));
+        assert!(Message::from_value(ambiguous).is_err());
+
+        assert!(
+            serde_json::from_str::<Message>(r#"{"User":{"text":"hello","calls":[]}}"#).is_err()
+        );
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Assistant":{"text":"ok","calls":[],"call_id":"c1"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Tool":{"call_id":"c1","outcome":{"Succeeded":{"text":"ok"}},"error":"denied"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ToolOutcome>(
+            r#"{"Succeeded":{"text":"ok","reason":"denied"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ToolOutcome>(
+            r#"{"Failed":{"output":"","reason":"denied","text":"ok"}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Message>(
+            r#"{"Tool":{"call_id":"c1","outcome":{"Succeeded":{"text":"ok","reason":"denied"}}}}"#
+        )
+        .is_err());
+    }
+
+    #[test]
     fn complete_transcript_and_definition_package_use_canonical_types() {
         let request = ModelRequest {
             session: "test".into(),
             run: "r1".into(),
             history: vec![
-                Message {
-                    role: Role::User,
-                    text: "hello".into(),
-                    calls: vec![],
-                    call_id: String::new(),
-                    error: None,
-                },
-                Message {
-                    role: Role::Assistant,
-                    text: String::new(),
-                    calls: vec![ToolCall {
+                Message::user("hello"),
+                Message::assistant(
+                    "",
+                    vec![ToolCall {
                         id: "c1".into(),
                         tool: "uppercase".into(),
                         arguments: "{}".into(),
                     }],
-                    call_id: String::new(),
-                    error: None,
-                },
-                Message {
-                    role: Role::Tool,
-                    text: "HELLO".into(),
-                    calls: vec![],
-                    call_id: "c1".into(),
-                    error: None,
-                },
+                ),
+                Message::tool(
+                    "c1",
+                    ToolOutcome::Succeeded {
+                        text: "HELLO".into(),
+                    },
+                ),
             ],
             tools: vec![],
             skills: vec![],
