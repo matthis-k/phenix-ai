@@ -86,7 +86,9 @@ pub(crate) fn run(
     cancelled: Arc<AtomicBool>,
     wake: WakePermit,
 ) -> Result<ModelReply, BasicError> {
-    run_with_notify(config, body, request, progress, cancelled, move || wake.wake())
+    run_with_notify(config, body, request, progress, cancelled, move || {
+        wake.wake()
+    })
 }
 
 /// The native transport is independent of the kernel's wake-up mechanism.
