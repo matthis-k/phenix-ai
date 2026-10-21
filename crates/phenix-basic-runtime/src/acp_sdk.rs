@@ -1548,9 +1548,18 @@ mod tests {
 
     #[test]
     fn acp_effective_model_idempotency_rejects_foreign_or_missing_choices() {
-        assert!(exact_current_model(Some("selected-real-model"), "selected-real-model"));
-        assert!(!exact_current_model(Some("phenix.model.http"), "selected-real-model"));
-        assert!(!exact_current_model(Some("selected-real-model"), "other-account-model"));
+        assert!(exact_current_model(
+            Some("selected-real-model"),
+            "selected-real-model"
+        ));
+        assert!(!exact_current_model(
+            Some("phenix.model.http"),
+            "selected-real-model"
+        ));
+        assert!(!exact_current_model(
+            Some("selected-real-model"),
+            "other-account-model"
+        ));
         assert!(!exact_current_model(Some("selected-real-model"), ""));
         assert!(!exact_current_model(None, "selected-real-model"));
     }
