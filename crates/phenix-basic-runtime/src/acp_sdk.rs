@@ -433,9 +433,7 @@ impl ModelCredentialResolver {
 /// client model IDs must never resolve through first-match routing.
 fn installed_model_provider(composition: &Composition) -> Option<&str> {
     let mut bindings = composition.slots.iter().filter(|binding| {
-        binding.caller == "phenix.basic.agent"
-            && binding.slot == "Model"
-            && binding.index == 0
+        binding.caller == "phenix.basic.agent" && binding.slot == "Model" && binding.index == 0
     });
     let selected = bindings.next()?;
     if bindings.next().is_some() {
@@ -1269,7 +1267,8 @@ mod tests {
         conflict.provider = "phenix.model.other".into();
         spec.slots.push(conflict);
         assert_eq!(installed_model_provider(&spec), None);
-        spec.slots.retain(|slot| slot.caller != "phenix.basic.agent");
+        spec.slots
+            .retain(|slot| slot.caller != "phenix.basic.agent");
         assert_eq!(installed_model_provider(&spec), None);
     }
 
