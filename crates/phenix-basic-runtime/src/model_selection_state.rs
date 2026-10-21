@@ -2,11 +2,13 @@
 //! Storage plugin. This is a checked persistence boundary, NOT an executable
 //! provider grant or an independent controller database.
 use phenix_basic_contracts::{
-    self as basic, BasicError, ErrorCode, RecordKey, StorageEdit, StorageTransaction,
-    StoredRecord,
+    self as basic, BasicError, ErrorCode, RecordKey, StorageEdit, StorageTransaction, StoredRecord,
 };
 use phenix_contract::Portable;
-use phenix_kernel::{resolve::{Composition, Selection}, Kernel, Outcome};
+use phenix_kernel::{
+    resolve::{Composition, Selection},
+    Kernel, Outcome,
+};
 use phenix_provider_contracts::{HttpModelBinding, ModelSelection};
 
 const KEY: &str = "phenix.provider.selected-model.v1";
@@ -15,9 +17,7 @@ fn storage_provider(composition: &Composition) -> Result<&str, String> {
     let mut slots = composition.slots.iter().filter(|slot| {
         slot.caller == "phenix.basic.session" && slot.slot == "Storage" && slot.index == 0
     });
-    let provider = slots
-        .next()
-        .ok_or("session storage binding is missing")?;
+    let provider = slots.next().ok_or("session storage binding is missing")?;
     if slots.next().is_some() {
         return Err("session storage binding is ambiguous".into());
     }
@@ -57,7 +57,10 @@ fn validate_intent(selection: &ModelSelection) -> Result<(), String> {
         || selection.model_id.trim().is_empty()
         || selection.protocol_id.trim().is_empty()
         || selection.endpoint_id.trim().is_empty()
-        || selection.profile_id.as_ref().is_some_and(|id| id.trim().is_empty())
+        || selection
+            .profile_id
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty())
     {
         return Err("stored selection has invalid model identity".into());
     }
