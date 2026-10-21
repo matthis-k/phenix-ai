@@ -28,6 +28,58 @@ pub fn project_model_request(
     }
 }
 
+// Provider-contributed catalog pages are untrusted. Distinct cursor offsets
+// alone do not prevent a malicious catalog from keeping the graph busy forever.
+// This is the Basic agent's bounded discovery budget, not a kernel limit.
+const MAX_CATALOG_PAGES: usize = 64;
+const MAX_CATALOG_TOOLS: usize = 1024;
+
+fn admit_catalog_page(
+    pages: usize,
+    accumulated: usize,
+    incoming: usize,
+) -> Result<(), phenix_basic_contracts::BasicError> {
+    if pages >= MAX_CATALOG_PAGES
+        || accumulated
+            .checked_add(incoming)
+            .is_none_or(|total| total > MAX_CATALOG_TOOLS)
+    {
+        return Err(phenix_basic_contracts::error(
+            phenix_basic_contracts::ErrorCode::InvalidReply,
+            "untrusted tool catalog exceeded Basic discovery budget",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod catalog_budget_tests {
+    use super::*;
+
+    #[test]
+    fn finite_catalog_accepts_last_budgeted_page_and_tool() {
+        assert!(admit_catalog_page(0, 0, 64).is_ok());
+        assert!(admit_catalog_page(MAX_CATALOG_PAGES - 1, 1023, 1).is_ok());
+    }
+
+    #[test]
+    fn distinct_unbounded_cursors_and_excessive_tools_fail_closed() {
+        assert_eq!(
+            admit_catalog_page(MAX_CATALOG_PAGES, 12, 1)
+                .unwrap_err()
+                .code,
+            phenix_basic_contracts::ErrorCode::InvalidReply
+        );
+        assert_eq!(
+            admit_catalog_page(2, MAX_CATALOG_TOOLS, 1)
+                .unwrap_err()
+                .code,
+            phenix_basic_contracts::ErrorCode::InvalidReply
+        );
+        assert!(admit_catalog_page(1, usize::MAX, 1).is_err());
+    }
+}
+
 /// Fail closed during the first staged graph integration: a preparer may
 /// observe the Basic request but cannot rewrite *any* execution byte yet.
 /// Source-backed compaction requires journal/CAS/meter admission in the
@@ -204,6 +256,7 @@ mod plugin {
         let mut tools = Vec::new();
         let mut cursor: Option<CatalogCursor> = None;
         let mut visited = BTreeSet::new();
+        let mut pages = 0;
         loop {
             let query = ToolQuery {
                 session: session.into(),
@@ -213,6 +266,9 @@ mod plugin {
             };
             let page = host.invoke::<ToolCatalog::list>("Catalog", &query)?;
             page.validate_for(&query).map_err(CallError::Domain)?;
+            super::admit_catalog_page(pages, tools.len(), page.tools.len())
+                .map_err(CallError::Domain)?;
+            pages += 1;
             tools.extend(page.tools);
             cursor = page.next;
             let Some(next) = cursor.as_ref() else {
