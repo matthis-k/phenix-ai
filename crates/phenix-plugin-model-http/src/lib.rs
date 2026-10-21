@@ -20,20 +20,34 @@ fn failed(message: &str) -> BasicError {
 pub(crate) enum ModelConfiguration {
     #[default]
     Preset,
-    // A checked, ephemeral installation is consumed by exactly one turn.
-    // Subsequent Model calls require fresh controller admission. In particular,
-    // they must never fall back to the older environment preset after install.
-    Selected(Option<request::Config>),
+    // Each checked configuration is scoped to its Basic session and consumed
+    // exactly once. Selected mode is permanent: missing/consumed sessions
+    // cannot fall back to an unrelated legacy environment preset.
+    Selected(std::collections::BTreeMap<String, request::Config>),
 }
 
 impl ModelConfiguration {
-    pub(crate) fn take_for_turn(&mut self) -> Result<request::Config, BasicError> {
+    pub(crate) fn install(&mut self, session: String, config: request::Config) {
+        match self {
+            Self::Preset => {
+                *self = Self::Selected(std::collections::BTreeMap::from([(session, config)]));
+            }
+            Self::Selected(pending) => {
+                pending.insert(session, config);
+            }
+        }
+    }
+
+    pub(crate) fn take_for_turn(
+        &mut self,
+        session: &str,
+    ) -> Result<request::Config, BasicError> {
         match self {
             Self::Preset => request::Config::load(),
-            Self::Selected(pending) => pending.take().ok_or_else(|| {
+            Self::Selected(pending) => pending.remove(session).ok_or_else(|| {
                 error(
                     ErrorCode::InvalidInput,
-                    "selected HTTP model is not installed",
+                    "selected HTTP model is not installed for session",
                 )
             }),
         }
@@ -95,7 +109,7 @@ mod plugin {
         }
         let config = state
             .configuration
-            .take_for_turn()
+            .take_for_turn(&request.session)
             .map_err(CallError::Domain)?;
         let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &request,
@@ -164,13 +178,14 @@ mod plugin {
                 "model turn is already active",
             ));
         }
+        let session = input.session().to_owned();
         let config = super::request::Config::from_install(input).map_err(|_| {
             fail(
                 ProviderErrorCode::InvalidInput,
                 "invalid HTTP model install",
             )
         })?;
-        state.configuration = super::ModelConfiguration::Selected(Some(config));
+        state.configuration.install(session, config);
         Ok(())
     }
 
