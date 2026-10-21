@@ -232,14 +232,32 @@ fn main() {
     );
     // This grant is spent. An unrelated PHENIX_MODEL_HTTP_* environment
     // preset must never take over the next selected Model turn.
-    match root.begin(&request.to_value()).unwrap() {
-        Call::Ready(Outcome::Domain(value)) => {
+    let second = root.begin(&request.to_value()).unwrap();
+    let rejected = match second {
+        Call::Ready(value) => value,
+        Call::Pending(ticket) => {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                assert!(Instant::now() < deadline, "second turn denial deadline");
+                match root.poll(&ticket).unwrap() {
+                    Poll::Ready(value) => {
+                        root.release(&ticket).unwrap();
+                        break value.unwrap();
+                    }
+                    Poll::Pending => std::thread::sleep(Duration::from_millis(5)),
+                    _ => panic!("second turn unexpectedly cancelled"),
+                }
+            }
+        }
+    };
+    match rejected {
+        Outcome::Domain(value) => {
             assert_eq!(
                 BasicError::from_value(value).unwrap().code,
                 ErrorCode::InvalidInput
             );
         }
-        _ => panic!("consumed native choice unexpectedly executed again"),
+        Outcome::Success(_) => panic!("consumed native choice unexpectedly executed again"),
     }
     assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
     drop(root);
