@@ -587,7 +587,8 @@ impl ProviderManagement {
                         profile_id: profile.clone(),
                         cursor: cursor.clone(),
                         limit: 256,
-                    })? else {
+                    })?
+                    else {
                         // Registration without discovery is not a selectable
                         // model or a reason to break unrelated ACP sessions.
                         break None;
@@ -1881,7 +1882,9 @@ mod tests {
         assert!(is_missing_model_discovery(&ProviderErrorCode::NotFound));
         assert!(!is_missing_model_discovery(&ProviderErrorCode::Denied));
         assert!(!is_missing_model_discovery(&ProviderErrorCode::Conflict));
-        assert!(!is_missing_model_discovery(&ProviderErrorCode::InvalidInput));
+        assert!(!is_missing_model_discovery(
+            &ProviderErrorCode::InvalidInput
+        ));
     }
 
     #[test]
