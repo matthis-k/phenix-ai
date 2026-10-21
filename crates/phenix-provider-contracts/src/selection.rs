@@ -761,6 +761,51 @@ mod tests {
     }
 
     #[test]
+    fn selected_model_scopes_exact_secret_resolution_before_reading_bytes() {
+        use phenix_sdk::Operation;
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let bound = bind_http_model(&provider, choice).unwrap();
+        let personal = CredentialIdentity::new("openai", "api", "personal").unwrap();
+        let work = CredentialIdentity::new("openai", "api", "work").unwrap();
+        let request_scope = bound.resolution_scope_for(&personal).unwrap();
+        assert_eq!(
+            request_scope.resource.as_deref(),
+            Some(personal.resource().unwrap().as_str())
+        );
+        assert_eq!(
+            request_scope.authority.operations,
+            [<super::super::credentials::ProviderCredentials::resolve as Operation>::KEY
+                .into()].into()
+        );
+        assert_eq!(
+            request_scope.authority.resources,
+            [personal.resource().unwrap()].into()
+        );
+        assert_eq!(
+            bound.resolution_scope_for(&work).unwrap_err().code,
+            ProviderErrorCode::Denied
+        );
+
+        let (mut local, mut no_auth, mut models, mut request) = fixture();
+        local.connections[0].auth_methods.clear();
+        local.connections[0].base_url = Some("http://127.0.0.1:11434/v1".into());
+        local.connections[0].protocols[0].endpoint =
+            Some("http://127.0.0.1:11434/v1/responses".into());
+        no_auth.profiles.clear();
+        models.profile_id = None;
+        request.profile_id = None;
+        let choice = validate_model_selection(&local, &no_auth, &models, &request, true).unwrap();
+        let bound = bind_http_model(&local, choice).unwrap();
+        assert_eq!(
+            bound.resolution_scope_for(&personal).unwrap_err().code,
+            ProviderErrorCode::Denied
+        );
+    }
+
+    #[test]
     fn explicit_credential_free_local_protocol_still_has_no_profile() {
         let (mut provider, mut auth, mut page, mut request) = fixture();
         provider.connections[0].auth_methods.clear();
