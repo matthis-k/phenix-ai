@@ -649,6 +649,7 @@ struct Controller {
     resolver: Option<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
+    selected_http_seen: std::collections::BTreeSet<String>,
     initialized: bool,
     issued: u64,
     queued: Arc<PendingPrompts>,
@@ -671,6 +672,7 @@ impl Controller {
             resolver,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
+            selected_http_seen: std::collections::BTreeSet::new(),
             initialized: false,
             issued: 0,
             queued,
@@ -1148,13 +1150,19 @@ impl Controller {
             return Err(invalid("unknown ACP session"));
         };
         if has_model_selection_storage(&self.composition) {
-            if let Some((stored, _revision)) =
-                super::model_selection_state::read(kernel, &self.composition, &session)
-                    .map_err(internal)?
+            match super::model_selection_state::read(kernel, &self.composition, &session)
+                .map_err(internal)?
             {
-                // Do not execute a prompt on the previously installed HTTP
-                // preset if the selected profile has been revoked or expired.
-                self.install_current_http_model(&session, &stored)?;
+                Some((stored, _revision)) => {
+                    // A once-selected native transport cannot silently return
+                    // to legacy preset routing when its record disappears.
+                    self.selected_http_seen.insert(session.clone());
+                    self.install_current_http_model(&session, &stored)?;
+                }
+                None if self.selected_http_seen.contains(&session) => {
+                    return Err(invalid("selected model record was withdrawn"));
+                }
+                None => {}
             }
         }
         // The SDK has already decoded the JSON-RPC envelope into a typed
