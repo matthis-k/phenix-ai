@@ -28,6 +28,7 @@ pub struct AdmittedModelChoice {
     model: ProviderModel,
     protocol: ProtocolBinding,
     credential_identity: Option<CredentialIdentity>,
+    credential_profile: Option<CredentialProfile>,
 }
 
 impl AdmittedModelChoice {
@@ -172,6 +173,37 @@ pub fn bind_http_model(
     })
 }
 
+/// Revalidate an admitted HTTP choice against the *current* provider, account
+/// status and model catalog before configuring a transport. This checks the
+/// selected profile's authentication method as well as the catalog's full
+/// model metadata, even if a buggy discovery source reuses a revision.
+///
+/// The caller must obtain this evidence from authorized runtime providers
+/// and independently authorize the exact credential root and Model execution.
+/// This remains non-secret metadata, not a grant or proof of live entitlement.
+pub fn revalidate_http_model(
+    provider: &ProviderDescriptor,
+    authentication: &AuthenticationStatus,
+    page: &ModelPage,
+    admitted: AdmittedModelChoice,
+    runtime_catalog_is_fresh: bool,
+) -> Result<HttpModelBinding, ProviderError> {
+    let current = validate_model_selection(
+        provider,
+        authentication,
+        page,
+        admitted.selection(),
+        runtime_catalog_is_fresh,
+    )?;
+    if current != admitted {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "selected model, connection or authentication registration changed",
+        ));
+    }
+    bind_http_model(provider, current)
+}
+
 fn selection_error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
         code,
@@ -305,12 +337,20 @@ pub fn validate_model_selection(
             "model is not selectable through the installed protocol",
         ));
     }
+    let credential_profile = requested.profile_id.as_deref().and_then(|profile_id| {
+        authentication
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+    });
     Ok(AdmittedModelChoice {
         requested: requested.clone(),
         connection: connection.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
         credential_identity,
+        credential_profile,
     })
 }
 
@@ -623,6 +663,88 @@ mod tests {
                 validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
             assert!(bind_http_model(&provider, admitted).is_err(), "{endpoint}");
         }
+    }
+
+    #[test]
+    fn live_http_revalidation_rejects_revoked_profile_and_stale_catalog() {
+        let (mut provider, mut auth, mut page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let binding =
+            revalidate_http_model(&provider, &auth, &page, admitted.clone(), true).unwrap();
+        assert_eq!(binding.model_id(), "o-series");
+        assert_eq!(
+            binding.credential_identity().unwrap().profile_id(),
+            "personal"
+        );
+
+        auth.profiles[0].status = CredentialProfileStatus::Unavailable {
+            reason: "revoked".into(),
+        };
+        assert_eq!(
+            revalidate_http_model(&provider, &auth, &page, admitted.clone(), true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::AuthenticationRequired
+        );
+        auth.profiles[0].status = CredentialProfileStatus::Authenticated;
+        assert_eq!(
+            revalidate_http_model(&provider, &auth, &page, admitted.clone(), false)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Unavailable
+        );
+        page.revision += 1;
+        assert_eq!(
+            revalidate_http_model(&provider, &auth, &page, admitted, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
+    }
+
+    #[test]
+    fn live_http_revalidation_rejects_same_revision_catalog_and_auth_method_changes() {
+        let (mut provider, mut auth, mut page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        // A new method can be equally valid for the connection, but it must
+        // not silently replace the selected account's admitted key method.
+        provider.connections[0]
+            .auth_methods
+            .push(AuthenticationMethod {
+                id: "other-key".into(),
+                label: "Other API key".into(),
+                kind: AuthenticationKind::ApiKey,
+                adapter: AdapterBinding::from_typed(
+                    "api-key",
+                    &ApiKeyOptions {
+                        environment_variable: None,
+                        interactive: true,
+                    },
+                )
+                .unwrap(),
+            });
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        auth.profiles[0].method_id = "other-key".into();
+        assert_eq!(
+            revalidate_http_model(&provider, &auth, &page, admitted.clone(), true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
+        auth.profiles[0].method_id = "api-key".into();
+
+        // A plugin that serves changed model metadata without bumping its
+        // revision also cannot silently reuse an older admitted choice.
+        page.models[0].capabilities.push("new-capability".into());
+        assert_eq!(
+            revalidate_http_model(&provider, &auth, &page, admitted, true)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
     }
 
     #[test]
