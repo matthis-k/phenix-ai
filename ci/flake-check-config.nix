@@ -20,6 +20,10 @@ ci.mkFlakeCheckConfig {
       # Share only the observed hotset, not every check dependency: broad
       # prebuilding would serialize the critical path and bloat the cache.
       ".#phenix-basic-contracts"
+      # B2 opt-in experiment: one shared contract definition target appeared
+      # in all five shards of the changed-provider-contract workflow #1030.
+      # Measure writer serialization and whole-workflow wall time before merge.
+      ".#phenix-provider-contracts"
       ".#phenix-plugin-event-journal"
       ".#phenix-plugin-storage-sqlite"
     ];
