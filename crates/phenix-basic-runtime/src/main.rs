@@ -990,7 +990,7 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json]".into());
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json] [--provider-model-resolver RESOLVER.json]".into());
     }
     ensure_default_sqlite_path()?;
 
@@ -998,6 +998,7 @@ fn run() -> Result<(), String> {
     // supply a package path, composition or native authority grant.
     let mut management: Option<Composition> = None;
     let mut credentials: Option<Composition> = None;
+    let mut resolver: Option<Composition> = None;
     if args[1] == "acp" {
         if !(args.len() - 3).is_multiple_of(2) {
             return Err("ACP management flags require a composition file".into());
@@ -1006,6 +1007,7 @@ fn run() -> Result<(), String> {
             let target = match flag[0].as_str() {
                 "--provider-management" => &mut management,
                 "--provider-credentials" => &mut credentials,
+                "--provider-model-resolver" => &mut resolver,
                 _ => return Err("unknown ACP management flag".into()),
             };
             if target.is_some() {
@@ -1062,7 +1064,12 @@ fn run() -> Result<(), String> {
     };
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
-        "acp" => acp_sdk::run(&composition, management.as_ref(), credentials.as_ref()),
+        "acp" => acp_sdk::run(
+            &composition,
+            management.as_ref(),
+            credentials.as_ref(),
+            resolver.as_ref(),
+        ),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(
             &composition,

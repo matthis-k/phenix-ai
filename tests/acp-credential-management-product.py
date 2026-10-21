@@ -62,11 +62,13 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     config_file = root / "credentials.json"
     config_file.write_text(json.dumps(configuration))
 
-    def start(config=None):
+    def start(config=None, resolver=None):
         argv = [runtime, "acp", basic]
         if config is not None:
             argv += ["--provider-management", catalog,
                      "--provider-credentials", str(config)]
+        if resolver is not None:
+            argv += ["--provider-model-resolver", str(resolver)]
         return subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
@@ -88,8 +90,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
             return frame
         raise AssertionError("too many unrelated ACP notifications")
 
-    def initialized(config):
-        child = start(config)
+    def initialized(config, resolver=None):
+        child = start(config, resolver)
         init = call(child, 1, "initialize", dict(protocolVersion=1, clientCapabilities={}))
         assert init["result"]["protocolVersion"] == 1
         return child
@@ -124,7 +126,33 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     assert bad.returncode != 0
     assert secret not in bad.stdout + bad.stderr
 
-    child = initialized(config_file)
+    # The resolver is an independent, exact-resource launch authority and has
+    # no ACP extension to expose its returned secret to editor clients.
+    resolver = json.loads(json.dumps(configuration))
+    resolver["entry"]["operation"] = "resolve"
+    resolver["grants"] = [{
+        "caller": "root", "interface": contract,
+        "operation": "resolve", "resources": [selected_resource]
+    }]
+    resolver["authority"]["operations"] = [contract + "/resolve"]
+    resolver_file = root / "model-resolver.json"
+    resolver_file.write_text(json.dumps(resolver))
+
+    excessive_resolver = json.loads(json.dumps(resolver))
+    excessive_resolver["authority"]["operations"].append(contract + "/import")
+    excessive_resolver_file = root / "excessive-resolver.json"
+    excessive_resolver_file.write_text(json.dumps(excessive_resolver))
+    bad_resolver = subprocess.run(
+        [runtime, "acp", basic,
+         "--provider-model-resolver", str(excessive_resolver_file)],
+        input="", capture_output=True, text=True, env=env, timeout=15,
+    )
+    assert bad_resolver.returncode != 0
+    assert secret not in bad_resolver.stdout + bad_resolver.stderr
+
+    child = initialized(config_file, resolver_file)
+    denied_resolver = call(child, 10, "_phenix/credentials/resolve", account)
+    assert denied_resolver["error"]["code"] == -32601
     granted = call(child, 8, "_phenix/credentials/capabilities", {})
     assert granted["result"] == dict(**account, **{"import": True, "revoke": True})
     providers = call(child, 7, "_phenix/providers/list", {"scope": "user"})
@@ -173,6 +201,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "capabilities_unavailable_without_grant": True,
     "catalog_coexists_without_credential_authority": True,
     "stored_secret_is_not_verified_auth": True,
+    "resolve_only_model_root_requires_exact_launcher_authority": True,
+    "model_resolver_never_exposed_as_acp_extension": True,
     "secret_redacted": True,
 }, sort_keys=True, indent=2))
 print("ACP credential import/revoke with exact launcher grants verified")
