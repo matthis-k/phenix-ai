@@ -1106,15 +1106,12 @@ impl Controller {
         // Refuse changed registration/revocation while resolving the secret.
         // Neither the original choice nor the secret-store reply are grants.
         if management.current_http_binding(desired)? != binding {
-            return Err(invalid("selected model authentication changed before install"));
+            return Err(invalid(
+                "selected model authentication changed before install",
+            ));
         }
-        let install = HttpModelInstall::from_checked(
-            &binding,
-            session.into(),
-            credential,
-            None,
-        )
-        .map_err(provider_rejection)?;
+        let install = HttpModelInstall::from_checked(&binding, session.into(), credential, None)
+            .map_err(provider_rejection)?;
         let kernel = self
             .sessions
             .get(session)
@@ -1601,17 +1598,25 @@ mod tests {
     #[test]
     fn native_model_credential_value_is_scrubbed_recursively() {
         let mut payload = Value::Map(std::collections::BTreeMap::from([
-            ("auth".into(), Value::List(vec![
-                Value::Map(std::collections::BTreeMap::from([
-                    ("secret".into(), Value::Bytes(b"fixture-private-api-key".to_vec())),
-                ])),
-            ])),
+            (
+                "auth".into(),
+                Value::List(vec![Value::Map(std::collections::BTreeMap::from([(
+                    "secret".into(),
+                    Value::Bytes(b"fixture-private-api-key".to_vec()),
+                )]))]),
+            ),
             ("model".into(), Value::String("selected".into())),
         ]));
         scrub_portable_secret_bytes(&mut payload);
-        let Value::Map(fields) = payload else { panic!("expected map"); };
-        let Value::List(auth) = &fields["auth"] else { panic!("expected auth list"); };
-        let Value::Map(inner) = &auth[0] else { panic!("expected auth map"); };
+        let Value::Map(fields) = payload else {
+            panic!("expected map");
+        };
+        let Value::List(auth) = &fields["auth"] else {
+            panic!("expected auth list");
+        };
+        let Value::Map(inner) = &auth[0] else {
+            panic!("expected auth map");
+        };
         assert_eq!(inner["secret"], Value::Bytes(vec![0; 23]));
         assert_eq!(fields["model"], Value::String("selected".into()));
     }
