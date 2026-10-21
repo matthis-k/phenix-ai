@@ -14,7 +14,7 @@ struct Transfer {
     stream: Stream,
     progress: Arc<Mutex<String>>,
     cancelled: Arc<AtomicBool>,
-    wake: WakePermit,
+    wake: Box<dyn Fn() + Send + Sync>,
     status: u32,
     sse: bool,
     failure: Option<BasicError>,
@@ -64,7 +64,7 @@ impl Handler for Transfer {
                             return Ok(0);
                         }
                     }
-                    self.wake.wake();
+                    (self.wake)();
                 }
                 Ok(bytes.len())
             }
@@ -86,6 +86,21 @@ pub(crate) fn run(
     cancelled: Arc<AtomicBool>,
     wake: WakePermit,
 ) -> Result<ModelReply, BasicError> {
+    run_with_notify(config, body, request, progress, cancelled, move || wake.wake())
+}
+
+/// The native transport is independent of the kernel's wake-up mechanism.
+/// Production retains the ticket-scoped `WakePermit`; a real loopback
+/// integration test can use a no-op notifier without constructing kernel
+/// authority or issuing a synthetic user/session root.
+pub(crate) fn run_with_notify(
+    config: Config,
+    body: Vec<u8>,
+    request: ModelRequest,
+    progress: Arc<Mutex<String>>,
+    cancelled: Arc<AtomicBool>,
+    wake: impl Fn() + Send + Sync + 'static,
+) -> Result<ModelReply, BasicError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(failed("HTTP model cancelled"));
     }
@@ -93,7 +108,7 @@ pub(crate) fn run(
         stream: Stream::new(config.protocol),
         progress,
         cancelled,
-        wake,
+        wake: Box::new(wake),
         status: 0,
         sse: false,
         failure: None,
