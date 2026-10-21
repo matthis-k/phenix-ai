@@ -414,8 +414,8 @@ fn bound_http_choice_with_kind(
     kind: phenix_provider_contracts::AuthenticationKind,
 ) -> phenix_provider_contracts::HttpModelBinding {
     use phenix_provider_contracts::{
-        bind_http_model, validate_model_selection, AuthenticationKind, AuthenticationMethod,
-        AuthenticationStatus, ConnectionDescriptor, CredentialProfile, CredentialProfileStatus,
+        bind_http_model, validate_model_selection, AuthenticationMethod, AuthenticationStatus,
+        ConnectionDescriptor, CredentialProfile, CredentialProfileStatus,
         ModelOrigin, ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderModel,
     };
     let endpoint = if authenticated {
