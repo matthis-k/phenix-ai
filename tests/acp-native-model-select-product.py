@@ -262,6 +262,12 @@ try:
     assert identity(fresh_a)["session_revision"] == 2
     prompt(third, session, 3, "survives native controller restart")
     assert received == ["fixture-a", "fixture-b", "fixture-b"], received
+    set_fresh_a = request(third, 4, "session/set_config_option", {
+        "sessionId": session, "configId": "model", "value": fresh_a,
+    })
+    current_a, _ = confirmed(set_fresh_a, "fixture-a", 3)
+    prompt(third, session, 5, "refreshed menu selects A after B")
+    assert received == ["fixture-a", "fixture-b", "fixture-b", "fixture-a"], received
     close(third)
 
     revoked = start(revoked=True)
@@ -273,7 +279,7 @@ try:
     })
     assert "error" in rejected, rejected
     close(revoked)
-    assert len(received) == 3
+    assert len(received) == 4
 
     with sqlite3.connect(sqlite_path) as connection:
         connection.execute(
@@ -290,7 +296,7 @@ try:
     })
     assert "error" in rejected, rejected
     close(corrupt)
-    assert len(received) == 3
+    assert len(received) == 4
 
     (output / "native-model-acceptance.json").write_text(json.dumps({
         "format": "phenix.c9.selected-http.v1",
@@ -306,6 +312,7 @@ try:
         "production_provider_login": False,
         "stale_client_selection_rejected": True,
         "fresh_menu_preconditions": True,
+        "refreshed_client_successful_switch": True,
         "contending_client_CAS_conflict": False,
     }, sort_keys=True, indent=2))
     print("C9 test-only authoritative provider native ACP selection verified")
