@@ -150,13 +150,27 @@ def model_options(response):
     return selected, offered
 
 
+def identity(value):
+    assert value.startswith("phenix.native-model@1:"), value
+    return json.loads(value.split(":", 1)[1])
+
+
 def chosen(offered, model):
     matches = [
         value for value in offered
-        if json.loads(value.split(":", 1)[1])["model_id"] == model
+        if identity(value)["model_id"] == model
     ]
     assert len(matches) == 1, (model, offered)
     return matches[0]
+
+
+def confirmed(response, expected_model, expected_revision):
+    current, offered = model_options(response)
+    selected = identity(current)
+    assert selected["model_id"] == expected_model, selected
+    assert selected["session_revision"] == expected_revision, selected
+    assert current in offered
+    return current, offered
 
 
 def prompt(process, session, number, text):
@@ -187,9 +201,14 @@ try:
     set_a = request(original, 3, "session/set_config_option", {
         "sessionId": session, "configId": "model", "value": a,
     })
-    effective, _ = model_options(set_a)
-    assert effective == a
-    prompt(original, session, 4, "first selected turn")
+    effective, offered_a = confirmed(set_a, "fixture-a", 1)
+    assert identity(a)["session_revision"] == 0
+    # Retrying the exact prior choice is safely idempotent.
+    repeat = request(original, 4, "session/set_config_option", {
+        "sessionId": session, "configId": "model", "value": a,
+    })
+    assert model_options(repeat)[0] == effective
+    prompt(original, session, 5, "first selected turn")
     assert received == ["fixture-a"], received
     close(original)
 
@@ -208,30 +227,47 @@ try:
     second = start()
     initialize(first)
     initialize(second)
-    selected, _ = model_options(load(first, session, 2))
-    assert selected == a
-    selected, _ = model_options(load(second, session, 2))
-    assert selected == a
+    selected, offers_first = confirmed(load(first, session, 2), "fixture-a", 1)
+    assert selected == effective
+    selected, offers_second = confirmed(load(second, session, 2), "fixture-a", 1)
+    assert selected == effective
 
+    # Two ACP clients have the same observed session revision (1).
+    fresh_b = chosen(offers_first, "fixture-b")
     set_b = request(first, 3, "session/set_config_option", {
-        "sessionId": session, "configId": "model", "value": b,
+        "sessionId": session, "configId": "model", "value": fresh_b,
     })
-    effective, _ = model_options(set_b)
-    assert effective == b
+    effective_b, _ = confirmed(set_b, "fixture-b", 2)
 
-    # The other client's ACP menu was A, but its prompt must read the
-    # committed B from shared Storage and reauthorize B before HTTP.
-    prompt(second, session, 3, "fresh cross-client current model")
+    # A stale A choice cannot revert the newer B selection. The previous
+    # revision is an idempotent replay only for the SAME effective model.
+    stale_a = chosen(offers_second, "fixture-a")
+    refused = request(second, 3, "session/set_config_option", {
+        "sessionId": session, "configId": "model", "value": stale_a,
+    })
+    assert "error" in refused, refused
+
+    # The other client's prompt must read committed B from shared Storage.
+    prompt(second, session, 4, "fresh cross-client current model")
     assert received == ["fixture-a", "fixture-b"], received
     close(first)
     close(second)
 
     third = start()
     initialize(third)
-    selected, _ = model_options(load(third, session, 2))
-    assert selected == b
+    selected, third_offers = confirmed(load(third, session, 2), "fixture-b", 2)
+    assert selected == effective_b
+    # Refreshing the menu permits deliberate B -> A after rejecting stale A.
+    fresh_a = chosen(third_offers, "fixture-a")
+    assert identity(fresh_a)["session_revision"] == 2
     prompt(third, session, 3, "survives native controller restart")
     assert received == ["fixture-a", "fixture-b", "fixture-b"], received
+    set_fresh_a = request(third, 4, "session/set_config_option", {
+        "sessionId": session, "configId": "model", "value": fresh_a,
+    })
+    current_a, _ = confirmed(set_fresh_a, "fixture-a", 3)
+    prompt(third, session, 5, "refreshed menu selects A after B")
+    assert received == ["fixture-a", "fixture-b", "fixture-b", "fixture-a"], received
     close(third)
 
     revoked = start(revoked=True)
@@ -243,7 +279,7 @@ try:
     })
     assert "error" in rejected, rejected
     close(revoked)
-    assert len(received) == 3
+    assert len(received) == 4
 
     with sqlite3.connect(sqlite_path) as connection:
         connection.execute(
@@ -260,7 +296,7 @@ try:
     })
     assert "error" in rejected, rejected
     close(corrupt)
-    assert len(received) == 3
+    assert len(received) == 4
 
     (output / "native-model-acceptance.json").write_text(json.dumps({
         "format": "phenix.c9.selected-http.v1",
@@ -274,6 +310,9 @@ try:
         "deleted_native_identity_denies_after_restart": True,
         "fallback_environment_ignored": True,
         "production_provider_login": False,
+        "stale_client_selection_rejected": True,
+        "fresh_menu_preconditions": True,
+        "refreshed_client_successful_switch": True,
         "contending_client_CAS_conflict": False,
     }, sort_keys=True, indent=2))
     print("C9 test-only authoritative provider native ACP selection verified")
