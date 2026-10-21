@@ -2,9 +2,9 @@
 mod request;
 use phenix_provider_protocols::stream;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod control_tests;
+#[cfg(test)]
+mod tests;
 mod transport;
 
 use phenix_basic_contracts::{error, BasicError, ErrorCode};
@@ -30,9 +30,12 @@ impl ModelConfiguration {
     pub(crate) fn take_for_turn(&mut self) -> Result<request::Config, BasicError> {
         match self {
             Self::Preset => request::Config::load(),
-            Self::Selected(pending) => pending
-                .take()
-                .ok_or_else(|| error(ErrorCode::InvalidInput, "selected HTTP model is not installed")),
+            Self::Selected(pending) => pending.take().ok_or_else(|| {
+                error(
+                    ErrorCode::InvalidInput,
+                    "selected HTTP model is not installed",
+                )
+            }),
         }
     }
 }
@@ -51,8 +54,10 @@ mod plugin {
         BasicError, Event, EventJournal, EventKind, JournalAppend, Model, ModelReply, ModelRequest,
         Usage,
     };
+    use phenix_provider_contracts::{
+        HttpModelInstall, HttpModelSession, ProviderError, ProviderErrorCode,
+    };
     use phenix_sdk::{Blob, CallError, CallResult, Code, Failure, Host, PendingResult};
-    use phenix_provider_contracts::{HttpModelInstall, HttpModelSession, ProviderError, ProviderErrorCode};
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -88,7 +93,10 @@ mod plugin {
                 "HTTP model work is already active",
             )));
         }
-        let config = state.configuration.take_for_turn().map_err(CallError::Domain)?;
+        let config = state
+            .configuration
+            .take_for_turn()
+            .map_err(CallError::Domain)?;
         let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &request,
             &config.model,
@@ -142,17 +150,26 @@ mod plugin {
                 message: message.into(),
             })
         };
-        let resource = phenix_basic_contracts::session_resource(input.session()).map_err(|_| {
-            fail(ProviderErrorCode::InvalidInput, "invalid selected session")
-        })?;
+        let resource = phenix_basic_contracts::session_resource(input.session())
+            .map_err(|_| fail(ProviderErrorCode::InvalidInput, "invalid selected session"))?;
         if host.resource()?.as_deref() != Some(resource.as_str()) {
-            return Err(fail(ProviderErrorCode::Denied, "model session resource denied"));
+            return Err(fail(
+                ProviderErrorCode::Denied,
+                "model session resource denied",
+            ));
         }
         if state.worker.is_some() {
-            return Err(fail(ProviderErrorCode::Conflict, "model turn is already active"));
+            return Err(fail(
+                ProviderErrorCode::Conflict,
+                "model turn is already active",
+            ));
         }
-        let config = super::request::Config::from_install(input)
-            .map_err(|_| fail(ProviderErrorCode::InvalidInput, "invalid HTTP model install"))?;
+        let config = super::request::Config::from_install(input).map_err(|_| {
+            fail(
+                ProviderErrorCode::InvalidInput,
+                "invalid HTTP model install",
+            )
+        })?;
         state.configuration = super::ModelConfiguration::Selected(Some(config));
         Ok(())
     }
