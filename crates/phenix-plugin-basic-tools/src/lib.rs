@@ -30,7 +30,10 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
         return Err(error(ErrorCode::InvalidInput, "page size must be positive"));
     }
     let offset = if let Some(cursor) = &request.cursor {
-        if cursor.query != request.query || cursor.revision != REVISION {
+        if cursor.session != request.session
+            || cursor.query != request.query
+            || cursor.revision != REVISION
+        {
             return Err(error(
                 ErrorCode::InvalidCursor,
                 "stale or foreign query cursor",
@@ -55,6 +58,7 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
         tools: matches[offset..end].iter().map(|id| tool(id)).collect(),
         revision: REVISION,
         next: (end < matches.len()).then(|| CatalogCursor {
+            session: request.session.clone(),
             query: request.query.clone(),
             revision: REVISION,
             offset: end as u64,
@@ -168,6 +172,7 @@ mod tests {
         let first = catalog(&page("", None, 1)).unwrap();
         assert_eq!(first.tools[0].id, "fail");
         assert_eq!(first.revision, 1);
+        assert_eq!(first.next.as_ref().unwrap().session, "one");
         let next = first.next.unwrap();
         assert_eq!(
             catalog(&page("", Some(next.clone()), 1)).unwrap().tools[0].id,
