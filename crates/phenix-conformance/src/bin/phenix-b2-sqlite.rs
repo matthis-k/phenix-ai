@@ -251,6 +251,45 @@ fn main() {
             .code,
             ErrorCode::Denied
         );
+    } else if args[1] == "native-cas-once" {
+        let worker = std::env::var("PHENIX_CAS_WORKER").unwrap();
+        assert!(worker == "alpha" || worker == "beta");
+        fs::write(output.join(format!("{worker}.ready")), "ready").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !output.join("start-cas").exists() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let result: Result<Vec<StoredRecord>, BasicError> = call(
+            &kernel,
+            write,
+            storage,
+            StorageTransaction {
+                session: "s1".into(),
+                edits: [
+                    "phenix.provider.selected-model.v1",
+                    "phenix.provider.native-routing-witness.v1",
+                ]
+                .into_iter()
+                .map(|key| StorageEdit {
+                    key: key.into(),
+                    expected: 0,
+                    data: Blob(worker.as_bytes().to_vec()),
+                })
+                .collect(),
+            },
+        )
+        .unwrap();
+        let outcome = match result {
+            Ok(rows) => {
+                assert_eq!(rows.len(), 2);
+                assert!(rows.iter().all(|row| row.revision == 1));
+                "committed"
+            }
+            Err(err) if err.code == ErrorCode::Conflict => "conflict",
+            Err(err) => panic!("unexpected Storage error: {:?}", err.code),
+        };
+        fs::write(output.join(format!("{worker}.result")), outcome).unwrap();
     } else if args[1] == "schema-rejected" {
         // Unsupported future versions, absent versioned tables, and malformed
         // unversioned tables must all fail before exposing Storage records.
