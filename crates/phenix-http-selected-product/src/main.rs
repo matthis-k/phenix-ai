@@ -95,7 +95,10 @@ fn main() {
         ("root", "phenix.basic.journal@1/read"),
         ("phenix.model.http", "phenix.basic.journal@1/append"),
         ("phenix.basic.event-journal", "phenix.basic.storage@1/read"),
-        ("phenix.basic.event-journal", "phenix.basic.storage@1/transact"),
+        (
+            "phenix.basic.event-journal",
+            "phenix.basic.storage@1/transact",
+        ),
     ];
     let kernel = Prepared::prepare(Composition {
         format: "phenix.composition.v3".into(),
@@ -221,7 +224,10 @@ fn main() {
         Outcome::Domain(_) => panic!("journal read failed"),
     };
     assert_eq!(
-        page.events.iter().map(|event| event.text.as_str()).collect::<String>(),
+        page.events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<String>(),
         reply.text
     );
     // This grant is spent. An unrelated PHENIX_MODEL_HTTP_* environment
@@ -239,5 +245,9 @@ fn main() {
     drop(root);
     kernel.shutdown().unwrap();
     fs::create_dir_all(&args[6]).unwrap();
-    fs::write(format!("{}/accepted.txt", args[6]), "selected-native-http\n").unwrap();
+    fs::write(
+        format!("{}/accepted.txt", args[6]),
+        "selected-native-http\n",
+    )
+    .unwrap();
 }
