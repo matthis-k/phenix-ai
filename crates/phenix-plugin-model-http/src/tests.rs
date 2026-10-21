@@ -401,6 +401,18 @@ fn bound_http_choice_with_model(
     authenticated: bool,
     selected_model: &str,
 ) -> phenix_provider_contracts::HttpModelBinding {
+    bound_http_choice_with_kind(
+        authenticated,
+        selected_model,
+        phenix_provider_contracts::AuthenticationKind::ApiKey,
+    )
+}
+
+fn bound_http_choice_with_kind(
+    authenticated: bool,
+    selected_model: &str,
+    kind: phenix_provider_contracts::AuthenticationKind,
+) -> phenix_provider_contracts::HttpModelBinding {
     use phenix_provider_contracts::{
         bind_http_model, validate_model_selection, AuthenticationKind, AuthenticationMethod,
         AuthenticationStatus, ConnectionDescriptor, CredentialProfile, CredentialProfileStatus,
@@ -426,7 +438,7 @@ fn bound_http_choice_with_model(
                 vec![AuthenticationMethod {
                     id: "key".into(),
                     label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
+                    kind,
                     adapter: phenix_provider_contracts::AdapterBinding::from_typed("key", &())
                         .unwrap(),
                 }]
@@ -576,4 +588,31 @@ fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
             .code,
         ErrorCode::InvalidInput
     );
+}
+
+#[test]
+fn checked_http_adapter_does_not_infer_oauth_or_plugin_auth_transport_headers() {
+    use phenix_provider_contracts::{AuthenticationKind, CredentialSecret};
+    for kind in [
+        AuthenticationKind::OAuthAuthorizationCode,
+        AuthenticationKind::OAuthDeviceCode,
+        AuthenticationKind::Plugin,
+    ] {
+        let choice = bound_http_choice_with_kind(true, "model-a", kind);
+        let token = CredentialSecret::new(b"auth-method-fixture-secret".to_vec()).unwrap();
+        assert_eq!(
+            request::Config::from_checked_binding(
+                &choice,
+                Some((choice.credential_identity().unwrap(), &token)),
+                None,
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    // Credential-free local models remain explicit and need no auth method.
+    let local = bound_http_choice(false);
+    assert!(request::Config::from_checked_binding(&local, None, None).is_ok());
 }
