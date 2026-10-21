@@ -475,10 +475,26 @@ struct NativeModelOffer {
 /// representation; this selector is NOT an authority token. On submission,
 /// compare the whole ID with current runtime-generated offers, not decoded
 /// client claims. Distinct account choices must never alias one model name.
-fn native_model_option_id(selection: &ModelSelection) -> acp::Result<String> {
-    serde_json::to_string(selection)
+fn native_model_option_id(selection: &ModelSelection, revision: u64) -> acp::Result<String> {
+    let mut fields = serde_json::to_value(selection).map_err(internal)?;
+    let object = fields.as_object_mut().ok_or_else(|| internal("invalid native selection"))?;
+    object.insert("session_revision".into(), serde_json::json!(revision));
+    serde_json::to_string(&fields)
         .map(|value| format!("phenix.native-model@1:{value}"))
         .map_err(internal)
+}
+
+/// A prior revision choice is idempotent ONLY when it selected the exact
+/// current model. A stale choice for another model is rejected on admission.
+fn is_previous_native_selection(
+    chosen: &str,
+    current: &ModelSelection,
+    revision: u64,
+) -> acp::Result<bool> {
+    let Some(previous) = revision.checked_sub(1) else {
+        return Ok(false);
+    };
+    Ok(native_model_option_id(current, previous)? == chosen)
 }
 
 /// One controller model-menu refresh must have a global bound, not one
@@ -661,7 +677,7 @@ impl ProviderManagement {
                         return Err(invalid("too many selectable HTTP models"));
                     }
                     offered.push(NativeModelOffer {
-                        id: native_model_option_id(&desired)?,
+                        id: native_model_option_id(&desired, 0)?,
                         label: format!("{} / {} / {}", exact.label, connection.label, model.label),
                         selected: desired,
                     });
@@ -1279,8 +1295,9 @@ impl Controller {
                 .as_ref()
                 .ok_or_else(|| invalid("selected model management is unavailable"))?;
             let native = management.authorized_http_offers(self.resolver.as_ref())?;
+            let revision = recorded.as_ref().map_or(0, |(_, revision)| *revision);
             let chosen = match &recorded {
-                Some((selection, _revision)) => native_model_option_id(selection)?,
+                Some((selection, _)) => native_model_option_id(selection, revision)?,
                 None => effective.clone().unwrap_or_default(),
             };
             if recorded.is_none() {
@@ -1292,7 +1309,10 @@ impl Controller {
                 }
             }
             for entry in native {
-                options.push(SessionConfigSelectOption::new(entry.id, entry.label));
+                options.push(SessionConfigSelectOption::new(
+                    native_model_option_id(&entry.selected, revision)?,
+                    entry.label,
+                ));
             }
             if !options
                 .iter()
@@ -1340,11 +1360,18 @@ impl Controller {
         } else {
             None
         };
+        let expected = previous.as_ref().map_or(0, |(_, revision)| *revision);
         let current = match &previous {
-            Some((selection, _)) => Some(native_model_option_id(selection)?),
+            Some((selection, _)) => Some(native_model_option_id(selection, expected)?),
             None => self.current_model_id(&session)?,
         };
-        if exact_current_model(current.as_deref(), &chosen) {
+        let idempotent = match &previous {
+            Some((selected, revision)) => {
+                is_previous_native_selection(&chosen, selected, *revision)?
+            }
+            None => false,
+        };
+        if exact_current_model(current.as_deref(), &chosen) || idempotent {
             return Ok(SetSessionConfigOptionResponse::new(
                 self.model_options(&session)?,
             ));
@@ -1360,22 +1387,22 @@ impl Controller {
             .as_ref()
             .ok_or_else(|| invalid("selected model management is unavailable"))?;
         let offers = management.authorized_http_offers(self.resolver.as_ref())?;
-        let mut found = offers.iter().filter(|entry| entry.id == chosen);
-        let desired = found
-            .next()
-            .ok_or_else(|| invalid("unavailable or unauthorized model"))?
-            .selected
-            .clone();
-        if found.next().is_some() {
-            return Err(invalid("ambiguous native model option"));
+        let mut found = Vec::new();
+        for entry in offers {
+            if native_model_option_id(&entry.selected, expected)? == chosen {
+                found.push(entry.selected);
+            }
         }
+        if found.len() != 1 {
+            return Err(invalid("stale, ambiguous or unauthorized model choice; refresh menu"));
+        }
+        let desired = found.pop().ok_or_else(|| invalid("model unavailable"))?;
         // After admission, remember any attempt to install a native Model:
         // even a later failed CAS must not silently route a no-record prompt
         // via the legacy environment while an uncommitted Model is installed.
         self.selected_http_seen.insert(session.clone());
         self.install_current_http_model(&session, &desired)?;
         let checked = management.current_http_binding(&desired)?;
-        let expected = previous.as_ref().map_or(0, |(_, revision)| *revision);
         super::model_selection_state::compare_and_swap(
             self.sessions
                 .get(&session)
@@ -1935,18 +1962,44 @@ mod tests {
             endpoint_id: "response".into(),
             catalog_revision: 7,
         };
-        let id = native_model_option_id(&selection).unwrap();
+        let id = native_model_option_id(&selection, 0).unwrap();
         assert!(id.starts_with("phenix.native-model@1:"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                id.strip_prefix("phenix.native-model@1:").unwrap()
+            ).unwrap()["session_revision"],
+            0
+        );
         assert!(!id.contains("Bearer "));
         let mut other = selection.clone();
         other.profile_id = Some("work".into());
-        assert_ne!(id, native_model_option_id(&other).unwrap());
+        assert_ne!(id, native_model_option_id(&other, 0).unwrap());
         other = selection.clone();
         other.protocol_id = "anthropic-messages".into();
-        assert_ne!(id, native_model_option_id(&other).unwrap());
+        assert_ne!(id, native_model_option_id(&other, 0).unwrap());
         other = selection.clone();
         other.catalog_revision = 8;
-        assert_ne!(id, native_model_option_id(&other).unwrap());
+        assert_ne!(id, native_model_option_id(&other, 0).unwrap());
+    }
+
+    #[test]
+    fn model_choices_are_scoped_to_session_storage_revision() {
+        let selection = ModelSelection {
+            provider_id: "provider".into(),
+            connection_id: "api".into(),
+            profile_id: None,
+            model_id: "a".into(),
+            protocol_id: "openai-chat".into(),
+            endpoint_id: "chat".into(),
+            catalog_revision: 7,
+        };
+        let initial = native_model_option_id(&selection, 0).unwrap();
+        assert_ne!(initial, native_model_option_id(&selection, 1).unwrap());
+        assert!(is_previous_native_selection(&initial, &selection, 1).unwrap());
+        assert!(!is_previous_native_selection(&initial, &selection, 2).unwrap());
+        let mut other = selection.clone();
+        other.model_id = "b".into();
+        assert!(!is_previous_native_selection(&initial, &other, 1).unwrap());
     }
 
     #[test]
