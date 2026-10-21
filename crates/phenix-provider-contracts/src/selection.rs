@@ -671,9 +671,13 @@ mod tests {
         provider.connections[0].protocols[0].endpoint =
             Some("https://api.openai.com/v1/responses".into());
         let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
-        let binding = revalidate_http_model(&provider, &auth, &page, admitted.clone(), true).unwrap();
+        let binding =
+            revalidate_http_model(&provider, &auth, &page, admitted.clone(), true).unwrap();
         assert_eq!(binding.model_id(), "o-series");
-        assert_eq!(binding.credential_identity().unwrap().profile_id(), "personal");
+        assert_eq!(
+            binding.credential_identity().unwrap().profile_id(),
+            "personal"
+        );
 
         auth.profiles[0].status = CredentialProfileStatus::Unavailable {
             reason: "revoked".into(),
@@ -707,19 +711,21 @@ mod tests {
             Some("https://api.openai.com/v1/responses".into());
         // A new method can be equally valid for the connection, but it must
         // not silently replace the selected account's admitted key method.
-        provider.connections[0].auth_methods.push(AuthenticationMethod {
-            id: "other-key".into(),
-            label: "Other API key".into(),
-            kind: AuthenticationKind::ApiKey,
-            adapter: AdapterBinding::from_typed(
-                "api-key",
-                &ApiKeyOptions {
-                    environment_variable: None,
-                    interactive: true,
-                },
-            )
-            .unwrap(),
-        });
+        provider.connections[0]
+            .auth_methods
+            .push(AuthenticationMethod {
+                id: "other-key".into(),
+                label: "Other API key".into(),
+                kind: AuthenticationKind::ApiKey,
+                adapter: AdapterBinding::from_typed(
+                    "api-key",
+                    &ApiKeyOptions {
+                        environment_variable: None,
+                        interactive: true,
+                    },
+                )
+                .unwrap(),
+            });
         let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
         auth.profiles[0].method_id = "other-key".into();
         assert_eq!(
