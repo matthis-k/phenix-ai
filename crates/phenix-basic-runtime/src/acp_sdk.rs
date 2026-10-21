@@ -642,6 +642,13 @@ fn has_model_selection_storage(spec: &Composition) -> bool {
     })
 }
 
+/// The ACP config-option response does not grant model routing. It may only
+/// acknowledge the runtime-advertised effective model; a forged/stale value
+/// must not be silently interpreted as a switch.
+fn exact_current_model(offered: Option<&str>, requested: &str) -> bool {
+    !requested.is_empty() && offered == Some(requested)
+}
+
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
@@ -966,45 +973,80 @@ impl Controller {
         self.credential_operation("revoke", &identity, &identity.to_value())
     }
 
-    /// The selected Model is an installed composition binding, not client configuration.
-    /// ACP's standard session config options let any frontend render the effective
-    /// model, even while this P1 composition has only one eligible binding.
-    fn model_options(&self) -> Vec<SessionConfigOption> {
-        installed_model_provider(&self.composition)
-            .map(|provider| {
+    /// Read the effective model for THIS session, not the static installed
+    /// transport plugin name when the native session has a persisted selection.
+    /// Storage contains only intent: provider-owned catalog/auth is checked
+    /// again before disclosing a selectable ACP model. A missing/invalid
+    /// selection never borrows a different session's model or authority.
+    fn current_model_id(&self, session: &str) -> acp::Result<Option<String>> {
+        let kernel = self
+            .sessions
+            .get(session)
+            .ok_or_else(|| invalid("unknown ACP session"))?;
+        let installed = installed_model_provider(&self.composition);
+        if has_model_selection_storage(&self.composition) {
+            let recorded = super::model_selection_state::read(kernel, &self.composition, session)
+                .map_err(internal)?;
+            match recorded {
+                Some((selection, _revision)) => {
+                    // The actual installed Model slot remains launcher-owned.
+                    // Validation alone cannot authorize an absent native slot.
+                    installed.ok_or_else(|| invalid("installed Model slot is ambiguous"))?;
+                    let management = self
+                        .management
+                        .as_ref()
+                        .ok_or_else(|| invalid("selected model management is unavailable"))?;
+                    let binding = management.current_http_binding(&selection)?;
+                    return Ok(Some(binding.model_id().to_owned()));
+                }
+                None if self.selected_http_seen.contains(session) => {
+                    return Err(invalid("selected model record was withdrawn"));
+                }
+                None => {}
+            }
+        }
+        Ok(installed.map(str::to_owned))
+    }
+
+    /// A single currently effective option is intentionally not an offer to
+    /// switch provider/account. Native model mutation requires a separate
+    /// revision-CAS admission path; standard ACP must not report a fabricated
+    /// success for a different model.
+    fn model_options(&self, session: &str) -> acp::Result<Vec<SessionConfigOption>> {
+        Ok(self
+            .current_model_id(session)?
+            .map(|id| {
                 SessionConfigOption::select(
                     "model",
                     "Model",
-                    provider.to_owned(),
-                    vec![SessionConfigSelectOption::new(
-                        provider.to_owned(),
-                        provider.to_owned(),
-                    )],
+                    id.clone(),
+                    vec![SessionConfigSelectOption::new(id.clone(), id)],
                 )
                 .category(SessionConfigOptionCategory::Model)
             })
             .into_iter()
-            .collect()
+            .collect())
     }
 
     fn set_config_option(
         &mut self,
         request: SetSessionConfigOptionRequest,
     ) -> acp::Result<SetSessionConfigOptionResponse> {
-        if !self.sessions.contains_key(&request.session_id.to_string()) {
-            return Err(invalid("unknown ACP session"));
-        }
+        let session = request.session_id.to_string();
+        let offered = self.current_model_id(&session)?;
         let chosen = match request.value {
             SessionConfigOptionValue::ValueId { value } => value.to_string(),
             _ => return Err(invalid("unsupported model configuration value")),
         };
-        let admitted = installed_model_provider(&self.composition) == Some(chosen.as_str());
-        if request.config_id.to_string() != "model" || !admitted {
+        if request.config_id.to_string() != "model"
+            || !exact_current_model(offered.as_deref(), &chosen)
+        {
             return Err(invalid("unavailable or unauthorized model"));
         }
-        // Until dynamic graph routing is installed, selection of the
-        // already admitted model is idempotent. A different model is denied.
-        Ok(SetSessionConfigOptionResponse::new(self.model_options()))
+        // An exact repeat is idempotent; this does not authorize a switch.
+        Ok(SetSessionConfigOptionResponse::new(
+            self.model_options(&session)?,
+        ))
     }
 
     fn new_session(&mut self, request: NewSessionRequest) -> acp::Result<NewSessionResponse> {
@@ -1026,7 +1068,8 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
-        Ok(NewSessionResponse::new(session).config_options(self.model_options()))
+        let options = self.model_options(&session)?;
+        Ok(NewSessionResponse::new(session).config_options(options))
     }
 
     fn load_session(
@@ -1068,7 +1111,7 @@ impl Controller {
         *offset = 0;
         let loaded = self.sessions.get(&session).expect("just inserted");
         send_updates(loaded, None, &session, offset, peer, &self.closed)?;
-        Ok(LoadSessionResponse::new().config_options(self.model_options()))
+        Ok(LoadSessionResponse::new().config_options(self.model_options(&session)?))
     }
 
     /// Controller-only, same-session Model authorization. A persisted choice
@@ -1502,6 +1545,24 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_effective_model_idempotency_rejects_foreign_or_missing_choices() {
+        assert!(exact_current_model(
+            Some("selected-real-model"),
+            "selected-real-model"
+        ));
+        assert!(!exact_current_model(
+            Some("phenix.model.http"),
+            "selected-real-model"
+        ));
+        assert!(!exact_current_model(
+            Some("selected-real-model"),
+            "other-account-model"
+        ));
+        assert!(!exact_current_model(Some("selected-real-model"), ""));
+        assert!(!exact_current_model(None, "selected-real-model"));
+    }
 
     #[test]
     fn only_one_exact_model_slot_is_advertisable_or_selectable() {
