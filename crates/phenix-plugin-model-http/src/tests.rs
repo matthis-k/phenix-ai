@@ -713,7 +713,7 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
 
             let content = concat!(
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"selected-live-reply\"},",
-                "\"finish_reason\":\"stop\"}]}\n\n",
+                "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n",
                 "data: [DONE]\n\n"
             );
             write!(
