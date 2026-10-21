@@ -28,6 +28,7 @@ pub struct AdmittedModelChoice {
     model: ProviderModel,
     protocol: ProtocolBinding,
     credential_identity: Option<CredentialIdentity>,
+    credential_profile: Option<CredentialProfile>,
 }
 
 impl AdmittedModelChoice {
@@ -172,6 +173,37 @@ pub fn bind_http_model(
     })
 }
 
+/// Revalidate an admitted HTTP choice against the *current* provider, account
+/// status and model catalog before configuring a transport. This checks the
+/// selected profile's authentication method as well as the catalog's full
+/// model metadata, even if a buggy discovery source reuses a revision.
+///
+/// The caller must obtain this evidence from authorized runtime providers
+/// and independently authorize the exact credential root and Model execution.
+/// This remains non-secret metadata, not a grant or proof of live entitlement.
+pub fn revalidate_http_model(
+    provider: &ProviderDescriptor,
+    authentication: &AuthenticationStatus,
+    page: &ModelPage,
+    admitted: AdmittedModelChoice,
+    runtime_catalog_is_fresh: bool,
+) -> Result<HttpModelBinding, ProviderError> {
+    let current = validate_model_selection(
+        provider,
+        authentication,
+        page,
+        admitted.selection(),
+        runtime_catalog_is_fresh,
+    )?;
+    if current != admitted {
+        return Err(selection_error(
+            ProviderErrorCode::Conflict,
+            "selected model, connection or authentication registration changed",
+        ));
+    }
+    bind_http_model(provider, current)
+}
+
 fn selection_error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
         code,
@@ -305,12 +337,20 @@ pub fn validate_model_selection(
             "model is not selectable through the installed protocol",
         ));
     }
+    let credential_profile = requested.profile_id.as_deref().and_then(|profile_id| {
+        authentication
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+    });
     Ok(AdmittedModelChoice {
         requested: requested.clone(),
         connection: connection.clone(),
         model: selected.clone(),
         protocol: protocol.clone(),
         credential_identity,
+        credential_profile,
     })
 }
 
