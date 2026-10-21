@@ -477,7 +477,9 @@ struct NativeModelOffer {
 /// client claims. Distinct account choices must never alias one model name.
 fn native_model_option_id(selection: &ModelSelection, revision: u64) -> acp::Result<String> {
     let mut fields = serde_json::to_value(selection).map_err(internal)?;
-    let object = fields.as_object_mut().ok_or_else(|| internal("invalid native selection"))?;
+    let object = fields
+        .as_object_mut()
+        .ok_or_else(|| internal("invalid native selection"))?;
     object.insert("session_revision".into(), serde_json::json!(revision));
     serde_json::to_string(&fields)
         .map(|value| format!("phenix.native-model@1:{value}"))
@@ -1394,7 +1396,9 @@ impl Controller {
             }
         }
         if found.len() != 1 {
-            return Err(invalid("stale, ambiguous or unauthorized model choice; refresh menu"));
+            return Err(invalid(
+                "stale, ambiguous or unauthorized model choice; refresh menu",
+            ));
         }
         let desired = found.pop().ok_or_else(|| invalid("model unavailable"))?;
         // After admission, remember any attempt to install a native Model:
@@ -1967,7 +1971,8 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(
                 id.strip_prefix("phenix.native-model@1:").unwrap()
-            ).unwrap()["session_revision"],
+            )
+            .unwrap()["session_revision"],
             0
         );
         assert!(!id.contains("Bearer "));
