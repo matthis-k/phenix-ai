@@ -11,7 +11,7 @@ pub(crate) struct Config {
     pub model: String,
     pub protocol: Protocol,
     pub provider_max_tokens: Option<u64>,
-    pub credential: Option<String>,
+    pub credential: Option<phenix_provider_contracts::CredentialSecret>,
     pub ca_file: Option<String>,
 }
 
@@ -52,16 +52,30 @@ pub(crate) fn configured_max_tokens(
 
 /// An absent setting permits a deliberately credential-free local provider.
 /// An explicitly supplied but unusable value must never become no-auth.
-fn configured_credential(
+pub(crate) fn configured_credential(
     value: Result<String, env::VarError>,
-) -> Result<Option<String>, BasicError> {
+) -> Result<Option<phenix_provider_contracts::CredentialSecret>, BasicError> {
     match value {
         Err(env::VarError::NotPresent) => Ok(None),
-        Ok(secret) if !secret.is_empty() && !secret.chars().any(char::is_control) => {
-            Ok(Some(secret))
-        }
-        _ => Err(error(ErrorCode::InvalidInput, "invalid HTTP credential")),
+        Ok(secret) => validated_credential(secret.into_bytes()).map(Some),
+        Err(_) => Err(error(ErrorCode::InvalidInput, "invalid HTTP credential")),
     }
+}
+
+/// Keep both explicit checked and legacy preset credentials in the canonical
+/// clearing secret type. Reject malformed text without retaining its bytes.
+fn validated_credential(
+    mut bytes: Vec<u8>,
+) -> Result<phenix_provider_contracts::CredentialSecret, BasicError> {
+    let valid = std::str::from_utf8(&bytes)
+        .ok()
+        .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
+    if !valid {
+        bytes.fill(0);
+        return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
+    }
+    phenix_provider_contracts::CredentialSecret::new(bytes)
+        .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
 }
 
 // The checked path is consumed once the controller resolves the selected
@@ -116,18 +130,8 @@ impl Config {
         let protocol = Protocol::parse(binding.protocol_id())?;
         let endpoint = endpoint_url(binding.endpoint())?;
         let secret = credential
-            .map(|(_, key)| {
-                std::str::from_utf8(key.expose_for_authorized_provider())
-                    .map(str::to_owned)
-                    .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
-            })
+            .map(|(_, key)| validated_credential(key.expose_for_authorized_provider().to_vec()))
             .transpose()?;
-        if secret
-            .as_deref()
-            .is_some_and(|value| value.is_empty() || value.chars().any(char::is_control))
-        {
-            return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
-        }
         Ok(Self {
             endpoint,
             model: binding.model_id().into(),

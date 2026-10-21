@@ -98,6 +98,16 @@ pub(crate) fn run(
         sse: false,
         failure: None,
     });
+    // The configuration owns clearing secret storage through the full
+    // transfer lifetime; no second long-lived plaintext String is retained.
+    let authorization = config
+        .credential
+        .as_ref()
+        .map(|secret| {
+            std::str::from_utf8(secret.expose_for_authorized_provider())
+                .map_err(|_| error(ErrorCode::InvalidInput, "invalid HTTP credential"))
+        })
+        .transpose()?;
     let configured = (|| -> Result<(), curl::Error> {
         handle.url(&config.endpoint)?;
         handle.post(true)?;
@@ -117,7 +127,7 @@ pub(crate) fn run(
         headers.append("Content-Type: application/json")?;
         headers.append("Accept: text/event-stream")?;
         headers.append("Expect:")?;
-        if let Some(token) = config.credential {
+        if let Some(token) = authorization {
             match config.protocol {
                 phenix_provider_protocols::Protocol::AnthropicMessages => {
                     headers.append(&format!("x-api-key: {token}"))?;
