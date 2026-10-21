@@ -87,7 +87,7 @@ pub(crate) fn run(
     wake: WakePermit,
 ) -> Result<ModelReply, BasicError> {
     run_with_notify(config, body, request, progress, cancelled, move || {
-        wake.wake()
+        wake.wake();
     })
 }
 
