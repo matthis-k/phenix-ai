@@ -100,7 +100,9 @@ def execute():
         status, ref = request("GET", path)
         if status == 404 or ref["object"]["sha"] != EXPECTED[name]:
             raise RuntimeError("historical ref moved before deletion: " + name)
-        status, _ = request("DELETE", path)
+        # GitHub reads a single ref via /git/ref/, but deletes via /git/refs/.
+        delete_path = "/git/refs/heads/" + urllib.parse.quote(name, safe="/")
+        status, _ = request("DELETE", delete_path)
         if status not in (200, 204):
             raise RuntimeError("unexpected deletion response for " + name)
         if request("GET", path)[0] != 404:
