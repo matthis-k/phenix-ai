@@ -1680,7 +1680,7 @@
       } ''
         mkdir -p "$out"
         python ${./tests/basic-pending-http-product.py} \
-          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} "$out" --advanced-adapter
+          ${basicRuntime}/bin/phenix-basic-runtime ${advancedComposition} ${httpModel} ${providerDefinitions} "$out" --advanced-adapter
         test -s "$out/pending-basic-http.json"
       '';
       # Only a test composition co-binds Model and Meter to the same fixture.
@@ -1783,11 +1783,11 @@
       } ''
         mkdir -p $out
         export PYTHONPATH=${./tests}
-        python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out
         test -s "$out/pending-basic-http.json"
-        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/responses
-        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out/anthropic
-        python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} $out
+        PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out/responses
+        PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/basic-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out/anthropic
+        python ${./tests/acp-pending-http-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${httpModel} ${providerDefinitions} $out
         test -s "$out/acp-pending-http.json"
       '';
       scriptedModelCheck = pkgs.runCommand "phenix-b4-scripted" { } ''
