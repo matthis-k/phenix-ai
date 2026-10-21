@@ -496,7 +496,10 @@ fn stale_native_model_choice(chosen: &str, current_revision: u64) -> bool {
     chosen
         .strip_prefix(PREFIX)
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-        .and_then(|json| json.get("session_revision").and_then(|value| value.as_u64()))
+        .and_then(|json| {
+            json.get("session_revision")
+                .and_then(|value| value.as_u64())
+        })
         .is_some_and(|revision| revision < current_revision)
 }
 
@@ -2020,7 +2023,8 @@ mod tests {
         assert!(!stale_native_model_choice(&id, 1));
         assert!(!stale_native_model_choice(&id, 0));
         assert!(!stale_native_model_choice(
-            "phenix.native-model@1:{\"provider_id\":\"forged\"}", 2,
+            "phenix.native-model@1:{\"provider_id\":\"forged\"}",
+            2,
         ));
         assert!(!stale_native_model_choice("unrelated", 2));
     }
