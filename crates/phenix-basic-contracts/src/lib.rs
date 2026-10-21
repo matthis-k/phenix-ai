@@ -254,6 +254,7 @@ pub enum TurnAdvanceOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct CatalogCursor {
+    pub session: String,
     pub query: String,
     pub revision: u64,
     pub offset: u64,
