@@ -80,6 +80,23 @@ impl HttpModelBinding {
         self.choice.credential_identity()
     }
 
+    /// Prepare the exact, resolve-only native credential import scope for a
+    /// checked selected account. Reject a foreign or credential-free choice
+    /// *before* invoking a credential provider. The returned scope does not
+    /// create authority: the trusted caller and kernel must already grant it.
+    pub fn resolution_scope_for(
+        &self,
+        selected: &CredentialIdentity,
+    ) -> Result<phenix_sdk::ScopedRequest, ProviderError> {
+        match self.credential_identity() {
+            Some(expected) if expected == selected => selected.resolve_scope(),
+            _ => Err(selection_error(
+                ProviderErrorCode::Denied,
+                "credential identity is not selected for this HTTP model",
+            )),
+        }
+    }
+
     /// Selected, validated authentication method category. The method's
     /// presence is not a credential-resolution grant, and a generic HTTP
     /// adapter must reject methods it does not explicitly implement.
@@ -757,6 +774,51 @@ mod tests {
                 .unwrap_err()
                 .code,
             ProviderErrorCode::Conflict
+        );
+    }
+
+    #[test]
+    fn selected_model_scopes_exact_secret_resolution_before_reading_bytes() {
+        use phenix_sdk::Operation;
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let choice = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let bound = bind_http_model(&provider, choice).unwrap();
+        let personal = CredentialIdentity::new("openai", "api", "personal").unwrap();
+        let work = CredentialIdentity::new("openai", "api", "work").unwrap();
+        let request_scope = bound.resolution_scope_for(&personal).unwrap();
+        assert_eq!(
+            request_scope.resource.as_deref(),
+            Some(personal.resource().unwrap().as_str())
+        );
+        assert_eq!(
+            request_scope.authority.operations,
+            [<super::super::credentials::ProviderCredentials::resolve as Operation>::KEY.into()]
+                .into()
+        );
+        assert_eq!(
+            request_scope.authority.resources,
+            [personal.resource().unwrap()].into()
+        );
+        assert_eq!(
+            bound.resolution_scope_for(&work).unwrap_err().code,
+            ProviderErrorCode::Denied
+        );
+
+        let (mut local, mut no_auth, mut models, mut request) = fixture();
+        local.connections[0].auth_methods.clear();
+        local.connections[0].base_url = Some("http://127.0.0.1:11434/v1".into());
+        local.connections[0].protocols[0].endpoint =
+            Some("http://127.0.0.1:11434/v1/responses".into());
+        no_auth.profiles.clear();
+        models.profile_id = None;
+        request.profile_id = None;
+        let choice = validate_model_selection(&local, &no_auth, &models, &request, true).unwrap();
+        let bound = bind_http_model(&local, choice).unwrap();
+        assert_eq!(
+            bound.resolution_scope_for(&personal).unwrap_err().code,
+            ProviderErrorCode::Denied
         );
     }
 
