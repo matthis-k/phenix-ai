@@ -1,0 +1,40 @@
+name: One-shot historical incremental-probe cleanup
+on:
+  pull_request:
+    paths:
+      - .github/scripts/cleanup-incremental-probe-branches.py
+      - .github/scripts/test_cleanup_incremental_probe_branches.py
+      - .github/workflows/cleanup-incremental-probes.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/cleanup-incremental-probe-branches.py
+      - .github/scripts/test_cleanup_incremental_probe_branches.py
+      - .github/workflows/cleanup-incremental-probes.yml
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - run: python3 -m py_compile .github/scripts/cleanup-incremental-probe-branches.py
+      - run: python3 .github/scripts/cleanup-incremental-probe-branches.py
+      - run: python3 .github/scripts/test_cleanup_incremental_probe_branches.py
+  cleanup:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'matthis-k/phenix-ai'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Delete only unchanged historical probe refs after full preflight
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/cleanup-incremental-probe-branches.py --execute
