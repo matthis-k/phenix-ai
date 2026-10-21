@@ -8,9 +8,11 @@ use phenix_kernel::{
     Call, Outcome, Poll,
 };
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthenticationStatus, ConnectionDescriptor,
-    HttpModelInstall, ModelOrigin, ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor,
-    ProviderError, ProviderErrorCode, ProviderModel,
+    bind_http_model, validate_model_selection, AdapterBinding, ApiKeyOptions, AuthenticationKind,
+    AuthenticationMethod, AuthenticationStatus, ConnectionDescriptor, CredentialIdentity,
+    CredentialProfile, CredentialProfileStatus, CredentialSecret, HttpModelInstall, ModelOrigin,
+    ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderError,
+    ProviderErrorCode, ProviderModel,
 };
 use std::{
     collections::BTreeSet,
@@ -27,7 +29,7 @@ fn selection(key: &str, provider: &str) -> Selection {
     }
 }
 
-fn checked_install(endpoint: &str, session: &str) -> HttpModelInstall {
+fn checked_install(endpoint: &str, session: &str, authenticated: bool) -> HttpModelInstall {
     // The fixture is deterministic test data, not an authoritative catalog.
     // Production controller admission must read current provider-owned state.
     let provider = ProviderDescriptor {
@@ -41,17 +43,43 @@ fn checked_install(endpoint: &str, session: &str) -> HttpModelInstall {
                 endpoint: Some(endpoint.into()),
             }],
             base_url: None,
-            auth_methods: vec![],
+            auth_methods: if authenticated {
+                vec![AuthenticationMethod {
+                    id: "api-key".into(),
+                    label: "API key".into(),
+                    kind: AuthenticationKind::ApiKey,
+                    adapter: AdapterBinding::from_typed(
+                        "api-key",
+                        &ApiKeyOptions {
+                            environment_variable: None,
+                            interactive: true,
+                        },
+                    )
+                    .unwrap(),
+                }]
+            } else {
+                vec![]
+            },
             model_sources: vec![],
         }],
     };
     let auth = AuthenticationStatus {
         provider_id: provider.id.clone(),
         connection_id: "local".into(),
-        profiles: vec![],
+        profiles: if authenticated {
+            vec![CredentialProfile {
+                id: "primary".into(),
+                label: "Primary".into(),
+                method_id: "api-key".into(),
+                status: CredentialProfileStatus::Authenticated,
+            }]
+        } else {
+            vec![]
+        },
     };
+    let profile_id = authenticated.then(|| "primary".to_owned());
     let models = ModelPage {
-        profile_id: None,
+        profile_id: profile_id.clone(),
         models: vec![ProviderModel {
             id: "selected-fixture".into(),
             label: "Selected fixture".into(),
@@ -68,7 +96,7 @@ fn checked_install(endpoint: &str, session: &str) -> HttpModelInstall {
     let request = ModelSelection {
         provider_id: provider.id.clone(),
         connection_id: "local".into(),
-        profile_id: None,
+        profile_id,
         model_id: "selected-fixture".into(),
         protocol_id: "openai-chat".into(),
         endpoint_id: "chat".into(),
@@ -76,7 +104,34 @@ fn checked_install(endpoint: &str, session: &str) -> HttpModelInstall {
     };
     let chosen = validate_model_selection(&provider, &auth, &models, &request, true).unwrap();
     let bound = bind_http_model(&provider, chosen).unwrap();
-    HttpModelInstall::from_checked(&bound, session.into(), None, None).unwrap()
+    if authenticated {
+        let correct = CredentialIdentity::new("local-fixture", "local", "primary").unwrap();
+        let foreign = CredentialIdentity::new("local-fixture", "local", "foreign").unwrap();
+        let new_secret = || CredentialSecret::new(b"selected-fixture-secret".to_vec()).unwrap();
+        // Admission and secret identity are distinct: stale/foreign or absent
+        // API-key profiles must fail before invoking any provider I/O.
+        assert_eq!(
+            HttpModelInstall::from_checked(
+                &bound,
+                session.into(),
+                Some((foreign, new_secret())),
+                None
+            )
+            .unwrap_err()
+            .code,
+            ProviderErrorCode::Denied
+        );
+        assert_eq!(
+            HttpModelInstall::from_checked(&bound, session.into(), None, None)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
+        );
+        HttpModelInstall::from_checked(&bound, session.into(), Some((correct, new_secret())), None)
+            .unwrap()
+    } else {
+        HttpModelInstall::from_checked(&bound, session.into(), None, None).unwrap()
+    }
 }
 
 fn main() {
@@ -88,6 +143,11 @@ fn main() {
     );
     let endpoint =
         std::env::var("PHENIX_SELECTED_HTTP_ENDPOINT").expect("selected loopback endpoint");
+    let authenticated = match std::env::var("PHENIX_SELECTED_HTTP_AUTH_MODE").as_deref() {
+        Ok("api-key") => true,
+        Ok("none") => false,
+        _ => panic!("explicit credential-free or API-key fixture mode is required"),
+    };
     let resource = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let specs = [
         ("root", "phenix.provider.http-model-session@1/install"),
@@ -152,7 +212,7 @@ fn main() {
 
     // A request for s2 cannot use this s1-only root even when the
     // metadata passes the ordinary provider catalog checks.
-    let foreign = checked_install(&endpoint, "s2");
+    let foreign = checked_install(&endpoint, "s2", authenticated);
     match root.invoke_selected(&control, &foreign.to_value()).unwrap() {
         Outcome::Domain(value) => {
             assert_eq!(
@@ -163,7 +223,7 @@ fn main() {
         Outcome::Success(_) => panic!("cross-session native model install was accepted"),
     }
 
-    let chosen = checked_install(&endpoint, "s1");
+    let chosen = checked_install(&endpoint, "s1", authenticated);
     assert!(matches!(
         root.invoke_selected(&control, &chosen.to_value()).unwrap(),
         Outcome::Success(_)
