@@ -587,6 +587,80 @@ pub mod definitions {
 mod tests {
     use super::*;
     #[test]
+    fn tool_pages_reject_foreign_cursor_skips_and_unbounded_response() {
+        let request = ToolQuery {
+            session: "s1".into(),
+            query: "read".into(),
+            cursor: None,
+            limit: 2,
+        };
+        let mut page = ToolPage {
+            tools: vec![ToolInfo {
+                id: "read-one".into(),
+                description: "One".into(),
+                arguments_schema: r#"{"type":"object"}"#.into(),
+                idempotent: true,
+            }],
+            revision: 7,
+            next: Some(CatalogCursor {
+                session: "s1".into(),
+                query: "read".into(),
+                revision: 7,
+                offset: 1,
+            }),
+        };
+        page.validate_for(&request).unwrap();
+        let mut wrong = page.clone();
+        wrong.next.as_mut().unwrap().session = "s2".into();
+        assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+        wrong = page.clone();
+        wrong.next.as_mut().unwrap().query = "write".into();
+        assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+        wrong = page.clone();
+        wrong.next.as_mut().unwrap().revision = 6;
+        assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+        for offset in [0, 2, 100] {
+            wrong = page.clone();
+            wrong.next.as_mut().unwrap().offset = offset;
+            assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+        }
+        wrong = page.clone();
+        wrong.tools.clear();
+        assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+        wrong = page.clone();
+        wrong.tools.extend(page.tools.clone());
+        wrong.tools.extend(page.tools.clone());
+        assert_eq!(wrong.validate_for(&request).unwrap_err().code, ErrorCode::InvalidReply);
+
+        let mut continued = request.clone();
+        continued.cursor = page.next.clone();
+        let next_page = ToolPage {
+            tools: page.tools.clone(),
+            revision: 7,
+            next: Some(CatalogCursor {
+                session: "s1".into(),
+                query: "read".into(),
+                revision: 7,
+                offset: 2,
+            }),
+        };
+        next_page.validate_for(&continued).unwrap();
+        continued.session = "another".into();
+        assert_eq!(
+            next_page.validate_for(&continued).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
+        continued.session = "s1".into();
+        continued.cursor.as_mut().unwrap().revision = 6;
+        assert_eq!(
+            next_page.validate_for(&continued).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
+        page.next = None;
+        page.validate_for(&request).unwrap();
+    }
+
+    #[test]
     fn reconciliation_outcomes_reject_ambiguous_wire_payloads() {
         for outcome in [
             ToolOutcome::Succeeded {
