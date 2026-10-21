@@ -9,10 +9,13 @@ import sys
 import threading
 import time
 
-binary, base_file, model_plugin, destination = sys.argv[1:]
+binary, base_file, model_plugin, provider_definitions, destination = sys.argv[1:]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 composition = json.loads(Path(base_file).read_text())
+# Resolve the provider plugin native contract without granting model install to ACP.
+if provider_definitions not in composition["definitions"]:
+    composition["definitions"].append(provider_definitions)
 composition["artifacts"] = [
     path for path in composition["artifacts"]
     if "phenix-plugin-model-scripted" not in path

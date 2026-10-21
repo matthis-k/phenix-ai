@@ -82,6 +82,48 @@ fn validated_credential(
 // credential root; the legacy HTTP environment preset remains a separate
 // explicit composition mode until the management/Model handoff is installed.
 impl Config {
+    /// Validate one decoded private native install before it becomes the next
+    /// model turn's configuration. A forged Portable payload cannot create
+    /// an unsafe endpoint, blank model or malformed header value.
+    pub(crate) fn from_install(
+        install: phenix_provider_contracts::HttpModelInstall,
+    ) -> Result<Self, BasicError> {
+        use phenix_provider_contracts::HttpModelAuthorization;
+        let (_, endpoint, model, protocol, provider_max_tokens, authentication) =
+            install.into_parts();
+        if model.trim().is_empty() || provider_max_tokens == Some(0) {
+            return Err(error(
+                ErrorCode::InvalidInput,
+                "invalid selected HTTP model",
+            ));
+        }
+        let endpoint = endpoint_url(&endpoint)?;
+        let protocol = Protocol::parse(&protocol)?;
+        let credential = match authentication {
+            HttpModelAuthorization::CredentialFree => None,
+            HttpModelAuthorization::ApiKey {
+                identity: _,
+                secret,
+            } => {
+                let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
+                    .ok()
+                    .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
+                if !valid {
+                    return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
+                }
+                Some(secret)
+            }
+        };
+        Ok(Self {
+            endpoint,
+            model,
+            protocol,
+            provider_max_tokens,
+            credential,
+            ca_file: None,
+        })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn from_checked_binding(
         binding: &phenix_provider_contracts::HttpModelBinding,

@@ -2,6 +2,8 @@
 mod request;
 use phenix_provider_protocols::stream;
 #[cfg(test)]
+mod control_tests;
+#[cfg(test)]
 mod tests;
 mod transport;
 
@@ -14,11 +16,47 @@ fn failed(message: &str) -> BasicError {
     error(ErrorCode::ModelFailed, message)
 }
 
+#[derive(Default)]
+pub(crate) enum ModelConfiguration {
+    #[default]
+    Preset,
+    // Each checked configuration is scoped to its Basic session and consumed
+    // exactly once. Selected mode is permanent: missing/consumed sessions
+    // cannot fall back to an unrelated legacy environment preset.
+    Selected(std::collections::BTreeMap<String, request::Config>),
+}
+
+impl ModelConfiguration {
+    pub(crate) fn install(&mut self, session: String, config: request::Config) {
+        match self {
+            Self::Preset => {
+                *self = Self::Selected(std::collections::BTreeMap::from([(session, config)]));
+            }
+            Self::Selected(pending) => {
+                pending.insert(session, config);
+            }
+        }
+    }
+
+    pub(crate) fn take_for_turn(&mut self, session: &str) -> Result<request::Config, BasicError> {
+        match self {
+            Self::Preset => request::Config::load(),
+            Self::Selected(pending) => pending.remove(session).ok_or_else(|| {
+                error(
+                    ErrorCode::InvalidInput,
+                    "selected HTTP model is not installed for session",
+                )
+            }),
+        }
+    }
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.model.http",
     version = "1.0.0",
     profile = "state",
     provide(phenix_basic_contracts::Model, slot = "Model"),
+    provide(phenix_provider_contracts::HttpModelSession, slot = "ModelControl"),
     require(phenix_basic_contracts::EventJournal, slot = "Journal"),
     require(phenix_basic_contracts::Storage, slot = "Storage", optional)
 )]
@@ -26,6 +64,9 @@ mod plugin {
     use phenix_basic_contracts::{
         BasicError, Event, EventJournal, EventKind, JournalAppend, Model, ModelReply, ModelRequest,
         Usage,
+    };
+    use phenix_provider_contracts::{
+        HttpModelInstall, HttpModelSession, ProviderError, ProviderErrorCode,
     };
     use phenix_sdk::{Blob, CallError, CallResult, Code, Failure, Host, PendingResult};
     use std::{
@@ -48,6 +89,7 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         worker: Option<Worker>,
+        configuration: super::ModelConfiguration,
     }
 
     fn start(
@@ -62,7 +104,10 @@ mod plugin {
                 "HTTP model work is already active",
             )));
         }
-        let config = super::request::Config::load().map_err(CallError::Domain)?;
+        let config = state
+            .configuration
+            .take_for_turn(&request.session)
+            .map_err(CallError::Domain)?;
         let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &request,
             &config.model,
@@ -104,6 +149,43 @@ mod plugin {
         });
         Ok(())
     }
+    #[provide(HttpModelSession::install)]
+    fn install(
+        state: &mut State,
+        host: &Host<'_>,
+        input: HttpModelInstall,
+    ) -> CallResult<(), ProviderError> {
+        let fail = |code, message: &str| {
+            CallError::Domain(ProviderError {
+                code,
+                message: message.into(),
+            })
+        };
+        let resource = phenix_basic_contracts::session_resource(input.session())
+            .map_err(|_| fail(ProviderErrorCode::InvalidInput, "invalid selected session"))?;
+        if host.resource()?.as_deref() != Some(resource.as_str()) {
+            return Err(fail(
+                ProviderErrorCode::Denied,
+                "model session resource denied",
+            ));
+        }
+        if state.worker.is_some() {
+            return Err(fail(
+                ProviderErrorCode::Conflict,
+                "model turn is already active",
+            ));
+        }
+        let session = input.session().to_owned();
+        let config = super::request::Config::from_install(input).map_err(|_| {
+            fail(
+                ProviderErrorCode::InvalidInput,
+                "invalid HTTP model install",
+            )
+        })?;
+        state.configuration.install(session, config);
+        Ok(())
+    }
+
     #[pending(Model::complete)]
     fn begin(
         state: &mut State,

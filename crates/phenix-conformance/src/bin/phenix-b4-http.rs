@@ -110,9 +110,13 @@ fn request(mode: &str) -> ModelRequest {
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 7, "MODE HTTP JOURNAL SQLITE DEFINITIONS OUTPUT");
+    assert_eq!(
+        args.len(),
+        8,
+        "MODE HTTP JOURNAL SQLITE BASIC_DEFINITIONS PROVIDER_DEFINITIONS OUTPUT"
+    );
     let mode = &args[1];
-    let output = Path::new(&args[6]);
+    let output = Path::new(&args[7]);
     fs::create_dir_all(output).unwrap();
     let resource = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let specs = [
@@ -128,7 +132,7 @@ fn main() {
     let kernel = Prepared::prepare(Composition {
         format: "phenix.composition.v3".into(),
         artifacts: args[2..5].to_vec(),
-        definitions: vec![args[5].clone()],
+        definitions: vec![args[5].clone(), args[6].clone()],
         entry: selection("phenix.basic.model@1/complete", "phenix.model.http"),
         slots: vec![
             SlotBinding {

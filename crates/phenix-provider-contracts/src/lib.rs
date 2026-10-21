@@ -16,6 +16,9 @@ pub use credentials::{
     CredentialIdentity, CredentialImport, CredentialSecret, ProviderCredentials,
 };
 
+pub mod model_session;
+pub use model_session::{HttpModelAuthorization, HttpModelInstall, HttpModelSession};
+
 pub mod selection;
 pub use selection::{
     bind_http_model, revalidate_http_model, validate_model_selection, AdmittedModelChoice,
@@ -338,7 +341,8 @@ pub trait ProviderAuth {
     profile = "definitions",
     define(ProviderCatalog),
     define(ProviderAuth),
-    define(ProviderCredentials)
+    define(ProviderCredentials),
+    define(HttpModelSession)
 )]
 pub mod definitions {
     use super::*;
@@ -499,7 +503,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 3);
+        assert_eq!(metadata.definitions.len(), 4);
     }
 
     #[test]
