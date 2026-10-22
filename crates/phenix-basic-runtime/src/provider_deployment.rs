@@ -358,11 +358,14 @@ mod tests {
         let composed = deployment.compose().unwrap();
         let control = composed.credentials.unwrap();
         assert_eq!(control.authority.operations.len(), 3);
-        assert!(control.authority.operations.contains(
-            "phenix.provider.credentials@1/bind_environment"
-        ));
+        assert!(control
+            .authority
+            .operations
+            .contains("phenix.provider.credentials@1/bind_environment"));
         let mut invalid = fixture();
-        invalid.credential_management_operations.push(CredentialOperation::Resolve);
+        invalid
+            .credential_management_operations
+            .push(CredentialOperation::Resolve);
         assert!(invalid.compose().is_err());
     }
 
