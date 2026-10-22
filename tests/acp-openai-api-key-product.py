@@ -22,7 +22,7 @@ output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 key = secrets.token_hex(32)
 received = []
-state = {"get": 0, "post": 0}
+state = {"get": 0, "post": 0, "redirected": 0}
 account = {"provider_id": "openai", "connection_id": "api", "profile_id": "personal"}
 resource = "phenix.credentials." + ".".join(
     account[name].encode().hex()
@@ -37,17 +37,34 @@ class HTTP(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *_): pass
     def do_GET(self):
-        assert self.path == "/models", self.path
+        if self.path != "/models":
+            state["redirected"] += 1
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         state["get"] += 1
-        if self.headers.get("Authorization") != "Bearer " + key:
-            code, body = 401, {"error": {"message": "invalid credential"}}
-        else:
+        authorization = self.headers.get("Authorization")
+        if authorization == "Bearer " + key:
             code, body = 200, {"object": "list", "data": [
                 {"id": "gpt-5"}, {"id": "text-embedding-3-large"},
             ]}
-        payload = json.dumps(body).encode()
+        else:
+            code = {
+                "Bearer denied-test-token": 403,
+                "Bearer limited-test-token": 429,
+                "Bearer unavailable-test-token": 503,
+                "Bearer malformed-test-token": 200,
+                "Bearer redirect-test-token": 302,
+            }.get(authorization, 401)
+            body = {"error": {"message": "verification did not succeed"}}
+        payload = (b"{not-json" if authorization == "Bearer malformed-test-token"
+                   else json.dumps(body).encode())
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        if code == 302:
+            self.send_header("Location",
+                             f"http://127.0.0.1:{server.server_port}/redirected")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -214,6 +231,21 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     assert invalid["result"]["ok"] is True
     after_wrong = call(p, 7, "_phenix/providers/auth/status", user)
     assert after_wrong["result"]["profiles"][0]["status"]["Unavailable"]
+    # A stored credential is never equivalent to a provider-verified login.
+    # Denied, throttled, unavailable, malformed and redirected probes fail closed.
+    for index, token in enumerate((
+            "denied-test-token", "limited-test-token",
+            "unavailable-test-token", "malformed-test-token",
+            "redirect-test-token"), start=30):
+        imported = call(p, index * 2, "_phenix/credentials/import",
+                        {**account, "secret": token})
+        assert imported["result"]["ok"] is True, imported
+        checked_status = call(p, index * 2 + 1,
+                              "_phenix/providers/auth/status", user)
+        assert checked_status["result"]["profiles"][0]["status"]["Unavailable"], checked_status
+        assert token not in json.dumps(checked_status), "credential leaked"
+    assert state["redirected"] == 0, "provider followed an unauthorized redirect"
+    assert state["post"] == 0, "invalid credential reached inference"
     checked = call(p, 8, "_phenix/credentials/import", {**account, "secret": key})
     assert checked["result"]["ok"] is True
     accepted = call(p, 9, "_phenix/providers/auth/poll",
@@ -239,14 +271,34 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                         {"type": "text", "text": "hello"}]})
     assert prompted.get("result", {}).get("stopReason") == "end_turn", prompted
     assert received == ["gpt-5"], received
+    # Fresh ACP process revalidates the exact credential after session restart.
+    restarted = launch()
+    init(restarted)
+    fresh_status = call(restarted, 20, "_phenix/providers/auth/status", user)
+    assert fresh_status["result"]["profiles"][0]["status"] == "Authenticated"
+    loaded = call(restarted, 21, "session/load",
+                  {"sessionId": session, "cwd": "/tmp", "mcpServers": []})
+    assert "result" in loaded, loaded
+    close(restarted)
     revoked = call(p, 15, "_phenix/credentials/revoke", account)
     assert revoked["result"]["ok"] is True
     unavailable = call(p, 16, "_phenix/providers/auth/status", user)
     assert unavailable["result"]["profiles"][0]["status"]["Unavailable"]
+    denied_prompt = call(p, 17, "session/prompt",
+                         {"sessionId": session, "prompt": [
+                             {"type": "text", "text": "must not execute"}]})
+    assert "error" in denied_prompt, denied_prompt
     close(p)
+    after_revoke = launch()
+    init(after_revoke)
+    denied_load = call(after_revoke, 22, "session/load",
+                       {"sessionId": session, "cwd": "/tmp", "mcpServers": []})
+    assert "error" in denied_load, denied_load
+    close(after_revoke)
 
     assert not list(vault.iterdir()), "key not revoked from vault"
-    assert state["get"] >= 5 and state["post"] == 1, state
+    assert state["redirected"] == 0, state
+    assert state["get"] >= 10 and state["post"] == 1, state
 
 server.shutdown()
 (output / "openai-api-auth-product.json").write_text(json.dumps({
@@ -255,4 +307,6 @@ server.shutdown()
     "exact_profile_grant": True, "begin_poll_completed": True,
     "authorized_model_discovery": True, "streamed_selected_http": True,
     "revoke_invalidates_status": True, "secret_not_logged": True,
+    "invalid_http_fail_closed": True, "redirect_not_followed": True,
+    "restart_revalidates_profile": True, "revocation_denies_selected_prompt": True,
 }, sort_keys=True, indent=2))
