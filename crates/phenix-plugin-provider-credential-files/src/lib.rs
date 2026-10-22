@@ -58,15 +58,12 @@ fn environment_key_name() -> Result<Option<String>, ProviderError> {
 }
 
 fn valid_key_environment_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 128
-        && name
-            .bytes()
-            .next()
-            .is_some_and(|first| first.is_ascii_uppercase() || first == b'_')
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    phenix_provider_contracts::ApiKeyOptions {
+        environment_variable: Some(name.to_owned()),
+        interactive: true,
+    }
+    .validate()
+    .is_ok()
 }
 
 /// ProviderCredentials::resolve only. A key read from an environment
