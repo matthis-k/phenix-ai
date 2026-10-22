@@ -554,6 +554,7 @@ mod tests {
         assert_eq!(meta.requires[0].slot, "Credentials");
     }
 
+    #[cfg(not(feature = "c11-loopback-test"))]
     #[test]
     fn unsupported_identities_do_not_fall_through_to_another_provider() {
         assert_eq!(
