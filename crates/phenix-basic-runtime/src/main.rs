@@ -3,6 +3,7 @@
 
 mod acp_sdk;
 mod model_selection_state;
+mod provider_deployment;
 use phenix_basic_contracts::{
     BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
@@ -991,7 +992,7 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 || !["terminal", "jsonl", "acp"].contains(&args[1].as_str()) {
-        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json]... [--provider-model-resolver RESOLVER.json]...".into());
+        return Err("usage: phenix-basic-runtime terminal|jsonl|acp COMPOSITION.json [--session SESSION | --provider-management MANAGEMENT.json] [--provider-credentials CREDENTIALS.json]... [--provider-model-resolver RESOLVER.json]... [--provider-bundle DEPLOYMENT.json]".into());
     }
     ensure_default_sqlite_path()?;
 
@@ -1004,8 +1005,29 @@ fn run() -> Result<(), String> {
         if !(args.len() - 3).is_multiple_of(2) {
             return Err("ACP management flags require a composition file".into());
         }
+        let mut has_bundle = false;
         for flag in args[3..].chunks_exact(2) {
             let data = std::fs::read(&flag[1]).map_err(|e| e.to_string())?;
+            if flag[0] == "--provider-bundle" {
+                if has_bundle || management.is_some() || !credentials.is_empty() || !resolvers.is_empty() {
+                    return Err("provider bundle cannot be mixed with manual provider roots".into());
+                }
+                let deployment: provider_deployment::ProviderDeployment =
+                    serde_json::from_slice(&data).map_err(|e| e.to_string())?;
+                let composed = deployment.compose()?;
+                management = Some(composed.management);
+                if let Some(control) = composed.credentials {
+                    credentials.push(control);
+                }
+                if let Some(resolver) = composed.resolver {
+                    resolvers.push(resolver);
+                }
+                has_bundle = true;
+                continue;
+            }
+            if has_bundle {
+                return Err("provider bundle cannot be mixed with manual provider roots".into());
+            }
             let spec: Composition = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
             match flag[0].as_str() {
                 "--provider-management" => {
