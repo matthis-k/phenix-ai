@@ -414,6 +414,7 @@ mod tests {
                         &ApiKeyOptions {
                             environment_variable: None,
                             interactive: true,
+                            presentation: ApiKeyPresentation::Bearer,
                         },
                     )
                     .unwrap(),
@@ -752,6 +753,7 @@ mod tests {
                     &ApiKeyOptions {
                         environment_variable: None,
                         interactive: true,
+                            presentation: ApiKeyPresentation::Bearer,
                     },
                 )
                 .unwrap(),
