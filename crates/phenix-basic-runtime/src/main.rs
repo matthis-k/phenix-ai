@@ -1066,12 +1066,7 @@ fn run() -> Result<(), String> {
     };
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
-        "acp" => acp_sdk::run(
-            &composition,
-            management.as_ref(),
-            &credentials,
-            &resolvers,
-        ),
+        "acp" => acp_sdk::run(&composition, management.as_ref(), &credentials, &resolvers),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(
             &composition,
