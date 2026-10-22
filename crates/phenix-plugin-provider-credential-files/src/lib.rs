@@ -64,6 +64,7 @@ fn valid_key_environment_name(name: &str) -> bool {
     phenix_provider_contracts::ApiKeyOptions {
         environment_variable: Some(name.to_owned()),
         interactive: true,
+        presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
     }
     .validate()
     .is_ok()
