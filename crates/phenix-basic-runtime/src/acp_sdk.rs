@@ -486,6 +486,31 @@ fn native_model_option_id(selection: &ModelSelection, revision: u64) -> acp::Res
         .map_err(internal)
 }
 
+/// Classify a stale menu without treating client JSON as authority. Only
+/// current runtime-issued catalog choices ever reach native installation.
+fn stale_native_model_choice(chosen: &str, current_revision: u64) -> bool {
+    const PREFIX: &str = "phenix.native-model@1:";
+    if chosen.len() > 4096 {
+        return false;
+    }
+    chosen
+        .strip_prefix(PREFIX)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|json| {
+            json.get("session_revision")
+                .and_then(|value| value.as_u64())
+        })
+        .is_some_and(|revision| revision < current_revision)
+}
+
+fn stale_model_conflict() -> acp::Error {
+    acp::Error::invalid_params().data(serde_json::json!({
+        "format": "phenix.basic.error.v1",
+        "code": ErrorCode::Conflict,
+        "message": "model selection changed; refresh the ACP session model menu",
+    }))
+}
+
 /// A prior revision choice is idempotent ONLY when it selected the exact
 /// current model. A stale choice for another model is rejected on admission.
 fn is_previous_native_selection(
@@ -1396,9 +1421,10 @@ impl Controller {
             }
         }
         if found.len() != 1 {
-            return Err(invalid(
-                "stale, ambiguous or unauthorized model choice; refresh menu",
-            ));
+            if stale_native_model_choice(&chosen, expected) {
+                return Err(stale_model_conflict());
+            }
+            return Err(invalid("ambiguous or unauthorized model choice"));
         }
         let desired = found.pop().ok_or_else(|| invalid("model unavailable"))?;
         // After admission, remember any attempt to install a native Model:
@@ -1985,6 +2011,22 @@ mod tests {
         other = selection.clone();
         other.catalog_revision = 8;
         assert_ne!(id, native_model_option_id(&other, 0).unwrap());
+    }
+
+    #[test]
+    fn stale_menu_is_typed_conflict_but_forged_and_future_choices_are_not() {
+        let chosen = serde_json::json!({
+            "provider_id": "fixture", "model_id": "model", "session_revision": 1
+        });
+        let id = format!("phenix.native-model@1:{chosen}");
+        assert!(stale_native_model_choice(&id, 2));
+        assert!(!stale_native_model_choice(&id, 1));
+        assert!(!stale_native_model_choice(&id, 0));
+        assert!(!stale_native_model_choice(
+            "phenix.native-model@1:{\"provider_id\":\"forged\"}",
+            2,
+        ));
+        assert!(!stale_native_model_choice("unrelated", 2));
     }
 
     #[test]

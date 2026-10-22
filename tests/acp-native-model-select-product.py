@@ -246,6 +246,10 @@ try:
         "sessionId": session, "configId": "model", "value": stale_a,
     })
     assert "error" in refused, refused
+    typed = refused["error"]["data"]
+    assert typed["format"] == "phenix.basic.error.v1", refused
+    assert typed["code"] == "Conflict", refused
+    assert "refresh" in typed["message"], refused
 
     # The other client's prompt must read committed B from shared Storage.
     prompt(second, session, 4, "fresh cross-client current model")
@@ -311,6 +315,7 @@ try:
         "fallback_environment_ignored": True,
         "production_provider_login": False,
         "stale_client_selection_rejected": True,
+        "stale_client_typed_conflict": True,
         "fresh_menu_preconditions": True,
         "refreshed_client_successful_switch": True,
         "contending_client_CAS_conflict": False,
