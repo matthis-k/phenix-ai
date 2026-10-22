@@ -1720,6 +1720,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-openai-api"
+version = "0.1.0"
+dependencies = [
+ "curl",
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-provider-secret-service"
 version = "0.1.0"
 dependencies = [
