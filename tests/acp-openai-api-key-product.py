@@ -17,10 +17,11 @@ import tempfile
 import threading
 import time
 
-if len(sys.argv) not in (7, 10):
-    raise SystemExit("Expected provider product arguments plus optionally 3 packaged compositions")
+if len(sys.argv) not in (7, 10, 11):
+    raise SystemExit("Expected provider product arguments, optionally packaged roots and a bundle")
 runtime, http_basic, provider_artifact, credentials_artifact, definitions, destination = sys.argv[1:7]
-packaged_paths = sys.argv[7:]
+packaged_paths = sys.argv[7:10]
+bundle_path = sys.argv[10] if len(sys.argv) == 11 else None
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 key = secrets.token_hex(32)
@@ -194,6 +195,24 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         path = root / (name + ".json")
         path.write_text(json.dumps(data))
         configs[name] = str(path)
+    # The same scripted ACP session must run through the shipping bundle
+    # composer, not just compare a JSON manifest to a handwritten fixture.
+    bundle_file = None
+    if bundle_path:
+        source = json.loads(Path(bundle_path).read_text())
+        assert source["account"] == account
+        assert source["provider"]["id"] == "phenix.provider.openai-api"
+        assert source["credentials"]["id"] == "phenix.provider.credential-files"
+        assert source["credentials"]["artifact"] == credentials_artifact
+        assert source["definitions"] == [definitions]
+        assert source["provider_credential_operations"] == ["resolve"]
+        assert source["credential_management"] is True
+        assert source["model_resolution"] is True
+        # Swap only the production provider artifact for the isolated local
+        # HTTP fixture, preserving the implementation IDs and all grants.
+        source["provider"]["artifact"] = provider_artifact
+        bundle_file = root / "bundle.json"
+        bundle_file.write_text(json.dumps(source))
     env = dict(os.environ, PHENIX_CREDENTIAL_FILE_CONSENT="1",
                PHENIX_CREDENTIAL_FILE_DIRECTORY=str(vault),
                PHENIX_OPENAI_API_PROFILE="personal",
@@ -212,11 +231,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
             launch_env.pop("PHENIX_OPENAI_API_PROFILE", None)
         else:
             launch_env["PHENIX_OPENAI_API_PROFILE"] = configured_profile
+        args = ([runtime, "acp", http_basic, "--provider-bundle", str(bundle_file)]
+                if bundle_file is not None else
+                [runtime, "acp", http_basic,
+                 "--provider-management", configs["management"],
+                 "--provider-credentials", configs["credential"],
+                 "--provider-model-resolver", configs["resolver"]])
         p = subprocess.Popen(
-            [runtime, "acp", http_basic,
-             "--provider-management", configs["management"],
-             "--provider-credentials", configs["credential"],
-             "--provider-model-resolver", configs["resolver"]],
+            args,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=launch_env,
         )
@@ -429,4 +451,5 @@ server.shutdown()
     "environment_source_revoke_denied": True,
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
+    "generic_provider_bundle_e2e": bundle_file is not None,
 }, sort_keys=True, indent=2))
