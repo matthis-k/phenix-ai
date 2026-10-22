@@ -91,15 +91,20 @@ pub struct ProviderDeclaration<'a> {
     pub auth: &'a str,
 }
 
-impl ProviderDeclaration<'_> {
-    pub fn connection(self, id: &str, label: &str) -> Result<ConnectionDescriptor, &'static str> {
-        if self.endpoint.is_empty() || self.protocol.is_empty() {
-            return Err("provider endpoint and protocol are required");
-        }
-        validate_endpoint(self.endpoint, EndpointMode::LocalLoopback)
-            .map_err(|_| "unsafe provider endpoint")?;
-        let auth_methods = match self.auth {
-            "api-key" => vec![AuthenticationMethod {
+/// Lookup of auth implementations installed by the provider composition.
+/// External plugins can register new methods without changing Phenix core.
+pub trait AuthenticationAdapters {
+    fn methods(&self, adapter: &str) -> Result<Vec<AuthenticationMethod>, &'static str>;
+}
+
+/// Convenience registry for the providers shipped in the default profile.
+/// It does not grant access to any of the methods it describes.
+pub struct BuiltinAuthenticationAdapters;
+
+impl AuthenticationAdapters for BuiltinAuthenticationAdapters {
+    fn methods(&self, adapter: &str) -> Result<Vec<AuthenticationMethod>, &'static str> {
+        match adapter {
+            "api-key" => Ok(vec![AuthenticationMethod {
                 id: "api-key".into(),
                 label: "API key".into(),
                 kind: AuthenticationKind::ApiKey,
@@ -111,17 +116,37 @@ impl ProviderDeclaration<'_> {
                     },
                 )
                 .map_err(|_| "invalid API key adapter")?,
-            }],
-            "chatgpt-oauth" => vec![AuthenticationMethod {
+            }]),
+            "chatgpt-oauth" => Ok(vec![AuthenticationMethod {
                 id: "chatgpt-sign-in".into(),
                 label: "Sign in with ChatGPT".into(),
                 kind: AuthenticationKind::OAuthAuthorizationCode,
                 adapter: AdapterBinding::from_typed("chatgpt.oauth", &())
                     .map_err(|_| "invalid OAuth adapter")?,
-            }],
-            "none" => vec![],
-            _ => return Err("authentication adapter is not registered"),
-        };
+            }]),
+            "none" => Ok(vec![]),
+            _ => Err("authentication adapter is not registered"),
+        }
+    }
+}
+
+impl ProviderDeclaration<'_> {
+    pub fn connection(self, id: &str, label: &str) -> Result<ConnectionDescriptor, &'static str> {
+        self.connection_with(id, label, &BuiltinAuthenticationAdapters)
+    }
+
+    pub fn connection_with(
+        self,
+        id: &str,
+        label: &str,
+        registry: &impl AuthenticationAdapters,
+    ) -> Result<ConnectionDescriptor, &'static str> {
+        if self.endpoint.is_empty() || self.protocol.is_empty() {
+            return Err("provider endpoint and protocol are required");
+        }
+        validate_endpoint(self.endpoint, EndpointMode::LocalLoopback)
+            .map_err(|_| "unsafe provider endpoint")?;
+        let auth_methods = registry.methods(self.auth)?;
         Ok(ConnectionDescriptor {
             id: id.into(),
             label: label.into(),
@@ -417,6 +442,39 @@ mod declaration_tests {
             .unwrap_err(),
             "unsafe provider endpoint"
         );
+    }
+
+    #[test]
+    fn externally_registered_authentication_adapter_is_supported() {
+        struct ThirdParty;
+        impl AuthenticationAdapters for ThirdParty {
+            fn methods(&self, adapter: &str) -> Result<Vec<AuthenticationMethod>, &'static str> {
+                if adapter != "vendor.sso" {
+                    return Err("unknown third-party adapter");
+                }
+                Ok(vec![AuthenticationMethod {
+                    id: "sso".into(),
+                    label: "Vendor SSO".into(),
+                    kind: AuthenticationKind::Plugin,
+                    adapter: AdapterBinding::from_typed("vendor.sso", &()).unwrap(),
+                }])
+            }
+        }
+        let connection = ProviderDeclaration {
+            endpoint: "https://api.vendor.example/v1",
+            protocol: "vendor-protocol",
+            auth: "vendor.sso",
+        }
+        .connection_with("custom", "Vendor", &ThirdParty)
+        .unwrap();
+        assert_eq!(connection.auth_methods[0].adapter.id, "vendor.sso");
+        assert_eq!(connection.protocols[0].id, "vendor-protocol");
+        validate_registrations(&[ProviderDescriptor {
+            id: "vendor".into(),
+            label: "Vendor".into(),
+            connections: vec![connection],
+        }])
+        .unwrap();
     }
 
     #[test]
