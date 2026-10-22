@@ -113,9 +113,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         artifacts=[credentials_artifact], slots=[],
         grants=[{"caller": "root", "interface": credential_contract,
                  "operation": operation, "resources": [resource]}
-                for operation in ("import", "revoke")],
+                for operation in ("import", "bind_environment", "revoke")],
         authority={"operations": [credential_contract + "/" + op
-                                  for op in ("import", "revoke")],
+                                  for op in ("import", "bind_environment", "revoke")],
                    "resources": [resource]},
         resource=resource,
     )
@@ -410,6 +410,42 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     close(sourced)
     assert not list(vault.iterdir()), "environment key must never be stored in the vault"
 
+    # Name only in the exact account; the API key never enters the vault.
+    explicit = launch(extra_env={"PHENIX_C15_SELECTED_API_KEY": key})
+    init(explicit)
+    forged = call(explicit, 97, "_phenix/credentials/env-bind",
+                  {**account, "profile_id": "work",
+                   "environment_variable": "PHENIX_C15_SELECTED_API_KEY"})
+    assert "error" in forged
+    invalid_name = call(explicit, 98, "_phenix/credentials/env-bind",
+                        {**account, "environment_variable": "BAD/NAME"})
+    assert "error" in invalid_name
+    bound = call(explicit, 99, "_phenix/credentials/env-bind",
+                 {**account, "environment_variable": "PHENIX_C15_SELECTED_API_KEY"})
+    assert bound["result"]["ok"] is True, bound
+    verified = call(explicit, 100, "_phenix/providers/auth/status", user)
+    assert verified["result"]["profiles"][0]["status"] == "Authenticated"
+    close(explicit)
+    for item in vault.iterdir():
+        if item.is_file():
+            assert key.encode() not in item.read_bytes(), "secret was persisted"
+
+    # A new ACP process checks the current environment for the same named
+    # account. The bound name alone must never imply authenticated status.
+    absent = launch()
+    init(absent)
+    missing = call(absent, 101, "_phenix/providers/auth/status", user)
+    assert missing["result"]["profiles"][0]["status"]["Unavailable"]
+    close(absent)
+    restored = launch(extra_env={"PHENIX_C15_SELECTED_API_KEY": key})
+    init(restored)
+    again = call(restored, 102, "_phenix/providers/auth/status", user)
+    assert again["result"]["profiles"][0]["status"] == "Authenticated"
+    revoked = call(restored, 103, "_phenix/credentials/revoke", account)
+    assert revoked["result"]["ok"] is True
+    close(restored)
+    assert not list(vault.iterdir()), "revoked env name persisted"
+
     assert state["redirected"] == 0, state
     assert state["get"] >= 12 and state["post"] == 2, state
 
@@ -427,6 +463,7 @@ server.shutdown()
     "deployment_mismatch_denied_before_network": True,
     "environment_key_selected_inference_without_vault": True,
     "environment_source_revoke_denied": True,
+    "explicit_name_only_bound_verified_and_revoked": True,
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
 }, sort_keys=True, indent=2))
