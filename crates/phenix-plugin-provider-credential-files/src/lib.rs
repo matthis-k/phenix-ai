@@ -67,7 +67,10 @@ const ENV_BIND_PREFIX: &[u8] = b"phenix-credential-env-v1:";
 /// a different environment variable.
 fn encoded_env_binding(name: &str) -> Result<Vec<u8>, ProviderError> {
     if !valid_key_environment_name(name) {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid API-key variable name"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key variable name",
+        ));
     }
     let mut bytes = ENV_BIND_PREFIX.to_vec();
     bytes.extend_from_slice(name.as_bytes());
@@ -75,23 +78,40 @@ fn encoded_env_binding(name: &str) -> Result<Vec<u8>, ProviderError> {
 }
 
 fn decoded_env_binding(bytes: &[u8]) -> Result<Option<&str>, ProviderError> {
-    let Some(raw) = bytes.strip_prefix(ENV_BIND_PREFIX) else { return Ok(None); };
-    let name = std::str::from_utf8(raw)
-        .map_err(|_| error(ProviderErrorCode::InvalidInput, "invalid bound variable name"))?;
+    let Some(raw) = bytes.strip_prefix(ENV_BIND_PREFIX) else {
+        return Ok(None);
+    };
+    let name = std::str::from_utf8(raw).map_err(|_| {
+        error(
+            ProviderErrorCode::InvalidInput,
+            "invalid bound variable name",
+        )
+    })?;
     if !valid_key_environment_name(name) {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid bound variable name"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid bound variable name",
+        ));
     }
     Ok(Some(name))
 }
 
-fn read_named_environment(name: &str)
-    -> Result<phenix_provider_contracts::CredentialSecret, ProviderError>
-{
+fn read_named_environment(
+    name: &str,
+) -> Result<phenix_provider_contracts::CredentialSecret, ProviderError> {
     let bytes = std::env::var_os(name)
-        .ok_or_else(|| error(ProviderErrorCode::NotFound, "configured API-key variable is unset"))?
+        .ok_or_else(|| {
+            error(
+                ProviderErrorCode::NotFound,
+                "configured API-key variable is unset",
+            )
+        })?
         .into_encoded_bytes();
     if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid API-key environment value"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key environment value",
+        ));
     }
     phenix_provider_contracts::CredentialSecret::new(bytes)
 }
@@ -151,7 +171,9 @@ fn authorize(
 )]
 mod plugin {
     use super::*;
-    use phenix_provider_contracts::{CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials};
+    use phenix_provider_contracts::{
+        CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials,
+    };
     use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
@@ -191,9 +213,14 @@ mod plugin {
         // Check the authenticated call resource before opening/touching the backend.
         let id =
             authorize(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
-        if request.secret.expose_for_authorized_provider().starts_with(ENV_BIND_PREFIX) {
+        if request
+            .secret
+            .expose_for_authorized_provider()
+            .starts_with(ENV_BIND_PREFIX)
+        {
             return Err(CallError::Domain(error(
-                ProviderErrorCode::InvalidInput, "reserved credential source marker",
+                ProviderErrorCode::InvalidInput,
+                "reserved credential source marker",
             )));
         }
         let secret = Secret::new(request.secret.expose_for_authorized_provider().to_vec())
@@ -213,15 +240,21 @@ mod plugin {
         host: &Host<'_>,
         request: CredentialEnvironmentBinding,
     ) -> CallResult<(), ProviderError> {
-        let id = authorize(&request.identity, host.resource()?.as_deref())
+        let id =
+            authorize(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        let bytes =
+            encoded_env_binding(&request.environment_variable).map_err(CallError::Domain)?;
+        let record = Secret::new(bytes)
+            .map_err(backend_error)
             .map_err(CallError::Domain)?;
-        let bytes = encoded_env_binding(&request.environment_variable)
-            .map_err(CallError::Domain)?;
-        let record = Secret::new(bytes).map_err(backend_error).map_err(CallError::Domain)?;
         // Persist ONLY the name. The environment value is resolved lazily on
         // every authorized provider operation and is never copied to the vault.
-        state.backend().map_err(CallError::Domain)?
-            .store(&id, &record).map_err(backend_error).map_err(CallError::Domain)
+        state
+            .backend()
+            .map_err(CallError::Domain)?
+            .store(&id, &record)
+            .map_err(backend_error)
+            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderCredentials::resolve)]
@@ -233,8 +266,7 @@ mod plugin {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
         // An explicitly bound exact-account source wins over a process-wide
         // legacy launcher hint. Never persist the resolved environment value.
-        let stored = state.backend().map_err(CallError::Domain)?
-            .read(&id);
+        let stored = state.backend().map_err(CallError::Domain)?.read(&id);
         match stored {
             Ok(secret) => {
                 let bytes = secret.expose_for_authorized_provider();
@@ -244,10 +276,9 @@ mod plugin {
                     CredentialSecret::new(bytes.to_vec()).map_err(CallError::Domain)
                 }
             }
-            Err(CredentialError::NotFound) => {
-                environment_key().map_err(CallError::Domain)?
-                    .ok_or_else(|| CallError::Domain(backend_error(CredentialError::NotFound)))
-            }
+            Err(CredentialError::NotFound) => environment_key()
+                .map_err(CallError::Domain)?
+                .ok_or_else(|| CallError::Domain(backend_error(CredentialError::NotFound))),
             Err(problem) => Err(CallError::Domain(backend_error(problem))),
         }
     }
@@ -259,10 +290,17 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<(), ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
-        let bound = state.backend().map_err(CallError::Domain)?.read(&id)
+        let bound = state
+            .backend()
+            .map_err(CallError::Domain)?
+            .read(&id)
             .ok()
-            .and_then(|secret| decoded_env_binding(secret.expose_for_authorized_provider())
-                .ok().flatten().map(str::to_owned))
+            .and_then(|secret| {
+                decoded_env_binding(secret.expose_for_authorized_provider())
+                    .ok()
+                    .flatten()
+                    .map(str::to_owned)
+            })
             .is_some();
         // Deleting an explicit variable-name binding revokes the reference.
         // A process-global inherited variable cannot be revoked by a file write.
@@ -292,7 +330,8 @@ mod tests {
         assert_eq!(decoded_env_binding(&bound).unwrap(), Some("OPENAI_API_KEY"));
         assert_eq!(decoded_env_binding(b"sk-direct-key").unwrap(), None);
         assert!(encoded_env_binding("unsafe-name").is_err());
-        assert!(!bound.windows(b"secret-api-key".len())
+        assert!(!bound
+            .windows(b"secret-api-key".len())
             .any(|part| part == b"secret-api-key"));
     }
 
