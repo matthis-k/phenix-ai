@@ -17,7 +17,10 @@ import tempfile
 import threading
 import time
 
-runtime, http_basic, provider_artifact, credentials_artifact, definitions, destination = sys.argv[1:]
+if len(sys.argv) not in (7, 10):
+    raise SystemExit("Expected provider product arguments plus optionally 3 packaged compositions")
+runtime, http_basic, provider_artifact, credentials_artifact, definitions, destination = sys.argv[1:7]
+packaged_paths = sys.argv[7:]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 key = secrets.token_hex(32)
@@ -154,6 +157,37 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         },
         resource=resource,
     )
+    if packaged_paths:
+        # Reuse the exact *installed* launcher authority specifications.
+        # Replace only the production provider library with its independently
+        # built loopback-test variant; no grants, slots, identities, or model
+        # installation implementation are modified for this acceptance run.
+        actual = {
+            name: json.loads(Path(path).read_text())
+            for name, path in zip(("management", "credential", "resolver"),
+                                  packaged_paths, strict=True)
+        }
+        for name, expected in (("management", provider),
+                               ("credential", credentials),
+                               ("resolver", resolver)):
+            installed = actual[name]
+            assert installed["entry"] == expected["entry"], name
+            assert installed["slots"] == expected["slots"], name
+            assert installed["grants"] == expected["grants"], name
+            assert installed["authority"] == expected["authority"], name
+            assert installed["resource"] == expected["resource"], name
+            assert installed["definitions"] == [definitions], name
+            assert installed["excluded"] == installed["substitutions"] == [], name
+        assert actual["management"]["artifacts"] == [
+            actual["management"]["artifacts"][0], credentials_artifact
+        ], actual["management"]["artifacts"]
+        assert len(actual["management"]["artifacts"]) == 2
+        assert actual["credential"]["artifacts"] == [credentials_artifact]
+        assert actual["resolver"]["artifacts"] == [credentials_artifact]
+        actual["management"]["artifacts"][0] = provider_artifact
+        credentials, resolver, provider = (
+            actual["credential"], actual["resolver"], actual["management"]
+        )
     configs = {}
     for name, data in [("credential", credentials), ("resolver", resolver),
                        ("management", provider)]:
@@ -326,4 +360,5 @@ server.shutdown()
     "restart_revalidates_profile": True, "revocation_denies_selected_prompt": True,
     "cross_profile_model_denied": True, "unsupported_oauth_denied": True,
     "cancelled_auth_attempt_not_replayable": True,
+    "shipping_launcher_authority_exercised": bool(packaged_paths),
 }, sort_keys=True, indent=2))

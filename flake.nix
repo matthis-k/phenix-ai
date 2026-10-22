@@ -475,6 +475,145 @@
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out"
         test -s "$out/openai-api-auth-product.json"
       '';
+      # C11b: separately installed API-key ACP control plane. This initial
+      # opt-in preset authorizes exactly one non-secret profile identity.
+      # Changing profiles requires an explicit new composition, not a
+      # frontend-supplied selector or a broadened credential root.
+      openAiApiCredentialResource =
+        "phenix.credentials.6f70656e6169.617069.706572736f6e616c";
+      openAiApiProviderOperations = [
+        { interface = "phenix.provider.catalog@1"; operation = "list"; }
+        { interface = "phenix.provider.catalog@1"; operation = "describe"; }
+        { interface = "phenix.provider.catalog@1"; operation = "models"; }
+        { interface = "phenix.provider.auth@1"; operation = "status"; }
+        { interface = "phenix.provider.auth@1"; operation = "begin"; }
+        { interface = "phenix.provider.auth@1"; operation = "poll"; }
+        { interface = "phenix.provider.auth@1"; operation = "cancel"; }
+      ];
+      openAiApiManagementComposition = pkgs.writeText "phenix-openai-api-management.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.catalog@1";
+            operation = "list";
+            provider = "phenix.provider.openai-api";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerOpenAiApi}" "${providerCredentialStore}" ];
+          slots = [
+            {
+              caller = "phenix.provider.openai-api";
+              slot = "Credentials";
+              provider = "phenix.provider.credential-files";
+              export = "Credentials";
+              index = 0;
+            }
+          ];
+          grants = (map (entry: {
+            caller = "root";
+            inherit (entry) interface operation;
+            resources = [ openAiApiCredentialResource ];
+          }) openAiApiProviderOperations) ++ [
+            {
+              caller = "phenix.provider.openai-api";
+              interface = "phenix.provider.credentials@1";
+              operation = "resolve";
+              resources = [ openAiApiCredentialResource ];
+            }
+          ];
+          authority = {
+            operations = (map (entry: "${entry.interface}/${entry.operation}") openAiApiProviderOperations)
+              ++ [ "phenix.provider.credentials@1/resolve" ];
+            resources = [ openAiApiCredentialResource ];
+          };
+          resource = openAiApiCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
+      openAiApiCredentialComposition = pkgs.writeText "phenix-openai-api-credentials.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.credentials@1";
+            operation = "import";
+            provider = "phenix.provider.credential-files";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerCredentialStore}" ];
+          slots = [];
+          grants = map (operation: {
+            caller = "root";
+            interface = "phenix.provider.credentials@1";
+            inherit operation;
+            resources = [ openAiApiCredentialResource ];
+          }) [ "import" "revoke" ];
+          authority = {
+            operations = [
+              "phenix.provider.credentials@1/import"
+              "phenix.provider.credentials@1/revoke"
+            ];
+            resources = [ openAiApiCredentialResource ];
+          };
+          resource = openAiApiCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
+      openAiApiResolverComposition = pkgs.writeText "phenix-openai-api-resolver.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.credentials@1";
+            operation = "resolve";
+            provider = "phenix.provider.credential-files";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerCredentialStore}" ];
+          slots = [];
+          grants = [
+            {
+              caller = "root";
+              interface = "phenix.provider.credentials@1";
+              operation = "resolve";
+              resources = [ openAiApiCredentialResource ];
+            }
+          ];
+          authority = {
+            operations = [ "phenix.provider.credentials@1/resolve" ];
+            resources = [ openAiApiCredentialResource ];
+          };
+          resource = openAiApiCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
+      providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/check-openai-auth-presets.py} \
+          ${openAiApiManagementComposition} \
+          ${openAiApiCredentialComposition} \
+          ${openAiApiResolverComposition} \
+          ${openAiApiCredentialResource} "$out"
+        # Without explicit operator consent this cannot initialize a backend
+        # or prompt for/resolve a secret through a hidden default.
+        if PHENIX_CREDENTIAL_FILE_CONSENT=0 PHENIX_CREDENTIAL_FILE_DIRECTORY="" \
+          ${self.packages.${system}.phenix-basic-openai-api-acp}/bin/phenix-basic-openai-api-acp \
+          </dev/null >"$out/unexpected-stdout" 2>"$out/refusal"; then
+          echo "OpenAI API launcher started without credential consent" >&2
+          exit 1
+        fi
+        grep -F "Set PHENIX_CREDENTIAL_FILE_DIRECTORY" "$out/refusal"
+        test -s "$out/launcher-authority.json"
+        # Exercise the shipping *grants* and composition paths with the
+        # dedicated deterministic loopback provider artifact; the production
+        # provider cannot be redirected to a test host at runtime.
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-openai-api-key-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/streamed" \
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition}
+        grep -F '"shipping_launcher_authority_exercised": true' "$out/streamed/openai-api-auth-product.json"
+      '';
       providerCredentialStoreSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-credential-files
         ./crates/phenix-provider-contracts
@@ -2456,6 +2595,37 @@
             exec ${basicHttpBinary}/bin/phenix-basic-http acp "$@"
           '';
         };
+        # Explicit opt-in authenticated provider: no key or vault bytes are
+        # embedded in the Nix store. The launcher selects one exact profile.
+        # A key becomes usable only after :Phenix auth verifies it with the
+        # provider and :Phenix model admits the actual selected HTTP binding.
+        phenix-basic-openai-api-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-openai-api-acp";
+          text = ''
+            set -eu
+            if [ "''${PHENIX_OPENAI_API_PROFILE:-personal}" != "personal" ]; then
+              echo "This opt-in composition authorizes only openai/api/personal." >&2
+              exit 2
+            fi
+            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
+               [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
+              echo "Configure a protected 0700 credential directory and explicitly opt into the file backend." >&2
+              echo "Set PHENIX_CREDENTIAL_FILE_DIRECTORY and PHENIX_CREDENTIAL_FILE_CONSENT=1." >&2
+              exit 2
+            fi
+            export PHENIX_OPENAI_API_PROFILE=personal
+            # Disable legacy preset credentials. Native HTTP sessions still
+            # require the provider-owned, freshly checked selected identity.
+            unset PHENIX_MODEL_HTTP_API_KEY OPENAI_API_KEY
+            export PHENIX_MODEL_HTTP_ENDPOINT=http://127.0.0.1:1/not-selected
+            export PHENIX_MODEL_HTTP_MODEL=unselected
+            ${basicSqliteEnvironment "basic-openai-api.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
+              --provider-management ${openAiApiManagementComposition} \
+              --provider-credentials ${openAiApiCredentialComposition} \
+              --provider-model-resolver ${openAiApiResolverComposition} "$@"
+          '';
+        };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
           text = ''
@@ -2502,6 +2672,7 @@
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-openai-api = providerOpenAiApi;
         provider-openai-api-product = providerOpenAiApiProductCheck;
+        provider-openai-api-launcher = providerOpenAiApiLauncherCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
