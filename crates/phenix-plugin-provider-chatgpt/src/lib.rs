@@ -54,6 +54,7 @@ struct StoredOAuth {
 struct OAuthAccount {
     subject: String,
     issued_client_id: String,
+    id_token_nonce: String,
     access_token: String,
     refresh_token: String,
     id_token: String,
@@ -207,10 +208,7 @@ mod plugin {
                         granted_scope: account.granted_scope.clone(),
                     },
                     &jwks, &account.issued_client_id,
-                    // The original nonce belongs only to the completed
-                    // attempt. Persisting a separate signed-ID-token proof
-                    // requires the nonce in the protected account record.
-                    "", Some(&account.subject),
+                    &account.id_token_nonce, Some(&account.subject),
                 ).ok())
                 .is_some();
         Ok(Some(CredentialProfile {
@@ -376,6 +374,7 @@ mod plugin {
             let account = OAuthAccount {
                 subject: verified.subject.clone(),
                 issued_client_id: verified.issued_client_id.clone(),
+                id_token_nonce: pending.pkce.nonce().to_owned(),
                 access_token: tokens.access_token.clone(),
                 refresh_token: tokens.refresh_token.clone(),
                 id_token: tokens.id_token.clone(),
@@ -436,7 +435,7 @@ mod tests {
         assert!(exact_identity(None).is_err());
         assert!(expired(&OAuthAccount {
             subject: "user".into(), issued_client_id: "issued".into(),
-            access_token: "access".into(), refresh_token: "refresh".into(),
+            id_token_nonce: "test-nonce".into(), access_token: "access".into(), refresh_token: "refresh".into(),
             id_token: "signed".into(), granted_scope: "openid".into(), expires_at: 1,
         }, 100));
     }
