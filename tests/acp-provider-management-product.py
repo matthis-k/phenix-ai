@@ -46,6 +46,16 @@ def probe(managed: bool):
             scope="user", provider_id="openai", connection_id="api",
             profile_id=None, cursor=None, limit=20))
         assert unavailable["error"]["code"] == -32601
+        for n, (method, fields) in enumerate([
+            ("begin", {"method_id": "api-key"}),
+            ("poll", {"attempt_id": "unknown"}),
+            ("cancel", {"attempt_id": "unknown"}),
+        ], start=30):
+            attempt = call(n, "_phenix/providers/auth/" + method, {
+                "scope": "user", "provider_id": "openai",
+                "connection_id": "api", **fields,
+            })
+            assert attempt["error"]["code"] == -32601, attempt
         child.stdin.close()
         assert child.wait(timeout=15) == 0
         child.stdout.close()
@@ -126,9 +136,27 @@ def probe(managed: bool):
     missing = call(12, "_phenix/providers/auth/status", dict(
         scope="user", provider_id="openai", connection_id="missing"))
     assert missing["error"]["data"]["code"] == "NotFound", missing
-    unauthorized = call(13, "_phenix/providers/auth/begin", dict(
+    # The contract's auth lifecycle is now routed by the ACP SDK. The
+    # shipping builtins remain registration-only: no prompt or successful
+    # login may be invented before an authorized backend is installed.
+    start = call(13, "_phenix/providers/auth/begin", dict(
         scope="user", provider_id="openai", connection_id="api", method_id="api-key"))
-    assert unauthorized["error"]["code"] == -32601
+    assert start["error"]["data"]["code"] == "Unavailable", start
+    wrong_method = call(14, "_phenix/providers/auth/begin", dict(
+        scope="user", provider_id="openai", connection_id="api", method_id="forged"))
+    assert wrong_method["error"]["data"]["code"] == "InvalidInput", wrong_method
+    for n, op in enumerate(["poll", "cancel"], start=15):
+        unknown = call(n, "_phenix/providers/auth/" + op, dict(
+            scope="user", provider_id="openai", connection_id="api",
+            attempt_id="not-issued"))
+        assert unknown["error"]["data"]["code"] == "NotFound", unknown
+        missing = call(n + 3, "_phenix/providers/auth/" + op, dict(
+            scope="user", provider_id="openai", connection_id="api",
+            attempt_id=""))
+        assert missing["error"]["code"] == -32602, missing
+    forged_scope = call(21, "_phenix/providers/auth/begin", dict(
+        scope="another", provider_id="openai", connection_id="api", method_id="api-key"))
+    assert forged_scope["error"]["code"] == -32602, forged_scope
 
     new_session = call(6, "session/new", dict(cwd="/tmp", mcpServers=[]))
     assert "sessionId" in new_session["result"], new_session
