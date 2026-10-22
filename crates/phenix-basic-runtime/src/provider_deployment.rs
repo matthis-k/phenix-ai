@@ -19,7 +19,9 @@ const AUTH: &str = "phenix.provider.auth@1";
 const CREDENTIALS: &str = "phenix.provider.credentials@1";
 const CATALOG_OPS: &[&str] = &["list", "describe", "models"];
 const AUTH_OPS: &[&str] = &["status", "begin", "poll", "cancel"];
-const MANAGEMENT_OPS: &[&str] = &["import", "bind_environment", "revoke"];
+// Current main exposes import/revoke. Env-name binding joins this same
+// control-plane policy once its typed contract (#1082) is merged.
+const MANAGEMENT_OPS: &[&str] = &["import", "revoke"];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,7 +44,7 @@ pub struct ProviderDeployment {
     /// Unlisted methods are denied by the kernel, even if implemented.
     #[serde(default)]
     provider_credential_operations: Vec<CredentialOperation>,
-    /// Expose masked API-key import, variable-name binding, and revocation.
+    /// Expose masked API-key import and revocation.
     /// OAuth-only connections can omit this entirely.
     #[serde(default)]
     credential_management: bool,
@@ -57,7 +59,6 @@ pub struct ProviderDeployment {
 #[serde(rename_all = "snake_case")]
 enum CredentialOperation {
     Import,
-    BindEnvironment,
     Resolve,
     Revoke,
 }
@@ -66,7 +67,6 @@ impl CredentialOperation {
     fn name(self) -> &'static str {
         match self {
             Self::Import => "import",
-            Self::BindEnvironment => "bind_environment",
             Self::Resolve => "resolve",
             Self::Revoke => "revoke",
         }
@@ -269,8 +269,8 @@ mod tests {
             .iter()
             .any(|g| g.caller == "phenix.provider.example" && g.operation == "import"));
         let control = installed.credentials.unwrap();
-        assert_eq!(control.authority.operations.len(), 3);
-        assert!(control.authority.operations.contains("phenix.provider.credentials@1/bind_environment"));
+        assert_eq!(control.authority.operations.len(), 2);
+        assert!(control.authority.operations.contains("phenix.provider.credentials@1/import"));
         assert_eq!(control.artifacts, vec!["/nix/store/keyring"]);
         let resolver = installed.resolver.unwrap();
         assert_eq!(resolver.authority.operations.len(), 1);
