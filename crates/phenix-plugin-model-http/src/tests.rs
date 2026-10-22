@@ -448,8 +448,19 @@ fn bound_http_choice_with_kind_endpoint(
                     id: "key".into(),
                     label: "API key".into(),
                     kind,
-                    adapter: phenix_provider_contracts::AdapterBinding::from_typed("key", &())
-                        .unwrap(),
+                    adapter: if kind == phenix_provider_contracts::AuthenticationKind::ApiKey {
+                        phenix_provider_contracts::AdapterBinding::from_typed(
+                            "key",
+                            &phenix_provider_contracts::ApiKeyOptions {
+                                environment_variable: None,
+                                interactive: true,
+                                presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+                            },
+                        )
+                        .unwrap()
+                    } else {
+                        phenix_provider_contracts::AdapterBinding::from_typed("key", &()).unwrap()
+                    },
                 }]
             } else {
                 Vec::new()
