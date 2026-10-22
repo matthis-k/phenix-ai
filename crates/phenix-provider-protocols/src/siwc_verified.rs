@@ -1,5 +1,5 @@
 //! SIWC cryptographic identity gate, separate from registration and UI.
- //!
+//!
 //! Validating the callback state or receiving a token response is not login.
 //! Only a signature/issuer/audience/expiry/nonce checked ID token *and* an
 //! independently granted plan scope produce a VerifiedChatGptIdentity.
