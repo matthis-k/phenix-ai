@@ -7,6 +7,10 @@
 use std::net::IpAddr;
 use url::Url;
 
+/// OpenAI's explicit OSS Sign in with ChatGPT URL/callback boundary.
+/// This is protocol data handling, not a ProviderAuth implementation.
+pub mod siwc;
+
 #[cfg(feature = "model-codecs")]
 pub mod request;
 #[cfg(feature = "model-codecs")]
