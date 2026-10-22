@@ -1,0 +1,320 @@
+//! SIWC cryptographic identity gate, separate from registration and UI.
+ //!
+ //! Validating the callback state or receiving a token response is not login.
+ //! Only a signature/issuer/audience/expiry/nonce checked ID token *and* an
+ //! independently granted plan scope produce a VerifiedChatGptIdentity.
+ //! This module contains no HTTP client and cannot download attacker-supplied
+ //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
+ //! perform strict TLS/no-redirect token exchange and authorize secure storage.
+
+use crate::siwc::{require_token_granted_plan_scope, REQUIRED_SCOPE};
+use openidconnect::core::{
+    CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
+};
+use openidconnect::{
+    ClientId, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
+};
+use serde_json::Value;
+
+pub const ISSUER: &str = "https://auth.openai.com";
+pub const JWKS_URL: &str = "https://auth.openai.com/.well-known/jwks.json";
+pub const MAX_TOKEN_BODY: usize = 64 * 1024;
+pub const MAX_JWKS_BODY: usize = 256 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationError {
+    InvalidTokenResponse,
+    InvalidJwks,
+    InvalidIdToken,
+    MissingPlanPermission,
+    IncorrectAccount,
+}
+
+/// The caller retains the freshly generated verifier only for this attempt.
+/// Deliberately not Debug/Clone; in particular, never log a future reauth URL
+/// containing an id_token_hint, nor persist this verifier in a session journal.
+pub struct GeneratedPkce {
+    state: String,
+    nonce: String,
+    challenge: String,
+    verifier: String,
+}
+
+impl GeneratedPkce {
+    pub fn new() -> Self {
+        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+        // Two independent 128-bit values avoid any dependence on a short
+        // random token representation and meet the registration input limits.
+        let state = format!(
+            "{}{}",
+            CsrfToken::new_random().secret(),
+            CsrfToken::new_random().secret()
+        );
+        let nonce = format!(
+            "{}{}",
+            Nonce::new_random().secret(),
+            Nonce::new_random().secret()
+        );
+        Self {
+            state,
+            nonce,
+            challenge: challenge.as_str().to_owned(),
+            verifier: verifier.secret().to_owned(),
+        }
+    }
+
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+    pub fn challenge(&self) -> &str {
+        &self.challenge
+    }
+    pub fn verifier(&self) -> &str {
+        &self.verifier
+    }
+}
+
+impl Default for GeneratedPkce {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Drop for GeneratedPkce {
+    fn drop(&mut self) {
+        self.verifier.unsafe_zeroize();
+        self.nonce.unsafe_zeroize();
+        self.state.unsafe_zeroize();
+    }
+}
+trait WipeString {
+    fn unsafe_zeroize(&mut self);
+}
+impl WipeString for String {
+    fn unsafe_zeroize(&mut self) {
+        // String bytes are ASCII PKCE/nonce material, so zeroing cannot
+        // invalidate UTF-8. Nothing secret is sent into Debug/Serde/logging.
+        unsafe { self.as_bytes_mut().fill(0) }
+    }
+}
+
+/// Raw token material has no Debug/Clone/serialization. A refresh token is
+/// storage-domain only and MUST NOT be handed to HTTP model inference.
+pub struct TokenEnvelope {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub id_token: String,
+    pub expires_in: u64,
+    pub granted_scope: String,
+}
+
+impl TokenEnvelope {
+    pub fn parse(body: &[u8]) -> Result<Self, VerificationError> {
+        if body.is_empty() || body.len() > MAX_TOKEN_BODY {
+            return Err(VerificationError::InvalidTokenResponse);
+        }
+        let json: Value =
+            serde_json::from_slice(body).map_err(|_| VerificationError::InvalidTokenResponse)?;
+        let field = |name| {
+            json.get(name)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && s.len() <= 16 * 1024)
+                .map(str::to_owned)
+                .ok_or(VerificationError::InvalidTokenResponse)
+        };
+        if !json
+            .get("token_type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("bearer"))
+        {
+            return Err(VerificationError::InvalidTokenResponse);
+        }
+        let expires_in = json
+            .get("expires_in")
+            .and_then(Value::as_u64)
+            .filter(|seconds| *seconds > 0 && *seconds <= 60 * 60 * 24 * 90)
+            .ok_or(VerificationError::InvalidTokenResponse)?;
+        Ok(Self {
+            access_token: field("access_token")?,
+            refresh_token: field("refresh_token")?,
+            id_token: field("id_token")?,
+            expires_in,
+            granted_scope: field("scope")?,
+        })
+    }
+}
+impl Drop for TokenEnvelope {
+    fn drop(&mut self) {
+        self.access_token.unsafe_zeroize();
+        self.refresh_token.unsafe_zeroize();
+        self.id_token.unsafe_zeroize();
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedChatGptIdentity {
+    pub subject: String,
+    pub issued_client_id: String,
+}
+
+/// This is the only entrance to the authenticated-account state. A caller
+/// cannot supply a subject, email, or an unverified claims JSON directly.
+/// JWKS must be fetched from JWKS_URL over pinned HTTPS with no redirects.
+/// The OIDC library performs RS256 verification and enforces issuer,
+/// audience, expiry and the original nonce.
+pub fn verify_chatgpt_identity(
+    envelope: &TokenEnvelope,
+    jwks_body: &[u8],
+    issued_client_id: &str,
+    original_nonce: &str,
+    expected_subject: Option<&str>,
+) -> Result<VerifiedChatGptIdentity, VerificationError> {
+    if issued_client_id.is_empty()
+        || issued_client_id == "dynamic_agent_client"
+        || issued_client_id.len() > 256
+        || original_nonce.len() < 24
+        || original_nonce.len() > 256
+    {
+        return Err(VerificationError::InvalidIdToken);
+    }
+    require_token_granted_plan_scope(&envelope.granted_scope)
+        .map_err(|_| VerificationError::MissingPlanPermission)?;
+    if jwks_body.is_empty() || jwks_body.len() > MAX_JWKS_BODY {
+        return Err(VerificationError::InvalidJwks);
+    }
+    let jwks: CoreJsonWebKeySet =
+        serde_json::from_slice(jwks_body).map_err(|_| VerificationError::InvalidJwks)?;
+    let id_token: CoreIdToken =
+        serde_json::from_value(Value::String(envelope.id_token.clone()))
+            .map_err(|_| VerificationError::InvalidIdToken)?;
+    let verifier = CoreIdTokenVerifier::new_public_client(
+        ClientId::new(issued_client_id.to_owned()),
+        IssuerUrl::new(ISSUER.to_owned()).map_err(|_| VerificationError::InvalidIdToken)?,
+        jwks,
+    )
+    .set_allowed_algs([CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256]);
+    let claims = id_token
+        .claims(&verifier, &Nonce::new(original_nonce.to_owned()))
+        .map_err(|_| VerificationError::InvalidIdToken)?;
+    let subject = claims.subject().as_str();
+    if subject.is_empty() || subject.len() > 256 {
+        return Err(VerificationError::InvalidIdToken);
+    }
+    if expected_subject.is_some_and(|existing| existing != subject) {
+        return Err(VerificationError::IncorrectAccount);
+    }
+    Ok(VerifiedChatGptIdentity {
+        subject: subject.to_owned(),
+        issued_client_id: issued_client_id.to_owned(),
+    })
+}
+
+pub fn refresh_form(
+    issued_client_id: &str,
+    refresh_token: &str,
+) -> Result<String, VerificationError> {
+    if issued_client_id.is_empty()
+        || issued_client_id == "dynamic_agent_client"
+        || refresh_token.is_empty()
+        || refresh_token.len() > 16 * 1024
+    {
+        return Err(VerificationError::InvalidTokenResponse);
+    }
+    let mut form = url::form_urlencoded::Serializer::new(String::new());
+    form.append_pair("grant_type", "refresh_token")
+        .append_pair("client_id", issued_client_id)
+        .append_pair("refresh_token", refresh_token)
+        .append_pair("resource", crate::siwc::RESOURCE);
+    Ok(form.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_attempt_has_independent_state_nonce_and_s256_challenge() {
+        let a = GeneratedPkce::new();
+        let b = GeneratedPkce::new();
+        assert_ne!(a.state(), b.state());
+        assert_ne!(a.nonce(), b.nonce());
+        assert_ne!(a.state(), a.nonce());
+        assert_eq!(a.challenge().len(), 43);
+        assert!((43..=128).contains(&a.verifier().len()));
+        assert!(!format!("{:?}", VerificationError::InvalidIdToken).contains(a.verifier()));
+    }
+
+    fn valid_token_response() -> &'static [u8] {
+        br#"{"token_type":"Bearer","access_token":"fake-access","refresh_token":"fake-refresh","id_token":"not-a-signed-jwt","expires_in":3600,"scope":"openid profile offline_access resource.invoke chatgpt.tokens.use.direct"}"#
+    }
+
+    #[test]
+    fn token_response_and_permissions_do_not_imply_oidc_login() {
+        let token = TokenEnvelope::parse(valid_token_response()).unwrap();
+        assert_eq!(
+            verify_chatgpt_identity(
+                &token,
+                br#"{"keys":[]}"#,
+                "oaiapp_issued",
+                "validnoncerandomstatefromoauthprovider",
+                None,
+            ),
+            Err(VerificationError::InvalidIdToken)
+        );
+        assert_eq!(
+            verify_chatgpt_identity(
+                &token,
+                br#"{"keys":[]}"#,
+                "dynamic_agent_client",
+                "validnoncerandomstatefromoauthprovider",
+                None,
+            ),
+            Err(VerificationError::InvalidIdToken)
+        );
+    }
+
+    #[test]
+    fn reject_missing_scope_expiry_and_wrong_token_type() {
+        for body in [
+            br#"{"token_type":"Basic","access_token":"a","refresh_token":"r","id_token":"i","expires_in":3600,"scope":"openid"}"#.as_slice(),
+            br#"{"token_type":"Bearer","access_token":"a","refresh_token":"r","id_token":"i","expires_in":0,"scope":"openid"}"#,
+            br#"{"token_type":"Bearer","access_token":"a","id_token":"i","expires_in":3600,"scope":"openid"}"#,
+            br#"{"access_token":"a","refresh_token":"r","id_token":"i","expires_in":3600,"scope":"openid"}"#,
+        ] {
+            assert!(TokenEnvelope::parse(body).is_err());
+        }
+        let without_scope = TokenEnvelope::parse(
+            br#"{"token_type":"Bearer","access_token":"a","refresh_token":"r","id_token":"i","expires_in":3600,"scope":"openid"}"#,
+        ).unwrap();
+        assert_eq!(
+            verify_chatgpt_identity(
+                &without_scope,
+                br#"{"keys":[]}"#,
+                "oaiapp_issued",
+                "validnoncerandomstatefromoauthprovider",
+                None,
+            ),
+            Err(VerificationError::MissingPlanPermission)
+        );
+    }
+
+    #[test]
+    fn refresh_uses_issued_client_without_expanding_scopes() {
+        let form = refresh_form("oaiapp_issued", "private-rotation-token").unwrap();
+        let fields: std::collections::BTreeMap<_, _> =
+            url::form_urlencoded::parse(form.as_bytes()).into_owned().collect();
+        assert_eq!(fields["client_id"], "oaiapp_issued");
+        assert_eq!(fields["grant_type"], "refresh_token");
+        assert_eq!(fields["refresh_token"], "private-rotation-token");
+        assert_eq!(fields["resource"], crate::siwc::RESOURCE);
+        assert!(!fields.contains_key("scope"));
+        assert!(refresh_form("dynamic_agent_client", "secret").is_err());
+    }
+
+    #[test]
+    fn required_scope_constant_is_same_as_registration() {
+        assert_eq!(REQUIRED_SCOPE, "chatgpt.tokens.use.direct");
+    }
+}
