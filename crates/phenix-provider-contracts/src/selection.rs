@@ -110,6 +110,26 @@ impl HttpModelBinding {
             .map(|method| &method.kind)
     }
 
+    /// Selected API-key wire strategy, from the method admitted for *this*
+    /// profile. Message codec IDs never select how secrets are presented.
+    /// Returning None means credential-free or OAuth (native Bearer).
+    pub fn api_key_presentation(&self) -> Result<Option<ApiKeyPresentation>, ProviderError> {
+        let Some(profile) = self.choice.credential_profile.as_ref() else {
+            return Ok(None);
+        };
+        let method = self.choice.connection.auth_methods.iter()
+            .find(|method| method.id == profile.method_id)
+            .ok_or_else(|| selection_error(
+                ProviderErrorCode::Denied, "selected authentication method no longer exists"
+            ))?;
+        if method.kind != AuthenticationKind::ApiKey {
+            return Ok(None);
+        }
+        let options = method.adapter.config.decode::<ApiKeyOptions>()?;
+        options.validate()?;
+        Ok(Some(options.presentation))
+    }
+
     pub fn selection(&self) -> &ModelSelection {
         self.choice.selection()
     }
