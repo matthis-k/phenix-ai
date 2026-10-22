@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 phenix-provider-builtins = { path = "../phenix-provider-builtins" }
-curl = "0.4"
+curl = { version = "0.4", default-features = false }
 serde_json.workspace = true
 
 [features]
