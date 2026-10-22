@@ -116,7 +116,22 @@ impl CallbackRequest {
         &self.uri
     }
 
-    pub fn respond(mut self, authenticated: bool) -> Result<(), CallbackError> {
+    /// A failed or unverified attempt never gets a success page.
+    pub fn reject(self) -> Result<(), CallbackError> {
+        self.respond_internal(false)
+    }
+
+    /// Only a cryptographically verified OIDC subject can confirm browser
+    /// completion. The provider must additionally enforce granted scopes and
+    /// persist the exact authorized account before calling this method.
+    pub fn confirm_verified(
+        self,
+        _identity: &crate::oauth_oidc::VerifiedSubject,
+    ) -> Result<(), CallbackError> {
+        self.respond_internal(true)
+    }
+
+    fn respond_internal(mut self, authenticated: bool) -> Result<(), CallbackError> {
         let response: &[u8] = if authenticated {
             b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 26\r\nConnection: close\r\n\r\nAuthentication completed.\n"
         } else {
@@ -239,10 +254,10 @@ mod tests {
         let mut browser = browser_request(&url, host, "GET");
         let callback = listener.poll().unwrap().unwrap();
         assert_eq!(callback.uri(), url);
-        callback.respond(true).unwrap();
+        callback.reject().unwrap();
         let mut result = String::new();
         browser.read_to_string(&mut result).unwrap();
-        assert!(result.starts_with("HTTP/1.1 200 OK"));
+        assert!(result.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(!result.contains("secret-fixture-code"));
         assert!(matches!(listener.poll(), Err(CallbackError::Consumed)));
     }
@@ -284,7 +299,7 @@ mod tests {
 
         // State correlation and a code are not OIDC proof: the browser must
         // not see a successful sign-in before the verified provider finishes.
-        candidate.respond(false).unwrap();
+        candidate.reject().unwrap();
         let mut result = String::new();
         browser.read_to_string(&mut result).unwrap();
         assert!(result.starts_with("HTTP/1.1 400 Bad Request"));
