@@ -115,7 +115,7 @@ impl CallbackRequest {
         let response: &[u8] = if authenticated {
             b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 26\r\nConnection: close\r\n\r\nAuthentication completed.\n"
         } else {
-            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 22\r\nConnection: close\r\n\r\nAuthentication failed.\n"
+            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 23\r\nConnection: close\r\n\r\nAuthentication failed.\n"
         };
         self.stream.write_all(response).map_err(|_| CallbackError::Io)
     }
@@ -166,7 +166,10 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
     let mut valid_host = false;
     for line in lines {
         let (name, value) = line.split_once(':').ok_or(CallbackError::InvalidRequest)?;
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
             || value.bytes().any(|b| b.is_ascii_control())
         {
             return Err(CallbackError::InvalidRequest);
@@ -196,7 +199,11 @@ mod tests {
     fn browser_request(url: &str, host: &str, method: &str) -> TcpStream {
         let target = url.strip_prefix(&format!("http://{host}")).unwrap();
         let mut stream = TcpStream::connect(host).unwrap();
-        write!(stream, "{method} {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").unwrap();
+        write!(
+            stream,
+            "{method} {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
         stream
     }
 
@@ -229,7 +236,13 @@ mod tests {
             assert!(matches!(listener.poll(), Err(CallbackError::InvalidRequest)));
             assert!(matches!(listener.poll(), Err(CallbackError::Consumed)));
         }
-        assert!(matches!(OAuthLoopbackListener::bind(Duration::ZERO), Err(CallbackError::Bind)));
-        assert!(matches!(OAuthLoopbackListener::bind(Duration::from_secs(601)), Err(CallbackError::Bind)));
+        assert!(matches!(
+            OAuthLoopbackListener::bind(Duration::ZERO),
+            Err(CallbackError::Bind)
+        ));
+        assert!(matches!(
+            OAuthLoopbackListener::bind(Duration::from_secs(601)),
+            Err(CallbackError::Bind)
+        ));
     }
 }
