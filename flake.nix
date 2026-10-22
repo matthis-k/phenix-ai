@@ -613,6 +613,49 @@
           excluded = [];
           substitutions = [];
         });
+      # C13f: browser OAuth provider runs in its own exact-account root.
+      # A missing credential directory or import/resolve grant is a hard error,
+      # not an implicit no-auth or API-key provider fallback.
+      chatGptCredentialResource =
+        "phenix.credentials.6f70656e6169.63686174677074.706572736f6e616c";
+      chatGptManagementComposition = pkgs.writeText "phenix-chatgpt-management.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.catalog@1";
+            operation = "list";
+            provider = "phenix.provider.chatgpt";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerChatGpt}" "${providerCredentialStore}" ];
+          slots = [
+            {
+              caller = "phenix.provider.chatgpt";
+              slot = "Credentials";
+              provider = "phenix.provider.credential-files";
+              export = "Credentials";
+              index = 0;
+            }
+          ];
+          grants = (map (entry: {
+            caller = "root";
+            inherit (entry) interface operation;
+            resources = [ chatGptCredentialResource ];
+          }) openAiApiProviderOperations) ++ (map (operation: {
+            caller = "phenix.provider.chatgpt";
+            interface = "phenix.provider.credentials@1";
+            inherit operation;
+            resources = [ chatGptCredentialResource ];
+          }) [ "resolve" "import" ]);
+          authority = {
+            operations = (map (entry: "${entry.interface}/${entry.operation}") openAiApiProviderOperations)
+              ++ [ "phenix.provider.credentials@1/resolve" "phenix.provider.credentials@1/import" ];
+            resources = [ chatGptCredentialResource ];
+          };
+          resource = chatGptCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2653,6 +2696,29 @@
               --provider-management ${openAiApiManagementComposition} \
               --provider-credentials ${openAiApiCredentialComposition} \
               --provider-model-resolver ${openAiApiResolverComposition} "$@"
+          '';
+        };
+        # OAuth login becomes available to :Phenix auth without any Lua
+        # credential or callback parser. The full selected-model integration is
+        # a later gate; never advertise it as an API-key entitlement.
+        phenix-basic-chatgpt-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-chatgpt-acp";
+          text = ''
+            set -eu
+            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
+               [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
+              echo "ChatGPT OAuth requires an opted-in protected credential backend." >&2
+              exit 2
+            fi
+            # This provider stores structured OAuth state under its exact root;
+            # the generic API-key environment override must not intercept it.
+            unset PHENIX_CREDENTIAL_API_KEY_ENV_NAME
+            unset PHENIX_MODEL_HTTP_API_KEY
+            export PHENIX_MODEL_HTTP_ENDPOINT=http://127.0.0.1:1/not-selected
+            export PHENIX_MODEL_HTTP_MODEL=unselected
+            ${basicSqliteEnvironment "basic-chatgpt.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
+              --provider-management ${chatGptManagementComposition} "$@"
           '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
