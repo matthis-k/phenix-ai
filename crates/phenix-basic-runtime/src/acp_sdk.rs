@@ -839,7 +839,9 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         }
     }
     if seen.len() != METHODS.len() {
-        return Err("credential management requires exact API-key source, import and revoke grants".into());
+        return Err(
+            "credential management requires exact API-key source, import and revoke grants".into(),
+        );
     }
     let kernel = Prepared::prepare(spec.clone())
         .map_err(|_| "invalid credential management composition".to_string())?
