@@ -11,6 +11,8 @@ use url::Url;
 /// This is protocol data handling, not a ProviderAuth implementation.
 pub mod siwc;
 #[cfg(feature = "siwc-verified")]
+pub mod oauth_oidc;
+#[cfg(feature = "siwc-verified")]
 pub mod siwc_verified;
 
 #[cfg(feature = "model-codecs")]
