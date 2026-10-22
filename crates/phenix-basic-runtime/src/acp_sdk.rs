@@ -1597,7 +1597,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(|| invalid("selected model management is unavailable"))?;
-        let offers = management.authorized_http_offers(self.resolver.as_ref())?;
+        let offers = management.authorized_http_offers(&self.resolvers)?;
         let mut found = Vec::new();
         for entry in offers {
             if native_model_option_id(&entry.selected, expected)? == chosen {
