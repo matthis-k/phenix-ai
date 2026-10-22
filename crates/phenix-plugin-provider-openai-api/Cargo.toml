@@ -1,0 +1,18 @@
+[package]
+name = "phenix-plugin-provider-openai-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-provider-contracts = { path = "../phenix-provider-contracts" }
+phenix-provider-builtins = { path = "../phenix-provider-builtins" }
+curl = { version = "0.4", default-features = false }
+serde_json.workspace = true
+
+[features]
+c11-loopback-test = []

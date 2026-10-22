@@ -418,6 +418,63 @@
           touch $out/verified
         '';
       };
+      # Opt-in provider plugin: real per-profile API-key verification. The
+      # default Basic composition and metadata-only provider remain unchanged.
+      providerOpenAiApiSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-openai-api
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerOpenAiApi = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-openai-api";
+        version = "0.1.0";
+        src = providerOpenAiApiSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-openai-api" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-openai-api" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_openai_api.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      # Dedicated test-only artifact permits local HTTP transport fixtures
+      # without adding a loopback URL override to the production provider.
+      providerOpenAiApiFixture = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-openai-api-test";
+        version = "0.1.0";
+        src = providerOpenAiApiSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-openai-api" "--features" "c11-loopback-test" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-openai-api" "--features" "c11-loopback-test" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_openai_api.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerOpenAiApiProductCheck = pkgs.runCommand "phenix-provider-openai-api-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-openai-api-key-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out"
+        test -s "$out/openai-api-auth-product.json"
+      '';
       providerCredentialStoreSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-credential-files
         ./crates/phenix-provider-contracts
@@ -2325,6 +2382,7 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
+        phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-credential-files = providerCredentialStore;
         phenix-plugin-provider-secret-service = providerSecretService;
         phenix-provider-contracts = providerDefinitions;
@@ -2442,6 +2500,8 @@
         provider-secret-service = providerSecretServiceCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
+        provider-openai-api = providerOpenAiApi;
+        provider-openai-api-product = providerOpenAiApiProductCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;

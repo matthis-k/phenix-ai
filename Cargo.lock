@@ -1720,6 +1720,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-openai-api"
+version = "0.1.0"
+dependencies = [
+ "curl",
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-provider-secret-service"
 version = "0.1.0"
 dependencies = [
@@ -1727,15 +1738,6 @@ dependencies = [
  "phenix-provider-contracts",
  "phenix-sdk",
  "zbus-secret-service-keyring-store",
-]
-
-[[package]]
-name = "phenix-plugin-workspace-selection"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
- "phenix-workspace-contracts",
 ]
 
 [[package]]
@@ -1753,6 +1755,15 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-plugin-workspace-selection"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "phenix-workspace-contracts",
 ]
 
 [[package]]
@@ -1799,19 +1810,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-workspace-contracts"
-version = "0.1.0"
-dependencies = [
- "phenix-sdk",
- "serde",
-]
-
-[[package]]
 name = "phenix-sdk"
 version = "0.1.0"
 dependencies = [
  "phenix-contract",
  "phenix-macros",
+]
+
+[[package]]
+name = "phenix-workspace-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
 ]
 
 [[package]]
