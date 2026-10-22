@@ -16,6 +16,8 @@ pub mod oauth_oidc;
 pub mod siwc;
 #[cfg(feature = "siwc-verified")]
 pub mod siwc_verified;
+#[cfg(feature = "siwc-verified")]
+pub mod siwc_transport;
 
 #[cfg(feature = "model-codecs")]
 pub mod request;
