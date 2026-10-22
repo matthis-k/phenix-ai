@@ -120,10 +120,15 @@ fn valid_host_id(value: &str) -> bool {
 }
 
 fn redirect(uri: &str) -> Result<Url, RegistrationError> {
+    // Do not let URL normalization accept empty userinfo, localhost aliases,
+    // a zero listener port, or a path that differs from the issued callback.
+    if !uri.starts_with("http://127.0.0.1:") {
+        return Err(RegistrationError::InvalidRedirect);
+    }
     let url = Url::parse(uri).map_err(|_| RegistrationError::InvalidRedirect)?;
     if url.scheme() != "http"
         || url.host_str() != Some("127.0.0.1")
-        || url.port().is_none()
+        || url.port().is_none_or(|port| port == 0)
         || url.path() != "/auth/callback"
         || url.username() != ""
         || url.password().is_some()
@@ -425,6 +430,8 @@ mod tests {
             "https://127.0.0.1:1455/auth/callback",
             "http://127.0.0.2:1455/auth/callback",
             "http://127.0.0.1:1455/auth/callback#fragment",
+            "http://@127.0.0.1:1455/auth/callback",
+            "http://127.0.0.1:0/auth/callback",
         ] {
             assert!(first().accept_callback(&format!("{uri}?state={STATE}&code=c"))
                 .is_err(), "{uri}");
