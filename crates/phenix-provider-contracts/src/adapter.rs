@@ -154,6 +154,7 @@ impl ApiKeyPresentation {
                     .iter()
                     .any(|reserved| name.eq_ignore_ascii_case(reserved))
                 || prefix.len() > 64
+                || !prefix.is_ascii()
                 || prefix.bytes().any(|byte| byte.is_ascii_control())
             {
                 return Err(rejected("invalid API-key header presentation"));
@@ -333,7 +334,7 @@ mod tests {
                 "{name:?}"
             );
         }
-        for prefix in ["secret:\r\n", "a\n", "a\t"] {
+        for prefix in ["secret:\r\n", "a\n", "a\t", "токен"] {
             assert!(
                 ApiKeyPresentation::Header {
                     name: "x-api-key".into(),
