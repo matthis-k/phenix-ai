@@ -303,6 +303,38 @@ mod tests {
     }
 
     #[test]
+    fn api_key_header_strategy_is_reusable_and_rejects_header_injection() {
+        let bearer = ApiKeyPresentation::Bearer;
+        let key_header = ApiKeyPresentation::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+        };
+        let custom = ApiKeyPresentation::Header {
+            name: "Authorization".into(),
+            prefix: "Token ".into(),
+        };
+        for candidate in [&bearer, &key_header, &custom] {
+            assert!(candidate.validate().is_ok());
+        }
+        assert_eq!(bearer.header_name(), "Authorization");
+        assert_eq!(bearer.header_value("opaque"), "Bearer opaque");
+        assert_eq!(key_header.header_name(), "x-api-key");
+        assert_eq!(key_header.header_value("opaque"), "opaque");
+        assert_eq!(custom.header_value("opaque"), "Token opaque");
+
+        for name in ["Host", "Cookie", "Content-Length", "x-key\r\nInjected", ""] {
+            assert!(ApiKeyPresentation::Header {
+                name: name.into(), prefix: String::new(),
+            }.validate().is_err(), "{name:?}");
+        }
+        for prefix in ["secret:\r\n", "a\n", "a\t"] {
+            assert!(ApiKeyPresentation::Header {
+                name: "x-api-key".into(), prefix: prefix.into(),
+            }.validate().is_err(), "{prefix:?}");
+        }
+    }
+
+    #[test]
     fn forged_schema_or_noncanonical_data_cannot_be_decoded() {
         let mut entry = AdapterBinding::from_typed("example", &()).unwrap();
         assert!(entry.config.decode::<()>().is_ok());
