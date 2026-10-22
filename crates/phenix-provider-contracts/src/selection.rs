@@ -110,6 +110,33 @@ impl HttpModelBinding {
             .map(|method| &method.kind)
     }
 
+    /// Selected API-key wire strategy, from the method admitted for *this*
+    /// profile. Message codec IDs never select how secrets are presented.
+    /// Returning None means credential-free or OAuth (native Bearer).
+    pub fn api_key_presentation(&self) -> Result<Option<ApiKeyPresentation>, ProviderError> {
+        let Some(profile) = self.choice.credential_profile.as_ref() else {
+            return Ok(None);
+        };
+        let method = self
+            .choice
+            .connection
+            .auth_methods
+            .iter()
+            .find(|method| method.id == profile.method_id)
+            .ok_or_else(|| {
+                selection_error(
+                    ProviderErrorCode::Denied,
+                    "selected authentication method no longer exists",
+                )
+            })?;
+        if method.kind != AuthenticationKind::ApiKey {
+            return Ok(None);
+        }
+        let options = method.adapter.config.decode::<ApiKeyOptions>()?;
+        options.validate()?;
+        Ok(Some(options.presentation))
+    }
+
     pub fn selection(&self) -> &ModelSelection {
         self.choice.selection()
     }
@@ -414,6 +441,7 @@ mod tests {
                         &ApiKeyOptions {
                             environment_variable: None,
                             interactive: true,
+                            presentation: ApiKeyPresentation::Bearer,
                         },
                     )
                     .unwrap(),
@@ -477,6 +505,59 @@ mod tests {
         assert_eq!(
             ModelSelection::from_value(request.to_value()).unwrap(),
             request
+        );
+    }
+
+    #[test]
+    fn header_authentication_strategy_is_independent_of_model_protocol() {
+        let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(checked.protocol_id(), "openai-responses");
+        assert_eq!(
+            checked.api_key_presentation().unwrap(),
+            Some(ApiKeyPresentation::Bearer)
+        );
+
+        let presentation = ApiKeyPresentation::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+        };
+        let method = &mut provider.connections[0].auth_methods[0];
+        method.adapter = AdapterBinding::from_typed(
+            "api-key",
+            &ApiKeyOptions {
+                environment_variable: Some("MY_API_KEY".into()),
+                interactive: true,
+                presentation: presentation.clone(),
+            },
+        )
+        .unwrap();
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(checked.protocol_id(), "openai-responses");
+        assert_eq!(checked.api_key_presentation().unwrap(), Some(presentation));
+
+        // Changing only the protocol must not silently switch the credential
+        // header chosen by this exact selected authentication method.
+        provider.connections[0].protocols[0].id = "anthropic-messages".into();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/messages".into());
+        let mut other_page = page.clone();
+        other_page.models[0].protocol_id = "anthropic-messages".into();
+        let mut other_request = request.clone();
+        other_request.protocol_id = "anthropic-messages".into();
+        let admitted =
+            validate_model_selection(&provider, &auth, &other_page, &other_request, true).unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(
+            checked.api_key_presentation().unwrap(),
+            Some(ApiKeyPresentation::Header {
+                name: "x-api-key".into(),
+                prefix: String::new(),
+            })
         );
     }
 
@@ -752,6 +833,7 @@ mod tests {
                     &ApiKeyOptions {
                         environment_variable: None,
                         interactive: true,
+                        presentation: ApiKeyPresentation::Bearer,
                     },
                 )
                 .unwrap(),
@@ -854,7 +936,11 @@ mod tests {
         assert_eq!(protocol, "openai-responses");
         assert_eq!(max_tokens, Some(128));
         match authorization {
-            HttpModelAuthorization::ApiKey { identity, secret } => {
+            HttpModelAuthorization::ApiKey {
+                identity,
+                secret,
+                presentation: _,
+            } => {
                 assert_eq!(identity, personal);
                 assert_eq!(
                     secret.expose_for_authorized_provider(),

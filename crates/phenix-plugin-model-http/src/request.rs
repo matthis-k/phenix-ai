@@ -12,6 +12,7 @@ pub(crate) struct Config {
     pub protocol: Protocol,
     pub provider_max_tokens: Option<u64>,
     pub credential: Option<phenix_provider_contracts::CredentialSecret>,
+    pub presentation: phenix_provider_contracts::ApiKeyPresentation,
     pub ca_file: Option<String>,
 }
 
@@ -99,31 +100,44 @@ impl Config {
         }
         let endpoint = endpoint_url(&endpoint)?;
         let protocol = Protocol::parse(&protocol)?;
-        let credential = match authentication {
-            HttpModelAuthorization::CredentialFree => None,
+        let (credential, presentation) = match authentication {
+            HttpModelAuthorization::CredentialFree => {
+                (None, phenix_provider_contracts::ApiKeyPresentation::Bearer)
+            }
             HttpModelAuthorization::ApiKey {
                 identity: _,
                 secret,
-            }
-            | HttpModelAuthorization::BearerToken {
+                presentation,
+            } => (Some(secret), presentation),
+            HttpModelAuthorization::BearerToken {
                 identity: _,
                 secret,
-            } => {
-                let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
-                    .ok()
-                    .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
-                if !valid {
-                    return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
-                }
-                Some(secret)
-            }
+            } => (
+                Some(secret),
+                phenix_provider_contracts::ApiKeyPresentation::Bearer,
+            ),
         };
+        presentation.validate().map_err(|_| {
+            error(
+                ErrorCode::InvalidInput,
+                "invalid selected authentication strategy",
+            )
+        })?;
+        if let Some(secret) = &credential {
+            let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
+                .ok()
+                .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
+            if !valid {
+                return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
+            }
+        }
         Ok(Self {
             endpoint,
             model,
             protocol,
             provider_max_tokens,
             credential,
+            presentation,
             ca_file: None,
         })
     }
@@ -191,6 +205,10 @@ impl Config {
             protocol,
             provider_max_tokens,
             credential: secret,
+            presentation: binding
+                .api_key_presentation()
+                .map_err(|_| error(ErrorCode::InvalidInput, "invalid API-key strategy"))?
+                .unwrap_or(phenix_provider_contracts::ApiKeyPresentation::Bearer),
             ca_file: None,
         })
     }
@@ -214,12 +232,24 @@ impl Config {
             ));
         }
         let credential = configured_credential(env::var("PHENIX_MODEL_HTTP_API_KEY"))?;
+        // The old preset is independent of checked provider selection. It
+        // retains the existing Anthropic default until the explicit strategy
+        // launcher replaces that preset too.
+        let presentation = if protocol == Protocol::AnthropicMessages {
+            phenix_provider_contracts::ApiKeyPresentation::Header {
+                name: "x-api-key".into(),
+                prefix: String::new(),
+            }
+        } else {
+            phenix_provider_contracts::ApiKeyPresentation::Bearer
+        };
         Ok(Self {
             endpoint,
             model,
             protocol,
             provider_max_tokens,
             credential,
+            presentation,
             ca_file: env::var("PHENIX_MODEL_HTTP_CA_FILE").ok(),
         })
     }
@@ -237,6 +267,7 @@ impl std::fmt::Debug for Config {
                 "credential",
                 &self.credential.as_ref().map(|_| "[REDACTED]"),
             )
+            .field("presentation", &self.presentation)
             .field("ca_file", &self.ca_file)
             .finish()
     }

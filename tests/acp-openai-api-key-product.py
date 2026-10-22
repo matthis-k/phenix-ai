@@ -202,8 +202,12 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                PHENIX_MODEL_HTTP_ENDPOINT="http://127.0.0.1:1/forged-preset",
                PHENIX_MODEL_HTTP_API_KEY="no-preset-token")
 
-    def launch(configured_profile="personal"):
+    env.pop("PHENIX_CREDENTIAL_API_KEY_ENV_NAME", None)
+
+    def launch(configured_profile="personal", extra_env=None):
         launch_env = dict(env)
+        if extra_env is not None:
+            launch_env.update(extra_env)
         if configured_profile is None:
             launch_env.pop("PHENIX_OPENAI_API_PROFILE", None)
         else:
@@ -367,8 +371,47 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     close(after_revoke)
 
     assert not list(vault.iterdir()), "key not revoked from vault"
+
+    # The same reusable API-key method also works with an environment source.
+    # It uses no masked ACP import, no plaintext vault and no new provider or
+    # model transport implementation.
+    environment_only = dict(
+        PHENIX_CREDENTIAL_API_KEY_ENV_NAME="PHENIX_C14_TEST_API_KEY",
+        PHENIX_C14_TEST_API_KEY=key,
+        PHENIX_CREDENTIAL_FILE_CONSENT="0",
+        PHENIX_CREDENTIAL_FILE_DIRECTORY="",
+    )
+    sourced = launch(extra_env=environment_only)
+    init(sourced)
+    sourced_status = call(sourced, 90, "_phenix/providers/auth/status", user)
+    assert sourced_status["result"]["profiles"][0]["status"] == "Authenticated", sourced_status
+    sourced_models = call(sourced, 91, "_phenix/providers/models",
+                         {**user, "profile_id": "personal", "cursor": None, "limit": 256})
+    assert [m["id"] for m in sourced_models["result"]["models"]] == ["gpt-5"]
+    new_session = call(sourced, 92, "session/new", {"cwd": "/tmp", "mcpServers": []})
+    selected_model = [
+        option["value"]
+        for option in new_session["result"]["configOptions"][0]["options"]
+        if option["value"].startswith("phenix.native-model@1:")
+    ]
+    assert len(selected_model) == 1
+    selected_in_env = call(sourced, 93, "session/set_config_option", {
+        "sessionId": new_session["result"]["sessionId"], "configId": "model",
+        "value": selected_model[0],
+    })
+    assert "result" in selected_in_env
+    env_answer = call(sourced, 94, "session/prompt", {
+        "sessionId": new_session["result"]["sessionId"],
+        "prompt": [{"type": "text", "text": "hello from env"}],
+    })
+    assert env_answer.get("result", {}).get("stopReason") == "end_turn", env_answer
+    cannot_revoke_env = call(sourced, 95, "_phenix/credentials/revoke", account)
+    assert "error" in cannot_revoke_env, "environment source cannot report false revocation"
+    close(sourced)
+    assert not list(vault.iterdir()), "environment key must never be stored in the vault"
+
     assert state["redirected"] == 0, state
-    assert state["get"] >= 10 and state["post"] == 1, state
+    assert state["get"] >= 12 and state["post"] == 2, state
 
 server.shutdown()
 (output / "openai-api-auth-product.json").write_text(json.dumps({
@@ -382,6 +425,8 @@ server.shutdown()
     "cross_profile_model_denied": True, "unsupported_oauth_denied": True,
     "root_selected_account_without_env": True,
     "deployment_mismatch_denied_before_network": True,
+    "environment_key_selected_inference_without_vault": True,
+    "environment_source_revoke_denied": True,
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
 }, sort_keys=True, indent=2))

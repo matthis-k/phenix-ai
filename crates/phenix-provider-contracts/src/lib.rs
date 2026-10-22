@@ -9,7 +9,7 @@ use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
 pub mod adapter;
-pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions};
+pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions, ApiKeyPresentation};
 
 pub mod credentials;
 pub use credentials::{

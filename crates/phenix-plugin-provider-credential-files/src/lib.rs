@@ -36,6 +36,60 @@ fn backend_error(problem: CredentialError) -> ProviderError {
     }
 }
 
+/// Name-only configuration: the value stays in the runtime environment,
+/// never in the provider descriptor, Nix config, ACP or session journal.
+/// This backend supports any provider/account admitted by the exact root.
+/// Source order is explicit: a populated environment key wins over the
+/// interactive file store, which is consulted only when the variable is unset.
+fn environment_key_name() -> Result<Option<String>, ProviderError> {
+    let Some(raw) = std::env::var_os("PHENIX_CREDENTIAL_API_KEY_ENV_NAME") else {
+        return Ok(None);
+    };
+    let name = raw.into_string().map_err(|_| {
+        error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key environment name",
+        )
+    })?;
+    if !valid_key_environment_name(&name) {
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key environment name",
+        ));
+    }
+    Ok(Some(name))
+}
+
+fn valid_key_environment_name(name: &str) -> bool {
+    phenix_provider_contracts::ApiKeyOptions {
+        environment_variable: Some(name.to_owned()),
+        interactive: true,
+        presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+    }
+    .validate()
+    .is_ok()
+}
+
+/// ProviderCredentials::resolve only. A key read from an environment
+/// variable must never be copied into persistent storage or journals.
+/// CredentialSecret owns the resulting byte buffer and zeroes it on drop.
+fn environment_key() -> Result<Option<phenix_provider_contracts::CredentialSecret>, ProviderError> {
+    let Some(name) = environment_key_name()? else {
+        return Ok(None);
+    };
+    let Some(raw) = std::env::var_os(&name) else {
+        return Ok(None);
+    };
+    let bytes = raw.into_encoded_bytes();
+    if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key environment value",
+        ));
+    }
+    phenix_provider_contracts::CredentialSecret::new(bytes).map(Some)
+}
+
 fn authorize(
     identity: &CredentialIdentity,
     actual: Option<&str>,
@@ -119,6 +173,11 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<CredentialSecret, ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        // Read the environment only after verifying the kernel's exact
+        // credential root; an arbitrary ACP selector cannot obtain it.
+        if let Some(secret) = environment_key().map_err(CallError::Domain)? {
+            return Ok(secret);
+        }
         let secret = state
             .backend()
             .map_err(CallError::Domain)?
@@ -136,6 +195,14 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<(), ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        // Revoking a file cannot invalidate a process environment variable.
+        // Fail explicitly rather than falsely reporting an account revoked.
+        if environment_key().map_err(CallError::Domain)?.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "API key supplied by environment; unset it and restart to revoke",
+            )));
+        }
         state
             .backend()
             .map_err(CallError::Domain)?
@@ -149,6 +216,26 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_sdk::ContractMetadata;
+
+    #[test]
+    fn environment_source_accepts_only_bounded_variable_names() {
+        for allowed in ["OPENAI_API_KEY", "MY_PROVIDER_KEY", "_KEY", "A9"] {
+            assert!(valid_key_environment_name(allowed), "{allowed}");
+        }
+        for invalid in [
+            "",
+            "api_key",
+            "9KEY",
+            "OPENAI-KEY",
+            "../SECRET",
+            "OPENAI_KEY=secret",
+            "A B",
+            "A\\nB",
+        ] {
+            assert!(!valid_key_environment_name(invalid), "{invalid:?}");
+        }
+        assert!(!valid_key_environment_name(&"A".repeat(129)));
+    }
 
     #[test]
     fn profile_selectors_never_grant_credential_access() {

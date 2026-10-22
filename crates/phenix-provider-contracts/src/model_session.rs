@@ -3,8 +3,8 @@
 //! status/catalog, resolve one exact credential root and hold an explicit
 //! session-scoped native install grant.
 use super::{
-    AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelBinding, ProviderError,
-    ProviderErrorCode,
+    ApiKeyPresentation, AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelBinding,
+    ProviderError, ProviderErrorCode,
 };
 use phenix_sdk::{contract, Portable};
 
@@ -15,6 +15,7 @@ pub enum HttpModelAuthorization {
     ApiKey {
         identity: CredentialIdentity,
         secret: CredentialSecret,
+        presentation: ApiKeyPresentation,
     },
     /// Validated OAuth access token for an explicitly selected account.
     /// Refresh and revocation belong to the authentication adapter; the
@@ -70,6 +71,9 @@ impl HttpModelInstall {
                 HttpModelAuthorization::ApiKey {
                     identity: actual,
                     secret,
+                    presentation: binding.api_key_presentation()?.ok_or_else(|| {
+                        problem(ProviderErrorCode::Denied, "missing API-key presentation")
+                    })?,
                 }
             }
             (

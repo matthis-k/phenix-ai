@@ -119,10 +119,101 @@ impl AdapterBinding {
 
 /// Standard API-key source options; provider-specific auth plugins may define
 /// their own Portable configuration instead. This contains no credential.
+/// Wire presentation is independent of the model protocol and provider ID.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum ApiKeyPresentation {
+    /// Standard HTTP bearer authorization.
+    Bearer,
+    /// A separately configured API-key HTTP header; `prefix` is public text
+    /// prepended to the secret and may be empty (e.g. x-api-key).
+    Header { name: String, prefix: String },
+}
+
+impl ApiKeyPresentation {
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        if let Self::Header { name, prefix } = self {
+            let safe_name = !name.is_empty()
+                && name.len() <= 64
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+            let restricted = [
+                "host",
+                "cookie",
+                "set-cookie",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+                "content-type",
+                "accept",
+                "expect",
+                "proxy-authorization",
+            ];
+            if !safe_name
+                || restricted
+                    .iter()
+                    .any(|reserved| name.eq_ignore_ascii_case(reserved))
+                || prefix.len() > 64
+                || !prefix.is_ascii()
+                || prefix.bytes().any(|byte| byte.is_ascii_control())
+            {
+                return Err(rejected("invalid API-key header presentation"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Public wire header **name**. Never expose the credential itself.
+    pub fn header_name(&self) -> &str {
+        match self {
+            Self::Bearer => "Authorization",
+            Self::Header { name, .. } => name,
+        }
+    }
+
+    pub fn header_value<'a>(&'a self, credential: &'a str) -> String {
+        match self {
+            Self::Bearer => format!("Bearer {credential}"),
+            Self::Header { prefix, .. } => format!("{prefix}{credential}"),
+        }
+    }
+}
+
+/// One reusable acquisition strategy with independent source and wire options.
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct ApiKeyOptions {
     pub environment_variable: Option<String>,
     pub interactive: bool,
+    pub presentation: ApiKeyPresentation,
+}
+
+impl ApiKeyOptions {
+    /// An API key can come from masked direct input or a provider-configured
+    /// environment variable name. Both are ordinary sources for the *same*
+    /// API-key method. This configuration must never contain the key itself.
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        self.presentation.validate()?;
+        let valid_name = |name: &str| {
+            !name.is_empty()
+                && name.len() <= 128
+                && name
+                    .bytes()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_uppercase() || first == b'_')
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        };
+        if self
+            .environment_variable
+            .as_deref()
+            .is_some_and(|name| !valid_name(name))
+            || (!self.interactive && self.environment_variable.is_none())
+        {
+            return Err(rejected("invalid API-key source configuration"));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +233,7 @@ mod tests {
             &ApiKeyOptions {
                 environment_variable: Some("OPENAI_API_KEY".into()),
                 interactive: true,
+                presentation: ApiKeyPresentation::Bearer,
             },
         )
         .unwrap();
@@ -165,6 +257,94 @@ mod tests {
         .unwrap();
         assert!(!other.config.decode::<CustomOptions>().unwrap().enabled);
         assert_ne!(other.config.schema_id, key.config.schema_id);
+    }
+
+    #[test]
+    fn api_key_source_options_are_names_not_credential_values() {
+        for valid in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "_CUSTOM_KEY"] {
+            assert!(ApiKeyOptions {
+                environment_variable: Some(valid.into()),
+                interactive: true,
+                presentation: ApiKeyPresentation::Bearer,
+            }
+            .validate()
+            .is_ok());
+        }
+        for invalid in [
+            "",
+            "lowercase",
+            "API-KEY",
+            "A B",
+            "9API_KEY",
+            "K=value",
+            "../KEY",
+        ] {
+            assert!(ApiKeyOptions {
+                environment_variable: Some(invalid.into()),
+                interactive: true,
+                presentation: ApiKeyPresentation::Bearer,
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(ApiKeyOptions {
+            environment_variable: None,
+            interactive: true,
+            presentation: ApiKeyPresentation::Bearer,
+        }
+        .validate()
+        .is_ok());
+        assert!(ApiKeyOptions {
+            environment_variable: None,
+            interactive: false,
+            presentation: ApiKeyPresentation::Bearer,
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn api_key_header_strategy_is_reusable_and_rejects_header_injection() {
+        let bearer = ApiKeyPresentation::Bearer;
+        let key_header = ApiKeyPresentation::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+        };
+        let custom = ApiKeyPresentation::Header {
+            name: "Authorization".into(),
+            prefix: "Token ".into(),
+        };
+        for candidate in [&bearer, &key_header, &custom] {
+            assert!(candidate.validate().is_ok());
+        }
+        assert_eq!(bearer.header_name(), "Authorization");
+        assert_eq!(bearer.header_value("opaque"), "Bearer opaque");
+        assert_eq!(key_header.header_name(), "x-api-key");
+        assert_eq!(key_header.header_value("opaque"), "opaque");
+        assert_eq!(custom.header_value("opaque"), "Token opaque");
+
+        for name in ["Host", "Cookie", "Content-Length", "x-key\r\nInjected", ""] {
+            assert!(
+                ApiKeyPresentation::Header {
+                    name: name.into(),
+                    prefix: String::new(),
+                }
+                .validate()
+                .is_err(),
+                "{name:?}"
+            );
+        }
+        for prefix in ["secret:\r\n", "a\n", "a\t", "токен"] {
+            assert!(
+                ApiKeyPresentation::Header {
+                    name: "x-api-key".into(),
+                    prefix: prefix.into(),
+                }
+                .validate()
+                .is_err(),
+                "{prefix:?}"
+            );
+        }
     }
 
     #[test]
