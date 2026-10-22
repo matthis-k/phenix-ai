@@ -78,261 +78,219 @@ fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> Pr
     }
 }
 
-/// Registration is offline and does not imply account entitlement or model
-/// availability. Explicit inference URLs are provider-documented protocol
-/// locations, not active transports; actual models must still be mapped to a
-/// supported protocol, authenticated account, fresh catalog and runtime grant.
-/// OAuth is only usable after provider-approved authorization.
+/// The smallest author-facing provider connection: endpoint, protocol, auth.
+///
+/// The provider/connection ID belongs to the registry, and named accounts
+/// belong to the credential store, NOT this declaration. Extra protocol
+/// endpoints, discovery codecs, and environment hints are explicit optional
+/// extensions. A declaration is metadata, never network or kernel authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderDeclaration<'a> {
+    pub endpoint: &'a str,
+    pub protocol: &'a str,
+    pub auth: &'a str,
+}
+
+impl ProviderDeclaration<'_> {
+    pub fn connection(self, id: &str, label: &str) -> Result<ConnectionDescriptor, &'static str> {
+        if self.endpoint.is_empty() || self.protocol.is_empty() {
+            return Err("provider endpoint and protocol are required");
+        }
+        validate_endpoint(self.endpoint, EndpointMode::LocalLoopback)
+            .map_err(|_| "unsafe provider endpoint")?;
+        let auth_methods = match self.auth {
+            "api-key" => vec![AuthenticationMethod {
+                id: "api-key".into(),
+                label: "API key".into(),
+                kind: AuthenticationKind::ApiKey,
+                adapter: AdapterBinding::from_typed(
+                    "api-key",
+                    &ApiKeyOptions {
+                        environment_variable: None,
+                        interactive: true,
+                    },
+                )
+                .map_err(|_| "invalid API key adapter")?,
+            }],
+            "chatgpt-oauth" => vec![AuthenticationMethod {
+                id: "chatgpt-sign-in".into(),
+                label: "Sign in with ChatGPT".into(),
+                kind: AuthenticationKind::OAuthAuthorizationCode,
+                adapter: AdapterBinding::from_typed("chatgpt.oauth", &())
+                    .map_err(|_| "invalid OAuth adapter")?,
+            }],
+            "none" => vec![],
+            _ => return Err("authentication adapter is not registered"),
+        };
+        Ok(ConnectionDescriptor {
+            id: id.into(),
+            label: label.into(),
+            protocols: vec![ProtocolBinding {
+                id: self.protocol.into(),
+                endpoint: None,
+            }],
+            base_url: Some(self.endpoint.into()),
+            auth_methods,
+            // No implicit /models guess. A provider or registered discovery
+            // adapter contributes this only where the provider supports it.
+            model_sources: vec![],
+        })
+    }
+}
+
+/// Named adapters are registry-level implementations. The builder merely
+/// references them; it does not implement OAuth or model streaming.
+pub trait ConnectionExtensions {
+    fn with_protocol(self, id: &str, endpoint: Option<&str>) -> Self;
+    fn with_catalog(
+        self,
+        endpoint: Option<&str>,
+        adapter: &str,
+        kind: DiscoveryKind,
+    ) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+    fn with_key_environment(self, name: &str) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+}
+
+impl ConnectionExtensions for ConnectionDescriptor {
+    fn with_protocol(mut self, id: &str, endpoint: Option<&str>) -> Self {
+        // Replace the primary protocol's optional endpoint without creating
+        // a duplicate, otherwise append an additional supported protocol.
+        if let Some(existing) = self.protocols.iter_mut().find(|item| item.id == id) {
+            existing.endpoint = endpoint.map(str::to_owned);
+        } else {
+            self.protocols.push(ProtocolBinding {
+                id: id.into(),
+                endpoint: endpoint.map(str::to_owned),
+            });
+        }
+        self
+    }
+
+    fn with_catalog(
+        mut self,
+        endpoint: Option<&str>,
+        adapter: &str,
+        kind: DiscoveryKind,
+    ) -> Result<Self, &'static str> {
+        self.model_sources.push(DiscoverySource {
+            id: "models".into(),
+            kind,
+            endpoint: endpoint.map(str::to_owned),
+            adapter: AdapterBinding::from_typed(adapter, &())
+                .map_err(|_| "unregistered model catalog adapter")?,
+        });
+        Ok(self)
+    }
+
+    fn with_key_environment(mut self, name: &str) -> Result<Self, &'static str> {
+        let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
+            return Err("key environment variable requires API key auth");
+        };
+        method.adapter = AdapterBinding::from_typed(
+            "api-key",
+            &ApiKeyOptions {
+                environment_variable: Some(name.into()),
+                interactive: true,
+            },
+        )
+        .map_err(|_| "invalid API key environment")?;
+        Ok(self)
+    }
+}
+
+/// Existing public registrations now use the same three-field declaration a
+/// third-party provider plugin can use. Protocol and discovery extensions
+/// preserve provider-specific behavior without enlarging that core schema.
 pub fn registrations() -> Vec<ProviderDescriptor> {
-    vec![
+    let make = |endpoint, protocol, auth, id, label| {
+        ProviderDeclaration { endpoint, protocol, auth }
+            .connection(id, label)
+            .expect("valid built-in provider declaration")
+    };
+    let model = |connection: ConnectionDescriptor, endpoint, adapter| {
+        connection
+            .with_catalog(endpoint, adapter, DiscoveryKind::Dynamic)
+            .expect("valid built-in dynamic catalog")
+    };
+    let api = make(
+        "https://api.openai.com/v1", OPENAI_RESPONSES, "api-key", "api", "OpenAI API",
+    )
+    .with_protocol(OPENAI_RESPONSES, Some("https://api.openai.com/v1/responses"))
+    .with_protocol(OPENAI_CHAT, Some("https://api.openai.com/v1/chat/completions"))
+    .with_key_environment("OPENAI_API_KEY")
+    .expect("valid OpenAI key setting");
+    let chatgpt = make(
+        "https://api.openai.com/v1", OPENAI_RESPONSES, "chatgpt-oauth",
+        "chatgpt", "ChatGPT subscription",
+    );
+    let openrouter = make(
+        "https://openrouter.ai/api/v1", OPENAI_CHAT, "api-key", "api", "OpenRouter API",
+    )
+    .with_protocol(OPENAI_CHAT, Some("https://openrouter.ai/api/v1/chat/completions"))
+    .with_protocol(OPENAI_RESPONSES, Some("https://openrouter.ai/api/v1/responses"));
+    let anthropic = make(
+        "https://api.anthropic.com/v1", ANTHROPIC_MESSAGES, "api-key", "api", "Anthropic API",
+    )
+    .with_protocol(ANTHROPIC_MESSAGES, Some("https://api.anthropic.com/v1/messages"));
+    let zen = make(
+        "https://opencode.ai/zen/v1", OPENAI_CHAT, "api-key", "api", "OpenCode Zen",
+    )
+    .with_protocol(OPENAI_CHAT, Some("https://opencode.ai/zen/v1/chat/completions"))
+    .with_protocol(OPENAI_RESPONSES, Some("https://opencode.ai/zen/v1/responses"))
+    .with_protocol(ANTHROPIC_MESSAGES, None);
+    let go = make(
+        "https://opencode.ai/zen/go/v1", OPENAI_CHAT, "api-key", "api", "OpenCode Go",
+    )
+    .with_protocol(OPENAI_CHAT, Some("https://opencode.ai/zen/go/v1/chat/completions"))
+    .with_protocol(OPENAI_RESPONSES, Some("https://opencode.ai/zen/go/v1/responses"))
+    .with_protocol(ANTHROPIC_MESSAGES, None);
+    let zai = make(
+        "https://api.z.ai/api/paas/v4", OPENAI_CHAT, "api-key", "standard", "Z.ai API",
+    )
+    .with_protocol(OPENAI_CHAT, Some("https://api.z.ai/api/paas/v4/chat/completions"))
+    .with_catalog(None, "zai.declared", DiscoveryKind::Declared)
+    .expect("valid Z.ai catalog");
+    let declared = vec![
         ProviderDescriptor {
             id: "openai".into(),
             label: "OpenAI".into(),
             connections: vec![
-                ConnectionDescriptor {
-                    id: "api".into(),
-                    label: "OpenAI API".into(),
-                    protocols: vec![
-                        ProtocolBinding {
-                            id: OPENAI_RESPONSES.into(),
-                            endpoint: Some("https://api.openai.com/v1/responses".into()),
-                        },
-                        ProtocolBinding {
-                            id: OPENAI_CHAT.into(),
-                            endpoint: Some("https://api.openai.com/v1/chat/completions".into()),
-                        },
-                    ],
-                    base_url: Some("https://api.openai.com/v1".into()),
-                    auth_methods: vec![AuthenticationMethod {
-                        id: "api-key".into(),
-                        label: "API key".into(),
-                        kind: AuthenticationKind::ApiKey,
-                        adapter: AdapterBinding::from_typed(
-                            "api-key",
-                            &ApiKeyOptions {
-                                environment_variable: Some("OPENAI_API_KEY".into()),
-                                interactive: true,
-                            },
-                        )
-                        .unwrap(),
-                    }],
-                    model_sources: vec![DiscoverySource {
-                        id: "models".into(),
-                        kind: DiscoveryKind::Dynamic,
-                        endpoint: Some("https://api.openai.com/v1/models".into()),
-                        adapter: AdapterBinding::from_typed("openai.models", &()).unwrap(),
-                    }],
-                },
-                ConnectionDescriptor {
-                    id: "chatgpt".into(),
-                    label: "ChatGPT subscription".into(),
-                    protocols: vec![ProtocolBinding {
-                        id: OPENAI_RESPONSES.into(),
-                        endpoint: None,
-                    }],
-                    base_url: Some("https://api.openai.com/v1".into()),
-                    auth_methods: vec![AuthenticationMethod {
-                        id: "chatgpt-sign-in".into(),
-                        label: "Sign in with ChatGPT".into(),
-                        kind: AuthenticationKind::OAuthAuthorizationCode,
-                        adapter: AdapterBinding::from_typed("chatgpt.oauth", &()).unwrap(),
-                    }],
-                    model_sources: vec![DiscoverySource {
-                        id: "models".into(),
-                        kind: DiscoveryKind::Dynamic,
-                        endpoint: Some("https://api.openai.com/v1/models".into()),
-                        adapter: AdapterBinding::from_typed("chatgpt.models", &()).unwrap(),
-                    }],
-                },
+                model(api, Some("https://api.openai.com/v1/models"), "openai.models"),
+                model(chatgpt, Some("https://api.openai.com/v1/models"), "chatgpt.models"),
             ],
         },
         ProviderDescriptor {
             id: "openrouter".into(),
             label: "OpenRouter".into(),
-            connections: vec![ConnectionDescriptor {
-                id: "api".into(),
-                label: "OpenRouter API".into(),
-                protocols: vec![
-                    ProtocolBinding {
-                        id: OPENAI_CHAT.into(),
-                        endpoint: Some("https://openrouter.ai/api/v1/chat/completions".into()),
-                    },
-                    ProtocolBinding {
-                        id: OPENAI_RESPONSES.into(),
-                        endpoint: Some("https://openrouter.ai/api/v1/responses".into()),
-                    },
-                ],
-                base_url: Some("https://openrouter.ai/api/v1".into()),
-                auth_methods: vec![AuthenticationMethod {
-                    id: "api-key".into(),
-                    label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
-                    adapter: AdapterBinding::from_typed(
-                        "api-key",
-                        &ApiKeyOptions {
-                            environment_variable: None,
-                            interactive: true,
-                        },
-                    )
-                    .unwrap(),
-                }],
-                model_sources: vec![DiscoverySource {
-                    id: "models".into(),
-                    kind: DiscoveryKind::Dynamic,
-                    endpoint: Some("https://openrouter.ai/api/v1/models".into()),
-                    adapter: AdapterBinding::from_typed("openrouter.models", &()).unwrap(),
-                }],
-            }],
+            connections: vec![model(openrouter, Some("https://openrouter.ai/api/v1/models"), "openrouter.models")],
         },
         ProviderDescriptor {
             id: "anthropic".into(),
             label: "Anthropic".into(),
-            connections: vec![ConnectionDescriptor {
-                id: "api".into(),
-                label: "Anthropic API".into(),
-                protocols: vec![ProtocolBinding {
-                    id: ANTHROPIC_MESSAGES.into(),
-                    endpoint: Some("https://api.anthropic.com/v1/messages".into()),
-                }],
-                base_url: Some("https://api.anthropic.com/v1".into()),
-                auth_methods: vec![AuthenticationMethod {
-                    id: "api-key".into(),
-                    label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
-                    adapter: AdapterBinding::from_typed(
-                        "api-key",
-                        &ApiKeyOptions {
-                            environment_variable: None,
-                            interactive: true,
-                        },
-                    )
-                    .unwrap(),
-                }],
-                model_sources: vec![DiscoverySource {
-                    id: "models".into(),
-                    kind: DiscoveryKind::Dynamic,
-                    endpoint: Some("https://api.anthropic.com/v1/models".into()),
-                    adapter: AdapterBinding::from_typed("anthropic.models", &()).unwrap(),
-                }],
-            }],
+            connections: vec![model(anthropic, Some("https://api.anthropic.com/v1/models"), "anthropic.models")],
         },
         ProviderDescriptor {
             id: "opencode-zen".into(),
             label: "OpenCode Zen".into(),
-            connections: vec![ConnectionDescriptor {
-                id: "api".into(),
-                label: "OpenCode Zen".into(),
-                protocols: vec![
-                    ProtocolBinding {
-                        id: OPENAI_CHAT.into(),
-                        endpoint: Some("https://opencode.ai/zen/v1/chat/completions".into()),
-                    },
-                    ProtocolBinding {
-                        id: OPENAI_RESPONSES.into(),
-                        endpoint: Some("https://opencode.ai/zen/v1/responses".into()),
-                    },
-                    ProtocolBinding {
-                        id: ANTHROPIC_MESSAGES.into(),
-                        endpoint: None,
-                    },
-                ],
-                base_url: Some("https://opencode.ai/zen/v1".into()),
-                auth_methods: vec![AuthenticationMethod {
-                    id: "api-key".into(),
-                    label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
-                    adapter: AdapterBinding::from_typed(
-                        "api-key",
-                        &ApiKeyOptions {
-                            environment_variable: None,
-                            interactive: true,
-                        },
-                    )
-                    .unwrap(),
-                }],
-                model_sources: vec![DiscoverySource {
-                    id: "models".into(),
-                    kind: DiscoveryKind::Dynamic,
-                    endpoint: Some("https://opencode.ai/zen/v1/models".into()),
-                    adapter: AdapterBinding::from_typed("opencode.models", &()).unwrap(),
-                }],
-            }],
+            connections: vec![model(zen, Some("https://opencode.ai/zen/v1/models"), "opencode.models")],
         },
         ProviderDescriptor {
             id: "opencode-go".into(),
             label: "OpenCode Go".into(),
-            connections: vec![ConnectionDescriptor {
-                id: "api".into(),
-                label: "OpenCode Go".into(),
-                protocols: vec![
-                    ProtocolBinding {
-                        id: OPENAI_CHAT.into(),
-                        endpoint: Some("https://opencode.ai/zen/go/v1/chat/completions".into()),
-                    },
-                    ProtocolBinding {
-                        id: OPENAI_RESPONSES.into(),
-                        endpoint: Some("https://opencode.ai/zen/go/v1/responses".into()),
-                    },
-                    ProtocolBinding {
-                        id: ANTHROPIC_MESSAGES.into(),
-                        endpoint: None,
-                    },
-                ],
-                base_url: Some("https://opencode.ai/zen/go/v1".into()),
-                auth_methods: vec![AuthenticationMethod {
-                    id: "api-key".into(),
-                    label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
-                    adapter: AdapterBinding::from_typed(
-                        "api-key",
-                        &ApiKeyOptions {
-                            environment_variable: None,
-                            interactive: true,
-                        },
-                    )
-                    .unwrap(),
-                }],
-                model_sources: vec![DiscoverySource {
-                    id: "models".into(),
-                    kind: DiscoveryKind::Dynamic,
-                    endpoint: Some("https://opencode.ai/zen/go/v1/models".into()),
-                    adapter: AdapterBinding::from_typed("opencode.models", &()).unwrap(),
-                }],
-            }],
+            connections: vec![model(go, Some("https://opencode.ai/zen/go/v1/models"), "opencode.models")],
         },
         ProviderDescriptor {
             id: "zai".into(),
             label: "Z.ai".into(),
-            connections: vec![ConnectionDescriptor {
-                id: "standard".into(),
-                label: "Z.ai API".into(),
-                protocols: vec![ProtocolBinding {
-                    id: OPENAI_CHAT.into(),
-                    endpoint: Some("https://api.z.ai/api/paas/v4/chat/completions".into()),
-                }],
-                base_url: Some("https://api.z.ai/api/paas/v4".into()),
-                auth_methods: vec![AuthenticationMethod {
-                    id: "api-key".into(),
-                    label: "API key".into(),
-                    kind: AuthenticationKind::ApiKey,
-                    adapter: AdapterBinding::from_typed(
-                        "api-key",
-                        &ApiKeyOptions {
-                            environment_variable: None,
-                            interactive: true,
-                        },
-                    )
-                    .unwrap(),
-                }],
-                model_sources: vec![DiscoverySource {
-                    id: "models".into(),
-                    kind: DiscoveryKind::Declared,
-                    endpoint: None,
-                    adapter: AdapterBinding::from_typed("zai.declared", &()).unwrap(),
-                }],
-            }],
+            connections: vec![zai],
         },
-    ]
+    ];
+    validate_registrations(&declared).expect("valid built-in provider endpoints");
+    declared
 }
 
 /// Defensive startup check for static registrations. Dynamic provider plugins
