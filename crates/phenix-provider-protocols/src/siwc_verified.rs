@@ -7,8 +7,8 @@
 //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
 //! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
-use crate::siwc::require_token_granted_plan_scope;
 use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError};
+use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
 

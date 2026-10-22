@@ -7,11 +7,11 @@
 use std::net::IpAddr;
 use url::Url;
 
+#[cfg(feature = "siwc-verified")]
+pub mod oauth_oidc;
 /// OpenAI's explicit OSS Sign in with ChatGPT URL/callback boundary.
 /// This is protocol data handling, not a ProviderAuth implementation.
 pub mod siwc;
-#[cfg(feature = "siwc-verified")]
-pub mod oauth_oidc;
 #[cfg(feature = "siwc-verified")]
 pub mod siwc_verified;
 

@@ -104,15 +104,23 @@ mod tests {
     fn invalid_provider_verification_parameters_fail_before_jwt() {
         assert_eq!(
             verify_signed_oidc_identity(
-                "jwt", br#"{"keys":[]}"#, "http://host.test",
-                "issued-client", "randomnoncerandomnoncerandomnonce", None,
+                "jwt",
+                br#"{"keys":[]}"#,
+                "http://host.test",
+                "issued-client",
+                "randomnoncerandomnoncerandomnonce",
+                None,
             ),
             Err(OidcError::InvalidConfiguration)
         );
         assert_eq!(
             verify_signed_oidc_identity(
-                "jwt", b"not jwks", "https://issuer.example.test",
-                "issued-client", "randomnoncerandomnoncerandomnonce", None,
+                "jwt",
+                b"not jwks",
+                "https://issuer.example.test",
+                "issued-client",
+                "randomnoncerandomnoncerandomnonce",
+                None,
             ),
             Err(OidcError::InvalidJwks)
         );
