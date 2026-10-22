@@ -9,9 +9,9 @@ use curl::easy::{Easy2, Handler, List, WriteError};
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
-    AuthenticationStatus, CredentialIdentity, CredentialProfile,
-    CredentialProfileStatus, ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError,
-    ProviderErrorCode, ProviderModel,
+    AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
+    ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
+    ProviderModel,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
