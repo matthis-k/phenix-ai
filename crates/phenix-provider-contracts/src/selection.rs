@@ -511,6 +511,8 @@ mod tests {
     #[test]
     fn header_authentication_strategy_is_independent_of_model_protocol() {
         let (mut provider, auth, page, request) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
         let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
         let checked = bind_http_model(&provider, admitted).unwrap();
         assert_eq!(checked.protocol_id(), "openai-responses");
@@ -541,6 +543,8 @@ mod tests {
         // Changing only the protocol must not silently switch the credential
         // header chosen by this exact selected authentication method.
         provider.connections[0].protocols[0].id = "anthropic-messages".into();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/messages".into());
         let mut other_page = page.clone();
         other_page.models[0].protocol_id = "anthropic-messages".into();
         let mut other_request = request.clone();
