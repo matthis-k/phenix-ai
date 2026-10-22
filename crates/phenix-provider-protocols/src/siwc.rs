@@ -71,14 +71,14 @@ impl VerifiedCallback {
         if !valid_pkce_verifier(code_verifier) {
             return Err(RegistrationError::InvalidAttempt);
         }
-        Ok(url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "authorization_code")
+        let mut form = url::form_urlencoded::Serializer::new(String::new());
+        form.append_pair("grant_type", "authorization_code")
             .append_pair("client_id", &self.issued_client_id)
             .append_pair("code", &self.code)
             .append_pair("code_verifier", code_verifier)
             .append_pair("redirect_uri", &self.redirect_uri)
-            .append_pair("resource", RESOURCE)
-            .finish())
+            .append_pair("resource", RESOURCE);
+        Ok(form.finish())
     }
 }
 
@@ -221,6 +221,12 @@ impl AuthorizationAttempt<'_> {
             return Err(RegistrationError::InvalidCallback);
         }
         let actual = Url::parse(callback_uri).map_err(|_| RegistrationError::InvalidCallback)?;
+        // Compare the raw callback authority/path as well as Url's parsed
+        // fields: normalization must not hide empty userinfo or a substituted
+        // callback host. The exact listener URL was fixed at authorization.
+        if !callback_uri.starts_with(&format!("{}?", self.redirect_uri)) {
+            return Err(RegistrationError::InvalidCallback);
+        }
         if actual.scheme() != expected.scheme()
             || actual.host_str() != expected.host_str()
             || actual.port() != expected.port()
