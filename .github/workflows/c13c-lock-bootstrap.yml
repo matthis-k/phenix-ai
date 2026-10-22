@@ -1,0 +1,34 @@
+name: Temporary C13c dependency lock bootstrap
+on:
+  push:
+    branches:
+      - feat/c13c-siwc-verified-tokens-20261022
+    paths:
+      - .github/workflows/c13c-lock-bootstrap.yml
+      - crates/phenix-provider-protocols/Cargo.toml
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Update workspace Cargo.lock for verified OIDC feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+          git diff --check Cargo.lock
+          git add Cargo.lock
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'chore(c13c): lock OIDC verifier dependencies'
+            git push origin HEAD:feat/c13c-siwc-verified-tokens-20261022
+          fi
