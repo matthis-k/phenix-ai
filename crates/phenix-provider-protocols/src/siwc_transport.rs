@@ -186,7 +186,9 @@ mod tests {
         assert!(request.ends_with(form));
         let token = TokenEnvelope::parse(&raw.unwrap()).unwrap();
         assert_eq!(token.granted_scope, "openid"); // token still unverified
-        assert_eq!(exchange_token("grant_type=code\nAuthorization: evil"),
-            Err(TransportError::InvalidForm));
+        assert!(matches!(
+            exchange_token("grant_type=code\nAuthorization: evil"),
+            Err(TransportError::InvalidForm)
+        ));
     }
 }
