@@ -149,10 +149,22 @@ impl Drop for TokenEnvelope {
     }
 }
 
+/// Proof object: constructible only after signed JWT and plan-scope checks.
+/// Downstream callbacks must not manufacture a successful identity.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedChatGptIdentity {
-    pub subject: String,
-    pub issued_client_id: String,
+    subject: String,
+    issued_client_id: String,
+}
+
+impl VerifiedChatGptIdentity {
+    pub fn subject(&self) -> &str {
+        &self.subject
+    }
+
+    pub fn issued_client_id(&self) -> &str {
+        &self.issued_client_id
+    }
 }
 
 /// This is the only entrance to the authenticated-account state. A caller
