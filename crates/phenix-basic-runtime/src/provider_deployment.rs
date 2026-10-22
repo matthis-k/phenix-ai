@@ -177,7 +177,7 @@ impl ProviderDeployment {
             CATALOG,
             "list",
             vec![SlotBinding {
-                caller: provider.id,
+                caller: provider.id.clone(),
                 slot: "Credentials".into(),
                 index: 0,
                 provider: credentials.id.clone(),
