@@ -932,7 +932,11 @@ mod tests {
         assert_eq!(protocol, "openai-responses");
         assert_eq!(max_tokens, Some(128));
         match authorization {
-            HttpModelAuthorization::ApiKey { identity, secret } => {
+            HttpModelAuthorization::ApiKey {
+                identity,
+                secret,
+                presentation: _,
+            } => {
                 assert_eq!(identity, personal);
                 assert_eq!(
                     secret.expose_for_authorized_provider(),
