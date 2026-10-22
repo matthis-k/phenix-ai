@@ -188,6 +188,63 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     assert not list(vault.iterdir())
     close(child)
 
+    # Two named accounts use two independent, exact-resource compositions.
+    # The ACP selector does not broaden one account's authority to another.
+    second_resource = resource(other)
+
+    def second_root(spec, destination):
+        copy = json.loads(json.dumps(spec))
+        copy["resource"] = second_resource
+        copy["authority"]["resources"] = [second_resource]
+        for grant in copy["grants"]:
+            grant["resources"] = [second_resource]
+        destination.write_text(json.dumps(copy))
+        return destination
+
+    work_file = second_root(configuration, root / "credentials-work.json")
+    work_resolver = second_root(resolver, root / "resolver-work.json")
+    argv = [
+        runtime, "acp", basic,
+        "--provider-management", catalog,
+        "--provider-credentials", str(config_file),
+        "--provider-model-resolver", str(resolver_file),
+        "--provider-credentials", str(work_file),
+        "--provider-model-resolver", str(work_resolver),
+    ]
+    child = subprocess.Popen(
+        argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
+    )
+    assert call(child, 1, "initialize", dict(
+        protocolVersion=1, clientCapabilities={}))["result"]["protocolVersion"] == 1
+    capability = call(child, 2, "_phenix/credentials/capabilities", {})
+    eligible = capability["result"]["profiles"]
+    assert eligible == [
+        dict(**account, **{"import": True, "revoke": True}),
+        dict(**other, **{"import": True, "revoke": True}),
+    ], eligible
+    assert call(child, 3, "_phenix/credentials/import", dict(
+        **account, secret=secret))["result"] == {"ok": True}
+    assert call(child, 4, "_phenix/credentials/import", dict(
+        **other, secret=secret))["result"] == {"ok": True}
+    assert len(list(vault.iterdir())) == 2
+    assert call(child, 5, "_phenix/credentials/revoke", other)["result"] == {"ok": True}
+    assert len(list(vault.iterdir())) == 1
+    assert call(child, 6, "_phenix/credentials/revoke", account)["result"] == {"ok": True}
+    assert not list(vault.iterdir())
+    close(child)
+
+    # Repeating the same exact resource is never silently first-match.
+    duplicate = subprocess.run(
+        [runtime, "acp", basic,
+         "--provider-credentials", str(config_file),
+         "--provider-credentials", str(config_file)],
+        input="", capture_output=True, text=True, env=env, timeout=15,
+    )
+    assert duplicate.returncode != 0
+    assert "duplicate credential root" in duplicate.stderr
+    assert secret not in duplicate.stdout + duplicate.stderr
+
 (out / "acp-credential-management.json").write_text(json.dumps({
     "format": "phenix.acp.credentials.product.v1",
     "authorized_import": True,
@@ -204,5 +261,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "resolve_only_model_root_requires_exact_launcher_authority": True,
     "model_resolver_never_exposed_as_acp_extension": True,
     "secret_redacted": True,
+    "independent_named_accounts": True,
+    "cross_account_revoke_isolation": True,
+    "duplicate_account_roots_denied": True,
 }, sort_keys=True, indent=2))
 print("ACP credential import/revoke with exact launcher grants verified")
