@@ -1,19 +1,17 @@
 //! SIWC cryptographic identity gate, separate from registration and UI.
  //!
- //! Validating the callback state or receiving a token response is not login.
- //! Only a signature/issuer/audience/expiry/nonce checked ID token *and* an
- //! independently granted plan scope produce a VerifiedChatGptIdentity.
- //! This module contains no HTTP client and cannot download attacker-supplied
- //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
- //! perform strict TLS/no-redirect token exchange and authorize secure storage.
+//! Validating the callback state or receiving a token response is not login.
+//! Only a signature/issuer/audience/expiry/nonce checked ID token *and* an
+//! independently granted plan scope produce a VerifiedChatGptIdentity.
+//! This module contains no HTTP client and cannot download attacker-supplied
+//! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
+//! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
 use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::core::{
     CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
 };
-use openidconnect::{
-    ClientId, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-};
+use openidconnect::{ClientId, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge};
 use serde_json::Value;
 
 pub const ISSUER: &str = "https://auth.openai.com";
@@ -186,9 +184,8 @@ pub fn verify_chatgpt_identity(
     }
     let jwks: CoreJsonWebKeySet =
         serde_json::from_slice(jwks_body).map_err(|_| VerificationError::InvalidJwks)?;
-    let id_token: CoreIdToken =
-        serde_json::from_value(Value::String(envelope.id_token.clone()))
-            .map_err(|_| VerificationError::InvalidIdToken)?;
+    let id_token: CoreIdToken = serde_json::from_value(Value::String(envelope.id_token.clone()))
+        .map_err(|_| VerificationError::InvalidIdToken)?;
     let verifier = CoreIdTokenVerifier::new_public_client(
         ClientId::new(issued_client_id.to_owned()),
         IssuerUrl::new(ISSUER.to_owned()).map_err(|_| VerificationError::InvalidIdToken)?,
@@ -303,8 +300,9 @@ mod tests {
     #[test]
     fn refresh_uses_issued_client_without_expanding_scopes() {
         let form = refresh_form("oaiapp_issued", "private-rotation-token").unwrap();
-        let fields: std::collections::BTreeMap<_, _> =
-            url::form_urlencoded::parse(form.as_bytes()).into_owned().collect();
+        let fields: std::collections::BTreeMap<_, _> = url::form_urlencoded::parse(form.as_bytes())
+            .into_owned()
+            .collect();
         assert_eq!(fields["client_id"], "oaiapp_issued");
         assert_eq!(fields["grant_type"], "refresh_token");
         assert_eq!(fields["refresh_token"], "private-rotation-token");
