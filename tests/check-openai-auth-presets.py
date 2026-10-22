@@ -33,10 +33,10 @@ for document in (management, writes, resolver):
         assert grant["resources"] == [credential_resource], grant
         assert grant["operation"] in ("list", "describe", "models", "status",
                                       "begin", "poll", "cancel",
-                                      "import", "revoke", "resolve")
+                                      "import", "bind_environment", "revoke", "resolve")
     for operation in document["authority"]["operations"]:
         assert operation in expected_provider | {
-            f"{credentials}/{method}" for method in ("import", "revoke", "resolve")
+            f"{credentials}/{method}" for method in ("import", "bind_environment", "revoke", "resolve")
         }, operation
 
 assert management["entry"] == {
@@ -62,7 +62,7 @@ for grant in management["grants"]:
     assert grant["caller"] == expected_caller
 
 for document, entry_operation, expected_operations in (
-    (writes, "import", {f"{credentials}/import", f"{credentials}/revoke"}),
+    (writes, "import", {f"{credentials}/import", f"{credentials}/bind_environment", f"{credentials}/revoke"}),
     (resolver, "resolve", {credential_resolve}),
 ):
     assert document["entry"] == {
