@@ -756,8 +756,11 @@ impl ProviderManagement {
                         offered.push(NativeModelOffer {
                             id: native_model_option_id(&desired, 0)?,
                             label: format!(
-                                "{} / {} / {}",
-                                exact.label, connection.label, model.label
+                                "{} / {} / {} / {}",
+                                exact.label,
+                                connection.label,
+                                profile.as_deref().unwrap_or("local"),
+                                model.label
                             ),
                             selected: desired,
                         });
