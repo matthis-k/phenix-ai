@@ -894,6 +894,26 @@ mod tests {
             Some("OPENAI_API_KEY")
         );
         assert!(settings.interactive);
+        assert_eq!(settings.presentation, ApiKeyPresentation::Bearer);
+
+        // Both connections reuse the exact same API-key strategy, even
+        // though one executes Responses and another executes Messages.
+        let anthropic = catalog.iter()
+            .find(|provider| provider.id == "anthropic")
+            .unwrap()
+            .connections.iter()
+            .find(|connection| connection.id == "api")
+            .unwrap();
+        let anthropic_key = anthropic.auth_methods[0]
+            .adapter.config.decode::<ApiKeyOptions>().unwrap();
+        assert_eq!(anthropic.auth_methods[0].adapter.id, "api-key");
+        assert_eq!(
+            anthropic_key.presentation,
+            ApiKeyPresentation::Header {
+                name: "x-api-key".into(),
+                prefix: String::new(),
+            }
+        );
 
         let chatgpt = &catalog[0].connections[1];
         assert_eq!(chatgpt.auth_methods[0].adapter.id, "chatgpt.oauth");
