@@ -22,8 +22,12 @@ const MODEL_ENDPOINT: &str = "https://api.openai.com/v1/models";
 
 #[cfg(feature = "c11-loopback-test")]
 fn test_base() -> Result<String, ProviderError> {
-    let source = std::env::var("PHENIX_C11_TEST_BASE")
-        .map_err(|_| error(ProviderErrorCode::Unavailable, "test provider endpoint unset"))?;
+    let source = std::env::var("PHENIX_C11_TEST_BASE").map_err(|_| {
+        error(
+            ProviderErrorCode::Unavailable,
+            "test provider endpoint unset",
+        )
+    })?;
     let port = source
         .strip_prefix("http://127.0.0.1:")
         .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
