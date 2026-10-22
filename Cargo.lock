@@ -2165,6 +2165,7 @@ dependencies = [
 name = "phenix-provider-protocols"
 version = "0.1.0"
 dependencies = [
+ "curl",
  "openidconnect",
  "phenix-basic-contracts",
  "phenix-sdk",
