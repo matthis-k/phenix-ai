@@ -268,23 +268,23 @@ impl AuthorizationAttempt<'_> {
         let mut client_id = None;
         let mut denied = false;
         for (key, value) in actual.query_pairs() {
-            match key.as_ref() {
-                "code" if code.replace(value.into_owned()).is_some() => {
-                    return Err(RegistrationError::InvalidCallback);
-                }
-                "state" if state.replace(value.into_owned()).is_some() => {
-                    return Err(RegistrationError::InvalidCallback);
-                }
-                "client_id" if client_id.replace(value.into_owned()).is_some() => {
-                    return Err(RegistrationError::InvalidCallback);
-                }
+            let field = match key.as_ref() {
+                "code" => Some(&mut code),
+                "state" => Some(&mut state),
+                "client_id" => Some(&mut client_id),
                 "error" => {
                     if denied {
                         return Err(RegistrationError::InvalidCallback);
                     }
                     denied = true;
+                    None
                 }
-                _ => {}
+                _ => None,
+            };
+            if let Some(slot) = field {
+                if slot.replace(value.into_owned()).is_some() {
+                    return Err(RegistrationError::InvalidCallback);
+                }
             }
         }
         if state.as_deref() != Some(self.state) {
