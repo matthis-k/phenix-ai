@@ -83,6 +83,83 @@ pub fn verify_signed_oidc_identity(
 mod tests {
     use super::*;
 
+    // Public-only RS256 verification fixture, signed offline with a 2048-bit
+    // test RSA key. No private signing key is checked into the repository.
+    // The fixed expiry is 2100-01-01 to keep the positive case deterministic.
+    const SIGNED_JWKS: &str = r#"{"keys":[{"kty":"RSA","alg":"RS256","use":"sig","kid":"phenix-fixture-rs256-1","n":"tM2hQYSNSJNoI3jy7UxEpbdO8-64l8-iZKcAH-PKiohkiDTZJVmkH4YBUjNRYk6MrwsJe5a_7G7NecOjLkBMo43Jfng8aiu-IZJZRMdmjLMNXlxrDcBfiRvjQxi7s9I1QgNOLwSIydWoQaxiJfqaqLYTB6ObY7BgCw0McARk7k0YGZaV6B6w6wVqe4pX1L9Ebm6cgxjJ0AysSz7q0JZ2qLZxDT_ntLFji1ML34GJ_ZqEY6ZKrjK2jKtDgeZjqfUI7sXlJMKzrIXLGxXgVldxjJjVkZK6z8LVju-5KRtMI4aEE1SY4KO1MMnxxgKj1aONifGyN3eBWCv-4RS-KtiHUQ","e":"AQAB"}]}"#;
+    const SIGNED_ID_TOKEN: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InBoZW5peC1maXh0dXJlLXJzMjU2LTEifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0Iiwic3ViIjoidXNlci1maXh0dXJlIiwiYXVkIjoiaXNzdWVkLWNsaWVudCIsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzYwMDAwMDAwLCJub25jZSI6InRlc3Qtbm9uY2UtdGVzdC1ub25jZS10ZXN0LW5vbmNlLXRlc3Qtbm9uY2UifQ.bvvzb_vJ667uVfKM52WTZGsgqcYY39O_wwZ_2RVBhnB0TjVhAqdhRvDKfUJy2dtMSk3hby40aFV5PVtVuCc8gxiwoct4N81OlLNrHE3nZLA6bKwd5sLis9RFM5HU1wZZ9AdQmnzwlNggCmHrUD2u-lIS7xhN24ZMkHUns-4AqIyM1Cz50MwILVFrF82O1-G4RVm2L7rYU8e0HXj5YwJ3F7LreDpISmfkACFAke8i4cwvHmwcEzv36pAnYJFXbFHycCrse-oQT_-HW7J0RbXXzLDaK1om-E4aIDL_n6RFcZYuph6O3OcRybRByOo4yuEYZfkb-AHUiBLFGoqKTLW-wg";
+    const EXPIRED_ID_TOKEN: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InBoZW5peC1maXh0dXJlLXJzMjU2LTEifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0Iiwic3ViIjoidXNlci1maXh0dXJlIiwiYXVkIjoiaXNzdWVkLWNsaWVudCIsImV4cCI6MTYwMDAwMDAwMCwiaWF0IjoxNTk5OTkwMDAwLCJub25jZSI6InRlc3Qtbm9uY2UtdGVzdC1ub25jZS10ZXN0LW5vbmNlLXRlc3Qtbm9uY2UifQ.jp9t67hj4x7pXD5eB32ctrbdSuSf90HL2aOMrjZNss-hWfHNXcRG1qd9wL6RHoDeSbTEf5ywrdalmFVNGFdeGgGKX72wGybAsJxIqevq1r7Ac1oFgKLoQIzRdutb6CuLi8VFPfh-BJNGzBjCdLv1LkdvXzAORyZY0t1m5DwhZ6-nY6is4sNBZDSgEV2SspMQnrGo-Sk-sp0yd-4tm0bU3jFjpSUyKasaAbRxppb0O4n2b4F0DX2syz_aLkbXS8CyvXDkrhz86awSGvcy1LnMymYK0vW5CLNRiaBSSMMrM74hvZfGnxTgepJnhmDc3yKLoJWna-cpEs2catFXmtVhrw";
+    const TEST_NONCE: &str = "test-nonce-test-nonce-test-nonce-test-nonce";
+
+    #[test]
+    fn signed_id_token_verifies_issuer_audience_nonce_expiry_and_account() {
+        let verified = verify_signed_oidc_identity(
+            SIGNED_ID_TOKEN,
+            SIGNED_JWKS.as_bytes(),
+            "https://auth.example.test",
+            "issued-client",
+            TEST_NONCE,
+            Some("user-fixture"),
+        )
+        .expect("the signed RS256 fixture must verify cryptographically");
+        assert_eq!(verified.as_str(), "user-fixture");
+
+        for (issuer, client, nonce) in [
+            ("https://different.example.test", "issued-client", TEST_NONCE),
+            ("https://auth.example.test", "different-client", TEST_NONCE),
+            ("https://auth.example.test", "issued-client", "other-nonce-other-nonce-other-nonce"),
+        ] {
+            assert_eq!(
+                verify_signed_oidc_identity(
+                    SIGNED_ID_TOKEN,
+                    SIGNED_JWKS.as_bytes(),
+                    issuer,
+                    client,
+                    nonce,
+                    None,
+                ),
+                Err(OidcError::InvalidIdToken)
+            );
+        }
+        assert_eq!(
+            verify_signed_oidc_identity(
+                SIGNED_ID_TOKEN,
+                SIGNED_JWKS.as_bytes(),
+                "https://auth.example.test",
+                "issued-client",
+                TEST_NONCE,
+                Some("another-user"),
+            ),
+            Err(OidcError::IncorrectAccount)
+        );
+        assert_eq!(
+            verify_signed_oidc_identity(
+                EXPIRED_ID_TOKEN,
+                SIGNED_JWKS.as_bytes(),
+                "https://auth.example.test",
+                "issued-client",
+                TEST_NONCE,
+                None,
+            ),
+            Err(OidcError::InvalidIdToken)
+        );
+        // A well-formed token body with a modified signature is not identity.
+        let mut forged = SIGNED_ID_TOKEN.to_owned();
+        forged.pop();
+        forged.push(if SIGNED_ID_TOKEN.ends_with('A') { 'B' } else { 'A' });
+        assert_eq!(
+            verify_signed_oidc_identity(
+                &forged,
+                SIGNED_JWKS.as_bytes(),
+                "https://auth.example.test",
+                "issued-client",
+                TEST_NONCE,
+                None,
+            ),
+            Err(OidcError::InvalidIdToken)
+        );
+    }
+
     #[test]
     fn invalid_tokens_never_produce_verified_subjects() {
         for issuer in ["https://auth.example.test", "https://auth.openai.com"] {
