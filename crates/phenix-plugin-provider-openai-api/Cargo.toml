@@ -13,3 +13,6 @@ phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 phenix-provider-builtins = { path = "../phenix-provider-builtins" }
 curl = "0.4"
 serde_json.workspace = true
+
+[features]
+c11-loopback-test = []
