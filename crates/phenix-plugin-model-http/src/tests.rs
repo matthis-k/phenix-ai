@@ -678,7 +678,16 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
         time::Duration,
     };
 
-    for authenticated in [false, true] {
+    // Exercise the actual curl/SSE path for both OAuth grant types, an API
+    // key and credential-free inference. All authenticated methods must send
+    // exactly the selected bearer and never read the environment fallback.
+    for auth_method in [
+        None,
+        Some(AuthenticationKind::ApiKey),
+        Some(AuthenticationKind::OAuthAuthorizationCode),
+        Some(AuthenticationKind::OAuthDeviceCode),
+    ] {
+        let authenticated = auth_method.is_some();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!(
             "http://127.0.0.1:{}/v1/chat/completions",
@@ -743,7 +752,7 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
         let binding = bound_http_choice_with_kind_endpoint(
             authenticated,
             "selected-fixture-model",
-            AuthenticationKind::ApiKey,
+            auth_method.unwrap_or(AuthenticationKind::ApiKey),
             Some(&endpoint),
         );
         let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
