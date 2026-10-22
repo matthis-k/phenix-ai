@@ -616,7 +616,7 @@ impl ProviderManagement {
     /// capability. Each choice is checked again before native install.
     fn authorized_http_offers(
         &self,
-        resolver: Option<&ModelCredentialResolver>,
+        resolvers: &[ModelCredentialResolver],
     ) -> acp::Result<Vec<NativeModelOffer>> {
         let listed: ProviderPage = self.read(
             "phenix.provider.catalog@1",
@@ -655,17 +655,24 @@ impl ProviderManagement {
                 if !connections.insert(&connection.id) {
                     return Err(invalid("duplicate provider connection"));
                 }
-                let profile = if connection.auth_methods.is_empty() {
-                    None
+                let profiles = if connection.auth_methods.is_empty() {
+                    vec![None]
                 } else {
-                    let Some(auth) = resolver.map(|source| &source.identity) else {
-                        continue;
-                    };
-                    if auth.provider_id() != exact.id || auth.connection_id() != connection.id {
-                        continue;
-                    }
-                    Some(auth.profile_id().to_owned())
+                    // Each resolver corresponds to one independently granted
+                    // exact resource. Named accounts on the same connection
+                    // are separate catalog/authorization selections.
+                    resolvers
+                        .iter()
+                        .filter(|source| {
+                            source.identity.provider_id() == exact.id
+                                && source.identity.connection_id() == connection.id
+                        })
+                        .map(|source| Some(source.identity.profile_id().to_owned()))
+                        .collect::<Vec<_>>()
                 };
+                if profiles.is_empty() {
+                    continue;
+                }
                 let auth: AuthenticationStatus = self.read(
                     "phenix.provider.auth@1",
                     "status",
@@ -675,79 +682,89 @@ impl ProviderManagement {
                         connection_id: connection.id.clone(),
                     },
                 )?;
-                if let Some(profile_id) = profile.as_deref() {
-                    if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
-                        continue;
+                for profile in profiles {
+                    if let Some(profile_id) = profile.as_deref() {
+                        if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                            continue;
+                        }
                     }
-                }
-                let mut collected = ModelPageAccumulator::default();
-                let mut cursor = None;
-                let full = loop {
-                    charge_model_option_budget(&mut inspected_pages, 128)?;
-                    let Some(page) = self.optional_model_page(&ModelQuery {
-                        scope: "user".into(),
-                        provider_id: exact.id.clone(),
-                        connection_id: connection.id.clone(),
-                        profile_id: profile.clone(),
-                        cursor: cursor.clone(),
-                        limit: 256,
-                    })?
-                    else {
-                        // Registration without discovery is not a selectable
-                        // model or a reason to break unrelated ACP sessions.
-                        break None;
+
+                    let mut collected = ModelPageAccumulator::default();
+                    let mut cursor = None;
+                    let full = loop {
+                        charge_model_option_budget(&mut inspected_pages, 128)?;
+                        let Some(page) = self.optional_model_page(&ModelQuery {
+                            scope: "user".into(),
+                            provider_id: exact.id.clone(),
+                            connection_id: connection.id.clone(),
+                            profile_id: profile.clone(),
+                            cursor: cursor.clone(),
+                            limit: 256,
+                        })?
+                        else {
+                            // Registration without discovery is not a selectable
+                            // model or a reason to break unrelated ACP sessions.
+                            break None;
+                        };
+                        cursor = collected.push(page, &profile)?;
+                        if cursor.is_none() {
+                            break Some(collected.complete(profile.clone())?);
+                        }
                     };
-                    cursor = collected.push(page, &profile)?;
-                    if cursor.is_none() {
-                        break Some(collected.complete(profile.clone())?);
-                    }
-                };
-                let Some(full) = full else {
-                    continue;
-                };
-                for model in &full.models {
-                    if !model.selectable || model.connection_id != connection.id {
-                        continue;
-                    }
-                    let desired = ModelSelection {
-                        provider_id: exact.id.clone(),
-                        connection_id: connection.id.clone(),
-                        profile_id: profile.clone(),
-                        model_id: model.id.clone(),
-                        protocol_id: model.protocol_id.clone(),
-                        endpoint_id: model.endpoint_id.clone(),
-                        catalog_revision: full.revision,
-                    };
-                    let Ok(admitted) =
-                        validate_model_selection(&exact, &auth, &full, &desired, true)
-                    else {
+                    let Some(full) = full else {
                         continue;
                     };
-                    let Ok(binding) = bind_http_model(&exact, admitted) else {
-                        continue;
-                    };
-                    // No OAuth/plugin-specific HTTP transport is implemented
-                    // here; never advertise it as an executable choice.
-                    if !matches!(
-                        binding.authentication_kind(),
-                        None | Some(AuthenticationKind::ApiKey)
-                    ) {
-                        continue;
+                    for model in &full.models {
+                        if !model.selectable || model.connection_id != connection.id {
+                            continue;
+                        }
+                        let desired = ModelSelection {
+                            provider_id: exact.id.clone(),
+                            connection_id: connection.id.clone(),
+                            profile_id: profile.clone(),
+                            model_id: model.id.clone(),
+                            protocol_id: model.protocol_id.clone(),
+                            endpoint_id: model.endpoint_id.clone(),
+                            catalog_revision: full.revision,
+                        };
+                        let Ok(admitted) =
+                            validate_model_selection(&exact, &auth, &full, &desired, true)
+                        else {
+                            continue;
+                        };
+                        let Ok(binding) = bind_http_model(&exact, admitted) else {
+                            continue;
+                        };
+                        // No OAuth/plugin-specific HTTP transport is implemented
+                        // here; never advertise it as an executable choice.
+                        if !matches!(
+                            binding.authentication_kind(),
+                            None | Some(AuthenticationKind::ApiKey)
+                        ) {
+                            continue;
+                        }
+                        if binding.credential_identity().is_some()
+                            && !resolvers
+                                .iter()
+                                .any(|r| binding.credential_identity() == Some(&r.identity))
+                        {
+                            continue;
+                        }
+                        if offered.len() >= 128 {
+                            return Err(invalid("too many selectable HTTP models"));
+                        }
+                        offered.push(NativeModelOffer {
+                            id: native_model_option_id(&desired, 0)?,
+                            label: format!(
+                                "{} / {} / {} / {}",
+                                exact.label,
+                                connection.label,
+                                profile.as_deref().unwrap_or("local"),
+                                model.label
+                            ),
+                            selected: desired,
+                        });
                     }
-                    if binding.credential_identity().is_some()
-                        && resolver
-                            .is_none_or(|r| binding.credential_identity() != Some(&r.identity))
-                    {
-                        continue;
-                    }
-                    if offered.len() >= 128 {
-                        return Err(invalid("too many selectable HTTP models"));
-                    }
-                    offered.push(NativeModelOffer {
-                        id: native_model_option_id(&desired, 0)?,
-                        label: format!("{} / {} / {}", exact.label, connection.label, model.label),
-                        selected: desired,
-                    });
                 }
             }
         }
@@ -988,8 +1005,8 @@ fn can_switch_native_model(spec: &Composition) -> bool {
 struct Controller {
     composition: Composition,
     management: Option<ProviderManagement>,
-    credentials: Option<CredentialManagement>,
-    resolver: Option<ModelCredentialResolver>,
+    credentials: Vec<CredentialManagement>,
+    resolvers: Vec<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     selected_http_seen: std::collections::BTreeSet<String>,
@@ -1003,8 +1020,8 @@ impl Controller {
     fn start(
         composition: Composition,
         management: Option<ProviderManagement>,
-        credentials: Option<CredentialManagement>,
-        resolver: Option<ModelCredentialResolver>,
+        credentials: Vec<CredentialManagement>,
+        resolvers: Vec<ModelCredentialResolver>,
         queued: Arc<PendingPrompts>,
         closed: Arc<AtomicBool>,
     ) -> Self {
@@ -1012,7 +1029,7 @@ impl Controller {
             composition,
             management,
             credentials,
-            resolver,
+            resolvers,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             selected_http_seen: std::collections::BTreeSet::new(),
@@ -1319,18 +1336,29 @@ impl Controller {
     }
 
     fn credential_capabilities(&self) -> acp::Result<serde_json::Value> {
-        let management = self
+        if self.credentials.is_empty() {
+            return Err(acp::Error::method_not_found());
+        }
+        let profiles = self
             .credentials
-            .as_ref()
-            .ok_or_else(acp::Error::method_not_found)?;
-        let identity = &management.identity;
-        Ok(serde_json::json!({
-            "provider_id": identity.provider_id(),
-            "connection_id": identity.connection_id(),
-            "profile_id": identity.profile_id(),
-            "import": true,
-            "revoke": true,
-        }))
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "provider_id": item.identity.provider_id(),
+                    "connection_id": item.identity.connection_id(),
+                    "profile_id": item.identity.profile_id(),
+                    "import": true,
+                    "revoke": true,
+                })
+            })
+            .collect::<Vec<_>>();
+        // Preserve the accepted single-account capability shape. When
+        // several accounts are granted, enumerate instead of advertising a
+        // misleading single selected account or broad wildcard authority.
+        if profiles.len() == 1 {
+            return Ok(profiles.into_iter().next().expect("one profile"));
+        }
+        Ok(serde_json::json!({ "profiles": profiles }))
     }
 
     fn credential_operation(
@@ -1339,15 +1367,19 @@ impl Controller {
         identity: &CredentialIdentity,
         value: &Value,
     ) -> acp::Result<serde_json::Value> {
+        if self.credentials.is_empty() {
+            return Err(acp::Error::method_not_found());
+        }
+        // Identity is a selector, not a grant. The lookup returns one
+        // distinct, already validated launcher-owned exact-resource kernel.
+        let resource = identity
+            .resource()
+            .map_err(|_| invalid("invalid credential identity"))?;
         let management = self
             .credentials
-            .as_ref()
-            .ok_or_else(acp::Error::method_not_found)?;
-        // Identity is an untrusted selector. It never widens the fixed
-        // launcher-owned credential resource or its root grants.
-        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
-            return Err(invalid("credential identity is not authorized"));
-        }
+            .iter()
+            .find(|item| item.resource == resource)
+            .ok_or_else(|| invalid("credential identity is not authorized"))?;
         let selected = Selection {
             operation: operation.into(),
             ..management.importer.clone()
@@ -1383,11 +1415,17 @@ impl Controller {
         )
         .map_err(|_| invalid("invalid credential identity"))?;
         // Check the identity before allocating/copying the supplied secret.
-        let management = self
+        if self.credentials.is_empty() {
+            return Err(acp::Error::method_not_found());
+        }
+        let resource = identity
+            .resource()
+            .map_err(|_| invalid("invalid credential identity"))?;
+        if !self
             .credentials
-            .as_ref()
-            .ok_or_else(acp::Error::method_not_found)?;
-        if identity.resource().ok().as_deref() != Some(management.resource.as_str()) {
+            .iter()
+            .any(|item| item.resource == resource)
+        {
             return Err(invalid("credential identity is not authorized"));
         }
         let secret = CredentialSecret::new(std::mem::take(&mut request.secret).into_bytes())
@@ -1470,7 +1508,7 @@ impl Controller {
                 .management
                 .as_ref()
                 .ok_or_else(|| invalid("selected model management is unavailable"))?;
-            let native = management.authorized_http_offers(self.resolver.as_ref())?;
+            let native = management.authorized_http_offers(&self.resolvers)?;
             let revision = recorded.as_ref().map_or(0, |(_, revision)| *revision);
             let chosen = match &recorded {
                 Some((selection, _)) => native_model_option_id(selection, revision)?,
@@ -1562,7 +1600,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(|| invalid("selected model management is unavailable"))?;
-        let offers = management.authorized_http_offers(self.resolver.as_ref())?;
+        let offers = management.authorized_http_offers(&self.resolvers)?;
         let mut found = Vec::new();
         for entry in offers {
             if native_model_option_id(&entry.selected, expected)? == chosen {
@@ -1699,8 +1737,9 @@ impl Controller {
                     .resolution_scope_for(identity)
                     .map_err(provider_rejection)?;
                 let resolver = self
-                    .resolver
-                    .as_ref()
+                    .resolvers
+                    .iter()
+                    .find(|source| source.identity == *identity)
                     .ok_or_else(|| invalid("selected API-key resolver is not installed"))?;
                 let secret = resolver
                     .resolve_for(identity)
@@ -1868,13 +1907,13 @@ impl Controller {
         if let Some(management) = self.management {
             management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
-        if let Some(credentials) = self.credentials {
-            credentials
+        for credential in self.credentials {
+            credential
                 .kernel
                 .shutdown()
                 .map_err(|_| "credential cleanup failed")?;
         }
-        if let Some(resolver) = self.resolver {
+        for resolver in self.resolvers {
             resolver
                 .kernel
                 .shutdown()
@@ -1887,8 +1926,8 @@ impl Controller {
 pub(super) fn run(
     composition: &Composition,
     management: Option<&Composition>,
-    credentials: Option<&Composition>,
-    resolver: Option<&Composition>,
+    credentials: &[Composition],
+    resolvers: &[Composition],
 ) -> Result<(), String> {
     let management = management
         .map(|spec| -> Result<ProviderManagement, String> {
@@ -1904,8 +1943,35 @@ pub(super) fn run(
             Ok(ProviderManagement { kernel, selected })
         })
         .transpose()?;
-    let credentials = credentials.map(prepare_credentials).transpose()?;
-    let resolver = resolver.map(prepare_model_resolver).transpose()?;
+    if credentials.len() > 32 || resolvers.len() > 32 {
+        return Err("too many authorized credential compositions".into());
+    }
+    let credentials = credentials
+        .iter()
+        .map(prepare_credentials)
+        .collect::<Result<Vec<_>, _>>()?;
+    let resolvers = resolvers
+        .iter()
+        .map(prepare_model_resolver)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut seen = std::collections::BTreeSet::new();
+    if credentials
+        .iter()
+        .any(|item| !seen.insert(item.resource.clone()))
+    {
+        return Err("duplicate credential root".into());
+    }
+    seen.clear();
+    if resolvers.iter().any(|item| {
+        !seen.insert(
+            item.identity
+                .clone()
+                .resource()
+                .expect("validated credential root"),
+        )
+    }) {
+        return Err("duplicate model credential root".into());
+    }
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
     // A prompt cancellation flag is registered before admission, closing
@@ -1915,7 +1981,7 @@ pub(super) fn run(
         composition.clone(),
         management,
         credentials,
-        resolver,
+        resolvers,
         Arc::clone(&queued),
         Arc::clone(&closed),
     );
