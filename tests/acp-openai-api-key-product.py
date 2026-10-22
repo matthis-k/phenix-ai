@@ -223,6 +223,18 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     pending = call(p, 4, "_phenix/providers/auth/poll",
                    {**user, "attempt_id": attempt})
     assert pending["result"] == "Pending", pending
+    unsupported = call(p, 70, "_phenix/providers/auth/begin",
+                       {**user, "method_id": "oauth-device"})
+    assert "error" in unsupported, unsupported
+    cancelled_start = call(p, 71, "_phenix/providers/auth/begin",
+                           {**user, "method_id": "api-key"})
+    cancelled_id = cancelled_start["result"]["ApiKeyInput"]["attempt_id"]
+    cancelled = call(p, 72, "_phenix/providers/auth/cancel",
+                     {**user, "attempt_id": cancelled_id})
+    assert cancelled["result"] == "Cancelled", cancelled
+    no_replay = call(p, 73, "_phenix/providers/auth/poll",
+                     {**user, "attempt_id": cancelled_id})
+    assert "error" in no_replay, no_replay
     forged = call(p, 5, "_phenix/credentials/import",
                   {**account, "profile_id": "work", "secret": key})
     assert forged["error"]["code"] == -32602
@@ -256,6 +268,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     listed = call(p, 11, "_phenix/providers/models",
                   {**user, "profile_id": "personal", "cursor": None, "limit": 256})
     assert [m["id"] for m in listed["result"]["models"]] == ["gpt-5"], listed
+    wrong_account = call(p, 74, "_phenix/providers/models",
+                         {**user, "profile_id": "work", "cursor": None, "limit": 256})
+    assert "error" in wrong_account, wrong_account
     created = call(p, 12, "session/new", {"cwd": "/tmp", "mcpServers": []})
     session = created["result"]["sessionId"]
     config = created["result"]["configOptions"][0]
@@ -309,4 +324,6 @@ server.shutdown()
     "revoke_invalidates_status": True, "secret_not_logged": True,
     "invalid_http_fail_closed": True, "redirect_not_followed": True,
     "restart_revalidates_profile": True, "revocation_denies_selected_prompt": True,
+    "cross_profile_model_denied": True, "unsupported_oauth_denied": True,
+    "cancelled_auth_attempt_not_replayable": True,
 }, sort_keys=True, indent=2))
