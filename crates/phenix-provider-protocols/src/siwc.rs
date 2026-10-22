@@ -17,6 +17,25 @@ const REQUESTED_SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const NEW_CLIENT: &str = "dynamic_agent_client";
 
+/// Only the *token endpoint's granted scope* is authoritative. The optional
+/// scope in the browser callback is untrusted and MUST NOT be passed here.
+pub fn require_token_granted_plan_scope(granted: &str) -> Result<(), RegistrationError> {
+    if granted.len() > 8192
+        || !granted.is_ascii()
+        || granted.bytes().any(|b| b.is_ascii_control() && b != b' ')
+    {
+        return Err(RegistrationError::ScopeDenied);
+    }
+    if granted
+        .split_ascii_whitespace()
+        .any(|scope| scope == REQUIRED_SCOPE)
+    {
+        Ok(())
+    } else {
+        Err(RegistrationError::ScopeDenied)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationError {
     InvalidHost,
@@ -26,6 +45,7 @@ pub enum RegistrationError {
     InvalidState,
     ClientMismatch,
     AuthorizationDenied,
+    ScopeDenied,
 }
 
 /// Registration is not an account identity. An issued client ID is bound to
@@ -444,6 +464,29 @@ mod tests {
             .authorization_url(),
             Err(RegistrationError::InvalidRedirect)
         ));
+    }
+
+    #[test]
+    fn token_scopes_must_include_exact_plan_permission() {
+        assert_eq!(
+            require_token_granted_plan_scope(
+                "openid email resource.invoke chatgpt.tokens.use.direct offline_access"
+            ),
+            Ok(())
+        );
+        for granted in [
+            "openid email resource.invoke",
+            "openid chatgpt.tokens.use.direct.extra",
+            "openid chatgpt.tokens.use",
+            "chatgpt.tokens.use.direct\nother",
+            "",
+        ] {
+            assert_eq!(
+                require_token_granted_plan_scope(granted),
+                Err(RegistrationError::ScopeDenied),
+                "{granted:?}"
+            );
+        }
     }
 
     #[test]
