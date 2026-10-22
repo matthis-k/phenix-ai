@@ -206,7 +206,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         assert source["credentials"]["artifact"] == credentials_artifact
         assert source["definitions"] == [definitions]
         assert source["provider_credential_operations"] == ["resolve"]
-        assert source["credential_management"] is True
+        assert source["credential_management_operations"] == ["import", "revoke"]
         assert source["model_resolution"] is True
         # Swap only the production provider artifact for the isolated local
         # HTTP fixture, preserving the implementation IDs and all grants.
