@@ -293,6 +293,87 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
     declared
 }
 
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    #[test]
+    fn minimal_provider_is_three_fields_and_never_implicitly_discovers_models() {
+        let declaration = ProviderDeclaration {
+            endpoint: "https://api.example.test/v1",
+            protocol: OPENAI_RESPONSES,
+            auth: "api-key",
+        };
+        let connection = declaration.connection("api", "Example").unwrap();
+        assert_eq!(connection.base_url.as_deref(), Some(declaration.endpoint));
+        assert_eq!(connection.protocols[0].id, declaration.protocol);
+        assert_eq!(connection.auth_methods[0].id, declaration.auth);
+        assert!(connection.model_sources.is_empty());
+        assert_eq!(connection.id, "api");
+    }
+
+    #[test]
+    fn unknown_adapter_or_unsafe_endpoint_fails_closed() {
+        let declaration = ProviderDeclaration {
+            endpoint: "https://api.example.test/v1",
+            protocol: OPENAI_CHAT,
+            auth: "unregistered-oauth",
+        };
+        assert_eq!(
+            declaration.connection("api", "Unregistered").unwrap_err(),
+            "authentication adapter is not registered"
+        );
+        assert_eq!(
+            ProviderDeclaration {
+                endpoint: "http://api.example.test/v1",
+                ..declaration
+            }
+            .connection("api", "Unsafe")
+            .unwrap_err(),
+            "unsafe provider endpoint"
+        );
+    }
+
+    #[test]
+    fn extra_protocols_and_discovery_are_optional_but_origin_is_checked() {
+        let connection = ProviderDeclaration {
+            endpoint: "https://api.example.test/v1",
+            protocol: OPENAI_RESPONSES,
+            auth: "api-key",
+        }
+        .connection("api", "Example")
+        .unwrap()
+        .with_protocol(
+            OPENAI_RESPONSES,
+            Some("https://api.example.test/v1/responses"),
+        )
+        .with_catalog(
+            Some("https://api.example.test/v1/models"),
+            "test.models",
+            DiscoveryKind::Dynamic,
+        )
+        .unwrap();
+        validate_registrations(&[ProviderDescriptor {
+            id: "example".into(),
+            label: "Example".into(),
+            connections: vec![connection.clone()],
+        }])
+        .unwrap();
+        let wrong_origin = connection.with_protocol(
+            OPENAI_CHAT,
+            Some("https://different.example.test/v1/chat/completions"),
+        );
+        assert_eq!(
+            validate_registrations(&[ProviderDescriptor {
+                id: "example".into(),
+                label: "Example".into(),
+                connections: vec![wrong_origin],
+            }]),
+            Err("cross-origin protocol endpoint")
+        );
+    }
+}
+
 /// Defensive startup check for static registrations. Dynamic provider plugins
 /// must receive the same runtime validation before installation.
 pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'static str> {
