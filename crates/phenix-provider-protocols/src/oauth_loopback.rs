@@ -248,6 +248,50 @@ mod tests {
     }
 
     #[test]
+    fn real_loopback_callback_remains_unverified_until_provider_oidc() {
+        use crate::siwc::{AuthorizationAttempt, Registration};
+        use crate::siwc_verified::GeneratedPkce;
+
+        let generated = GeneratedPkce::new();
+        let mut listener = OAuthLoopbackListener::bind(Duration::from_secs(30)).unwrap();
+        let redirect_uri = listener.redirect_uri();
+        let attempt = AuthorizationAttempt {
+            registration: Registration::First { app_name: "Phenix" },
+            host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000",
+            redirect_uri: &redirect_uri,
+            state: generated.state(),
+            nonce: generated.nonce(),
+            pkce_challenge: generated.challenge(),
+        };
+        assert!(attempt.authorization_url().unwrap().starts_with("https://"));
+        let callback_uri = format!(
+            "{redirect_uri}?state={}&code=short-lived-code&client_id=oaiapp_issued",
+            generated.state()
+        );
+        let host = redirect_uri
+            .strip_prefix("http://")
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap();
+        let mut browser = browser_request(&callback_uri, host, "GET");
+        let candidate = listener.poll().unwrap().unwrap();
+        let correlated = attempt.accept_callback(candidate.uri()).unwrap();
+        assert_eq!(correlated.issued_client_id(), "oaiapp_issued");
+        let form = correlated.exchange_form(generated.verifier()).unwrap();
+        assert!(form.contains("grant_type=authorization_code"));
+        assert!(!form.contains("client_secret"));
+
+        // State correlation and a code are not OIDC proof: the browser must
+        // not see a successful sign-in before the verified provider finishes.
+        candidate.respond(false).unwrap();
+        let mut result = String::new();
+        browser.read_to_string(&mut result).unwrap();
+        assert!(result.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(!result.contains("short-lived-code"));
+    }
+
+    #[test]
     fn rejects_wrong_method_duplicate_host_and_unbound_redirects() {
         for method in ["POST", "PUT"] {
             let mut listener = OAuthLoopbackListener::bind(Duration::from_secs(30)).unwrap();
