@@ -509,6 +509,61 @@ mod tests {
     }
 
     #[test]
+    fn header_authentication_strategy_is_independent_of_model_protocol() {
+        let (mut provider, auth, page, request) = fixture();
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(checked.protocol_id(), "openai-responses");
+        assert_eq!(
+            checked.api_key_presentation().unwrap(),
+            Some(ApiKeyPresentation::Bearer)
+        );
+
+        let presentation = ApiKeyPresentation::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+        };
+        let method = &mut provider.connections[0].auth_methods[0];
+        method.adapter = AdapterBinding::from_typed(
+            "api-key",
+            &ApiKeyOptions {
+                environment_variable: Some("MY_API_KEY".into()),
+                interactive: true,
+                presentation: presentation.clone(),
+            },
+        )
+        .unwrap();
+        let admitted = validate_model_selection(&provider, &auth, &page, &request, true).unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(checked.protocol_id(), "openai-responses");
+        assert_eq!(checked.api_key_presentation().unwrap(), Some(presentation));
+
+        // Changing only the protocol must not silently switch the credential
+        // header chosen by this exact selected authentication method.
+        provider.connections[0].protocols[0].id = "anthropic-messages".into();
+        let mut other_page = page.clone();
+        other_page.models[0].protocol_id = "anthropic-messages".into();
+        let mut other_request = request.clone();
+        other_request.protocol_id = "anthropic-messages".into();
+        let admitted = validate_model_selection(
+            &provider,
+            &auth,
+            &other_page,
+            &other_request,
+            true,
+        )
+        .unwrap();
+        let checked = bind_http_model(&provider, admitted).unwrap();
+        assert_eq!(
+            checked.api_key_presentation().unwrap(),
+            Some(ApiKeyPresentation::Header {
+                name: "x-api-key".into(),
+                prefix: String::new(),
+            })
+        );
+    }
+
+    #[test]
     fn refuses_other_account_or_foreign_provider_even_with_same_model_id() {
         let (provider, auth, page, mut request) = fixture();
         request.profile_id = Some("work".into());
