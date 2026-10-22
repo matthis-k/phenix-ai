@@ -646,6 +646,51 @@ fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth
 }
 
 #[test]
+fn native_http_oauth_install_rejects_foreign_account_before_transport() {
+    use phenix_provider_contracts::{
+        AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelInstall,
+        ProviderErrorCode,
+    };
+    for kind in [
+        AuthenticationKind::OAuthAuthorizationCode,
+        AuthenticationKind::OAuthDeviceCode,
+    ] {
+        let binding = bound_http_choice_with_kind(true, "selected-model", kind);
+        let expected = binding.credential_identity().unwrap().clone();
+        let install = HttpModelInstall::from_checked(
+            &binding,
+            "session-1".into(),
+            Some((
+                expected.clone(),
+                CredentialSecret::new(b"authorized-bearer-token".to_vec()).unwrap(),
+            )),
+            None,
+        )
+        .unwrap();
+        let config = request::Config::from_install(install).unwrap();
+        assert_eq!(
+            config.credential.as_ref().unwrap().expose_for_authorized_provider(),
+            b"authorized-bearer-token"
+        );
+        assert!(!format!("{config:?}").contains("authorized-bearer-token"));
+
+        let foreign = CredentialIdentity::new("fixture", "api", "another-account").unwrap();
+        assert_ne!(foreign, expected);
+        let error = HttpModelInstall::from_checked(
+            &binding,
+            "session-1".into(),
+            Some((
+                foreign,
+                CredentialSecret::new(b"foreign-bearer-token".to_vec()).unwrap(),
+            )),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ProviderErrorCode::Denied);
+    }
+}
+
+#[test]
 fn preset_http_credentials_use_clearing_secret_storage_and_reject_bad_inputs() {
     use phenix_provider_contracts::CredentialSecret;
     let key: CredentialSecret = request::configured_credential(Ok("fixture-secret".into()))
