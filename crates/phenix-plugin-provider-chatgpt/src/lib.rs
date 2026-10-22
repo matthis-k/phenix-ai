@@ -484,8 +484,8 @@ mod plugin {
                 .checked_add(tokens.expires_in)
                 .ok_or_else(|| CallError::Domain(denied("invalid OAuth expiration")))?;
             let account = OAuthAccount {
-                subject: verified.subject.clone(),
-                issued_client_id: verified.issued_client_id.clone(),
+                subject: verified.subject().to_owned(),
+                issued_client_id: verified.issued_client_id().to_owned(),
                 id_token_nonce: pending.pkce.nonce().to_owned(),
                 access_token: tokens.access_token.clone(),
                 refresh_token: tokens.refresh_token.clone(),
