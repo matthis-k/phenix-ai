@@ -158,7 +158,10 @@ impl Config {
         match (binding.credential_identity(), binding.authentication_kind()) {
             (None, None)
             | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::ApiKey))
-            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::OAuthAuthorizationCode))
+            | (
+                Some(_),
+                Some(phenix_provider_contracts::AuthenticationKind::OAuthAuthorizationCode),
+            )
             | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::OAuthDeviceCode)) => {}
             _ => {
                 return Err(error(
