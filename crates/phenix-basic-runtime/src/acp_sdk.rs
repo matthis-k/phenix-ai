@@ -22,9 +22,9 @@ use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
     bind_http_model, validate_model_selection, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
     AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialEnvironmentBinding,
-    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
-    ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderErrorCode,
-    ProviderPage, ProviderQuery,
+    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
+    ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
+    ProviderErrorCode, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -1479,11 +1479,16 @@ impl Controller {
         )
         .map_err(|_| invalid("invalid credential identity"))?;
         let name = &request.environment_variable;
-        if name.is_empty() || name.len() > 128
-            || !name.bytes().enumerate().all(|(i,b)| {
-                if i == 0 { b.is_ascii_uppercase() || b == b'_' }
-                else { b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_' }
-            }) {
+        if name.is_empty()
+            || name.len() > 128
+            || !name.bytes().enumerate().all(|(i, b)| {
+                if i == 0 {
+                    b.is_ascii_uppercase() || b == b'_'
+                } else {
+                    b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'
+                }
+            })
+        {
             return Err(invalid("invalid API-key environment variable name"));
         }
         let payload = CredentialEnvironmentBinding {
@@ -2157,7 +2162,10 @@ pub(super) fn run(
         )
         .on_receive_request(
             async move |request: CredentialEnvironmentRequest, reply, _peer| {
-                submit(&credential_environment, Command::CredentialEnvironment(request, reply))
+                submit(
+                    &credential_environment,
+                    Command::CredentialEnvironment(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
