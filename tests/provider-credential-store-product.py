@@ -51,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     vault.mkdir(mode=0o700)
     env = dict(os.environ, PHENIX_CREDENTIAL_FILE_DIRECTORY=str(vault),
                PHENIX_CREDENTIAL_FILE_CONSENT="1")
+    env.pop("PHENIX_CREDENTIAL_API_KEY_ENV_NAME", None)
     first = identity()
     second = identity("work")
     first_secret = secrets.token_hex(32).encode()
@@ -106,6 +107,27 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     domain("import", dict(identity=first, secret=first_secret), "Unavailable",
            environment=relative_directory)
     assert not list(vault.iterdir())
+
+    # One generic contract supports a direct key or an environment-variable
+    # source; a configured name is not a secret, and the kernel grants remain
+    # exact to the selected provider/connection/profile.
+    env_key = secrets.token_hex(24).encode()
+    env_sourced = dict(env, PHENIX_CREDENTIAL_FILE_CONSENT="0",
+                       PHENIX_CREDENTIAL_FILE_DIRECTORY="",
+                       PHENIX_CREDENTIAL_API_KEY_ENV_NAME="PHENIX_TEST_ONLY_API_KEY",
+                       PHENIX_TEST_ONLY_API_KEY=env_key.decode())
+    result, status = invoke("resolve", first, environment=env_sourced)
+    assert status == 0 and result == dict(kind="success", value=dict(bytes=list(env_key)))
+    domain("resolve", second, "Denied", environment=env_sourced)
+    domain("revoke", first, "Denied", environment=env_sourced)
+    domain("import", dict(identity=first, secret=first_secret), "Denied",
+           environment=env_sourced)
+    invalid_env_name = dict(env_sourced,
+                            PHENIX_CREDENTIAL_API_KEY_ENV_NAME="K=value")
+    domain("resolve", first, "InvalidInput", environment=invalid_env_name)
+    empty_env_key = dict(env_sourced, PHENIX_TEST_ONLY_API_KEY="")
+    domain("resolve", first, "InvalidInput", environment=empty_env_key)
+    assert not list(vault.iterdir()), "environment source must not create a credential file"
 
     boundary = dict(provider_id="a" * 64, connection_id="b" * 48, profile_id="c")
     result, status = invoke("import", dict(identity=boundary, secret=first_secret),
@@ -177,5 +199,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-credentials-") as temporary:
     cases=["explicit-consent", "explicit-absolute-directory", "identity-boundaries", "private-files", "restart", "profile-isolation",
            "connection-isolation", "session-resource-denial", "import-grant-denial",
            "resolve-grant-denial", "revoke-grant-denial", "rotation-restart",
-           "revoke-without-fallback", "insecure-vault-denial", "nonsecret-diagnostics"],
+           "revoke-without-fallback", "environment-key-without-file-consent",
+           "environment-revocation-denial", "invalid-environment-name",
+           "insecure-vault-denial", "nonsecret-diagnostics"],
 ), indent=2))
