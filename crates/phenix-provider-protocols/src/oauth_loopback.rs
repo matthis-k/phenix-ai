@@ -42,7 +42,10 @@ impl OAuthLoopbackListener {
         listener
             .set_nonblocking(true)
             .map_err(|_| CallbackError::Bind)?;
-        let port = listener.local_addr().map_err(|_| CallbackError::Bind)?.port();
+        let port = listener
+            .local_addr()
+            .map_err(|_| CallbackError::Bind)?
+            .port();
         if port == 0 {
             return Err(CallbackError::Bind);
         }
@@ -90,7 +93,9 @@ impl OAuthLoopbackListener {
         let uri = match parse_request(&mut stream, self.port) {
             Ok(uri) => uri,
             Err(problem) => {
-                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
                 return Err(problem);
             }
         };
@@ -117,7 +122,9 @@ impl CallbackRequest {
         } else {
             b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 23\r\nConnection: close\r\n\r\nAuthentication failed.\n"
         };
-        self.stream.write_all(response).map_err(|_| CallbackError::Io)
+        self.stream
+            .write_all(response)
+            .map_err(|_| CallbackError::Io)
     }
 }
 
@@ -134,11 +141,17 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     loop {
-        let count = stream.read(&mut chunk).map_err(|_| CallbackError::InvalidRequest)?;
+        let count = stream
+            .read(&mut chunk)
+            .map_err(|_| CallbackError::InvalidRequest)?;
         if count == 0 {
             return Err(CallbackError::InvalidRequest);
         }
-        if buffer.len().checked_add(count).is_none_or(|n| n > MAX_REQUEST) {
+        if buffer
+            .len()
+            .checked_add(count)
+            .is_none_or(|n| n > MAX_REQUEST)
+        {
             return Err(CallbackError::InvalidRequest);
         }
         buffer.extend_from_slice(&chunk[..count]);
@@ -147,7 +160,9 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
         }
     }
     let raw = std::str::from_utf8(&buffer).map_err(|_| CallbackError::InvalidRequest)?;
-    let (headers, _) = raw.split_once("\r\n\r\n").ok_or(CallbackError::InvalidRequest)?;
+    let (headers, _) = raw
+        .split_once("\r\n\r\n")
+        .ok_or(CallbackError::InvalidRequest)?;
     let mut lines = headers.split("\r\n");
     let request = lines.next().ok_or(CallbackError::InvalidRequest)?;
     let mut fields = request.split(' ');
@@ -155,9 +170,12 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
         return Err(CallbackError::InvalidRequest);
     }
     let target = fields.next().ok_or(CallbackError::InvalidRequest)?;
-    if fields.next() != Some("HTTP/1.1") || fields.next().is_some()
+    if fields.next() != Some("HTTP/1.1")
+        || fields.next().is_some()
         || !target.starts_with("/auth/callback?")
-        || target.bytes().any(|b| b.is_ascii_control() || b == b' ' || b == b'#')
+        || target
+            .bytes()
+            .any(|b| b.is_ascii_control() || b == b' ' || b == b'#')
     {
         return Err(CallbackError::InvalidRequest);
     }
@@ -167,9 +185,7 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
     for line in lines {
         let (name, value) = line.split_once(':').ok_or(CallbackError::InvalidRequest)?;
         if name.is_empty()
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
             || value.bytes().any(|b| b.is_ascii_control())
         {
             return Err(CallbackError::InvalidRequest);
@@ -214,7 +230,12 @@ mod tests {
         assert!(uri.starts_with("http://127.0.0.1:"));
         assert!(listener.poll().unwrap().is_none());
         let url = format!("{uri}?state=fixture-state&code=secret-fixture-code");
-        let host = uri.strip_prefix("http://").unwrap().split('/').next().unwrap();
+        let host = uri
+            .strip_prefix("http://")
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap();
         let mut browser = browser_request(&url, host, "GET");
         let callback = listener.poll().unwrap().unwrap();
         assert_eq!(callback.uri(), url);
@@ -231,9 +252,17 @@ mod tests {
         for method in ["POST", "PUT"] {
             let mut listener = OAuthLoopbackListener::bind(Duration::from_secs(30)).unwrap();
             let uri = listener.redirect_uri();
-            let host = uri.strip_prefix("http://").unwrap().split('/').next().unwrap();
+            let host = uri
+                .strip_prefix("http://")
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
             let _browser = browser_request(&format!("{uri}?state=s&code=c"), host, method);
-            assert!(matches!(listener.poll(), Err(CallbackError::InvalidRequest)));
+            assert!(matches!(
+                listener.poll(),
+                Err(CallbackError::InvalidRequest)
+            ));
             assert!(matches!(listener.poll(), Err(CallbackError::Consumed)));
         }
         assert!(matches!(
