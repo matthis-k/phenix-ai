@@ -234,7 +234,11 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         p.stdin.flush()
         for _ in range(256):
             raw = p.responses.get(timeout=40)
-            assert raw is not None, (method, p.poll())
+            if raw is None:
+                # Process exits before ACP can respond are transport startup
+                # failures. Keep a bounded, fixture-key-redacted diagnostic.
+                stderr = p.stderr.read()[-1200:].replace(key, "[REDACTED]")
+                raise AssertionError((method, p.poll(), stderr))
             assert key not in raw, "secret leaked in ACP response"
             data = json.loads(raw)
             if data.get("method") == "session/update": continue
