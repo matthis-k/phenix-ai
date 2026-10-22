@@ -26,7 +26,12 @@ struct BoundedBody {
 }
 impl Handler for BoundedBody {
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if self.bytes.len().checked_add(data.len()).is_none_or(|n| n > self.bound) {
+        if self
+            .bytes
+            .len()
+            .checked_add(data.len())
+            .is_none_or(|n| n > self.bound)
+        {
             self.too_large = true;
             return Ok(0);
         }
@@ -44,21 +49,29 @@ fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, Trans
         too_large: false,
     });
     let mut headers = List::new();
-    headers.append("Accept: application/json").map_err(|_| TransportError::Unavailable)?;
+    headers
+        .append("Accept: application/json")
+        .map_err(|_| TransportError::Unavailable)?;
     if post.is_some() {
-        headers.append("Content-Type: application/x-www-form-urlencoded")
+        headers
+            .append("Content-Type: application/x-www-form-urlencoded")
             .map_err(|_| TransportError::Unavailable)?;
     }
     easy.url(url).map_err(|_| TransportError::Unavailable)?;
-    easy.http_headers(headers).map_err(|_| TransportError::Unavailable)?;
-    easy.follow_location(false).map_err(|_| TransportError::Unavailable)?;
+    easy.http_headers(headers)
+        .map_err(|_| TransportError::Unavailable)?;
+    easy.follow_location(false)
+        .map_err(|_| TransportError::Unavailable)?;
     easy.connect_timeout(Duration::from_secs(5))
         .map_err(|_| TransportError::Unavailable)?;
     easy.timeout(Duration::from_secs(15))
         .map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_peer(true).map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_host(true).map_err(|_| TransportError::Unavailable)?;
-    easy.signal(false).map_err(|_| TransportError::Unavailable)?;
+    easy.ssl_verify_peer(true)
+        .map_err(|_| TransportError::Unavailable)?;
+    easy.ssl_verify_host(true)
+        .map_err(|_| TransportError::Unavailable)?;
+    easy.signal(false)
+        .map_err(|_| TransportError::Unavailable)?;
     if let Some(form) = post {
         easy.post(true).map_err(|_| TransportError::Unavailable)?;
         easy.post_fields_copy(form.as_bytes())
@@ -124,14 +137,18 @@ mod tests {
         thread,
     };
 
-    fn local(response: &'static str, post: Option<&str>, limit: usize)
-        -> (Result<Vec<u8>, TransportError>, String)
-    {
+    fn local(
+        response: &'static str,
+        post: Option<&str>,
+        limit: usize,
+    ) -> (Result<Vec<u8>, TransportError>, String) {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
         let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut bytes = Vec::new();
             let mut buf = [0; 4096];
             loop {
@@ -140,11 +157,17 @@ mod tests {
                 let head_end = bytes.windows(4).position(|x| x == b"\r\n\r\n");
                 if let Some(end) = head_end {
                     let header = std::str::from_utf8(&bytes[..end]).unwrap();
-                    let size = header.lines()
-                        .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ")
-                            .and_then(|n| n.trim().parse::<usize>().ok()))
+                    let size = header
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|n| n.trim().parse::<usize>().ok())
+                        })
                         .unwrap_or_default();
-                    if bytes.len() >= end + 4 + size { break; }
+                    if bytes.len() >= end + 4 + size {
+                        break;
+                    }
                 }
             }
             stream.write_all(response.as_bytes()).unwrap();
@@ -164,12 +187,16 @@ mod tests {
 
         let (rejected, _) = local(
             "HTTP/1.1 401 Unauthorized\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret",
-            Some("grant_type=authorization_code&client_id=issued&resource=valid"), MAX_TOKEN_BODY);
+            Some("grant_type=authorization_code&client_id=issued&resource=valid"),
+            MAX_TOKEN_BODY,
+        );
         assert_eq!(rejected, Err(TransportError::Rejected));
 
         let (too_large, _) = local(
             "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\n123456",
-            None, 3);
+            None,
+            3,
+        );
         assert_eq!(too_large, Err(TransportError::TooLarge));
     }
 
