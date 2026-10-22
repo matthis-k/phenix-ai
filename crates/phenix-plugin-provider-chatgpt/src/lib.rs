@@ -208,7 +208,7 @@ mod plugin {
         host.invoke_scoped::<ProviderCredentials::import>(
             "Credentials",
             &scope,
-            CredentialImport {
+            &CredentialImport {
                 identity: identity.clone(),
                 secret,
             },
