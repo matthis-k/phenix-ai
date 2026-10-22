@@ -101,10 +101,9 @@ impl Config {
         let endpoint = endpoint_url(&endpoint)?;
         let protocol = Protocol::parse(&protocol)?;
         let (credential, presentation) = match authentication {
-            HttpModelAuthorization::CredentialFree => (
-                None,
-                phenix_provider_contracts::ApiKeyPresentation::Bearer,
-            ),
+            HttpModelAuthorization::CredentialFree => {
+                (None, phenix_provider_contracts::ApiKeyPresentation::Bearer)
+            }
             HttpModelAuthorization::ApiKey {
                 identity: _,
                 secret,
@@ -119,7 +118,10 @@ impl Config {
             ),
         };
         presentation.validate().map_err(|_| {
-            error(ErrorCode::InvalidInput, "invalid selected authentication strategy")
+            error(
+                ErrorCode::InvalidInput,
+                "invalid selected authentication strategy",
+            )
         })?;
         if let Some(secret) = &credential {
             let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
@@ -203,7 +205,8 @@ impl Config {
             protocol,
             provider_max_tokens,
             credential: secret,
-            presentation: binding.api_key_presentation()
+            presentation: binding
+                .api_key_presentation()
                 .map_err(|_| error(ErrorCode::InvalidInput, "invalid API-key strategy"))?
                 .unwrap_or(phenix_provider_contracts::ApiKeyPresentation::Bearer),
             ca_file: None,
@@ -234,7 +237,8 @@ impl Config {
         // launcher replaces that preset too.
         let presentation = if protocol == Protocol::AnthropicMessages {
             phenix_provider_contracts::ApiKeyPresentation::Header {
-                name: "x-api-key".into(), prefix: String::new(),
+                name: "x-api-key".into(),
+                prefix: String::new(),
             }
         } else {
             phenix_provider_contracts::ApiKeyPresentation::Bearer

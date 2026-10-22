@@ -134,13 +134,25 @@ impl ApiKeyPresentation {
         if let Self::Header { name, prefix } = self {
             let safe_name = !name.is_empty()
                 && name.len() <= 64
-                && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
             let restricted = [
-                "host", "cookie", "set-cookie", "content-length", "transfer-encoding",
-                "connection", "content-type", "accept", "expect", "proxy-authorization",
+                "host",
+                "cookie",
+                "set-cookie",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+                "content-type",
+                "accept",
+                "expect",
+                "proxy-authorization",
             ];
             if !safe_name
-                || restricted.iter().any(|reserved| name.eq_ignore_ascii_case(reserved))
+                || restricted
+                    .iter()
+                    .any(|reserved| name.eq_ignore_ascii_case(reserved))
                 || prefix.len() > 64
                 || prefix.bytes().any(|byte| byte.is_ascii_control())
             {
@@ -189,9 +201,7 @@ impl ApiKeyOptions {
                     .is_some_and(|first| first.is_ascii_uppercase() || first == b'_')
                 && name
                     .bytes()
-                    .all(|byte| {
-                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
-                    })
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
         };
         if self
             .environment_variable
@@ -222,7 +232,7 @@ mod tests {
             &ApiKeyOptions {
                 environment_variable: Some("OPENAI_API_KEY".into()),
                 interactive: true,
-            presentation: ApiKeyPresentation::Bearer,
+                presentation: ApiKeyPresentation::Bearer,
             },
         )
         .unwrap();
@@ -254,16 +264,24 @@ mod tests {
             assert!(ApiKeyOptions {
                 environment_variable: Some(valid.into()),
                 interactive: true,
-            presentation: ApiKeyPresentation::Bearer,
+                presentation: ApiKeyPresentation::Bearer,
             }
             .validate()
             .is_ok());
         }
-        for invalid in ["", "lowercase", "API-KEY", "A B", "9API_KEY", "K=value", "../KEY"] {
+        for invalid in [
+            "",
+            "lowercase",
+            "API-KEY",
+            "A B",
+            "9API_KEY",
+            "K=value",
+            "../KEY",
+        ] {
             assert!(ApiKeyOptions {
                 environment_variable: Some(invalid.into()),
                 interactive: true,
-            presentation: ApiKeyPresentation::Bearer,
+                presentation: ApiKeyPresentation::Bearer,
             }
             .validate()
             .is_err());
@@ -271,14 +289,14 @@ mod tests {
         assert!(ApiKeyOptions {
             environment_variable: None,
             interactive: true,
-        presentation: ApiKeyPresentation::Bearer,
+            presentation: ApiKeyPresentation::Bearer,
         }
         .validate()
         .is_ok());
         assert!(ApiKeyOptions {
             environment_variable: None,
             interactive: false,
-        presentation: ApiKeyPresentation::Bearer,
+            presentation: ApiKeyPresentation::Bearer,
         }
         .validate()
         .is_err());

@@ -46,7 +46,10 @@ fn environment_key_name() -> Result<Option<String>, ProviderError> {
         return Ok(None);
     };
     let name = raw.into_string().map_err(|_| {
-        error(ProviderErrorCode::InvalidInput, "invalid API-key environment name")
+        error(
+            ProviderErrorCode::InvalidInput,
+            "invalid API-key environment name",
+        )
     })?;
     if !valid_key_environment_name(&name) {
         return Err(error(
@@ -77,10 +80,7 @@ fn environment_key() -> Result<Option<phenix_provider_contracts::CredentialSecre
         return Ok(None);
     };
     let bytes = raw.into_encoded_bytes();
-    if bytes.is_empty()
-        || bytes.len() > 4096
-        || !bytes.iter().all(u8::is_ascii_graphic)
-    {
+    if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
         return Err(error(
             ProviderErrorCode::InvalidInput,
             "invalid API-key environment value",
@@ -222,8 +222,14 @@ mod tests {
             assert!(valid_key_environment_name(allowed), "{allowed}");
         }
         for invalid in [
-            "", "api_key", "9KEY", "OPENAI-KEY", "../SECRET",
-            "OPENAI_KEY=secret", "A B", "A\\nB",
+            "",
+            "api_key",
+            "9KEY",
+            "OPENAI-KEY",
+            "../SECRET",
+            "OPENAI_KEY=secret",
+            "A B",
+            "A\\nB",
         ] {
             assert!(!valid_key_environment_name(invalid), "{invalid:?}");
         }

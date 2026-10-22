@@ -3,8 +3,8 @@
 //! status/catalog, resolve one exact credential root and hold an explicit
 //! session-scoped native install grant.
 use super::{
-    ApiKeyPresentation, AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelBinding, ProviderError,
-    ProviderErrorCode,
+    ApiKeyPresentation, AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelBinding,
+    ProviderError, ProviderErrorCode,
 };
 use phenix_sdk::{contract, Portable};
 

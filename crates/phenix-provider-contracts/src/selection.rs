@@ -117,11 +117,18 @@ impl HttpModelBinding {
         let Some(profile) = self.choice.credential_profile.as_ref() else {
             return Ok(None);
         };
-        let method = self.choice.connection.auth_methods.iter()
+        let method = self
+            .choice
+            .connection
+            .auth_methods
+            .iter()
             .find(|method| method.id == profile.method_id)
-            .ok_or_else(|| selection_error(
-                ProviderErrorCode::Denied, "selected authentication method no longer exists"
-            ))?;
+            .ok_or_else(|| {
+                selection_error(
+                    ProviderErrorCode::Denied,
+                    "selected authentication method no longer exists",
+                )
+            })?;
         if method.kind != AuthenticationKind::ApiKey {
             return Ok(None);
         }
@@ -773,7 +780,7 @@ mod tests {
                     &ApiKeyOptions {
                         environment_variable: None,
                         interactive: true,
-                            presentation: ApiKeyPresentation::Bearer,
+                        presentation: ApiKeyPresentation::Bearer,
                     },
                 )
                 .unwrap(),
