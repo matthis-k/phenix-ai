@@ -37,31 +37,52 @@ fn valid_name(name: &str) -> bool {
         environment_variable: Some(name.to_owned()),
         interactive: true,
         presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
-    }.validate().is_ok()
+    }
+    .validate()
+    .is_ok()
 }
 
 fn encode_name(name: &str) -> Result<Vec<u8>, ProviderError> {
     if !valid_name(name) {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid environment variable name"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid environment variable name",
+        ));
     }
     let mut bytes = ENV_BIND_PREFIX.to_vec();
     bytes.extend_from_slice(name.as_bytes());
     Ok(bytes)
 }
 
-fn resolve_stored(bytes: Vec<u8>) -> Result<phenix_provider_contracts::CredentialSecret, ProviderError> {
+fn resolve_stored(
+    bytes: Vec<u8>,
+) -> Result<phenix_provider_contracts::CredentialSecret, ProviderError> {
     if let Some(encoded) = bytes.strip_prefix(ENV_BIND_PREFIX) {
         let name = std::str::from_utf8(encoded).map_err(|_| {
-            error(ProviderErrorCode::InvalidInput, "invalid bound environment name")
+            error(
+                ProviderErrorCode::InvalidInput,
+                "invalid bound environment name",
+            )
         })?;
         if !valid_name(name) {
-            return Err(error(ProviderErrorCode::InvalidInput, "invalid bound environment name"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid bound environment name",
+            ));
         }
         let bytes = std::env::var_os(name)
-            .ok_or_else(|| error(ProviderErrorCode::NotFound, "bound environment variable is unset"))?
+            .ok_or_else(|| {
+                error(
+                    ProviderErrorCode::NotFound,
+                    "bound environment variable is unset",
+                )
+            })?
             .into_encoded_bytes();
         if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
-            return Err(error(ProviderErrorCode::InvalidInput, "invalid API key environment value"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid API key environment value",
+            ));
         }
         phenix_provider_contracts::CredentialSecret::new(bytes)
     } else {
@@ -86,7 +107,9 @@ fn entry(identity: &CredentialIdentity, actual: Option<&str>) -> Result<Entry, P
 )]
 mod plugin {
     use super::*;
-    use phenix_provider_contracts::{CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials};
+    use phenix_provider_contracts::{
+        CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials,
+    };
     use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
@@ -94,9 +117,15 @@ mod plugin {
 
     #[provide(ProviderCredentials::import)]
     fn import(host: &Host<'_>, request: CredentialImport) -> CallResult<(), ProviderError> {
-        if request.secret.expose_for_authorized_provider().starts_with(ENV_BIND_PREFIX) {
-            return Err(CallError::Domain(error(ProviderErrorCode::InvalidInput,
-                "reserved credential source marker")));
+        if request
+            .secret
+            .expose_for_authorized_provider()
+            .starts_with(ENV_BIND_PREFIX)
+        {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "reserved credential source marker",
+            )));
         }
         entry(&request.identity, host.resource()?.as_deref())
             .map_err(CallError::Domain)?
@@ -110,10 +139,13 @@ mod plugin {
         host: &Host<'_>,
         request: CredentialEnvironmentBinding,
     ) -> CallResult<(), ProviderError> {
-        let target = entry(&request.identity, host.resource()?.as_deref())
-            .map_err(CallError::Domain)?;
+        let target =
+            entry(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
         let tagged = encode_name(&request.environment_variable).map_err(CallError::Domain)?;
-        target.set_secret(&tagged).map_err(backend_error).map_err(CallError::Domain)
+        target
+            .set_secret(&tagged)
+            .map_err(backend_error)
+            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderCredentials::resolve)]
@@ -150,8 +182,12 @@ mod tests {
         assert!(encoded.starts_with(ENV_BIND_PREFIX));
         assert_eq!(&encoded[ENV_BIND_PREFIX.len()..], b"OPENAI_API_KEY");
         assert!(encode_name("BAD/NAME").is_err());
-        assert_eq!(resolve_stored(b"plain-direct-test".to_vec())
-            .unwrap().expose_for_authorized_provider(), b"plain-direct-test");
+        assert_eq!(
+            resolve_stored(b"plain-direct-test".to_vec())
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"plain-direct-test"
+        );
     }
 
     #[test]
