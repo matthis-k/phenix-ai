@@ -44,6 +44,45 @@ packaged launchers and direct invocations work without extra configuration.
 Set `PHENIX_BASIC_SQLITE_PATH` to override it; component-specific launchers such
 as `phenix-basic-http-acp` select their own database file.
 
+## Opt-in verified OpenAI API onboarding (experimental)
+
+`phenix-basic-openai-api-acp` is a separately installed ACP launcher for
+provider-owned authentication, current model discovery and selected-model HTTP
+execution. It does **not** change the ordinary Basic or metadata-only provider
+presets. This first opt-in composition authorizes only the named credential
+`openai/api/personal`; other profiles require their own trusted composition.
+
+The launcher uses the explicit-consent credential-file backend. Create an
+existing private directory before starting it (the credential plugin rejects
+unsafe ownership or permissions); do not put an API key in Nix expressions or
+the environment:
+
+```sh
+mkdir -p "$HOME/.local/state/phenix/openai-api-credentials"
+chmod 700 "$HOME/.local/state/phenix/openai-api-credentials"
+export PHENIX_CREDENTIAL_FILE_DIRECTORY="$HOME/.local/state/phenix/openai-api-credentials"
+export PHENIX_CREDENTIAL_FILE_CONSENT=1
+nix run .#phenix-basic-openai-api-acp
+```
+
+In a Neovim frontend configured to launch that binary, run `:Phenix auth`
+and enter the OpenAI API key for the **personal** profile. A saved key remains
+unverified until the provider checks it against OpenAI's models endpoint.
+Then run `:Phenix model` to select an offered, authorized Responses model
+before prompting. Model selection is stored in the dedicated
+`basic-openai-api.sqlite` session database; credentials are resolved at
+execution instead of being persisted in the journal. Revocation invalidates
+the credential-bound selected model.
+
+This experimental preset explicitly disables legacy environment-key
+fallback. The local file fallback requires operator consent and stores
+credential material on disk with restrictive permissions; it is not encrypted
+at rest. A properly configured OS Secret Service backend can be integrated
+as an alternative when its provider composition is available. A successful
+`/v1/models` response is authentication evidence, **not** proof of quota or
+inference entitlement. ChatGPT subscription OAuth is not provided by this
+OpenAI API-key connection.
+
 ## Opt-in P1 HTTP model
 
 `phenix-basic-http-acp` runs the accepted Basic agent with the existing
