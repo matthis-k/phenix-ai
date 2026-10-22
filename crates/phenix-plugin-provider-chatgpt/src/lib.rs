@@ -122,7 +122,18 @@ fn expired(account: &OAuthAccount, now: u64) -> bool {
     account.expires_at <= now.saturating_add(30)
 }
 
+fn require_attempt_owner(
+    expected: &CredentialIdentity,
+    authorized: &CredentialIdentity,
+) -> Result<(), ProviderError> {
+    if expected != authorized {
+        return Err(denied("OAuth attempt belongs to a different account"));
+    }
+    Ok(())
+}
+
 struct Pending {
+    identity: CredentialIdentity,
     listener: OAuthLoopbackListener,
     pkce: GeneratedPkce,
     host_id: String,
@@ -396,6 +407,7 @@ mod plugin {
         state.attempts.insert(
             id.clone(),
             Pending {
+                identity,
                 listener,
                 pkce,
                 host_id: record.host_id,
@@ -419,11 +431,17 @@ mod plugin {
         if query.provider_id != PROVIDER || query.connection_id != CONNECTION {
             return Err(CallError::Domain(denied("OAuth attempt not authorized")));
         }
-        let Some(mut pending) = state.attempts.remove(&query.attempt_id) else {
+        let Some(found) = state.attempts.get(&query.attempt_id) else {
             return Err(CallError::Domain(problem(
                 ProviderErrorCode::NotFound,
                 "OAuth attempt not found",
             )));
+        };
+        // A known attempt ID does not authorize another account to poll it,
+        // consume its one-shot callback, or acquire the resulting credential.
+        require_attempt_owner(&found.identity, &identity).map_err(CallError::Domain)?;
+        let Some(mut pending) = state.attempts.remove(&query.attempt_id) else {
+            return Err(CallError::Domain(unavailable("OAuth attempt disappeared")));
         };
         let callback = match pending.listener.poll() {
             Ok(None) => {
@@ -526,16 +544,20 @@ mod plugin {
         host: &Host<'_>,
         query: AuthAttemptQuery,
     ) -> CallResult<AuthAttemptState, ProviderError> {
-        checked(host, &query.scope)?;
+        let identity = checked(host, &query.scope)?;
         if query.provider_id != PROVIDER || query.connection_id != CONNECTION {
             return Err(CallError::Domain(denied("OAuth attempt not authorized")));
         }
-        if state.attempts.remove(&query.attempt_id).is_none() {
+        let Some(found) = state.attempts.get(&query.attempt_id) else {
             return Err(CallError::Domain(problem(
                 ProviderErrorCode::NotFound,
                 "OAuth attempt not found",
             )));
-        }
+        };
+        // A second named account cannot cancel another account's pending
+        // authorization, even if the attempt identifier becomes visible.
+        require_attempt_owner(&found.identity, &identity).map_err(CallError::Domain)?;
+        state.attempts.remove(&query.attempt_id);
         Ok(AuthAttemptState::Cancelled)
     }
 }
@@ -567,6 +589,17 @@ mod tests {
             },
             100
         ));
+    }
+
+    #[test]
+    fn oauth_attempt_is_bound_to_the_exact_authorized_account() {
+        let owner = CredentialIdentity::new("openai", "chatgpt", "personal").unwrap();
+        let other = CredentialIdentity::new("openai", "chatgpt", "work").unwrap();
+        assert!(require_attempt_owner(&owner, &owner).is_ok());
+        assert_eq!(
+            require_attempt_owner(&owner, &other).unwrap_err().code,
+            ProviderErrorCode::Denied,
+        );
     }
 
     #[test]
