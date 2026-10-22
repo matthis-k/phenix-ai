@@ -620,7 +620,11 @@ fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth
         )
         .unwrap();
         assert_eq!(
-            config.credential.as_ref().unwrap().expose_for_authorized_provider(),
+            config
+                .credential
+                .as_ref()
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"authorized-oauth-bearer"
         );
         assert!(!format!("{config:?}").contains("authorized-oauth-bearer"));
