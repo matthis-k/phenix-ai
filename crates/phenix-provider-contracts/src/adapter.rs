@@ -125,6 +125,36 @@ pub struct ApiKeyOptions {
     pub interactive: bool,
 }
 
+impl ApiKeyOptions {
+    /// An API key can come from masked direct input or a provider-configured
+    /// environment variable name. Both are ordinary sources for the *same*
+    /// API-key method. This configuration must never contain the key itself.
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        let valid_name = |name: &str| {
+            !name.is_empty()
+                && name.len() <= 128
+                && name
+                    .bytes()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_uppercase() || first == b'_')
+                && name
+                    .bytes()
+                    .all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+        };
+        if self
+            .environment_variable
+            .as_deref()
+            .is_some_and(|name| !valid_name(name))
+            || (!self.interactive && self.environment_variable.is_none())
+        {
+            return Err(rejected("invalid API-key source configuration"));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +195,38 @@ mod tests {
         .unwrap();
         assert!(!other.config.decode::<CustomOptions>().unwrap().enabled);
         assert_ne!(other.config.schema_id, key.config.schema_id);
+    }
+
+    #[test]
+    fn api_key_source_options_are_names_not_credential_values() {
+        for valid in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "_CUSTOM_KEY"] {
+            assert!(ApiKeyOptions {
+                environment_variable: Some(valid.into()),
+                interactive: true,
+            }
+            .validate()
+            .is_ok());
+        }
+        for invalid in ["", "lowercase", "API-KEY", "A B", "9API_KEY", "K=value", "../KEY"] {
+            assert!(ApiKeyOptions {
+                environment_variable: Some(invalid.into()),
+                interactive: true,
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(ApiKeyOptions {
+            environment_variable: None,
+            interactive: true,
+        }
+        .validate()
+        .is_ok());
+        assert!(ApiKeyOptions {
+            environment_variable: None,
+            interactive: false,
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]
