@@ -264,6 +264,15 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<CredentialSecret, ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        // Preserve the opt-in launcher environment-only path without opening
+        // a credential-file vault or requiring file-storage consent. An
+        // explicit account binding is stored in that vault and therefore
+        // requires its independent, explicit consent.
+        if std::env::var("PHENIX_CREDENTIAL_FILE_CONSENT").as_deref() != Ok("1") {
+            return environment_key()
+                .map_err(CallError::Domain)?
+                .ok_or_else(|| CallError::Domain(backend_error(CredentialError::ConsentRequired)));
+        }
         // An explicitly bound exact-account source wins over a process-wide
         // legacy launcher hint. Never persist the resolved environment value.
         let stored = state.backend().map_err(CallError::Domain)?.read(&id);
