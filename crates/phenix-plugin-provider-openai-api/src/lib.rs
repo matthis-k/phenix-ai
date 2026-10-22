@@ -9,7 +9,7 @@ use curl::easy::{Easy2, Handler, List, WriteError};
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
-    AuthenticationStatus, ConnectionDescriptor, CredentialIdentity, CredentialProfile,
+    AuthenticationStatus, CredentialIdentity, CredentialProfile,
     CredentialProfileStatus, ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError,
     ProviderErrorCode, ProviderModel,
 };
@@ -105,15 +105,6 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
         }
     }
     Ok(provider)
-}
-
-fn connection() -> Result<ConnectionDescriptor, ProviderError> {
-    descriptor()?.connections.into_iter().next().ok_or_else(|| {
-        error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI API connection unavailable",
-        )
-    })
 }
 
 fn require_identity(provider: &str, connection: &str) -> Result<(), ProviderError> {
