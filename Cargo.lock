@@ -1741,15 +1741,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-workspace-selection"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-sdk",
- "phenix-workspace-contracts",
-]
-
-[[package]]
 name = "phenix-plugin-storage-fixture"
 version = "0.1.0"
 dependencies = [
@@ -1764,6 +1755,15 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-plugin-workspace-selection"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "phenix-workspace-contracts",
 ]
 
 [[package]]
@@ -1810,19 +1810,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-workspace-contracts"
-version = "0.1.0"
-dependencies = [
- "phenix-sdk",
- "serde",
-]
-
-[[package]]
 name = "phenix-sdk"
 version = "0.1.0"
 dependencies = [
  "phenix-contract",
  "phenix-macros",
+]
+
+[[package]]
+name = "phenix-workspace-contracts"
+version = "0.1.0"
+dependencies = [
+ "phenix-sdk",
+ "serde",
 ]
 
 [[package]]
