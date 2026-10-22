@@ -13,5 +13,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: |
-          cargo metadata --no-deps --format-version 1 > /dev/null
+          cargo check --offline -p phenix-plugin-provider-openai-api || true
           git diff -- Cargo.lock
+          cargo test --locked -p phenix-plugin-provider-openai-api --no-run || true
