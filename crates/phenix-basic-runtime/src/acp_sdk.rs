@@ -20,7 +20,8 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
+    bind_http_model, validate_model_selection, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
+    AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus,
     CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
     ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
     ProviderErrorCode, ProviderPage, ProviderQuery,
@@ -54,6 +55,39 @@ struct ProviderAuthStatusRequest {
     scope: String,
     provider_id: String,
     connection_id: String,
+}
+
+/// The provider contract owns the method and attempt lifecycle. No API key,
+/// OAuth token, transport authority, or caller-supplied provider artifact is
+/// accepted by any of these ACP control-plane requests.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/auth/begin", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderAuthBeginRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+    method_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/auth/poll", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderAuthPollRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+    attempt_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/providers/auth/cancel", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ProviderAuthCancelRequest {
+    scope: String,
+    provider_id: String,
+    connection_id: String,
+    attempt_id: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
@@ -133,6 +167,9 @@ enum Command {
     ),
     ProviderList(ProviderListRequest, Reply<serde_json::Value>),
     ProviderAuthStatus(ProviderAuthStatusRequest, Reply<serde_json::Value>),
+    ProviderAuthBegin(ProviderAuthBeginRequest, Reply<serde_json::Value>),
+    ProviderAuthPoll(ProviderAuthPollRequest, Reply<serde_json::Value>),
+    ProviderAuthCancel(ProviderAuthCancelRequest, Reply<serde_json::Value>),
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
     CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
@@ -150,6 +187,9 @@ impl Command {
             Self::SetConfig(_, reply) => reply.respond_with_error(error),
             Self::ProviderList(_, reply) => reply.respond_with_error(error),
             Self::ProviderAuthStatus(_, reply) => reply.respond_with_error(error),
+            Self::ProviderAuthBegin(_, reply) => reply.respond_with_error(error),
+            Self::ProviderAuthPoll(_, reply) => reply.respond_with_error(error),
+            Self::ProviderAuthCancel(_, reply) => reply.respond_with_error(error),
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
             Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
@@ -1045,6 +1085,30 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::ProviderAuthBegin(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.provider_auth_begin(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ProviderAuthPoll(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.provider_auth_poll(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ProviderAuthCancel(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.provider_auth_cancel(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::ProviderModels(request, reply) => {
                 let result = if !self.initialized {
                     Err(invalid("initialize required"))
@@ -1139,6 +1203,91 @@ impl Controller {
                 provider_id: request.provider_id,
                 connection_id: request.connection_id,
             },
+        )
+    }
+
+    fn provider_auth_begin(
+        &self,
+        request: ProviderAuthBeginRequest,
+    ) -> acp::Result<serde_json::Value> {
+        if request.scope != "user"
+            || request.provider_id.is_empty()
+            || request.connection_id.is_empty()
+            || request.method_id.is_empty()
+            || request.provider_id.len() > 128
+            || request.connection_id.len() > 128
+            || request.method_id.len() > 128
+        {
+            return Err(invalid("invalid provider authentication method"));
+        }
+        self.provider_read::<_, AuthChallenge>(
+            "phenix.provider.auth@1",
+            "begin",
+            &AuthStart {
+                scope: request.scope,
+                provider_id: request.provider_id,
+                connection_id: request.connection_id,
+                method_id: request.method_id,
+            },
+        )
+    }
+
+    fn provider_auth_attempt(
+        &self,
+        scope: String,
+        provider_id: String,
+        connection_id: String,
+        attempt_id: String,
+        operation: &str,
+    ) -> acp::Result<serde_json::Value> {
+        if scope != "user"
+            || provider_id.is_empty()
+            || connection_id.is_empty()
+            || attempt_id.is_empty()
+            || provider_id.len() > 128
+            || connection_id.len() > 128
+            || attempt_id.len() > 256
+            || attempt_id.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid provider authentication attempt"));
+        }
+        // The attempt selector is not proof of authentication or a grant:
+        // only the launcher-owned provider plugin can complete this operation.
+        self.provider_read::<_, AuthAttemptState>(
+            "phenix.provider.auth@1",
+            operation,
+            &AuthAttemptQuery {
+                scope,
+                provider_id,
+                connection_id,
+                attempt_id,
+            },
+        )
+    }
+
+    fn provider_auth_poll(
+        &self,
+        request: ProviderAuthPollRequest,
+    ) -> acp::Result<serde_json::Value> {
+        self.provider_auth_attempt(
+            request.scope,
+            request.provider_id,
+            request.connection_id,
+            request.attempt_id,
+            "poll",
+        )
+    }
+
+    fn provider_auth_cancel(
+        &self,
+        request: ProviderAuthCancelRequest,
+    ) -> acp::Result<serde_json::Value> {
+        self.provider_auth_attempt(
+            request.scope,
+            request.provider_id,
+            request.connection_id,
+            request.attempt_id,
+            "cancel",
         )
     }
 
@@ -1779,6 +1928,9 @@ pub(super) fn run(
     let set_config = tx.clone();
     let provider_list = tx.clone();
     let provider_auth_status = tx.clone();
+    let provider_auth_begin = tx.clone();
+    let provider_auth_poll = tx.clone();
+    let provider_auth_cancel = tx.clone();
     let provider_models = tx.clone();
     let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
@@ -1826,6 +1978,33 @@ pub(super) fn run(
                 submit(
                     &provider_auth_status,
                     Command::ProviderAuthStatus(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderAuthBeginRequest, reply, _peer| {
+                submit(
+                    &provider_auth_begin,
+                    Command::ProviderAuthBegin(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderAuthPollRequest, reply, _peer| {
+                submit(
+                    &provider_auth_poll,
+                    Command::ProviderAuthPoll(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ProviderAuthCancelRequest, reply, _peer| {
+                submit(
+                    &provider_auth_cancel,
+                    Command::ProviderAuthCancel(request, reply),
                 )
             },
             acp::on_receive_request!(),
