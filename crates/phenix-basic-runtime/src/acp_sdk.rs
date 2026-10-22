@@ -739,8 +739,7 @@ impl ProviderManagement {
                         // bearer methods can become executable selections.
                         if !matches!(
                             binding.authentication_kind(),
-                            None
-                                | Some(AuthenticationKind::ApiKey)
+                            None | Some(AuthenticationKind::ApiKey)
                                 | Some(AuthenticationKind::OAuthAuthorizationCode)
                                 | Some(AuthenticationKind::OAuthDeviceCode)
                         ) {
