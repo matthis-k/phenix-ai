@@ -70,6 +70,18 @@ struct OAuthAccount {
     expires_at: u64,
 }
 
+impl Drop for OAuthAccount {
+    fn drop(&mut self) {
+        // The protected credential store owns persistence; temporary JSON
+        // projections must not leave the access/refresh/ID tokens in heap
+        // allocations longer than their Rust lifetimes.
+        for token in [&mut self.access_token, &mut self.refresh_token, &mut self.id_token] {
+            let mut bytes = std::mem::take(token).into_bytes();
+            bytes.fill(0);
+        }
+    }
+}
+
 fn exact_identity(resource: Option<&str>) -> Result<CredentialIdentity, ProviderError> {
     let identity = CredentialIdentity::from_resource(
         resource.ok_or_else(|| denied("ChatGPT account is not authorized"))?,
@@ -358,7 +370,7 @@ mod plugin {
         let registration = match &record.account {
             Some(account) => Registration::Returning {
                 issued_client_id: &account.issued_client_id,
-                id_token_hint: Some(&account.id_token),
+                id_token_hint: None, // never expose the saved ID token in client-visible URLs
                 login_hint: None,
             },
             None => Registration::First {
