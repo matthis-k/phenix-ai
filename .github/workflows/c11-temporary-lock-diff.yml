@@ -1,0 +1,17 @@
+name: Temporary C11 Cargo lock normalization probe
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c11-temporary-lock-diff.yml'
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          cargo metadata --no-deps --format-version 1 > /dev/null
+          git diff -- Cargo.lock
