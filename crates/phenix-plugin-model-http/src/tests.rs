@@ -605,28 +605,38 @@ fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
 }
 
 #[test]
-fn checked_http_adapter_does_not_infer_oauth_or_plugin_auth_transport_headers() {
+fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth() {
     use phenix_provider_contracts::{AuthenticationKind, CredentialSecret};
     for kind in [
         AuthenticationKind::OAuthAuthorizationCode,
         AuthenticationKind::OAuthDeviceCode,
-        AuthenticationKind::Plugin,
     ] {
         let choice = bound_http_choice_with_kind(true, "model-a", kind);
-        let token = CredentialSecret::new(b"auth-method-fixture-secret".to_vec()).unwrap();
+        let token = CredentialSecret::new(b"authorized-oauth-bearer".to_vec()).unwrap();
+        let config = request::Config::from_checked_binding(
+            &choice,
+            Some((choice.credential_identity().unwrap(), &token)),
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            request::Config::from_checked_binding(
-                &choice,
-                Some((choice.credential_identity().unwrap(), &token)),
-                None,
-            )
-            .unwrap_err()
-            .code,
-            ErrorCode::InvalidInput
+            config.credential.as_ref().unwrap().expose_for_authorized_provider(),
+            b"authorized-oauth-bearer"
         );
+        assert!(!format!("{config:?}").contains("authorized-oauth-bearer"));
     }
-
-    // Credential-free local models remain explicit and need no auth method.
+    let plugin = bound_http_choice_with_kind(true, "model-a", AuthenticationKind::Plugin);
+    let token = CredentialSecret::new(b"unrecognized-plugin-secret".to_vec()).unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(
+            &plugin,
+            Some((plugin.credential_identity().unwrap(), &token)),
+            None,
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
     let local = bound_http_choice(false);
     assert!(request::Config::from_checked_binding(&local, None, None).is_ok());
 }
