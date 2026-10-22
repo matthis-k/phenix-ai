@@ -8,6 +8,8 @@ use std::net::IpAddr;
 use url::Url;
 
 #[cfg(feature = "model-codecs")]
+pub mod siwc_models;
+#[cfg(feature = "model-codecs")]
 pub mod request;
 #[cfg(feature = "model-codecs")]
 pub mod stream;
