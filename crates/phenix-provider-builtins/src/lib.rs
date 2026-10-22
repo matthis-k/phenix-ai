@@ -5,7 +5,7 @@
 //! revalidate and authorize every selected account and model.
 
 use phenix_provider_contracts::{
-    AdapterBinding, ApiKeyOptions, AuthenticationKind, AuthenticationMethod, ConnectionDescriptor,
+    AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod, ConnectionDescriptor,
     DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
@@ -113,6 +113,7 @@ impl AuthenticationAdapters for BuiltinAuthenticationAdapters {
                     &ApiKeyOptions {
                         environment_variable: None,
                         interactive: true,
+                    presentation: ApiKeyPresentation::Bearer,
                     },
                 )
                 .map_err(|_| "invalid API key adapter")?,
@@ -178,6 +179,9 @@ pub trait ConnectionExtensions {
     fn with_key_environment(self, name: &str) -> Result<Self, &'static str>
     where
         Self: Sized;
+    fn with_key_presentation(self, presentation: ApiKeyPresentation) -> Result<Self, &'static str>
+    where
+        Self: Sized;
 }
 
 impl ConnectionExtensions for ConnectionDescriptor {
@@ -218,10 +222,25 @@ impl ConnectionExtensions for ConnectionDescriptor {
         let options = ApiKeyOptions {
             environment_variable: Some(name.into()),
             interactive: true,
+        presentation: ApiKeyPresentation::Bearer,
         };
         options.validate().map_err(|_| "invalid API key environment")?;
         method.adapter = AdapterBinding::from_typed("api-key", &options)
             .map_err(|_| "invalid API key environment")?;
+        Ok(self)
+    }
+
+    fn with_key_presentation(mut self, presentation: ApiKeyPresentation) -> Result<Self, &'static str> {
+        presentation.validate().map_err(|_| "invalid API-key wire presentation")?;
+        let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
+            return Err("wire presentation requires the API-key strategy");
+        };
+        let mut options = method.adapter.config.decode::<ApiKeyOptions>()
+            .map_err(|_| "API-key source adapter has incompatible configuration")?;
+        options.presentation = presentation;
+        options.validate().map_err(|_| "invalid API-key wire presentation")?;
+        method.adapter = AdapterBinding::from_typed("api-key", &options)
+            .map_err(|_| "invalid API-key wire presentation")?;
         Ok(self)
     }
 }
@@ -293,7 +312,12 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
     .with_protocol(
         ANTHROPIC_MESSAGES,
         Some("https://api.anthropic.com/v1/messages"),
-    );
+    )
+    .with_key_presentation(ApiKeyPresentation::Header {
+        name: "x-api-key".into(),
+        prefix: String::new(),
+    })
+    .expect("valid Anthropic API-key wire strategy");
     let zen = make(
         "https://opencode.ai/zen/v1",
         OPENAI_CHAT,
