@@ -896,8 +896,7 @@ mod tests {
         let (mut provider, auth, page, requested) = fixture();
         provider.connections[0].protocols[0].endpoint =
             Some("https://api.openai.com/v1/responses".into());
-        provider.connections[0].auth_methods[0].kind =
-            AuthenticationKind::OAuthAuthorizationCode;
+        provider.connections[0].auth_methods[0].kind = AuthenticationKind::OAuthAuthorizationCode;
         let selected = validate_model_selection(&provider, &auth, &page, &requested, true).unwrap();
         let binding = bind_http_model(&provider, selected).unwrap();
         let personal = CredentialIdentity::new("openai", "api", "personal").unwrap();
@@ -921,7 +920,7 @@ mod tests {
             "s1".into(),
             Some((
                 personal.clone(),
-                CredentialSecret::new(b"authorized-bearer-token".to_vec()).unwrap()
+                CredentialSecret::new(b"authorized-bearer-token".to_vec()).unwrap(),
             )),
             None,
         )
