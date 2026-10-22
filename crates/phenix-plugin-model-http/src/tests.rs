@@ -669,7 +669,11 @@ fn native_http_oauth_install_rejects_foreign_account_before_transport() {
         .unwrap();
         let config = request::Config::from_install(install).unwrap();
         assert_eq!(
-            config.credential.as_ref().unwrap().expose_for_authorized_provider(),
+            config
+                .credential
+                .as_ref()
+                .unwrap()
+                .expose_for_authorized_provider(),
             b"authorized-bearer-token"
         );
         assert!(!format!("{config:?}").contains("authorized-bearer-token"));
