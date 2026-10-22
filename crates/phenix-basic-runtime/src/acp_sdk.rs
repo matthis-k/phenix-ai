@@ -21,8 +21,8 @@ use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
     bind_http_model, validate_model_selection, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
-    AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialIdentity,
-    CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
+    AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialEnvironmentBinding,
+    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
     ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderErrorCode,
     ProviderPage, ProviderQuery,
 };
@@ -139,6 +139,16 @@ impl Drop for CredentialImportRequest {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/env-bind", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialEnvironmentRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+    environment_variable: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
 #[request(method = "_phenix/credentials/revoke", response = serde_json::Value)]
 #[serde(deny_unknown_fields)]
 struct CredentialRevokeRequest {
@@ -173,6 +183,7 @@ enum Command {
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
     CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
+    CredentialEnvironment(CredentialEnvironmentRequest, Reply<serde_json::Value>),
     CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
@@ -193,6 +204,7 @@ impl Command {
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
             Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
+            Self::CredentialEnvironment(_, reply) => reply.respond_with_error(error),
             Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
@@ -1152,6 +1164,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::CredentialEnvironment(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_environment(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::CredentialRevoke(request, reply) => {
                 let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
                     Err(invalid("active initialized ACP connection required"))
@@ -1446,6 +1466,31 @@ impl Controller {
             }
         }
         response
+    }
+
+    fn credential_environment(
+        &self,
+        request: CredentialEnvironmentRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = CredentialIdentity::new(
+            request.provider_id,
+            request.connection_id,
+            request.profile_id,
+        )
+        .map_err(|_| invalid("invalid credential identity"))?;
+        let name = &request.environment_variable;
+        if name.is_empty() || name.len() > 128
+            || !name.bytes().enumerate().all(|(i,b)| {
+                if i == 0 { b.is_ascii_uppercase() || b == b'_' }
+                else { b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_' }
+            }) {
+            return Err(invalid("invalid API-key environment variable name"));
+        }
+        let payload = CredentialEnvironmentBinding {
+            identity: identity.clone(),
+            environment_variable: request.environment_variable,
+        };
+        self.credential_operation("bind_environment", &identity, &payload.to_value())
     }
 
     fn credential_revoke(
@@ -2010,6 +2055,7 @@ pub(super) fn run(
     let provider_models = tx.clone();
     let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
+    let credential_environment = tx.clone();
     let credential_revoke = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
@@ -2106,6 +2152,12 @@ pub(super) fn run(
                     &credential_import,
                     Command::CredentialImport(request, reply),
                 )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialEnvironmentRequest, reply, _peer| {
+                submit(&credential_environment, Command::CredentialEnvironment(request, reply))
             },
             acp::on_receive_request!(),
         )
