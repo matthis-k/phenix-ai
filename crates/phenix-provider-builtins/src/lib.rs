@@ -219,11 +219,12 @@ impl ConnectionExtensions for ConnectionDescriptor {
         let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
             return Err("key environment variable requires API key auth");
         };
-        let options = ApiKeyOptions {
-            environment_variable: Some(name.into()),
-            interactive: true,
-            presentation: ApiKeyPresentation::Bearer,
-        };
+        let mut options = method
+            .adapter
+            .config
+            .decode::<ApiKeyOptions>()
+            .map_err(|_| "API-key source adapter has incompatible configuration")?;
+        options.environment_variable = Some(name.into());
         options
             .validate()
             .map_err(|_| "invalid API key environment")?;
@@ -919,6 +920,38 @@ mod tests {
                 prefix: String::new(),
             }
         );
+
+        // Acquisition source and HTTP presentation are independent options;
+        // configuring either first must produce the same method declaration.
+        let header = ApiKeyPresentation::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+        };
+        for configured in [
+            openai
+                .clone()
+                .with_key_presentation(header.clone())
+                .unwrap()
+                .with_key_environment("EXAMPLE_API_KEY")
+                .unwrap(),
+            openai
+                .clone()
+                .with_key_environment("EXAMPLE_API_KEY")
+                .unwrap()
+                .with_key_presentation(header.clone())
+                .unwrap(),
+        ] {
+            let configured_key = configured.auth_methods[0]
+                .adapter
+                .config
+                .decode::<ApiKeyOptions>()
+                .unwrap();
+            assert_eq!(configured_key.presentation, header);
+            assert_eq!(
+                configured_key.environment_variable.as_deref(),
+                Some("EXAMPLE_API_KEY")
+            );
+        }
 
         let chatgpt = &catalog[0].connections[1];
         assert_eq!(chatgpt.auth_methods[0].adapter.id, "chatgpt.oauth");
