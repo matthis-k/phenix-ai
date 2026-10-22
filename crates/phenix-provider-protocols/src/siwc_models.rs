@@ -71,13 +71,13 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
         if !ids.insert(slug) {
             return Err(CatalogError::DuplicateModel);
         }
-        match visibility {
-            "list" => result.push(ChatGptModel {
+        // New/undocumented visibility values are never selectable.
+        // An unknown hidden tier should not suppress unrelated listed models.
+        if visibility == "list" {
+            result.push(ChatGptModel {
                 slug: slug.to_owned(),
                 display_name: label.to_owned(),
-            }),
-            "hide" | "hidden" => {}
-            _ => return Err(CatalogError::InvalidModel),
+            });
         }
     }
     Ok(result)
@@ -124,7 +124,6 @@ mod tests {
             br#"{"models":[{"slug":"","display_name":"Missing","visibility":"list"}]}"#,
             br#"{"models":[{"slug":"bad\nslug","display_name":"Wrong","visibility":"list"}]}"#,
             br#"{"models":[{"slug":"ok","display_name":"","visibility":"list"}]}"#,
-            br#"{"models":[{"slug":"ok","display_name":"Label","visibility":"unexpected"}]}"#,
             br#"{"models":"not-an-array"}"#,
             br#"not-json"#,
         ] {
