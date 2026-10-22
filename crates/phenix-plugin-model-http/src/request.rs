@@ -104,6 +104,10 @@ impl Config {
             HttpModelAuthorization::ApiKey {
                 identity: _,
                 secret,
+            }
+            | HttpModelAuthorization::BearerToken {
+                identity: _,
+                secret,
             } => {
                 let valid = std::str::from_utf8(secret.expose_for_authorized_provider())
                     .ok()
@@ -147,11 +151,15 @@ impl Config {
                 "invalid HTTP provider max tokens",
             ));
         }
-        // A stored secret is not proof that an arbitrary provider-specific
-        // OAuth or plugin flow can use this adapter's API-key headers.
+        // The selected provider must already have verified this account
+        // and admitted the specific authentication method. Native transport
+        // accepts API keys or current OAuth bearer tokens; plugin-specific
+        // unknown modes remain unsupported.
         match (binding.credential_identity(), binding.authentication_kind()) {
             (None, None)
-            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::ApiKey)) => {}
+            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::ApiKey))
+            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::OAuthAuthorizationCode))
+            | (Some(_), Some(phenix_provider_contracts::AuthenticationKind::OAuthDeviceCode)) => {}
             _ => {
                 return Err(error(
                     ErrorCode::InvalidInput,
