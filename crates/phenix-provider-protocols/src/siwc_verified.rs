@@ -8,10 +8,8 @@
 //! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
 use crate::siwc::require_token_granted_plan_scope;
-use openidconnect::core::{
-    CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
-};
-use openidconnect::{ClientId, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge};
+use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError};
+use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
 
 pub const ISSUER: &str = "https://auth.openai.com";
@@ -182,28 +180,23 @@ pub fn verify_chatgpt_identity(
     if jwks_body.is_empty() || jwks_body.len() > MAX_JWKS_BODY {
         return Err(VerificationError::InvalidJwks);
     }
-    let jwks: CoreJsonWebKeySet =
-        serde_json::from_slice(jwks_body).map_err(|_| VerificationError::InvalidJwks)?;
-    let id_token: CoreIdToken = serde_json::from_value(Value::String(envelope.id_token.clone()))
-        .map_err(|_| VerificationError::InvalidIdToken)?;
-    let verifier = CoreIdTokenVerifier::new_public_client(
-        ClientId::new(issued_client_id.to_owned()),
-        IssuerUrl::new(ISSUER.to_owned()).map_err(|_| VerificationError::InvalidIdToken)?,
-        jwks,
+    let subject = verify_signed_oidc_identity(
+        &envelope.id_token,
+        jwks_body,
+        ISSUER,
+        issued_client_id,
+        original_nonce,
+        expected_subject,
     )
-    .set_allowed_algs([CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256]);
-    let claims = id_token
-        .claims(&verifier, &Nonce::new(original_nonce.to_owned()))
-        .map_err(|_| VerificationError::InvalidIdToken)?;
-    let subject = claims.subject().as_str();
-    if subject.is_empty() || subject.len() > 256 {
-        return Err(VerificationError::InvalidIdToken);
-    }
-    if expected_subject.is_some_and(|existing| existing != subject) {
-        return Err(VerificationError::IncorrectAccount);
-    }
+    .map_err(|problem| match problem {
+        OidcError::InvalidJwks => VerificationError::InvalidJwks,
+        OidcError::IncorrectAccount => VerificationError::IncorrectAccount,
+        OidcError::InvalidConfiguration | OidcError::InvalidIdToken => {
+            VerificationError::InvalidIdToken
+        }
+    })?;
     Ok(VerifiedChatGptIdentity {
-        subject: subject.to_owned(),
+        subject: subject.as_str().to_owned(),
         issued_client_id: issued_client_id.to_owned(),
     })
 }
