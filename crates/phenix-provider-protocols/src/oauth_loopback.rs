@@ -131,6 +131,15 @@ impl CallbackRequest {
         self.respond_internal(true)
     }
 
+    /// ChatGPT-specific proof includes the verified ID-token subject, issued
+    /// dynamic client registration, and granted plan-use scope.
+    pub fn confirm_chatgpt(
+        self,
+        _identity: &crate::siwc_verified::VerifiedChatGptIdentity,
+    ) -> Result<(), CallbackError> {
+        self.respond_internal(true)
+    }
+
     fn respond_internal(mut self, authenticated: bool) -> Result<(), CallbackError> {
         let response: &[u8] = if authenticated {
             b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: 26\r\nConnection: close\r\n\r\nAuthentication completed.\n"
