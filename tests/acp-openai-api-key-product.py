@@ -130,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                 "provider": "phenix.provider.credential-files",
                 "export": "Credentials", "index": 0}],
         grants=[{"caller": "root", "interface": interface,
-                 "operation": operation, "resources": [scope]}
+                 "operation": operation, "resources": [resource]}
                 for interface, operation in [
                     (provider_contract, "list"), (provider_contract, "describe"),
                     (provider_contract, "models"), (auth_contract, "status"),
@@ -150,9 +150,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                                (auth_contract, "poll"),
                                (auth_contract, "cancel"),
                            ]] + [credential_contract + "/resolve"],
-            "resources": [scope, resource],
+            "resources": [resource],
         },
-        resource=scope,
+        resource=resource,
     )
     configs = {}
     for name, data in [("credential", credentials), ("resolver", resolver),
