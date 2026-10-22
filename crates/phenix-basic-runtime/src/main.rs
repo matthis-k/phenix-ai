@@ -1009,7 +1009,11 @@ fn run() -> Result<(), String> {
         for flag in args[3..].chunks_exact(2) {
             let data = std::fs::read(&flag[1]).map_err(|e| e.to_string())?;
             if flag[0] == "--provider-bundle" {
-                if has_bundle || management.is_some() || !credentials.is_empty() || !resolvers.is_empty() {
+                if has_bundle
+                    || management.is_some()
+                    || !credentials.is_empty()
+                    || !resolvers.is_empty()
+                {
                     return Err("provider bundle cannot be mixed with manual provider roots".into());
                 }
                 let deployment: provider_deployment::ProviderDeployment =
