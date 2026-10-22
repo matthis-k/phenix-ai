@@ -30,9 +30,7 @@ fn valid_slug(slug: &str) -> bool {
 }
 
 fn valid_display_name(label: &str) -> bool {
-    !label.is_empty()
-        && label.len() <= 128
-        && !label.chars().any(char::is_control)
+    !label.is_empty() && label.len() <= 128 && !label.chars().any(char::is_control)
 }
 
 /// Preserve server ordering and show only visibility:list, per SIWC docs.
@@ -41,8 +39,7 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
     if body.len() > MAX_CATALOG_BYTES {
         return Err(CatalogError::TooLarge);
     }
-    let json: Value =
-        serde_json::from_slice(body).map_err(|_| CatalogError::InvalidShape)?;
+    let json: Value = serde_json::from_slice(body).map_err(|_| CatalogError::InvalidShape)?;
     let models = json
         .get("models")
         .and_then(Value::as_array)
