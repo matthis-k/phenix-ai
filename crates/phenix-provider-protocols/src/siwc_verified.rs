@@ -7,7 +7,7 @@
  //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
  //! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
-use crate::siwc::{require_token_granted_plan_scope, REQUIRED_SCOPE};
+use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::core::{
     CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
 };
@@ -84,19 +84,19 @@ impl Default for GeneratedPkce {
 }
 impl Drop for GeneratedPkce {
     fn drop(&mut self) {
-        self.verifier.unsafe_zeroize();
-        self.nonce.unsafe_zeroize();
-        self.state.unsafe_zeroize();
+        self.verifier.wipe();
+        self.nonce.wipe();
+        self.state.wipe();
     }
 }
 trait WipeString {
-    fn unsafe_zeroize(&mut self);
+    fn wipe(&mut self);
 }
 impl WipeString for String {
-    fn unsafe_zeroize(&mut self) {
-        // String bytes are ASCII PKCE/nonce material, so zeroing cannot
-        // invalidate UTF-8. Nothing secret is sent into Debug/Serde/logging.
-        unsafe { self.as_bytes_mut().fill(0) }
+    fn wipe(&mut self) {
+        // Taking ownership avoids unsafe mutation of String's UTF-8 bytes.
+        let mut bytes = std::mem::take(self).into_bytes();
+        bytes.fill(0);
     }
 }
 
@@ -147,9 +147,9 @@ impl TokenEnvelope {
 }
 impl Drop for TokenEnvelope {
     fn drop(&mut self) {
-        self.access_token.unsafe_zeroize();
-        self.refresh_token.unsafe_zeroize();
-        self.id_token.unsafe_zeroize();
+        self.access_token.wipe();
+        self.refresh_token.wipe();
+        self.id_token.wipe();
     }
 }
 
@@ -315,6 +315,6 @@ mod tests {
 
     #[test]
     fn required_scope_constant_is_same_as_registration() {
-        assert_eq!(REQUIRED_SCOPE, "chatgpt.tokens.use.direct");
+        assert_eq!(crate::siwc::REQUIRED_SCOPE, "chatgpt.tokens.use.direct");
     }
 }
