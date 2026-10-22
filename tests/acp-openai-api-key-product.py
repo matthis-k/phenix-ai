@@ -202,14 +202,19 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                PHENIX_MODEL_HTTP_ENDPOINT="http://127.0.0.1:1/forged-preset",
                PHENIX_MODEL_HTTP_API_KEY="no-preset-token")
 
-    def launch():
+    def launch(configured_profile="personal"):
+        launch_env = dict(env)
+        if configured_profile is None:
+            launch_env.pop("PHENIX_OPENAI_API_PROFILE", None)
+        else:
+            launch_env["PHENIX_OPENAI_API_PROFILE"] = configured_profile
         p = subprocess.Popen(
             [runtime, "acp", http_basic,
              "--provider-management", configs["management"],
              "--provider-credentials", configs["credential"],
              "--provider-model-resolver", configs["resolver"]],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, env=env,
+            text=True, bufsize=1, env=launch_env,
         )
         children.append(p)
         p.responses = queue.Queue()
@@ -320,6 +325,22 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                         {"type": "text", "text": "hello"}]})
     assert prompted.get("result", {}).get("stopReason") == "end_turn", prompted
     assert received == ["gpt-5"], received
+    # The authorized root, not a process-global profile default, must
+    # select this account. Omitting the optional restriction still works,
+    # while a conflicting deployment restriction fails before network I/O.
+    root_selected = launch(configured_profile=None)
+    init(root_selected)
+    root_status = call(root_selected, 79, "_phenix/providers/auth/status", user)
+    assert root_status["result"]["profiles"][0]["status"] == "Authenticated", root_status
+    close(root_selected)
+    before_denial = state["get"]
+    restricted = launch(configured_profile="work")
+    init(restricted)
+    mismatch = call(restricted, 80, "_phenix/providers/auth/status", user)
+    assert "error" in mismatch, mismatch
+    assert state["get"] == before_denial, "mismatched account reached provider network"
+    close(restricted)
+
     # Fresh ACP process revalidates the exact credential after session restart.
     restarted = launch()
     init(restarted)
@@ -359,6 +380,8 @@ server.shutdown()
     "invalid_http_fail_closed": True, "redirect_not_followed": True,
     "restart_revalidates_profile": True, "revocation_denies_selected_prompt": True,
     "cross_profile_model_denied": True, "unsupported_oauth_denied": True,
+    "root_selected_account_without_env": True,
+    "deployment_mismatch_denied_before_network": True,
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
 }, sort_keys=True, indent=2))
