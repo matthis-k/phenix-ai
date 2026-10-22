@@ -585,6 +585,26 @@
           excluded = [];
           substitutions = [];
         });
+      openAiApiProviderBundle = pkgs.writeText "phenix-openai-api-bundle.json"
+        (builtins.toJSON {
+          provider = {
+            id = "phenix.provider.openai-api";
+            artifact = "${providerOpenAiApi}";
+          };
+          credentials = {
+            id = "phenix.provider.credential-files";
+            artifact = "${providerCredentialStore}";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          account = {
+            provider_id = "openai";
+            connection_id = "api";
+            profile_id = "personal";
+          };
+          provider_credential_operations = [ "resolve" ];
+          credential_management = true;
+          model_resolution = true;
+        });
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -611,7 +631,7 @@
         python ${./tests/acp-openai-api-key-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/streamed" \
-          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition}
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
         grep -F '"shipping_launcher_authority_exercised": true' "$out/streamed/openai-api-auth-product.json"
       '';
       providerCredentialStoreSource = subset (publicPaths ++ [
@@ -2627,9 +2647,7 @@
             export PHENIX_MODEL_HTTP_MODEL=unselected
             ${basicSqliteEnvironment "basic-openai-api.sqlite"}
             exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
-              --provider-management ${openAiApiManagementComposition} \
-              --provider-credentials ${openAiApiCredentialComposition} \
-              --provider-model-resolver ${openAiApiResolverComposition} "$@"
+              --provider-bundle ${openAiApiProviderBundle} "$@"
           '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {
