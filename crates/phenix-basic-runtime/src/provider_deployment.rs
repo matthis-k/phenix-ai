@@ -19,9 +19,6 @@ const AUTH: &str = "phenix.provider.auth@1";
 const CREDENTIALS: &str = "phenix.provider.credentials@1";
 const CATALOG_OPS: &[&str] = &["list", "describe", "models"];
 const AUTH_OPS: &[&str] = &["status", "begin", "poll", "cancel"];
-// Current main exposes import/revoke. Env-name binding joins this same
-// control-plane policy once its typed contract (#1082) is merged.
-const MANAGEMENT_OPS: &[&str] = &["import", "revoke"];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,10 +41,11 @@ pub struct ProviderDeployment {
     /// Unlisted methods are denied by the kernel, even if implemented.
     #[serde(default)]
     provider_credential_operations: Vec<CredentialOperation>,
-    /// Expose masked API-key import and revocation.
-    /// OAuth-only connections can omit this entirely.
+    /// Explicitly authorized ACP management operations. An OAuth-only
+    /// provider can leave this empty; a new typed operation requires no
+    /// hard-coded changes to the controller or composition builder.
     #[serde(default)]
-    credential_management: bool,
+    credential_management_operations: Vec<CredentialOperation>,
     /// Expose the selected exact-account credential to the native model
     /// installer. OAuth adapters must supply a validated access token, not
     /// hand a persisted OAuth record directly to model inference.
@@ -59,6 +57,7 @@ pub struct ProviderDeployment {
 #[serde(rename_all = "snake_case")]
 enum CredentialOperation {
     Import,
+    BindEnvironment,
     Resolve,
     Revoke,
 }
@@ -67,6 +66,7 @@ impl CredentialOperation {
     fn name(self) -> &'static str {
         match self {
             Self::Import => "import",
+            Self::BindEnvironment => "bind_environment",
             Self::Resolve => "resolve",
             Self::Revoke => "revoke",
         }
@@ -128,7 +128,7 @@ impl ProviderDeployment {
             definitions,
             account,
             provider_credential_operations,
-            credential_management,
+            credential_management_operations,
             model_resolution,
         } = self;
         // The host, not an ACP request, selects trusted installation paths.
@@ -170,6 +170,18 @@ impl ProviderDeployment {
                 &resource,
             ));
         }
+        let managed = credential_management_operations
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if managed.len() != credential_management_operations.len()
+            || (!managed.is_empty()
+                && (!managed.contains(&CredentialOperation::Import)
+                    || !managed.contains(&CredentialOperation::Revoke)
+                    || managed.contains(&CredentialOperation::Resolve)))
+        {
+            return Err("invalid credential management operation selection".into());
+        }
         let management = root(
             &provider.id,
             vec![provider.artifact, credentials.artifact.clone()],
@@ -186,7 +198,7 @@ impl ProviderDeployment {
             grants,
             &resource,
         );
-        let credentials_root = credential_management.then(|| {
+        let credentials_root = (!managed.is_empty()).then(|| {
             root(
                 &credentials.id,
                 vec![credentials.artifact.clone()],
@@ -194,9 +206,9 @@ impl ProviderDeployment {
                 CREDENTIALS,
                 "import",
                 vec![],
-                MANAGEMENT_OPS
+                managed
                     .iter()
-                    .map(|method| grant("root", CREDENTIALS, method, &resource))
+                    .map(|operation| grant("root", CREDENTIALS, operation.name(), &resource))
                     .collect(),
                 &resource,
             )
@@ -242,7 +254,7 @@ mod tests {
                 "profile_id": "work"
             },
             "provider_credential_operations": ["resolve"],
-            "credential_management": true,
+            "credential_management_operations": ["import", "revoke"],
             "model_resolution": true
         }))
         .unwrap()
@@ -292,7 +304,7 @@ mod tests {
     #[test]
     fn oauth_provider_has_private_store_without_api_key_import_or_model_fallback() {
         let mut manifest = fixture();
-        manifest.credential_management = false;
+        manifest.credential_management_operations.clear();
         manifest.model_resolution = false;
         manifest.provider_credential_operations =
             vec![CredentialOperation::Resolve, CredentialOperation::Import];
@@ -335,6 +347,23 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<ProviderDeployment>(invalid).is_err());
+    }
+
+    #[test]
+    fn new_credential_methods_need_no_runtime_grant_count_change() {
+        let mut deployment = fixture();
+        deployment
+            .credential_management_operations
+            .push(CredentialOperation::BindEnvironment);
+        let composed = deployment.compose().unwrap();
+        let control = composed.credentials.unwrap();
+        assert_eq!(control.authority.operations.len(), 3);
+        assert!(control.authority.operations.contains(
+            "phenix.provider.credentials@1/bind_environment"
+        ));
+        let mut invalid = fixture();
+        invalid.credential_management_operations.push(CredentialOperation::Resolve);
+        assert!(invalid.compose().is_err());
     }
 
     #[test]
