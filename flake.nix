@@ -1238,6 +1238,9 @@
             { interface = "phenix.provider.catalog@1"; operation = "list"; }
             { interface = "phenix.provider.catalog@1"; operation = "describe"; }
             { interface = "phenix.provider.auth@1"; operation = "status"; }
+            { interface = "phenix.provider.auth@1"; operation = "begin"; }
+            { interface = "phenix.provider.auth@1"; operation = "poll"; }
+            { interface = "phenix.provider.auth@1"; operation = "cancel"; }
             { interface = "phenix.provider.catalog@1"; operation = "models"; }
           ];
           excluded = [];
@@ -1247,6 +1250,9 @@
               "phenix.provider.catalog@1/list"
               "phenix.provider.catalog@1/describe"
               "phenix.provider.auth@1/status"
+              "phenix.provider.auth@1/begin"
+              "phenix.provider.auth@1/poll"
+              "phenix.provider.auth@1/cancel"
               "phenix.provider.catalog@1/models"
             ];
             resources = [ "phenix.providers.user" ];
