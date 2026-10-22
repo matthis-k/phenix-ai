@@ -2616,7 +2616,7 @@
                  [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; } &&
                ! printenv "$PHENIX_CREDENTIAL_API_KEY_ENV_NAME" >/dev/null; then
               echo "Provide an API-key environment variable, or configure a protected 0700 credential directory for masked input." >&2
-              echo "Set PHENIX_CREDENTIAL_API_KEY_ENV_NAME (default OPENAI_API_KEY), or PHENIX_CREDENTIAL_FILE_DIRECTORY and PHENIX_CREDENTIAL_FILE_CONSENT=1." >&2
+              echo "Set PHENIX_CREDENTIAL_FILE_DIRECTORY and PHENIX_CREDENTIAL_FILE_CONSENT=1, or supply PHENIX_CREDENTIAL_API_KEY_ENV_NAME (default OPENAI_API_KEY)." >&2
               exit 2
             fi
             export PHENIX_OPENAI_API_PROFILE=personal
