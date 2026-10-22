@@ -683,82 +683,85 @@ impl ProviderManagement {
                     },
                 )?;
                 for profile in profiles {
-                if let Some(profile_id) = profile.as_deref() {
-                    if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
-                        continue;
+                    if let Some(profile_id) = profile.as_deref() {
+                        if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                            continue;
+                        }
                     }
-                }
 
-                let mut collected = ModelPageAccumulator::default();
-                let mut cursor = None;
-                let full = loop {
-                    charge_model_option_budget(&mut inspected_pages, 128)?;
-                    let Some(page) = self.optional_model_page(&ModelQuery {
-                        scope: "user".into(),
-                        provider_id: exact.id.clone(),
-                        connection_id: connection.id.clone(),
-                        profile_id: profile.clone(),
-                        cursor: cursor.clone(),
-                        limit: 256,
-                    })?
-                    else {
-                        // Registration without discovery is not a selectable
-                        // model or a reason to break unrelated ACP sessions.
-                        break None;
+                    let mut collected = ModelPageAccumulator::default();
+                    let mut cursor = None;
+                    let full = loop {
+                        charge_model_option_budget(&mut inspected_pages, 128)?;
+                        let Some(page) = self.optional_model_page(&ModelQuery {
+                            scope: "user".into(),
+                            provider_id: exact.id.clone(),
+                            connection_id: connection.id.clone(),
+                            profile_id: profile.clone(),
+                            cursor: cursor.clone(),
+                            limit: 256,
+                        })?
+                        else {
+                            // Registration without discovery is not a selectable
+                            // model or a reason to break unrelated ACP sessions.
+                            break None;
+                        };
+                        cursor = collected.push(page, &profile)?;
+                        if cursor.is_none() {
+                            break Some(collected.complete(profile.clone())?);
+                        }
                     };
-                    cursor = collected.push(page, &profile)?;
-                    if cursor.is_none() {
-                        break Some(collected.complete(profile.clone())?);
-                    }
-                };
-                let Some(full) = full else {
-                    continue;
-                };
-                for model in &full.models {
-                    if !model.selectable || model.connection_id != connection.id {
-                        continue;
-                    }
-                    let desired = ModelSelection {
-                        provider_id: exact.id.clone(),
-                        connection_id: connection.id.clone(),
-                        profile_id: profile.clone(),
-                        model_id: model.id.clone(),
-                        protocol_id: model.protocol_id.clone(),
-                        endpoint_id: model.endpoint_id.clone(),
-                        catalog_revision: full.revision,
-                    };
-                    let Ok(admitted) =
-                        validate_model_selection(&exact, &auth, &full, &desired, true)
-                    else {
+                    let Some(full) = full else {
                         continue;
                     };
-                    let Ok(binding) = bind_http_model(&exact, admitted) else {
-                        continue;
-                    };
-                    // No OAuth/plugin-specific HTTP transport is implemented
-                    // here; never advertise it as an executable choice.
-                    if !matches!(
-                        binding.authentication_kind(),
-                        None | Some(AuthenticationKind::ApiKey)
-                    ) {
-                        continue;
+                    for model in &full.models {
+                        if !model.selectable || model.connection_id != connection.id {
+                            continue;
+                        }
+                        let desired = ModelSelection {
+                            provider_id: exact.id.clone(),
+                            connection_id: connection.id.clone(),
+                            profile_id: profile.clone(),
+                            model_id: model.id.clone(),
+                            protocol_id: model.protocol_id.clone(),
+                            endpoint_id: model.endpoint_id.clone(),
+                            catalog_revision: full.revision,
+                        };
+                        let Ok(admitted) =
+                            validate_model_selection(&exact, &auth, &full, &desired, true)
+                        else {
+                            continue;
+                        };
+                        let Ok(binding) = bind_http_model(&exact, admitted) else {
+                            continue;
+                        };
+                        // No OAuth/plugin-specific HTTP transport is implemented
+                        // here; never advertise it as an executable choice.
+                        if !matches!(
+                            binding.authentication_kind(),
+                            None | Some(AuthenticationKind::ApiKey)
+                        ) {
+                            continue;
+                        }
+                        if binding.credential_identity().is_some()
+                            && !resolvers
+                                .iter()
+                                .any(|r| binding.credential_identity() == Some(&r.identity))
+                        {
+                            continue;
+                        }
+                        if offered.len() >= 128 {
+                            return Err(invalid("too many selectable HTTP models"));
+                        }
+                        offered.push(NativeModelOffer {
+                            id: native_model_option_id(&desired, 0)?,
+                            label: format!(
+                                "{} / {} / {}",
+                                exact.label, connection.label, model.label
+                            ),
+                            selected: desired,
+                        });
                     }
-                    if binding.credential_identity().is_some()
-                        && !resolvers
-                            .iter()
-                            .any(|r| binding.credential_identity() == Some(&r.identity))
-                    {
-                        continue;
-                    }
-                    if offered.len() >= 128 {
-                        return Err(invalid("too many selectable HTTP models"));
-                    }
-                    offered.push(NativeModelOffer {
-                        id: native_model_option_id(&desired, 0)?,
-                        label: format!("{} / {} / {}", exact.label, connection.label, model.label),
-                        selected: desired,
-                    });
-                }
                 }
             }
         }
@@ -1333,15 +1336,19 @@ impl Controller {
         if self.credentials.is_empty() {
             return Err(acp::Error::method_not_found());
         }
-        let profiles = self.credentials.iter().map(|item| {
-            serde_json::json!({
-                "provider_id": item.identity.provider_id(),
-                "connection_id": item.identity.connection_id(),
-                "profile_id": item.identity.profile_id(),
-                "import": true,
-                "revoke": true,
+        let profiles = self
+            .credentials
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "provider_id": item.identity.provider_id(),
+                    "connection_id": item.identity.connection_id(),
+                    "profile_id": item.identity.profile_id(),
+                    "import": true,
+                    "revoke": true,
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         // Preserve the accepted single-account capability shape. When
         // several accounts are granted, enumerate instead of advertising a
         // misleading single selected account or broad wildcard authority.
@@ -1362,7 +1369,9 @@ impl Controller {
         }
         // Identity is a selector, not a grant. The lookup returns one
         // distinct, already validated launcher-owned exact-resource kernel.
-        let resource = identity.resource().map_err(|_| invalid("invalid credential identity"))?;
+        let resource = identity
+            .resource()
+            .map_err(|_| invalid("invalid credential identity"))?;
         let management = self
             .credentials
             .iter()
@@ -1406,8 +1415,14 @@ impl Controller {
         if self.credentials.is_empty() {
             return Err(acp::Error::method_not_found());
         }
-        let resource = identity.resource().map_err(|_| invalid("invalid credential identity"))?;
-        if !self.credentials.iter().any(|item| item.resource == resource) {
+        let resource = identity
+            .resource()
+            .map_err(|_| invalid("invalid credential identity"))?;
+        if !self
+            .credentials
+            .iter()
+            .any(|item| item.resource == resource)
+        {
             return Err(invalid("credential identity is not authorized"));
         }
         let secret = CredentialSecret::new(std::mem::take(&mut request.secret).into_bytes())
@@ -1890,10 +1905,16 @@ impl Controller {
             management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         for credential in self.credentials {
-            credential.kernel.shutdown().map_err(|_| "credential cleanup failed")?;
+            credential
+                .kernel
+                .shutdown()
+                .map_err(|_| "credential cleanup failed")?;
         }
         for resolver in self.resolvers {
-            resolver.kernel.shutdown().map_err(|_| "model resolver cleanup failed")?;
+            resolver
+                .kernel
+                .shutdown()
+                .map_err(|_| "model resolver cleanup failed")?;
         }
         Ok(())
     }
@@ -1922,16 +1943,30 @@ pub(super) fn run(
     if credentials.len() > 32 || resolvers.len() > 32 {
         return Err("too many authorized credential compositions".into());
     }
-    let credentials = credentials.iter().map(prepare_credentials)
+    let credentials = credentials
+        .iter()
+        .map(prepare_credentials)
         .collect::<Result<Vec<_>, _>>()?;
-    let resolvers = resolvers.iter().map(prepare_model_resolver)
+    let resolvers = resolvers
+        .iter()
+        .map(prepare_model_resolver)
         .collect::<Result<Vec<_>, _>>()?;
     let mut seen = std::collections::BTreeSet::new();
-    if credentials.iter().any(|item| !seen.insert(item.resource.clone())) {
+    if credentials
+        .iter()
+        .any(|item| !seen.insert(item.resource.clone()))
+    {
         return Err("duplicate credential root".into());
     }
     seen.clear();
-    if resolvers.iter().any(|item| !seen.insert(item.identity.clone().resource().expect("validated credential root"))) {
+    if resolvers.iter().any(|item| {
+        !seen.insert(
+            item.identity
+                .clone()
+                .resource()
+                .expect("validated credential root"),
+        )
+    }) {
         return Err("duplicate model credential root".into());
     }
     let (tx, receiver) = sync_channel::<Command>(64);
