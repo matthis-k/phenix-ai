@@ -604,6 +604,15 @@
         fi
         grep -F "Set PHENIX_CREDENTIAL_FILE_DIRECTORY" "$out/refusal"
         test -s "$out/launcher-authority.json"
+        # Exercise the shipping *grants* and composition paths with the
+        # dedicated deterministic loopback provider artifact; the production
+        # provider cannot be redirected to a test host at runtime.
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-openai-api-key-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/streamed" \
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition}
+        grep -F '"shipping_launcher_authority_exercised": true' "$out/streamed/openai-api-auth-product.json"
       '';
       providerCredentialStoreSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-credential-files
