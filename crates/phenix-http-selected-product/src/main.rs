@@ -8,7 +8,7 @@ use phenix_kernel::{
     Call, Outcome, Poll,
 };
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AdapterBinding, ApiKeyOptions, AuthenticationKind,
+    bind_http_model, validate_model_selection, AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind,
     AuthenticationMethod, AuthenticationStatus, ConnectionDescriptor, CredentialIdentity,
     CredentialProfile, CredentialProfileStatus, CredentialSecret, HttpModelInstall, ModelOrigin,
     ModelPage, ModelSelection, ProtocolBinding, ProviderDescriptor, ProviderError,
@@ -53,6 +53,7 @@ fn checked_install(endpoint: &str, session: &str, authenticated: bool) -> HttpMo
                         &ApiKeyOptions {
                             environment_variable: None,
                             interactive: true,
+                            presentation: ApiKeyPresentation::Bearer,
                         },
                     )
                     .unwrap(),
