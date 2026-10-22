@@ -447,7 +447,7 @@ fn bound_http_choice_with_kind_endpoint(
                 vec![AuthenticationMethod {
                     id: "key".into(),
                     label: "API key".into(),
-                    kind,
+                    kind: kind.clone(),
                     adapter: if kind == phenix_provider_contracts::AuthenticationKind::ApiKey {
                         phenix_provider_contracts::AdapterBinding::from_typed(
                             "key",
