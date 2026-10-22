@@ -302,7 +302,14 @@ mod plugin {
     }
 
     fn check(host: &Host<'_>, scope: &str) -> CallResult<(), ProviderError> {
-        if scope != "user" || host.resource()?.as_deref() != Some("phenix.providers.user") {
+        // The kernel pins a root resource for all descendants. Verification
+        // resolves one credential through a nested ProviderCredentials import,
+        // so this opt-in, single-profile provider MUST be rooted at that exact
+        // credential resource, not the generic provider-list resource. The
+        // external ACP selector "user" is never an authority grant.
+        let identity = selected_profile().map_err(CallError::Domain)?;
+        let expected = identity.resource().map_err(CallError::Domain)?;
+        if scope != "user" || host.resource()?.as_deref() != Some(expected.as_str()) {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Denied,
                 "provider management scope unauthorized",
