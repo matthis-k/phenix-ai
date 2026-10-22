@@ -19,6 +19,31 @@ use std::time::{Duration, Instant};
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
 const MODEL_ENDPOINT: &str = "https://api.openai.com/v1/models";
+
+#[cfg(feature = "c11-loopback-test")]
+fn test_base() -> Result<String, ProviderError> {
+    let source = std::env::var("PHENIX_C11_TEST_BASE")
+        .map_err(|_| error(ProviderErrorCode::Unavailable, "test provider endpoint unset"))?;
+    let port = source
+        .strip_prefix("http://127.0.0.1:")
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|text| text.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or_else(|| error(ProviderErrorCode::Denied, "test endpoint must be loopback"))?;
+    Ok(format!("http://127.0.0.1:{port}"))
+}
+
+fn models_url() -> Result<String, ProviderError> {
+    #[cfg(feature = "c11-loopback-test")]
+    {
+        return Ok(format!("{}/models", test_base()?));
+    }
+    #[cfg(not(feature = "c11-loopback-test"))]
+    {
+        Ok(MODEL_ENDPOINT.into())
+    }
+}
+
 const MAX_MODELS: usize = 256;
 const MAX_BODY: usize = 256 * 1024;
 
@@ -60,6 +85,20 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
             ProviderErrorCode::Unavailable,
             "OpenAI API registration invalid",
         ));
+    }
+    #[cfg(feature = "c11-loopback-test")]
+    {
+        let base = test_base()?;
+        let c = &mut provider.connections[0];
+        c.base_url = Some(base.clone());
+        for protocol in &mut c.protocols {
+            if protocol.id == "openai-responses" {
+                protocol.endpoint = Some(format!("{base}/responses"));
+            }
+        }
+        for source in &mut c.model_sources {
+            source.endpoint = Some(format!("{base}/models"));
+        }
     }
     Ok(provider)
 }
@@ -115,12 +154,13 @@ fn fetch_models(
         return Err(invalid("invalid OpenAI API key encoding"));
     }
     let token = std::str::from_utf8(bytes).map_err(|_| invalid("invalid API key encoding"))?;
+    let address = models_url()?;
     let mut easy = Easy2::new(Response {
         bytes: Vec::new(),
         too_large: false,
     });
     let configure = (|| -> Result<(), curl::Error> {
-        easy.url(MODEL_ENDPOINT)?;
+        easy.url(&address)?;
         easy.get(true)?;
         easy.follow_location(false)?;
         easy.connect_timeout(Duration::from_secs(4))?;
