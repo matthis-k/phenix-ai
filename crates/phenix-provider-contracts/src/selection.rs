@@ -861,7 +861,9 @@ mod tests {
                     b"selected-fixture-key"
                 );
             }
-            HttpModelAuthorization::CredentialFree => panic!("authenticated choice lost key"),
+            HttpModelAuthorization::CredentialFree | HttpModelAuthorization::BearerToken { .. } => {
+                panic!("API key was not preserved as its expected authorization variant")
+            }
         }
 
         let (mut local, mut no_auth, mut models, mut request) = fixture();
@@ -887,6 +889,52 @@ mod tests {
                 .code,
             ProviderErrorCode::Denied
         );
+    }
+
+    #[test]
+    fn oauth_bearer_requires_exact_verified_account_and_never_becomes_api_key() {
+        let (mut provider, auth, page, requested) = fixture();
+        provider.connections[0].protocols[0].endpoint =
+            Some("https://api.openai.com/v1/responses".into());
+        provider.connections[0].auth_methods[0].kind = AuthenticationKind::OAuthAuthorizationCode;
+        let selected = validate_model_selection(&provider, &auth, &page, &requested, true).unwrap();
+        let binding = bind_http_model(&provider, selected).unwrap();
+        let personal = CredentialIdentity::new("openai", "api", "personal").unwrap();
+        let work = CredentialIdentity::new("openai", "api", "work").unwrap();
+        assert_eq!(
+            HttpModelInstall::from_checked(
+                &binding,
+                "s1".into(),
+                Some((
+                    work,
+                    CredentialSecret::new(b"wrong-account-token".to_vec()).unwrap()
+                )),
+                None,
+            )
+            .unwrap_err()
+            .code,
+            ProviderErrorCode::Denied
+        );
+        let installed = HttpModelInstall::from_checked(
+            &binding,
+            "s1".into(),
+            Some((
+                personal.clone(),
+                CredentialSecret::new(b"authorized-bearer-token".to_vec()).unwrap(),
+            )),
+            None,
+        )
+        .unwrap();
+        match installed.into_parts().5 {
+            HttpModelAuthorization::BearerToken { identity, secret } => {
+                assert_eq!(identity, personal);
+                assert_eq!(
+                    secret.expose_for_authorized_provider(),
+                    b"authorized-bearer-token"
+                );
+            }
+            _ => panic!("OAuth must install with the bearer variant"),
+        }
     }
 
     #[test]

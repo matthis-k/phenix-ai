@@ -605,30 +605,93 @@ fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
 }
 
 #[test]
-fn checked_http_adapter_does_not_infer_oauth_or_plugin_auth_transport_headers() {
+fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth() {
     use phenix_provider_contracts::{AuthenticationKind, CredentialSecret};
     for kind in [
         AuthenticationKind::OAuthAuthorizationCode,
         AuthenticationKind::OAuthDeviceCode,
-        AuthenticationKind::Plugin,
     ] {
         let choice = bound_http_choice_with_kind(true, "model-a", kind);
-        let token = CredentialSecret::new(b"auth-method-fixture-secret".to_vec()).unwrap();
+        let token = CredentialSecret::new(b"authorized-oauth-bearer".to_vec()).unwrap();
+        let config = request::Config::from_checked_binding(
+            &choice,
+            Some((choice.credential_identity().unwrap(), &token)),
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            request::Config::from_checked_binding(
-                &choice,
-                Some((choice.credential_identity().unwrap(), &token)),
-                None,
-            )
-            .unwrap_err()
-            .code,
-            ErrorCode::InvalidInput
+            config
+                .credential
+                .as_ref()
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"authorized-oauth-bearer"
         );
+        assert!(!format!("{config:?}").contains("authorized-oauth-bearer"));
     }
-
-    // Credential-free local models remain explicit and need no auth method.
+    let plugin = bound_http_choice_with_kind(true, "model-a", AuthenticationKind::Plugin);
+    let token = CredentialSecret::new(b"unrecognized-plugin-secret".to_vec()).unwrap();
+    assert_eq!(
+        request::Config::from_checked_binding(
+            &plugin,
+            Some((plugin.credential_identity().unwrap(), &token)),
+            None,
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::InvalidInput
+    );
     let local = bound_http_choice(false);
     assert!(request::Config::from_checked_binding(&local, None, None).is_ok());
+}
+
+#[test]
+fn native_http_oauth_install_rejects_foreign_account_before_transport() {
+    use phenix_provider_contracts::{
+        AuthenticationKind, CredentialIdentity, CredentialSecret, HttpModelInstall,
+        ProviderErrorCode,
+    };
+    for kind in [
+        AuthenticationKind::OAuthAuthorizationCode,
+        AuthenticationKind::OAuthDeviceCode,
+    ] {
+        let binding = bound_http_choice_with_kind(true, "selected-model", kind);
+        let expected = binding.credential_identity().unwrap().clone();
+        let install = HttpModelInstall::from_checked(
+            &binding,
+            "session-1".into(),
+            Some((
+                expected.clone(),
+                CredentialSecret::new(b"authorized-bearer-token".to_vec()).unwrap(),
+            )),
+            None,
+        )
+        .unwrap();
+        let config = request::Config::from_install(install).unwrap();
+        assert_eq!(
+            config
+                .credential
+                .as_ref()
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"authorized-bearer-token"
+        );
+        assert!(!format!("{config:?}").contains("authorized-bearer-token"));
+
+        let foreign = CredentialIdentity::new("fixture", "api", "another-account").unwrap();
+        assert_ne!(foreign, expected);
+        let error = HttpModelInstall::from_checked(
+            &binding,
+            "session-1".into(),
+            Some((
+                foreign,
+                CredentialSecret::new(b"foreign-bearer-token".to_vec()).unwrap(),
+            )),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ProviderErrorCode::Denied);
+    }
 }
 
 #[test]
@@ -664,7 +727,16 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
         time::Duration,
     };
 
-    for authenticated in [false, true] {
+    // Exercise the actual curl/SSE path for both OAuth grant types, an API
+    // key and credential-free inference. All authenticated methods must send
+    // exactly the selected bearer and never read the environment fallback.
+    for auth_method in [
+        None,
+        Some(AuthenticationKind::ApiKey),
+        Some(AuthenticationKind::OAuthAuthorizationCode),
+        Some(AuthenticationKind::OAuthDeviceCode),
+    ] {
+        let authenticated = auth_method.is_some();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!(
             "http://127.0.0.1:{}/v1/chat/completions",
@@ -729,7 +801,7 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
         let binding = bound_http_choice_with_kind_endpoint(
             authenticated,
             "selected-fixture-model",
-            AuthenticationKind::ApiKey,
+            auth_method.unwrap_or(AuthenticationKind::ApiKey),
             Some(&endpoint),
         );
         let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
