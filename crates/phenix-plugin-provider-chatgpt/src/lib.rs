@@ -75,7 +75,11 @@ impl Drop for OAuthAccount {
         // The protected credential store owns persistence; temporary JSON
         // projections must not leave the access/refresh/ID tokens in heap
         // allocations longer than their Rust lifetimes.
-        for token in [&mut self.access_token, &mut self.refresh_token, &mut self.id_token] {
+        for token in [
+            &mut self.access_token,
+            &mut self.refresh_token,
+            &mut self.id_token,
+        ] {
             let mut bytes = std::mem::take(token).into_bytes();
             bytes.fill(0);
         }
