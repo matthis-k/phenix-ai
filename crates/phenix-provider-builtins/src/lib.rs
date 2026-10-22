@@ -215,14 +215,13 @@ impl ConnectionExtensions for ConnectionDescriptor {
         let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
             return Err("key environment variable requires API key auth");
         };
-        method.adapter = AdapterBinding::from_typed(
-            "api-key",
-            &ApiKeyOptions {
-                environment_variable: Some(name.into()),
-                interactive: true,
-            },
-        )
-        .map_err(|_| "invalid API key environment")?;
+        let options = ApiKeyOptions {
+            environment_variable: Some(name.into()),
+            interactive: true,
+        };
+        options.validate().map_err(|_| "invalid API key environment")?;
+        method.adapter = AdapterBinding::from_typed("api-key", &options)
+            .map_err(|_| "invalid API key environment")?;
         Ok(self)
     }
 }
