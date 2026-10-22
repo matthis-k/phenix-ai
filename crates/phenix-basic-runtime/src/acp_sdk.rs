@@ -808,40 +808,37 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         .ok_or("credential management requires one explicit credential resource")?;
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid launcher credential resource")?;
-    // A launcher's exact credential-management root must grant all and only
-    // the operations that its ACP bridge exposes. Keep the source-name binding
-    // independent from the secret-import and revocation capabilities.
-    const METHODS: [&str; 3] = ["import", "bind_environment", "revoke"];
-    let operations = METHODS
-        .into_iter()
-        .map(|method| format!("{CONTRACT}/{method}"))
-        .collect::<std::collections::BTreeSet<_>>();
-    if spec.entry.interface != CONTRACT
-        || spec.entry.operation != "import"
-        || spec.authority.operations != operations
-        || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
-        || spec.grants.len() != METHODS.len()
-        || !spec.slots.is_empty()
-        || !spec.excluded.is_empty()
-        || !spec.substitutions.is_empty()
-    {
-        return Err("credential management composition has unexpected authority".into());
-    }
+    // Validate the exact launcher-granted subset, not a fixed operation
+    // count. Existing import/revoke roots remain valid while newer backends
+    // may grant the independently typed variable-name source operation.
+    // The kernel checks that each granted method actually exists.
+    let permitted = ["import", "bind_environment", "revoke"];
     let mut seen = std::collections::BTreeSet::new();
     for grant in &spec.grants {
         if grant.caller != "root"
             || grant.interface != CONTRACT
-            || !METHODS.contains(&grant.operation.as_str())
+            || !permitted.contains(&grant.operation.as_str())
             || grant.resources != std::collections::BTreeSet::from([resource.to_string()])
             || !seen.insert(grant.operation.as_str())
         {
             return Err("credential management requires exact root grants".into());
         }
     }
-    if seen.len() != METHODS.len() {
-        return Err(
-            "credential management requires exact API-key source, import and revoke grants".into(),
-        );
+    let operations = seen
+        .iter()
+        .map(|operation| format!("{CONTRACT}/{operation}"))
+        .collect::<std::collections::BTreeSet<_>>();
+    if spec.entry.interface != CONTRACT
+        || spec.entry.operation != "import"
+        || !seen.contains("import")
+        || !seen.contains("revoke")
+        || spec.authority.operations != operations
+        || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
+        || !spec.slots.is_empty()
+        || !spec.excluded.is_empty()
+        || !spec.substitutions.is_empty()
+    {
+        return Err("credential management composition has unexpected authority".into());
     }
     let kernel = Prepared::prepare(spec.clone())
         .map_err(|_| "invalid credential management composition".to_string())?
