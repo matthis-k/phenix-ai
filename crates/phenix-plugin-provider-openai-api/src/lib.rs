@@ -253,7 +253,7 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
             || id.len() > 128
             || !id
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
         {
             return Err(error(
                 ProviderErrorCode::Unavailable,
@@ -543,6 +543,12 @@ mod tests {
         assert!(supports_responses("o3"));
         assert!(!supports_responses("text-embedding-3-large"));
         assert!(!supports_responses("dall-e-3"));
+        // Account catalog may contain non-chat fine-tune IDs with colons.
+        // They must not invalidate an otherwise verified profile.
+        assert_eq!(
+            parse_model_ids(br#"{"object":"list","data":[{"id":"ft:gpt-4.1:team:run"}]}"#).unwrap(),
+            vec!["ft:gpt-4.1:team:run"],
+        );
         let wrong = br#"{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5"}]}"#;
         assert_eq!(
             parse_model_ids(wrong).unwrap_err().code,
