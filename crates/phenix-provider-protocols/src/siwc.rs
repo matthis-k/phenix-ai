@@ -240,7 +240,10 @@ impl AuthorizationAttempt<'_> {
 
     /// Consumes the pending attempt. Matching callback parameters proves only
     /// correlation, never authentication or ChatGPT plan entitlement.
-    pub fn accept_callback(self, callback_uri: &str) -> Result<VerifiedCallback, RegistrationError> {
+    pub fn accept_callback(
+        self,
+        callback_uri: &str,
+    ) -> Result<VerifiedCallback, RegistrationError> {
         let expected = self.check()?;
         if callback_uri.len() > 16 * 1024 {
             return Err(RegistrationError::InvalidCallback);
@@ -300,7 +303,10 @@ impl AuthorizationAttempt<'_> {
             Registration::Returning {
                 issued_client_id, ..
             } => {
-                if client_id.as_deref().is_some_and(|id| id != issued_client_id) {
+                if client_id
+                    .as_deref()
+                    .is_some_and(|id| id != issued_client_id)
+                {
                     return Err(RegistrationError::ClientMismatch);
                 }
                 issued_client_id.to_owned()
@@ -337,14 +343,19 @@ mod tests {
     }
 
     fn first() -> AuthorizationAttempt<'static> {
-        start(Registration::First { app_name: "Phenix AI" })
+        start(Registration::First {
+            app_name: "Phenix AI",
+        })
     }
 
     #[test]
     fn dynamic_registration_keeps_issued_client_id_for_exchange() {
         let uri = first().authorization_url().unwrap();
-        let params: std::collections::BTreeMap<_, _> =
-            Url::parse(&uri).unwrap().query_pairs().into_owned().collect();
+        let params: std::collections::BTreeMap<_, _> = Url::parse(&uri)
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
         assert_eq!(params["client_id"], NEW_CLIENT);
         assert_eq!(params["agent_name_hint"], "Phenix AI");
         assert_eq!(params["ext_agent_host_id"], HOST);
@@ -359,8 +370,9 @@ mod tests {
             .unwrap();
         assert_eq!(returned.issued_client_id(), "oaiapp_issued");
         let form = returned.exchange_form(VERIFIER).unwrap();
-        let fields: std::collections::BTreeMap<_, _> =
-            url::form_urlencoded::parse(form.as_bytes()).into_owned().collect();
+        let fields: std::collections::BTreeMap<_, _> = url::form_urlencoded::parse(form.as_bytes())
+            .into_owned()
+            .collect();
         assert_eq!(fields["client_id"], "oaiapp_issued");
         assert_eq!(fields["code"], "short-lived-code");
         assert_eq!(fields["resource"], RESOURCE);
@@ -393,8 +405,11 @@ mod tests {
             })
         }
         let url = returning().authorization_url().unwrap();
-        let query: std::collections::BTreeMap<_, _> =
-            Url::parse(&url).unwrap().query_pairs().into_owned().collect();
+        let query: std::collections::BTreeMap<_, _> = Url::parse(&url)
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
         assert_eq!(query["client_id"], "oaiapp_saved");
         assert!(!query.contains_key("agent_name_hint"));
         assert_eq!(query["id_token_hint"], "saved-id-token");
@@ -453,8 +468,12 @@ mod tests {
             "http://@127.0.0.1:1455/auth/callback",
             "http://127.0.0.1:0/auth/callback",
         ] {
-            assert!(first().accept_callback(&format!("{uri}?state={STATE}&code=c"))
-                .is_err(), "{uri}");
+            assert!(
+                first()
+                    .accept_callback(&format!("{uri}?state={STATE}&code=c"))
+                    .is_err(),
+                "{uri}"
+            );
         }
         assert!(matches!(
             AuthorizationAttempt {
@@ -508,9 +527,12 @@ mod tests {
             Err(RegistrationError::InvalidHost)
         ));
         assert!(matches!(
-            first().accept_callback(&format!(
-                "{CALLBACK}?state={STATE}&code=c&client_id=oaiapp_issued"
-            )).unwrap().exchange_form("not-pkce"),
+            first()
+                .accept_callback(&format!(
+                    "{CALLBACK}?state={STATE}&code=c&client_id=oaiapp_issued"
+                ))
+                .unwrap()
+                .exchange_form("not-pkce"),
             Err(RegistrationError::InvalidAttempt)
         ));
     }
