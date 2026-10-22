@@ -75,7 +75,10 @@ fn selected_profile_from_resource(
         )
     })?;
     let identity = CredentialIdentity::from_resource(raw).map_err(|_| {
-        error(ProviderErrorCode::Denied, "invalid provider credential root")
+        error(
+            ProviderErrorCode::Denied,
+            "invalid provider credential root",
+        )
     })?;
     require_identity(identity.provider_id(), identity.connection_id())?;
     if configured.is_some_and(|expected| expected != identity.profile_id()) {
