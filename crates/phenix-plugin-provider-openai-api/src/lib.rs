@@ -61,14 +61,33 @@ fn invalid(message: &str) -> ProviderError {
     error(ProviderErrorCode::InvalidInput, message)
 }
 
-fn selected_profile() -> Result<CredentialIdentity, ProviderError> {
-    let profile = std::env::var("PHENIX_OPENAI_API_PROFILE").map_err(|_| {
+/// The launcher's exact root, not process-global configuration, selects an
+/// account. A configured profile is only an additional restriction, never a
+/// fallback that could redirect credential resolution to a sibling account.
+fn selected_profile_from_resource(
+    resource: Option<&str>,
+    configured: Option<&str>,
+) -> Result<CredentialIdentity, ProviderError> {
+    let raw = resource.ok_or_else(|| {
         error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI API profile is not configured",
+            ProviderErrorCode::Denied,
+            "OpenAI API credential root is not authorized",
         )
     })?;
-    CredentialIdentity::new(PROVIDER, CONNECTION, profile)
+    let identity = CredentialIdentity::from_resource(raw).map_err(|_| {
+        error(
+            ProviderErrorCode::Denied,
+            "invalid provider credential root",
+        )
+    })?;
+    require_identity(identity.provider_id(), identity.connection_id())?;
+    if configured.is_some_and(|expected| expected != identity.profile_id()) {
+        return Err(error(
+            ProviderErrorCode::Denied,
+            "configured provider profile does not match authorized credential root",
+        ));
+    }
+    Ok(identity)
 }
 
 fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
@@ -301,20 +320,34 @@ mod plugin {
         attempts: BTreeMap<String, Instant>,
     }
 
+    fn scoped_profile(host: &Host<'_>) -> CallResult<CredentialIdentity, ProviderError> {
+        // The deployment may restrict its provider instance to a profile.
+        // Absent that restriction, the kernel-pinned credential resource is
+        // sufficient and cannot be broadened by an ACP account selector.
+        let configured = match std::env::var("PHENIX_OPENAI_API_PROFILE") {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => {
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::Denied,
+                    "invalid provider profile configuration",
+                )))
+            }
+        };
+        selected_profile_from_resource(host.resource()?.as_deref(), configured.as_deref())
+            .map_err(CallError::Domain)
+    }
+
     fn check(host: &Host<'_>, scope: &str) -> CallResult<(), ProviderError> {
-        // The kernel pins a root resource for all descendants. Verification
-        // resolves one credential through a nested ProviderCredentials import,
-        // so this opt-in, single-profile provider MUST be rooted at that exact
-        // credential resource, not the generic provider-list resource. The
-        // external ACP selector "user" is never an authority grant.
-        let identity = selected_profile().map_err(CallError::Domain)?;
-        let expected = identity.resource().map_err(CallError::Domain)?;
-        if scope != "user" || host.resource()?.as_deref() != Some(expected.as_str()) {
+        // "user" is a selector, never an authority grant. The configured
+        // composition pins an exact credential resource for this invocation.
+        if scope != "user" {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Denied,
                 "provider management scope unauthorized",
             )));
         }
+        scoped_profile(host)?;
         Ok(())
     }
 
@@ -331,7 +364,7 @@ mod plugin {
     }
 
     fn profile(host: &Host<'_>) -> CallResult<CredentialProfile, ProviderError> {
-        let selected = selected_profile().map_err(CallError::Domain)?;
+        let selected = scoped_profile(host)?;
         let status = match models(host, &selected) {
             Ok(_) => CredentialProfileStatus::Authenticated,
             Err(_) => CredentialProfileStatus::Unavailable {
@@ -383,7 +416,7 @@ mod plugin {
     ) -> CallResult<ModelPage, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        let selected = selected_profile().map_err(CallError::Domain)?;
+        let selected = scoped_profile(host)?;
         if query.profile_id.as_deref() != Some(selected.profile_id())
             || query.cursor.is_some()
             || query.limit == 0
@@ -431,10 +464,7 @@ mod plugin {
     ) -> CallResult<AuthenticationStatus, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        let profiles = match selected_profile() {
-            Ok(_) => vec![profile(host)?],
-            Err(_) => vec![],
-        };
+        let profiles = vec![profile(host)?];
         Ok(AuthenticationStatus {
             provider_id: PROVIDER.into(),
             connection_id: CONNECTION.into(),
@@ -455,7 +485,7 @@ mod plugin {
                 "unavailable authentication method",
             )));
         }
-        selected_profile().map_err(CallError::Domain)?;
+        scoped_profile(host)?;
         if state.attempts.len() >= 16 {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Unavailable,
@@ -551,6 +581,47 @@ mod tests {
         assert_eq!(
             parse_model_ids(wrong).unwrap_err().code,
             ProviderErrorCode::Unavailable,
+        );
+    }
+
+    #[test]
+    fn exact_root_selects_named_account_without_implicit_environment_fallback() {
+        let personal = CredentialIdentity::new(PROVIDER, CONNECTION, "personal").unwrap();
+        let work = CredentialIdentity::new(PROVIDER, CONNECTION, "work").unwrap();
+        let personal_resource = personal.resource().unwrap();
+        let work_resource = work.resource().unwrap();
+        assert_eq!(
+            selected_profile_from_resource(Some(&work_resource), None).unwrap(),
+            work
+        );
+        assert_eq!(
+            selected_profile_from_resource(Some(&personal_resource), Some("personal")).unwrap(),
+            personal
+        );
+        assert_eq!(
+            selected_profile_from_resource(Some(&work_resource), Some("personal"))
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
+        );
+        assert_eq!(
+            selected_profile_from_resource(None, Some("work"))
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
+        );
+        let foreign = CredentialIdentity::new("anthropic", CONNECTION, "work").unwrap();
+        assert_eq!(
+            selected_profile_from_resource(Some(&foreign.resource().unwrap()), None)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::NotFound
+        );
+        assert_eq!(
+            selected_profile_from_resource(Some("phenix.credentials.malformed"), None)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Denied
         );
     }
 
