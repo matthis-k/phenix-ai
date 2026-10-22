@@ -60,6 +60,42 @@ fn environment_key_name() -> Result<Option<String>, ProviderError> {
     Ok(Some(name))
 }
 
+const ENV_BIND_PREFIX: &[u8] = b"phenix-credential-env-v1:";
+
+/// Tagged values are source metadata, not API-key bytes. Direct key import
+/// rejects this reserved marker, so a raw key can never accidentally resolve
+/// a different environment variable.
+fn encoded_env_binding(name: &str) -> Result<Vec<u8>, ProviderError> {
+    if !valid_key_environment_name(name) {
+        return Err(error(ProviderErrorCode::InvalidInput, "invalid API-key variable name"));
+    }
+    let mut bytes = ENV_BIND_PREFIX.to_vec();
+    bytes.extend_from_slice(name.as_bytes());
+    Ok(bytes)
+}
+
+fn decoded_env_binding(bytes: &[u8]) -> Result<Option<&str>, ProviderError> {
+    let Some(raw) = bytes.strip_prefix(ENV_BIND_PREFIX) else { return Ok(None); };
+    let name = std::str::from_utf8(raw)
+        .map_err(|_| error(ProviderErrorCode::InvalidInput, "invalid bound variable name"))?;
+    if !valid_key_environment_name(name) {
+        return Err(error(ProviderErrorCode::InvalidInput, "invalid bound variable name"));
+    }
+    Ok(Some(name))
+}
+
+fn read_named_environment(name: &str)
+    -> Result<phenix_provider_contracts::CredentialSecret, ProviderError>
+{
+    let bytes = std::env::var_os(name)
+        .ok_or_else(|| error(ProviderErrorCode::NotFound, "configured API-key variable is unset"))?
+        .into_encoded_bytes();
+    if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
+        return Err(error(ProviderErrorCode::InvalidInput, "invalid API-key environment value"));
+    }
+    phenix_provider_contracts::CredentialSecret::new(bytes)
+}
+
 fn valid_key_environment_name(name: &str) -> bool {
     phenix_provider_contracts::ApiKeyOptions {
         environment_variable: Some(name.to_owned()),
@@ -115,7 +151,7 @@ fn authorize(
 )]
 mod plugin {
     use super::*;
-    use phenix_provider_contracts::{CredentialImport, CredentialSecret, ProviderCredentials};
+    use phenix_provider_contracts::{CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials};
     use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
@@ -155,6 +191,11 @@ mod plugin {
         // Check the authenticated call resource before opening/touching the backend.
         let id =
             authorize(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        if request.secret.expose_for_authorized_provider().starts_with(ENV_BIND_PREFIX) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput, "reserved credential source marker",
+            )));
+        }
         let secret = Secret::new(request.secret.expose_for_authorized_provider().to_vec())
             .map_err(backend_error)
             .map_err(CallError::Domain)?;
@@ -166,6 +207,23 @@ mod plugin {
             .map_err(CallError::Domain)
     }
 
+    #[provide(ProviderCredentials::bind_environment)]
+    fn bind_environment(
+        state: &mut State,
+        host: &Host<'_>,
+        request: CredentialEnvironmentBinding,
+    ) -> CallResult<(), ProviderError> {
+        let id = authorize(&request.identity, host.resource()?.as_deref())
+            .map_err(CallError::Domain)?;
+        let bytes = encoded_env_binding(&request.environment_variable)
+            .map_err(CallError::Domain)?;
+        let record = Secret::new(bytes).map_err(backend_error).map_err(CallError::Domain)?;
+        // Persist ONLY the name. The environment value is resolved lazily on
+        // every authorized provider operation and is never copied to the vault.
+        state.backend().map_err(CallError::Domain)?
+            .store(&id, &record).map_err(backend_error).map_err(CallError::Domain)
+    }
+
     #[provide(ProviderCredentials::resolve)]
     fn resolve(
         state: &mut State,
@@ -173,19 +231,25 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<CredentialSecret, ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
-        // Read the environment only after verifying the kernel's exact
-        // credential root; an arbitrary ACP selector cannot obtain it.
-        if let Some(secret) = environment_key().map_err(CallError::Domain)? {
-            return Ok(secret);
+        // An explicitly bound exact-account source wins over a process-wide
+        // legacy launcher hint. Never persist the resolved environment value.
+        let stored = state.backend().map_err(CallError::Domain)?
+            .read(&id);
+        match stored {
+            Ok(secret) => {
+                let bytes = secret.expose_for_authorized_provider();
+                if let Some(name) = decoded_env_binding(bytes).map_err(CallError::Domain)? {
+                    read_named_environment(name).map_err(CallError::Domain)
+                } else {
+                    CredentialSecret::new(bytes.to_vec()).map_err(CallError::Domain)
+                }
+            }
+            Err(CredentialError::NotFound) => {
+                environment_key().map_err(CallError::Domain)?
+                    .ok_or_else(|| CallError::Domain(backend_error(CredentialError::NotFound)))
+            }
+            Err(problem) => Err(CallError::Domain(backend_error(problem))),
         }
-        let secret = state
-            .backend()
-            .map_err(CallError::Domain)?
-            .read(&id)
-            .map_err(backend_error)
-            .map_err(CallError::Domain)?;
-        CredentialSecret::new(secret.expose_for_authorized_provider().to_vec())
-            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderCredentials::revoke)]
@@ -195,9 +259,14 @@ mod plugin {
         request: CredentialIdentity,
     ) -> CallResult<(), ProviderError> {
         let id = authorize(&request, host.resource()?.as_deref()).map_err(CallError::Domain)?;
-        // Revoking a file cannot invalidate a process environment variable.
-        // Fail explicitly rather than falsely reporting an account revoked.
-        if environment_key().map_err(CallError::Domain)?.is_some() {
+        let bound = state.backend().map_err(CallError::Domain)?.read(&id)
+            .ok()
+            .and_then(|secret| decoded_env_binding(secret.expose_for_authorized_provider())
+                .ok().flatten().map(str::to_owned))
+            .is_some();
+        // Deleting an explicit variable-name binding revokes the reference.
+        // A process-global inherited variable cannot be revoked by a file write.
+        if !bound && environment_key().map_err(CallError::Domain)?.is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Denied,
                 "API key supplied by environment; unset it and restart to revoke",
@@ -216,6 +285,16 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_sdk::ContractMetadata;
+
+    #[test]
+    fn exact_account_environment_source_is_name_only_and_disjoint_from_raw_keys() {
+        let bound = encoded_env_binding("OPENAI_API_KEY").unwrap();
+        assert_eq!(decoded_env_binding(&bound).unwrap(), Some("OPENAI_API_KEY"));
+        assert_eq!(decoded_env_binding(b"sk-direct-key").unwrap(), None);
+        assert!(encoded_env_binding("unsafe-name").is_err());
+        assert!(!bound.windows(b"secret-api-key".len())
+            .any(|part| part == b"secret-api-key"));
+    }
 
     #[test]
     fn environment_source_accepts_only_bounded_variable_names() {
