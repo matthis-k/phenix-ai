@@ -105,9 +105,17 @@ mod tests {
         assert_eq!(verified.as_str(), "user-fixture");
 
         for (issuer, client, nonce) in [
-            ("https://different.example.test", "issued-client", TEST_NONCE),
+            (
+                "https://different.example.test",
+                "issued-client",
+                TEST_NONCE,
+            ),
             ("https://auth.example.test", "different-client", TEST_NONCE),
-            ("https://auth.example.test", "issued-client", "other-nonce-other-nonce-other-nonce"),
+            (
+                "https://auth.example.test",
+                "issued-client",
+                "other-nonce-other-nonce-other-nonce",
+            ),
         ] {
             assert_eq!(
                 verify_signed_oidc_identity(
@@ -146,7 +154,11 @@ mod tests {
         // A well-formed token body with a modified signature is not identity.
         let mut forged = SIGNED_ID_TOKEN.to_owned();
         forged.pop();
-        forged.push(if SIGNED_ID_TOKEN.ends_with('A') { 'B' } else { 'A' });
+        forged.push(if SIGNED_ID_TOKEN.ends_with('A') {
+            'B'
+        } else {
+            'A'
+        });
         assert_eq!(
             verify_signed_oidc_identity(
                 &forged,
