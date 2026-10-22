@@ -703,8 +703,8 @@
         version = "0.1.0";
         src = providerProtocolsSource;
         cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs" ];
-        cargoTestFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs" ];
+        cargoBuildFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs,siwc-verified" ];
+        cargoTestFlags = [ "-p" "phenix-provider-protocols" "--features" "model-codecs,siwc-verified" ];
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
         installPhase = ''
