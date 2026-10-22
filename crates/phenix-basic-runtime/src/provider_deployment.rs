@@ -137,7 +137,9 @@ impl ProviderDeployment {
             || credentials.id.is_empty()
             || provider.id == credentials.id
             || definitions.is_empty()
-            || definitions.iter().any(|path| !Path::new(path).is_absolute())
+            || definitions
+                .iter()
+                .any(|path| !Path::new(path).is_absolute())
             || !Path::new(&provider.artifact).is_absolute()
             || !Path::new(&credentials.artifact).is_absolute()
         {
@@ -258,7 +260,10 @@ mod tests {
         assert_eq!(management.slots[0].slot, "Credentials");
         assert_eq!(management.slots[0].provider, "phenix.credentials.keyring");
         assert_eq!(management.resource.as_deref(), Some(expected.as_str()));
-        assert_eq!(management.authority.resources, BTreeSet::from([expected.clone()]));
+        assert_eq!(
+            management.authority.resources,
+            BTreeSet::from([expected.clone()])
+        );
         assert_eq!(management.authority.operations.len(), 8);
         assert!(management
             .grants
@@ -270,11 +275,17 @@ mod tests {
             .any(|g| g.caller == "phenix.provider.example" && g.operation == "import"));
         let control = installed.credentials.unwrap();
         assert_eq!(control.authority.operations.len(), 2);
-        assert!(control.authority.operations.contains("phenix.provider.credentials@1/import"));
+        assert!(control
+            .authority
+            .operations
+            .contains("phenix.provider.credentials@1/import"));
         assert_eq!(control.artifacts, vec!["/nix/store/keyring"]);
         let resolver = installed.resolver.unwrap();
         assert_eq!(resolver.authority.operations.len(), 1);
-        assert!(resolver.authority.operations.contains("phenix.provider.credentials@1/resolve"));
+        assert!(resolver
+            .authority
+            .operations
+            .contains("phenix.provider.credentials@1/resolve"));
         assert_eq!(resolver.resource.as_deref(), Some(expected.as_str()));
     }
 
@@ -283,10 +294,8 @@ mod tests {
         let mut manifest = fixture();
         manifest.credential_management = false;
         manifest.model_resolution = false;
-        manifest.provider_credential_operations = vec![
-            CredentialOperation::Resolve,
-            CredentialOperation::Import,
-        ];
+        manifest.provider_credential_operations =
+            vec![CredentialOperation::Resolve, CredentialOperation::Import];
         let composed = manifest.compose().unwrap();
         assert!(composed.credentials.is_none());
         assert!(composed.resolver.is_none());
@@ -305,7 +314,9 @@ mod tests {
     #[test]
     fn invalid_or_ambiguous_deployments_are_rejected() {
         let mut duplicate = fixture();
-        duplicate.provider_credential_operations.push(CredentialOperation::Resolve);
+        duplicate
+            .provider_credential_operations
+            .push(CredentialOperation::Resolve);
         assert!(duplicate.compose().is_err());
         let mut same = fixture();
         same.credentials.id = same.provider.id.clone();
