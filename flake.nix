@@ -445,6 +445,34 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
+      # Provider-owned ChatGPT authorization-code/OIDC plugin. This is
+      # dormant unless a separate launcher explicitly composes its exact
+      # named-account credential grants and provider auth routes.
+      providerChatGptSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-chatgpt
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerChatGpt = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-chatgpt";
+        version = "0.1.0";
+        src = providerChatGptSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-chatgpt" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-chatgpt" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_chatgpt.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       # Dedicated test-only artifact permits local HTTP transport fixtures
       # without adding a loopback URL override to the production provider.
       providerOpenAiApiFixture = rust.buildRustPackage {
@@ -2522,6 +2550,7 @@
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
+        phenix-plugin-provider-chatgpt = providerChatGpt;
         phenix-plugin-provider-credential-files = providerCredentialStore;
         phenix-plugin-provider-secret-service = providerSecretService;
         phenix-provider-contracts = providerDefinitions;
@@ -2671,6 +2700,7 @@
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-openai-api = providerOpenAiApi;
+        provider-chatgpt = providerChatGpt;
         provider-openai-api-product = providerOpenAiApiProductCheck;
         provider-openai-api-launcher = providerOpenAiApiLauncherCheck;
         b4-scripted = scriptedModelCheck;
