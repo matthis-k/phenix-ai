@@ -483,10 +483,13 @@ mod plugin {
             let mut form = correlated
                 .exchange_form(pending.pkce.verifier())
                 .map_err(|_| CallError::Domain(denied("invalid OAuth exchange")))?;
-            let tokens = exchange_token(&form)
-                .map_err(|_| CallError::Domain(denied("OAuth code exchange rejected")))?;
+            // Wipe the authorization-code form on *both* successful and
+            // rejected exchanges; a failed request must not leave a copy.
+            let exchange = exchange_token(&form);
             let mut form_bytes = std::mem::take(&mut form).into_bytes();
             form_bytes.fill(0);
+            let tokens = exchange
+                .map_err(|_| CallError::Domain(denied("OAuth code exchange rejected")))?;
             let jwks = issuer_jwks()
                 .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
             let verified = verify_chatgpt_identity(
