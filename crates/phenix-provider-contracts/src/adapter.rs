@@ -323,14 +323,26 @@ mod tests {
         assert_eq!(custom.header_value("opaque"), "Token opaque");
 
         for name in ["Host", "Cookie", "Content-Length", "x-key\r\nInjected", ""] {
-            assert!(ApiKeyPresentation::Header {
-                name: name.into(), prefix: String::new(),
-            }.validate().is_err(), "{name:?}");
+            assert!(
+                ApiKeyPresentation::Header {
+                    name: name.into(),
+                    prefix: String::new(),
+                }
+                .validate()
+                .is_err(),
+                "{name:?}"
+            );
         }
         for prefix in ["secret:\r\n", "a\n", "a\t"] {
-            assert!(ApiKeyPresentation::Header {
-                name: "x-api-key".into(), prefix: prefix.into(),
-            }.validate().is_err(), "{prefix:?}");
+            assert!(
+                ApiKeyPresentation::Header {
+                    name: "x-api-key".into(),
+                    prefix: prefix.into(),
+                }
+                .validate()
+                .is_err(),
+                "{prefix:?}"
+            );
         }
     }
 

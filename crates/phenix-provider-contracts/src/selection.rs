@@ -545,14 +545,8 @@ mod tests {
         other_page.models[0].protocol_id = "anthropic-messages".into();
         let mut other_request = request.clone();
         other_request.protocol_id = "anthropic-messages".into();
-        let admitted = validate_model_selection(
-            &provider,
-            &auth,
-            &other_page,
-            &other_request,
-            true,
-        )
-        .unwrap();
+        let admitted =
+            validate_model_selection(&provider, &auth, &other_page, &other_request, true).unwrap();
         let checked = bind_http_model(&provider, admitted).unwrap();
         assert_eq!(
             checked.api_key_presentation().unwrap(),
