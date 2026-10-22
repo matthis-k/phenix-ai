@@ -735,11 +735,14 @@ impl ProviderManagement {
                         let Ok(binding) = bind_http_model(&exact, admitted) else {
                             continue;
                         };
-                        // No OAuth/plugin-specific HTTP transport is implemented
-                        // here; never advertise it as an executable choice.
+                        // Only installed and verified API key or OAuth
+                        // bearer methods can become executable selections.
                         if !matches!(
                             binding.authentication_kind(),
-                            None | Some(AuthenticationKind::ApiKey)
+                            None
+                                | Some(AuthenticationKind::ApiKey)
+                                | Some(AuthenticationKind::OAuthAuthorizationCode)
+                                | Some(AuthenticationKind::OAuthDeviceCode)
                         ) {
                             continue;
                         }
@@ -1727,9 +1730,17 @@ impl Controller {
         let binding = management.current_http_binding(desired)?;
         let credential = match (binding.credential_identity(), binding.authentication_kind()) {
             (None, None) => None,
-            (Some(identity), Some(AuthenticationKind::ApiKey)) => {
-                // Scope derivation is not a grant. The separate model resolver
-                // kernel must also possess the exact launcher-owned root.
+            (
+                Some(identity),
+                Some(
+                    AuthenticationKind::ApiKey
+                    | AuthenticationKind::OAuthAuthorizationCode
+                    | AuthenticationKind::OAuthDeviceCode,
+                ),
+            ) => {
+                // Scope derivation is not a grant. The selected account's
+                // exact launcher-owned resolver must admit the credential,
+                // and the provider must freshly verify the selected profile.
                 binding
                     .resolution_scope_for(identity)
                     .map_err(provider_rejection)?;
@@ -1737,10 +1748,10 @@ impl Controller {
                     .resolvers
                     .iter()
                     .find(|source| source.identity == *identity)
-                    .ok_or_else(|| invalid("selected API-key resolver is not installed"))?;
+                    .ok_or_else(|| invalid("selected credential resolver is not installed"))?;
                 let secret = resolver
                     .resolve_for(identity)
-                    .map_err(|_| invalid("selected API-key resolution was denied"))?;
+                    .map_err(|_| invalid("selected credential resolution was denied"))?;
                 Some((identity.clone(), secret))
             }
             _ => return Err(invalid("selected model authentication is unsupported")),
