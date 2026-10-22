@@ -16,6 +16,13 @@ pub enum HttpModelAuthorization {
         identity: CredentialIdentity,
         secret: CredentialSecret,
     },
+    /// Validated OAuth access token for an explicitly selected account.
+    /// Refresh and revocation belong to the authentication adapter; the
+    /// transport receives only the current, non-journaled bearer secret.
+    BearerToken {
+        identity: CredentialIdentity,
+        secret: CredentialSecret,
+    },
 }
 
 /// One-turn native install. The Rust constructor is checked; the receiving
@@ -65,6 +72,17 @@ impl HttpModelInstall {
                     secret,
                 }
             }
+            (
+                Some(expected),
+                Some(
+                    AuthenticationKind::OAuthAuthorizationCode
+                    | AuthenticationKind::OAuthDeviceCode,
+                ),
+                Some((actual, secret)),
+            ) if *expected == actual => HttpModelAuthorization::BearerToken {
+                identity: actual,
+                secret,
+            },
             _ => {
                 return Err(problem(
                     ProviderErrorCode::Denied,
