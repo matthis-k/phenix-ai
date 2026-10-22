@@ -445,10 +445,35 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
-      providerOpenAiApiCheck = pkgs.runCommand "phenix-provider-openai-api-contract-product" { } ''
-        mkdir -p $out
-        ${kernel}/bin/phenix-kernel inspect ${providerOpenAiApi} ${providerDefinitions} > $out/descriptor.json
-        test -s $out/descriptor.json
+      # Dedicated test-only artifact permits local HTTP transport fixtures
+      # without adding a loopback URL override to the production provider.
+      providerOpenAiApiFixture = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-openai-api-test";
+        version = "0.1.0";
+        src = providerOpenAiApiSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-openai-api" "--features" "c11-loopback-test" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-openai-api" "--features" "c11-loopback-test" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_openai_api.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      providerOpenAiApiProductCheck = pkgs.runCommand "phenix-provider-openai-api-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-openai-api-key-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out"
+        test -s "$out/openai-api-auth-product.json"
       '';
       providerCredentialStoreSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-credential-files
@@ -2476,6 +2501,7 @@
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-openai-api = providerOpenAiApi;
+        provider-openai-api-product = providerOpenAiApiProductCheck;
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
