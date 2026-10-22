@@ -655,25 +655,24 @@ impl ProviderManagement {
                 if !connections.insert(&connection.id) {
                     return Err(invalid("duplicate provider connection"));
                 }
-                let profile = if connection.auth_methods.is_empty() {
-                    None
+                let profiles = if connection.auth_methods.is_empty() {
+                    vec![None]
                 } else {
-                    // Model catalogs may expose several accounts on one
-                    // connection. Only exact launcher-authorized resolver
-                    // identities can become executable selections. Iterate
-                    // the full authorized set instead of implicitly picking
-                    // the first account; the account dimension is applied
-                    // below when generating each candidate.
-                    let matches = resolvers.iter().filter(|source| {
-                        source.identity.provider_id() == exact.id
-                            && source.identity.connection_id() == connection.id
-                    });
-                    let mut matches = matches.peekable();
-                    let Some(first) = matches.peek() else {
-                        continue;
-                    };
-                    Some(first.identity.profile_id().to_owned())
+                    // Each resolver corresponds to one independently granted
+                    // exact resource. Named accounts on the same connection
+                    // are separate catalog/authorization selections.
+                    resolvers
+                        .iter()
+                        .filter(|source| {
+                            source.identity.provider_id() == exact.id
+                                && source.identity.connection_id() == connection.id
+                        })
+                        .map(|source| Some(source.identity.profile_id().to_owned()))
+                        .collect::<Vec<_>>()
                 };
+                if profiles.is_empty() {
+                    continue;
+                }
                 let auth: AuthenticationStatus = self.read(
                     "phenix.provider.auth@1",
                     "status",
@@ -683,11 +682,13 @@ impl ProviderManagement {
                         connection_id: connection.id.clone(),
                     },
                 )?;
+                for profile in profiles {
                 if let Some(profile_id) = profile.as_deref() {
                     if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
                         continue;
                     }
                 }
+
                 let mut collected = ModelPageAccumulator::default();
                 let mut cursor = None;
                 let full = loop {
@@ -757,6 +758,7 @@ impl ProviderManagement {
                         label: format!("{} / {} / {}", exact.label, connection.label, model.label),
                         selected: desired,
                     });
+                }
                 }
             }
         }
