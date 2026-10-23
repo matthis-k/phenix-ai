@@ -28,8 +28,12 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
             return Err(invalid("provider catalog is invalid"));
         }
         let mut seen = std::collections::BTreeSet::new();
+        let mut provider_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.connections.len() > 32 || provider.id.is_empty() {
+            if provider.connections.len() > 32
+                || provider.id.is_empty()
+                || !provider_ids.insert(provider.id.clone())
+            {
                 return Err(invalid("invalid registered provider"));
             }
             for connection in &provider.connections {
@@ -50,8 +54,12 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
         for byte in page.revision.to_le_bytes() {
             digest = (digest ^ u64::from(byte)).wrapping_mul(1099511628211);
         }
+        let mut source_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.id.is_empty() || provider.connections.len() > 32 {
+            if provider.id.is_empty()
+                || provider.connections.len() > 32
+                || !source_ids.insert(provider.id.clone())
+            {
                 return Err(invalid("invalid registered provider"));
             }
             if let Some(existing) = merged.iter_mut().find(|item| item.id == provider.id) {
@@ -736,6 +744,15 @@ mod multi_provider_tests {
         .is_err());
         assert!(merge_provider_pages(&[page("openai", "OpenAI", "api", 0)]).is_err());
         assert!(merge_provider_pages(&[]).is_err());
+        // A single malicious provider implementation cannot split one
+        // provider descriptor into two records and evade duplicate detection.
+        let mut duplicate = page("openai", "OpenAI", "api", 7);
+        duplicate.providers.push(ProviderDescriptor {
+            id: "openai".into(),
+            label: "OpenAI".into(),
+            connections: vec![connection("chatgpt")],
+        });
+        assert!(merge_provider_pages(&[duplicate]).is_err());
     }
 
     #[test]
