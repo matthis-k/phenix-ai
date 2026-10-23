@@ -156,8 +156,12 @@ mod journal_page_tests {
         assert!(validate_journal_page(
             "s1",
             12,
-            &EventPage { events: vec![], next: 12 }
-        ).is_ok());
+            &EventPage {
+                events: vec![],
+                next: 12
+            }
+        )
+        .is_ok());
     }
 
     #[test]
@@ -182,7 +186,10 @@ mod journal_page_tests {
         let mut empty_run = good.clone();
         empty_run.events[0].run.clear();
         cases.push(empty_run);
-        cases.push(EventPage { events: vec![], next: 13 });
+        cases.push(EventPage {
+            events: vec![],
+            next: 13,
+        });
         for case in cases {
             assert_eq!(
                 validate_journal_page("s1", 10, &case).unwrap_err().code,
@@ -532,8 +539,7 @@ mod plugin {
                     limit: super::JOURNAL_PAGE_LIMIT,
                 },
             )?;
-            super::validate_journal_page(session, after, &page)
-                .map_err(CallError::Domain)?;
+            super::validate_journal_page(session, after, &page).map_err(CallError::Domain)?;
             if page.events.is_empty() {
                 return Ok((after, collected));
             }
