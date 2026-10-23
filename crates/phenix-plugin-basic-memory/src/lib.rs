@@ -47,7 +47,9 @@ fn validate_loaded_items<'a>(
     require(phenix_basic_contracts::Storage, slot = "Storage")
 )]
 mod plugin {
-    use super::{validate_context, validate_loaded_items, validate_skills, CONTEXT_KEY, SKILLS_KEY};
+    use super::{
+        validate_context, validate_loaded_items, validate_skills, CONTEXT_KEY, SKILLS_KEY,
+    };
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, Context, ContextItem, ContextSet, ErrorCode, RecordKey,
         Scope, Skill, SkillSet, Skills, Storage, StorageEdit, StorageTransaction,
@@ -194,10 +196,7 @@ mod tests {
                 .code,
             ErrorCode::StorageFailed
         );
-        for ids in [
-            vec!["skill-a", "skill-a"],
-            vec!["", "skill-b"],
-        ] {
+        for ids in [vec!["skill-a", "skill-a"], vec!["", "skill-b"]] {
             assert_eq!(
                 validate_loaded_items("s1", "s1", ids.into_iter())
                     .unwrap_err()
