@@ -998,7 +998,7 @@ fn run() -> Result<(), String> {
 
     // Management compositions are launcher-owned. Client requests cannot
     // supply a package path, composition or native authority grant.
-    let mut management: Option<Composition> = None;
+    let mut management: Vec<Composition> = Vec::new();
     let mut credentials: Vec<Composition> = Vec::new();
     let mut resolvers: Vec<Composition> = Vec::new();
     if args[1] == "acp" {
@@ -1010,7 +1010,7 @@ fn run() -> Result<(), String> {
             let data = std::fs::read(&flag[1]).map_err(|e| e.to_string())?;
             if flag[0] == "--provider-bundle" {
                 if has_bundle
-                    || management.is_some()
+                    || !management.is_empty()
                     || !credentials.is_empty()
                     || !resolvers.is_empty()
                 {
@@ -1019,7 +1019,7 @@ fn run() -> Result<(), String> {
                 let deployment: provider_deployment::ProviderDeployment =
                     serde_json::from_slice(&data).map_err(|e| e.to_string())?;
                 let composed = deployment.compose()?;
-                management = Some(composed.management);
+                management.push(composed.management);
                 if let Some(control) = composed.credentials {
                     credentials.push(control);
                 }
@@ -1035,9 +1035,7 @@ fn run() -> Result<(), String> {
             let spec: Composition = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
             match flag[0].as_str() {
                 "--provider-management" => {
-                    if management.replace(spec).is_some() {
-                        return Err("duplicate provider management composition".into());
-                    }
+                    management.push(spec);
                 }
                 "--provider-credentials" => credentials.push(spec),
                 "--provider-model-resolver" => resolvers.push(spec),
@@ -1092,7 +1090,7 @@ fn run() -> Result<(), String> {
     };
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
-        "acp" => acp_sdk::run(&composition, management.as_ref(), &credentials, &resolvers),
+        "acp" => acp_sdk::run(&composition, &management, &credentials, &resolvers),
         "jsonl" => run_jsonl(&composition),
         "terminal" => run_console(
             &composition,
