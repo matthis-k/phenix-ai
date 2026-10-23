@@ -26,7 +26,11 @@ fn composition(artifacts: Vec<String>) -> Composition {
     let mut operations = BTreeSet::new();
     let mut grants = Vec::new();
     for (caller, interface, names) in [
-        ("root", COUNTER, vec!["run", "reference", "observed_reference", "slow"]),
+        (
+            "root",
+            COUNTER,
+            vec!["run", "reference", "observed_reference", "slow"],
+        ),
         ("root", RELAY, vec!["run"]),
         ("root", PROPERTY, vec!["get", "set", "watch"]),
         ("root", OBSERVED, vec!["get", "watch"]),
@@ -395,7 +399,9 @@ fn main() {
         denied
             .grants
             .iter_mut()
-            .filter(|grant| grant.caller == "root" && grant.interface == COUNTER && grant.operation == "run")
+            .filter(|grant| {
+                grant.caller == "root" && grant.interface == COUNTER && grant.operation == "run"
+            })
             .for_each(|grant| {
                 grant.resources.remove(resource);
             });
