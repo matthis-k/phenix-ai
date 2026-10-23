@@ -130,7 +130,9 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
         || connection.protocols[0].endpoint.as_deref()
             != Some("https://api.openai.com/v1/responses")
     {
-        return Err(unavailable("ChatGPT plan inference endpoint is not installed"));
+        return Err(unavailable(
+            "ChatGPT plan inference endpoint is not installed",
+        ));
     }
     Ok(provider)
 }
