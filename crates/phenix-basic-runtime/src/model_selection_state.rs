@@ -161,7 +161,6 @@ fn read_record(
 /// A persisted native witness makes absence/corruption of selected identity
 /// an error even after process restart. Neither record grants execution.
 /// The controller must refresh current provider/catalog state before install.
-#[allow(dead_code)]
 pub(crate) fn read(
     kernel: &Kernel,
     composition: &Composition,
@@ -178,7 +177,6 @@ pub(crate) fn read(
 /// ordinary revision-CAS Storage. Never write a client-supplied model name.
 /// The caller must install the current authenticated Model through the same
 /// session kernel and prove execution admission BEFORE acknowledging success.
-#[allow(dead_code)]
 pub(crate) fn compare_and_swap(
     kernel: &Kernel,
     composition: &Composition,

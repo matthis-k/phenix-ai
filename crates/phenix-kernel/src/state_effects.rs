@@ -142,15 +142,7 @@ impl Kernel {
         match request {
             StateRequest::Create { .. } => Err(Error::Denied),
             StateRequest::Read(r) => self.cells.borrow().read(&r),
-            StateRequest::CompareExchange(edit) => {
-                let Value::List(mut batch) = self.cells.borrow_mut().commit(&[edit])? else {
-                    unreachable!()
-                };
-                let Value::List(mut snapshots) = batch.pop().unwrap() else {
-                    unreachable!()
-                };
-                Ok(snapshots.pop().unwrap())
-            }
+            StateRequest::CompareExchange(edit) => self.cells.borrow_mut().compare_exchange(edit),
             StateRequest::Batch(edits) => self.cells.borrow_mut().commit(&edits),
             StateRequest::Subscribe(r) => {
                 self.cells.borrow_mut().subscribe(root, caller, ticket, r)
