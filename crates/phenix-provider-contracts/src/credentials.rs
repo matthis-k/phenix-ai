@@ -260,6 +260,16 @@ pub struct CredentialEnvironmentBinding {
     pub environment_variable: String,
 }
 
+/// Native only: renew a durable secret if and only if the exact account still
+/// contains the generation previously verified by the provider. Both secrets
+/// have zeroizing ownership; no ACP or journal path can invoke this operation.
+#[derive(Debug, Portable)]
+pub struct CredentialRotation {
+    pub identity: CredentialIdentity,
+    pub expected: CredentialSecret,
+    pub replacement: CredentialSecret,
+}
+
 /// Storage presence is not authentication/entitlement evidence. ProviderAuth
 /// still owns method validity; selection still requires fresh provider proof.
 #[contract(id = "phenix.provider.credentials@1")]
@@ -267,6 +277,7 @@ pub trait ProviderCredentials {
     fn import(&self, request: CredentialImport) -> Result<(), ProviderError>;
     fn bind_environment(&self, request: CredentialEnvironmentBinding) -> Result<(), ProviderError>;
     fn resolve(&self, request: CredentialIdentity) -> Result<CredentialSecret, ProviderError>;
+    fn compare_exchange(&self, request: CredentialRotation) -> Result<bool, ProviderError>;
     fn revoke(&self, request: CredentialIdentity) -> Result<(), ProviderError>;
 }
 
