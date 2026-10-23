@@ -142,9 +142,7 @@ impl Kernel {
         match request {
             StateRequest::Create { .. } => Err(Error::Denied),
             StateRequest::Read(r) => self.cells.borrow().read(&r),
-            StateRequest::CompareExchange(edit) => {
-                self.cells.borrow_mut().compare_exchange(edit)
-            }
+            StateRequest::CompareExchange(edit) => self.cells.borrow_mut().compare_exchange(edit),
             StateRequest::Batch(edits) => self.cells.borrow_mut().commit(&edits),
             StateRequest::Subscribe(r) => {
                 self.cells.borrow_mut().subscribe(root, caller, ticket, r)
