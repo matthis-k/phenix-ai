@@ -77,8 +77,38 @@ mod plugin {
         Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
+    use std::collections::BTreeMap;
+
+    /// Live sessions belong to the plugin instance. Storage holds recovery
+    /// snapshots; a validated snapshot is restored only on first use.
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        sessions: BTreeMap<String, SessionSnapshot>,
+    }
+
+    impl State {
+        fn current(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<&SessionSnapshot, BasicError> {
+            if !self.sessions.contains_key(session) {
+                let restored = load(host, session)?;
+                self.sessions.insert(session.into(), restored);
+            }
+            Ok(&self.sessions[session])
+        }
+
+        fn committed(&mut self, snapshot: SessionSnapshot) -> SessionSnapshot {
+            self.sessions
+                .insert(snapshot.session.clone(), snapshot.clone());
+            snapshot
+        }
+
+        fn invalidate(&mut self, session: &str) {
+            self.sessions.remove(session);
+        }
+    }
 
     fn load(host: &Host<'_>, session: &str) -> CallResult<SessionSnapshot, BasicError> {
         let result = host.invoke::<Storage::read>(
@@ -140,25 +170,24 @@ mod plugin {
 
     #[provide(Session::open)]
     fn open(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: Scope,
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        // A new plugin instance cannot prove that the owning process died.
-        // Report the durable state unchanged. In particular, do not turn a
-        // still-live run with pending tools into Indeterminate.
-        load(host, &request.session)
+        // Opening the session cannot prove that a previous process died.
+        // Preserve the saved Running/Indeterminate status without speculation.
+        Ok(state.current(host, &request.session)?.clone())
     }
 
     #[provide(Session::checkpoint)]
     fn checkpoint(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: SessionSnapshot,
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        let prior = load(host, &request.session)?;
+        let prior = state.current(host, &request.session)?;
         if request.revision != prior.revision {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,
@@ -177,19 +206,54 @@ mod plugin {
                 "session checkpoint has invalid running state or pending calls",
             )));
         }
-        commit(host, request)
+        let session = request.session.clone();
+        match commit(host, request) {
+            Ok(committed) => Ok(state.committed(committed)),
+            Err(failure) => {
+                // A failed/ambiguous CAS may mean a different instance wrote,
+                // or storage committed but failed to acknowledge. Reload next
+                // time rather than advancing stale private state.
+                state.invalidate(&session);
+                Err(failure)
+            }
+        }
     }
 
     #[provide(Session::reconcile)]
     fn reconcile(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: ReconcileTool,
     ) -> CallResult<SessionSnapshot, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        let mut current = load(host, &request.session)?;
+        let mut current = state.current(host, &request.session)?.clone();
         reconcile_snapshot(&mut current, &request).map_err(CallError::Domain)?;
-        commit(host, current)
+        match commit(host, current) {
+            Ok(committed) => Ok(state.committed(committed)),
+            Err(failure) => {
+                state.invalidate(&request.session);
+                Err(failure)
+            }
+        }
+    }
+    #[cfg(test)]
+    mod state_tests {
+        use super::*;
+
+        #[test]
+        fn live_sessions_are_isolated_and_ambiguous_commit_can_be_invalidated() {
+            let mut state = State::default();
+            let mut one = empty("one");
+            one.revision = 2;
+            let two = empty("two");
+            state.committed(one.clone());
+            state.committed(two.clone());
+            assert_eq!(state.sessions["one"], one);
+            assert_eq!(state.sessions["two"], two);
+            state.invalidate("one");
+            assert!(!state.sessions.contains_key("one"));
+            assert_eq!(state.sessions["two"], two);
+        }
     }
 }
 
