@@ -769,6 +769,7 @@
           ${openAiApiCredentialComposition} \
           ${openAiApiResolverComposition} \
           ${chatGptResolverComposition} \
+          ${chatGptLogoutComposition} \
           "$out"
       '';
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
