@@ -2322,12 +2322,9 @@ mod tests {
         assert!(validate_credentials_spec(&forged_import).is_err());
 
         let mut widened = spec.clone();
-        widened.grants.push(phenix_kernel::Grant {
-            caller: "root".into(),
-            interface: contract.into(),
-            operation: "import".into(),
-            resources: std::collections::BTreeSet::from([resource.clone()]),
-        });
+        let mut extra_grant = widened.grants[0].clone();
+        extra_grant.operation = "import".into();
+        widened.grants.push(extra_grant);
         assert!(validate_credentials_spec(&widened).is_err());
 
         let mut foreign = spec.clone();
