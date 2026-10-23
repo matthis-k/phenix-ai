@@ -77,7 +77,10 @@ mod plugin {
     }
 
     impl State {
-        fn reconcile(&mut self, restored: WorkspaceSnapshot) -> Result<WorkspaceSnapshot, WorkspaceError> {
+        fn reconcile(
+            &mut self,
+            restored: WorkspaceSnapshot,
+        ) -> Result<WorkspaceSnapshot, WorkspaceError> {
             if let Some(current) = self.selections.get(&restored.session) {
                 if restored.revision < current.revision {
                     return Err(error(
