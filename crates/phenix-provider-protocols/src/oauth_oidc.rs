@@ -182,7 +182,11 @@ mod tests {
             Err(OidcError::InvalidIdToken)
         );
         assert_eq!(
-            verify("https://auth.example.test", "issued-client", "different-user"),
+            verify(
+                "https://auth.example.test",
+                "issued-client",
+                "different-user"
+            ),
             Err(OidcError::IncorrectAccount)
         );
         assert_eq!(
@@ -190,7 +194,11 @@ mod tests {
             Err(OidcError::InvalidIdToken)
         );
         assert_eq!(
-            verify("https://other.example.test", "issued-client", "user-fixture"),
+            verify(
+                "https://other.example.test",
+                "issued-client",
+                "user-fixture"
+            ),
             Err(OidcError::InvalidIdToken)
         );
     }
