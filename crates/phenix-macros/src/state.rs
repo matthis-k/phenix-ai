@@ -374,6 +374,8 @@ pub fn expand(
                             let sidecar =
                                 syn::Ident::new(&format!("__published_{}", name), name.span());
                             let method = syn::Ident::new(&format!("publish_{}", name), name.span());
+                            let reference_method =
+                                syn::Ident::new(&format!("reference_{}", name), name.span());
                             sidecars.push(syn::Field::parse_named.parse2(quote!(
                                 #sidecar: Option<(::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Revision)>
                             ))?);
@@ -386,6 +388,18 @@ pub fn expand(
                                 state.#sidecar = Some((reference, ::phenix_sdk::Revision(0)));
                             });
                             owned_fields.push(quote! {
+                                #[allow(dead_code)]
+                                pub fn #reference_method(
+                                    &self,
+                                ) -> Result<::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Failure> {
+                                    self.#sidecar
+                                        .map(|(reference, _)| reference)
+                                        .ok_or_else(|| ::phenix_sdk::Failure::new(
+                                            ::phenix_sdk::Code::ScopeRejected,
+                                            "owned property is not initialized",
+                                        ))
+                                }
+
                                 #[allow(dead_code)]
                                 pub fn #method(
                                     &mut self,
