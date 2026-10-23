@@ -2385,9 +2385,10 @@ mod tests {
         assert!(validate_model_resolver_spec(&wrong_provider).is_err());
 
         let mut extra_root = spec.clone();
-        extra_root.authority.operations.insert(
-            "phenix.provider.credentials@1/revoke".into(),
-        );
+        extra_root
+            .authority
+            .operations
+            .insert("phenix.provider.credentials@1/revoke".into());
         assert!(validate_model_resolver_spec(&extra_root).is_err());
     }
 
