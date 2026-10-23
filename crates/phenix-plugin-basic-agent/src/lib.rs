@@ -38,9 +38,10 @@ const MAX_CATALOG_TOOLS: usize = 1024;
 const JOURNAL_PAGE_LIMIT: u64 = 128;
 const MAX_JOURNAL_PAGES: usize = 64;
 
-fn validate_journal_page(
+fn validate_journal_page_with_limit(
     session: &str,
     after: u64,
+    limit: u64,
     page: &phenix_basic_contracts::EventPage,
 ) -> Result<(), phenix_basic_contracts::BasicError> {
     let invalid = || {
@@ -49,7 +50,7 @@ fn validate_journal_page(
             "journal returned an invalid event page",
         )
     };
-    if page.events.len() > JOURNAL_PAGE_LIMIT as usize {
+    if limit == 0 || u64::try_from(page.events.len()).is_err_or(|count| count > limit) {
         return Err(invalid());
     }
     let mut sequence = after;
@@ -63,6 +64,14 @@ fn validate_journal_page(
         return Err(invalid());
     }
     Ok(())
+}
+
+fn validate_journal_page(
+    session: &str,
+    after: u64,
+    page: &phenix_basic_contracts::EventPage,
+) -> Result<(), phenix_basic_contracts::BasicError> {
+    validate_journal_page_with_limit(session, after, JOURNAL_PAGE_LIMIT, page)
 }
 
 fn admit_catalog_page(
@@ -162,6 +171,18 @@ mod journal_page_tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn output_page_validation_honors_original_request_limit() {
+        let page = EventPage {
+            events: vec![event(11, "s1"), event(12, "s1")],
+            next: 12,
+        };
+        assert!(validate_journal_page_with_limit("s1", 10, 2, &page).is_ok());
+        assert!(validate_journal_page_with_limit("s1", 10, 1, &page).is_err());
+        assert!(validate_journal_page_with_limit("s1", 10, 0, &page).is_err());
+        assert!(validate_journal_page_with_limit("s1", 10, u64::MAX, &page).is_ok());
     }
 
     #[test]
@@ -1130,7 +1151,15 @@ mod plugin {
         request: JournalQuery,
     ) -> CallResult<EventPage, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        host.invoke::<EventJournal::read>("Journal", &request)
+        let page = host.invoke::<EventJournal::read>("Journal", &request)?;
+        super::validate_journal_page_with_limit(
+            &request.session,
+            request.after,
+            request.limit,
+            &page,
+        )
+        .map_err(CallError::Domain)?;
+        Ok(page)
     }
 
     #[provide(BasicOutput::observer)]
