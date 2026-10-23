@@ -213,6 +213,20 @@ fn main() {
     assert_eq!(kernel.inspect()["live_state"]["epoch"], before_foreign);
     assert_eq!(
         kernel
+            .admit_default_root()
+            .unwrap()
+            .invoke(&Value::String("foreign-batch-publish".into()))
+            .unwrap(),
+        Outcome::Success(Value::U64(7)),
+        "a mixed authorized/foreign batch must not commit its authorized edit"
+    );
+    assert_eq!(
+        kernel.inspect()["live_state"]["epoch"],
+        before_foreign,
+        "denied batch must not advance the global state epoch"
+    );
+    assert_eq!(
+        kernel
             .admit_root(selection(OBSERVED, "get", PROVIDER))
             .unwrap()
             .invoke(&owned_reference)
