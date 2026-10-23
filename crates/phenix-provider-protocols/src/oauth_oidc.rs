@@ -42,6 +42,52 @@ pub fn verify_signed_oidc_identity(
     original_nonce: &str,
     expected_subject: Option<&str>,
 ) -> Result<VerifiedSubject, OidcError> {
+    verify_signed_oidc_identity_with_nonce(
+        jwt,
+        jwks_body,
+        issuer,
+        issued_client_id,
+        original_nonce,
+        expected_subject,
+        false,
+    )
+}
+
+/// Refresh responses may omit nonce by OIDC Core section 12.2. If they do
+/// include one, it must still match the original login nonce. A signed
+/// same-subject ID token, not an OAuth response or client-supplied identifier,
+/// is required for accepting an updated refresh generation.
+pub fn verify_refreshed_signed_oidc_identity(
+    jwt: &str,
+    jwks_body: &[u8],
+    issuer: &str,
+    issued_client_id: &str,
+    original_nonce: &str,
+    expected_subject: &str,
+) -> Result<VerifiedSubject, OidcError> {
+    if expected_subject.is_empty() {
+        return Err(OidcError::InvalidConfiguration);
+    }
+    verify_signed_oidc_identity_with_nonce(
+        jwt,
+        jwks_body,
+        issuer,
+        issued_client_id,
+        original_nonce,
+        Some(expected_subject),
+        true,
+    )
+}
+
+fn verify_signed_oidc_identity_with_nonce(
+    jwt: &str,
+    jwks_body: &[u8],
+    issuer: &str,
+    issued_client_id: &str,
+    original_nonce: &str,
+    expected_subject: Option<&str>,
+    allow_absent_nonce: bool,
+) -> Result<VerifiedSubject, OidcError> {
     if jwt.is_empty()
         || jwt.len() > 16 * 1024
         || issued_client_id.is_empty()
@@ -66,9 +112,18 @@ pub fn verify_signed_oidc_identity(
         jwks,
     )
     .set_allowed_algs([CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256]);
-    let claims = id_token
-        .claims(&verifier, &Nonce::new(original_nonce.to_owned()))
-        .map_err(|_| OidcError::InvalidIdToken)?;
+    let claims = if allow_absent_nonce {
+        id_token.claims(&verifier, |nonce: Option<&Nonce>| {
+            if nonce.is_some_and(|value| value.secret() != original_nonce) {
+                Err("refreshed ID token nonce differs from login".to_owned())
+            } else {
+                Ok(())
+            }
+        })
+    } else {
+        id_token.claims(&verifier, &Nonce::new(original_nonce.to_owned()))
+    }
+    .map_err(|_| OidcError::InvalidIdToken)?;
     let subject = claims.subject().as_str();
     if subject.is_empty() || subject.len() > 256 {
         return Err(OidcError::InvalidIdToken);
