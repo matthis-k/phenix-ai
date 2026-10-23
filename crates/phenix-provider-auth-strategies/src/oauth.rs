@@ -36,23 +36,36 @@ fn challenge_id(challenge: &AuthChallenge) -> Result<&str, ProviderError> {
             verification_url,
             user_code,
         } => {
-            if user_code.is_empty() || user_code.len() > 128 || user_code.chars().any(char::is_control)
+            if user_code.is_empty()
+                || user_code.len() > 128
+                || user_code.chars().any(char::is_control)
             {
-                return Err(error(ProviderErrorCode::InvalidInput, "invalid OAuth device code"));
+                return Err(error(
+                    ProviderErrorCode::InvalidInput,
+                    "invalid OAuth device code",
+                ));
             }
             (attempt_id.as_str(), verification_url.as_str())
         }
         AuthChallenge::ApiKeyInput { .. } => {
-            return Err(error(ProviderErrorCode::InvalidInput, "expected OAuth challenge"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "expected OAuth challenge",
+            ));
         }
     };
     // A short sequential ID must not stand in for the provider's random OAuth
     // correlation key. The callback state is separately validated by its
     // implementing strategy; this public ID never authenticates an account.
     if !(24..=256).contains(&id.len())
-        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid OAuth attempt identity"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid OAuth attempt identity",
+        ));
     }
     // This is an additional defense. The provider validates the complete
     // URL and exact trusted OAuth endpoint before presenting the challenge.
@@ -63,17 +76,27 @@ fn challenge_id(challenge: &AuthChallenge) -> Result<&str, ProviderError> {
     if uri.len() > 4096
         || authority.is_empty()
         || authority.contains('@')
-        || uri.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\')
+        || uri
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\')
     {
-        return Err(error(ProviderErrorCode::InvalidInput, "invalid OAuth challenge URL"));
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid OAuth challenge URL",
+        ));
     }
     Ok(id)
 }
 
 fn valid_owner(owner: &AuthStart) -> bool {
-    [&owner.scope, &owner.provider_id, &owner.connection_id, &owner.method_id]
-        .iter()
-        .all(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+    [
+        &owner.scope,
+        &owner.provider_id,
+        &owner.connection_id,
+        &owner.method_id,
+    ]
+    .iter()
+    .all(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
 }
 fn owns(owner: &AuthStart, query: &AuthAttemptQuery) -> bool {
     owner.scope == query.scope
@@ -93,25 +116,42 @@ impl OAuthAttempts {
         challenge: AuthChallenge,
     ) -> Result<AuthChallenge, ProviderError> {
         if !valid_owner(&owner) {
-            return Err(error(ProviderErrorCode::InvalidInput, "invalid OAuth owner"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid OAuth owner",
+            ));
         }
         let id = challenge_id(&challenge)?.to_owned();
         self.pending
             .retain(|_, item| item.started.elapsed() <= ATTEMPT_TTL);
         if self.pending.len() >= MAX_PENDING {
-            return Err(error(ProviderErrorCode::Unavailable, "too many OAuth attempts"));
+            return Err(error(
+                ProviderErrorCode::Unavailable,
+                "too many OAuth attempts",
+            ));
         }
         if self.pending.contains_key(&id) {
-            return Err(error(ProviderErrorCode::Conflict, "OAuth attempt already registered"));
+            return Err(error(
+                ProviderErrorCode::Conflict,
+                "OAuth attempt already registered",
+            ));
         }
         self.pending.insert(
             id,
-            Attempt { owner, started: Instant::now(), challenge: challenge.clone(), announce: false },
+            Attempt {
+                owner,
+                started: Instant::now(),
+                challenge: challenge.clone(),
+                announce: false,
+            },
         );
         Ok(challenge)
     }
 
-    fn check(&mut self, query: &AuthAttemptQuery) -> Result<Option<AuthAttemptState>, ProviderError> {
+    fn check(
+        &mut self,
+        query: &AuthAttemptQuery,
+    ) -> Result<Option<AuthAttemptState>, ProviderError> {
         let item = self.pending.get(&query.attempt_id).ok_or_else(unknown)?;
         if !owns(&item.owner, query) {
             return Err(unknown());
@@ -129,10 +169,15 @@ impl OAuthAttempts {
         if let Some(terminal) = self.check(query)? {
             return Ok(terminal);
         }
-        let item = self.pending.get_mut(&query.attempt_id).ok_or_else(unknown)?;
+        let item = self
+            .pending
+            .get_mut(&query.attempt_id)
+            .ok_or_else(unknown)?;
         if item.announce {
             item.announce = false;
-            Ok(AuthAttemptState::AwaitingInput { challenge: item.challenge.clone() })
+            Ok(AuthAttemptState::AwaitingInput {
+                challenge: item.challenge.clone(),
+            })
         } else {
             Ok(AuthAttemptState::Pending)
         }
@@ -149,9 +194,15 @@ impl OAuthAttempts {
             return Err(unknown());
         }
         if challenge_id(&challenge)? != query.attempt_id {
-            return Err(error(ProviderErrorCode::InvalidInput, "OAuth challenge identity changed"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "OAuth challenge identity changed",
+            ));
         }
-        let item = self.pending.get_mut(&query.attempt_id).ok_or_else(unknown)?;
+        let item = self
+            .pending
+            .get_mut(&query.attempt_id)
+            .ok_or_else(unknown)?;
         item.challenge = challenge;
         item.announce = true;
         Ok(())
@@ -173,7 +224,10 @@ impl OAuthAttempts {
             || profile.label.is_empty()
             || profile.method_id != item.owner.method_id
         {
-            return Err(error(ProviderErrorCode::InvalidInput, "verified OAuth profile mismatch"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "verified OAuth profile mismatch",
+            ));
         }
         self.pending.remove(&query.attempt_id);
         Ok(AuthAttemptState::Completed { profile })
@@ -223,69 +277,125 @@ mod tests {
         }
     }
     fn browser(url: &str) -> AuthChallenge {
-        AuthChallenge::OpenBrowser { attempt_id: ID.into(), url: url.into() }
+        AuthChallenge::OpenBrowser {
+            attempt_id: ID.into(),
+            url: url.into(),
+        }
     }
 
     #[test]
     fn browser_open_is_never_success_and_account_scope_is_exact() {
         let mut attempts = OAuthAttempts::default();
         let challenge = browser("https://auth.example.com/authorize?state=one");
-        assert_eq!(attempts.begin(owner("oauth"), challenge.clone()).unwrap(), challenge);
+        assert_eq!(
+            attempts.begin(owner("oauth"), challenge.clone()).unwrap(),
+            challenge
+        );
         assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::Pending);
         let mut foreign = query();
         foreign.connection_id = "api".into();
-        assert_eq!(attempts.cancel(&foreign).unwrap_err().code, ProviderErrorCode::NotFound);
+        assert_eq!(
+            attempts.cancel(&foreign).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
         assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::Pending);
         assert_eq!(
-            attempts.complete(
-                &query(),
-                AuthenticatedProfile { id: "subject".into(), label: "Subject".into(), method_id: "api-key".into() },
-            ).unwrap_err().code,
+            attempts
+                .complete(
+                    &query(),
+                    AuthenticatedProfile {
+                        id: "subject".into(),
+                        label: "Subject".into(),
+                        method_id: "api-key".into()
+                    },
+                )
+                .unwrap_err()
+                .code,
             ProviderErrorCode::InvalidInput,
         );
         assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::Pending);
         assert!(matches!(
             attempts.complete(
                 &query(),
-                AuthenticatedProfile { id: "subject".into(), label: "Subject".into(), method_id: "oauth".into() },
+                AuthenticatedProfile {
+                    id: "subject".into(),
+                    label: "Subject".into(),
+                    method_id: "oauth".into()
+                },
             ),
             Ok(AuthAttemptState::Completed { .. })
         ));
-        assert_eq!(attempts.poll(&query()).unwrap_err().code, ProviderErrorCode::NotFound);
+        assert_eq!(
+            attempts.poll(&query()).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
     }
 
     #[test]
     fn reissued_challenge_is_observed_once_and_cancel_is_terminal() {
         let mut attempts = OAuthAttempts::default();
-        attempts.begin(owner("oauth"), browser("https://auth.example.com/authorize?state=a")).unwrap();
+        attempts
+            .begin(
+                owner("oauth"),
+                browser("https://auth.example.com/authorize?state=a"),
+            )
+            .unwrap();
         let rotated = browser("https://auth.example.com/authorize?state=b");
         attempts.reissue(&query(), rotated.clone()).unwrap();
-        assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::AwaitingInput { challenge: rotated });
+        assert_eq!(
+            attempts.poll(&query()).unwrap(),
+            AuthAttemptState::AwaitingInput { challenge: rotated }
+        );
         assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::Pending);
-        assert_eq!(attempts.cancel(&query()).unwrap(), AuthAttemptState::Cancelled);
-        assert_eq!(attempts.cancel(&query()).unwrap_err().code, ProviderErrorCode::NotFound);
+        assert_eq!(
+            attempts.cancel(&query()).unwrap(),
+            AuthAttemptState::Cancelled
+        );
+        assert_eq!(
+            attempts.cancel(&query()).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
     }
 
     #[test]
     fn rejects_forged_challenges_and_expires_without_completing() {
         let mut attempts = OAuthAttempts::default();
         assert_eq!(
-            attempts.begin(owner("oauth"), browser("http://untrusted.example/")).unwrap_err().code,
+            attempts
+                .begin(owner("oauth"), browser("http://untrusted.example/"))
+                .unwrap_err()
+                .code,
             ProviderErrorCode::InvalidInput,
         );
         assert_eq!(
-            attempts.begin(owner("oauth"), AuthChallenge::ApiKeyInput { attempt_id: ID.into(), prompt: "key".into() })
-                .unwrap_err().code,
+            attempts
+                .begin(
+                    owner("oauth"),
+                    AuthChallenge::ApiKeyInput {
+                        attempt_id: ID.into(),
+                        prompt: "key".into()
+                    }
+                )
+                .unwrap_err()
+                .code,
             ProviderErrorCode::InvalidInput,
         );
-        attempts.begin(owner("oauth"), browser("https://auth.example.com/")).unwrap();
+        attempts
+            .begin(owner("oauth"), browser("https://auth.example.com/"))
+            .unwrap();
         assert_eq!(
-            attempts.begin(owner("oauth"), browser("https://auth.example.com/")).unwrap_err().code,
+            attempts
+                .begin(owner("oauth"), browser("https://auth.example.com/"))
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Conflict,
         );
         attempts.pending.get_mut(ID).unwrap().started =
             Instant::now() - ATTEMPT_TTL - std::time::Duration::from_secs(1);
         assert_eq!(attempts.poll(&query()).unwrap(), AuthAttemptState::Expired);
-        assert_eq!(attempts.poll(&query()).unwrap_err().code, ProviderErrorCode::NotFound);
+        assert_eq!(
+            attempts.poll(&query()).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
     }
 }
