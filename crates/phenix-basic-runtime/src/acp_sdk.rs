@@ -934,7 +934,7 @@ fn installed_model_provider(composition: &Composition) -> Option<&str> {
 // CredentialSecret owns and zeroizes the original independently.
 fn scrub_portable_secret_bytes(value: &mut Value) {
     match value {
-        Value::Bytes(bytes) => bytes.zeroize(),
+        Value::Bytes(bytes) => bytes.as_mut_slice().zeroize(),
         Value::List(items) => {
             for item in items {
                 scrub_portable_secret_bytes(item);
