@@ -8,8 +8,8 @@ use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
-    CredentialProfile, CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery,
-    ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
+    CredentialProfile, CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage,
+    ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
@@ -440,7 +440,9 @@ mod plugin {
         _: &Host<'_>,
         _: CredentialImport,
     ) -> CallResult<(), ProviderError> {
-        Err(CallError::Domain(denied("ChatGPT OAuth does not import API keys")))
+        Err(CallError::Domain(denied(
+            "ChatGPT OAuth does not import API keys",
+        )))
     }
 
     #[provide(ProviderCredentials::bind_environment)]
@@ -449,7 +451,9 @@ mod plugin {
         _: &Host<'_>,
         _: CredentialEnvironmentBinding,
     ) -> CallResult<(), ProviderError> {
-        Err(CallError::Domain(denied("ChatGPT OAuth has no API-key environment source")))
+        Err(CallError::Domain(denied(
+            "ChatGPT OAuth has no API-key environment source",
+        )))
     }
 
     #[provide(ProviderCredentials::revoke)]
@@ -458,7 +462,9 @@ mod plugin {
         _: &Host<'_>,
         _: CredentialIdentity,
     ) -> CallResult<(), ProviderError> {
-        Err(CallError::Domain(denied("OAuth revocation requires the account lifecycle")))
+        Err(CallError::Domain(denied(
+            "OAuth revocation requires the account lifecycle",
+        )))
     }
 
     /// Controller-only selected-model resolution. This is intentionally the
