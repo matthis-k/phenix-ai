@@ -44,10 +44,17 @@ mod client {
                             ..
                         }))
                 ) {
-                    return Err(Failure::new(Code::PluginFailed, "foreign publication was not denied").into());
+                    return Err(Failure::new(
+                        Code::PluginFailed,
+                        "foreign publication was not denied",
+                    )
+                    .into());
                 }
                 let after = reference.read(host).map_err(|error| {
-                    Failure::new(Code::PluginFailed, format!("foreign read after denial: {error}"))
+                    Failure::new(
+                        Code::PluginFailed,
+                        format!("foreign read after denial: {error}"),
+                    )
                 })?;
                 return Ok(*after.value);
             }
