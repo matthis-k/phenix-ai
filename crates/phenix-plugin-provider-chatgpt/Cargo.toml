@@ -14,5 +14,6 @@ phenix-provider-builtins = { path = "../phenix-provider-builtins" }
 phenix-provider-protocols = { path = "../phenix-provider-protocols", features = ["siwc-verified", "model-codecs"] }
 serde.workspace = true
 serde_json.workspace = true
+zeroize = "=1.9.1"
 uuid = { version = "=1.28.0", features = ["v4"] }
 curl = { version = "0.4", default-features = false }
