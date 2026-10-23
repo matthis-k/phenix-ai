@@ -1,7 +1,10 @@
-//! Reusable API-key authentication attempt lifecycle.
+//! Reusable provider authentication attempt lifecycles.
 //!
 //! Concrete providers own credential verification and the approved credential
 //! store. This strategy tracks attempts without holding or serializing secrets.
+pub mod oauth;
+pub use oauth::OAuthAttempts;
+
 use phenix_provider_contracts::{
     AuthAttemptState, AuthChallenge, AuthenticatedProfile, CredentialIdentity, ProviderError,
     ProviderErrorCode,
