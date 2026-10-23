@@ -6,6 +6,7 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use curl::easy::{Easy2, Handler, List, WriteError};
+use phenix_provider_auth_strategies::ApiKeyAttempts;
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
@@ -13,7 +14,6 @@ use phenix_provider_contracts::{
     ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
     ProviderModel,
 };
-use phenix_provider_auth_strategies::ApiKeyAttempts;
 use std::collections::BTreeSet;
 use std::time::Duration;
 

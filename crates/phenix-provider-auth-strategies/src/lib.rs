@@ -50,20 +50,25 @@ impl ApiKeyAttempts {
             || prompt.is_empty()
             || prompt.len() > 1024
         {
-            return Err(error(ProviderErrorCode::InvalidInput, "invalid API-key challenge"));
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid API-key challenge",
+            ));
         }
         // An abandoned attempt cannot permanently exhaust the provider's
         // bounded input budget. Expired IDs are never revived.
-        self.pending.retain(|_, item| item.started.elapsed() <= ATTEMPT_TTL);
+        self.pending
+            .retain(|_, item| item.started.elapsed() <= ATTEMPT_TTL);
         if self.pending.len() >= MAX_PENDING {
             return Err(error(
                 ProviderErrorCode::Unavailable,
                 "too many open authentication attempts",
             ));
         }
-        self.next = self.next.checked_add(1).ok_or_else(|| {
-            error(ProviderErrorCode::Unavailable, "auth attempt overflow")
-        })?;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or_else(|| error(ProviderErrorCode::Unavailable, "auth attempt overflow"))?;
         let attempt_id = format!("{prefix}-{}", self.next);
         self.pending.insert(
             attempt_id.clone(),
@@ -86,9 +91,11 @@ impl ApiKeyAttempts {
         owner: &CredentialIdentity,
         id: &str,
     ) -> Result<Option<AuthAttemptState>, ProviderError> {
-        let item = self.pending.get(id).filter(|item| item.owner == *owner).ok_or_else(|| {
-            error(ProviderErrorCode::NotFound, "auth attempt not found")
-        })?;
+        let item = self
+            .pending
+            .get(id)
+            .filter(|item| item.owner == *owner)
+            .ok_or_else(|| error(ProviderErrorCode::NotFound, "auth attempt not found"))?;
         if item.started.elapsed() > ATTEMPT_TTL {
             self.pending.remove(id);
             return Ok(Some(AuthAttemptState::Expired));
@@ -132,9 +139,8 @@ mod tests {
     }
 
     fn begin(attempts: &mut ApiKeyAttempts, owner: CredentialIdentity) -> String {
-        let AuthChallenge::ApiKeyInput { attempt_id, .. } = attempts
-            .begin(owner, "provider", "Enter API key")
-            .unwrap()
+        let AuthChallenge::ApiKeyInput { attempt_id, .. } =
+            attempts.begin(owner, "provider", "Enter API key").unwrap()
         else {
             panic!("expected API-key input");
         };
