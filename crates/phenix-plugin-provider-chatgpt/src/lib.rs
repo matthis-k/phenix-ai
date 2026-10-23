@@ -454,12 +454,7 @@ mod plugin {
     #[cfg(test)]
     #[test]
     fn abandoned_oauth_attempts_do_not_exhaust_login_capacity() {
-        let identity = CredentialIdentity::new(
-            PROVIDER.into(),
-            CONNECTION.into(),
-            "personal".into(),
-        )
-        .unwrap();
+        let identity = CredentialIdentity::new(PROVIDER, CONNECTION, "personal").unwrap();
         let pending = |age: Duration| Pending {
             created_at: Instant::now() - age,
             identity: identity.clone(),
