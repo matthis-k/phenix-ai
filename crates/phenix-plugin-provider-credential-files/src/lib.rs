@@ -293,7 +293,6 @@ mod plugin {
         }
     }
 
-
     #[provide(ProviderCredentials::compare_exchange)]
     fn compare_exchange(
         state: &mut State,
@@ -323,10 +322,14 @@ mod plugin {
         let old = Secret::new(request.expected.expose_for_authorized_provider().to_vec())
             .map_err(backend_error)
             .map_err(CallError::Domain)?;
-        let replacement =
-            Secret::new(request.replacement.expose_for_authorized_provider().to_vec())
-                .map_err(backend_error)
-                .map_err(CallError::Domain)?;
+        let replacement = Secret::new(
+            request
+                .replacement
+                .expose_for_authorized_provider()
+                .to_vec(),
+        )
+        .map_err(backend_error)
+        .map_err(CallError::Domain)?;
         state
             .backend()
             .map_err(CallError::Domain)?
