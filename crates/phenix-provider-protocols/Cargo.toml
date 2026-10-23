@@ -5,13 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-siwc-verified = ["dep:openidconnect", "dep:serde_json"]
+siwc-verified = ["dep:openidconnect", "dep:serde_json", "dep:curl"]
 model-codecs = ["dep:phenix-sdk", "dep:phenix-basic-contracts", "dep:serde_json", "dep:sse-parse"]
 
 [dependencies]
+zeroize = "=1.9.1"
 url = "=2.5.8"
 phenix-sdk = { path = "../phenix-sdk", optional = true }
 phenix-basic-contracts = { path = "../phenix-basic-contracts", optional = true }
 serde_json = { workspace = true, optional = true }
 openidconnect = { version = "=4.0.1", default-features = false, optional = true }
+curl = { version = "0.4", default-features = false, optional = true }
 sse-parse = { version = "=0.1.0", optional = true }

@@ -6,6 +6,7 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use curl::easy::{Easy2, Handler, List, WriteError};
+use phenix_provider_auth_strategies::ApiKeyAttempts;
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
@@ -13,8 +14,8 @@ use phenix_provider_contracts::{
     ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
     ProviderModel,
 };
-use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use phenix_provider_discovery::{parse, CatalogFormat};
+use std::time::Duration;
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
@@ -231,36 +232,36 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
             "OpenAI model catalog too large",
         ));
     }
-    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+    // The documented list envelope is mandatory. Entry parsing and duplicate
+    // detection are shared with other provider discovery implementations.
+    let document: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
         error(
             ProviderErrorCode::Unavailable,
             "invalid OpenAI model response",
         )
     })?;
-    if response.get("object").and_then(serde_json::Value::as_str) != Some("list") {
+    if document.get("object").and_then(serde_json::Value::as_str) != Some("list") {
         return Err(error(
             ProviderErrorCode::Unavailable,
             "unexpected OpenAI catalog shape",
         ));
     }
-    let entries = response
-        .get("data")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| error(ProviderErrorCode::Unavailable, "missing OpenAI models"))?;
-    if entries.len() > MAX_MODELS {
+    let page = parse(CatalogFormat::OpenAi, body).map_err(|_| {
+        error(
+            ProviderErrorCode::Unavailable,
+            "invalid OpenAI model response",
+        )
+    })?;
+    if page.models.len() > MAX_MODELS {
         return Err(error(
             ProviderErrorCode::Unavailable,
             "too many OpenAI models",
         ));
     }
-    let mut ids = BTreeSet::new();
-    for entry in entries {
-        let id = entry
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| error(ProviderErrorCode::Unavailable, "invalid OpenAI model ID"))?;
-        if id.is_empty()
-            || id.len() > 128
+    let mut ids = Vec::with_capacity(page.models.len());
+    for model in page.models {
+        let id = model.id;
+        if id.len() > 128
             || !id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
@@ -270,14 +271,10 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
                 "invalid OpenAI model identity",
             ));
         }
-        if !ids.insert(id.to_owned()) {
-            return Err(error(
-                ProviderErrorCode::Unavailable,
-                "duplicate OpenAI model ID",
-            ));
-        }
+        ids.push(id);
     }
-    Ok(ids.into_iter().collect())
+    ids.sort_unstable();
+    Ok(ids)
 }
 
 /// Supported Responses families, rather than treating image, embedding,
@@ -316,8 +313,7 @@ mod plugin {
 
     #[derive(Default)]
     pub struct State {
-        serial: u64,
-        attempts: BTreeMap<String, Instant>,
+        attempts: ApiKeyAttempts,
     }
 
     fn scoped_profile(host: &Host<'_>) -> CallResult<CredentialIdentity, ProviderError> {
@@ -485,25 +481,15 @@ mod plugin {
                 "unavailable authentication method",
             )));
         }
-        scoped_profile(host)?;
-        if state.attempts.len() >= 16 {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "too many open authentication attempts",
-            )));
-        }
-        state.serial = state.serial.checked_add(1).ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "auth attempt overflow",
-            ))
-        })?;
-        let id = format!("openai-api-{}", state.serial);
-        state.attempts.insert(id.clone(), Instant::now());
-        Ok(AuthChallenge::ApiKeyInput {
-            attempt_id: id,
-            prompt: "Import API key into the launcher-authorized credential profile, then poll this attempt".into(),
-        })
+        let identity = scoped_profile(host)?;
+        state
+            .attempts
+            .begin(
+                identity,
+                "openai-api",
+                "Import API key into the launcher-authorized credential profile, then poll this attempt",
+            )
+            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::poll)]
@@ -514,25 +500,28 @@ mod plugin {
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        let started = *state.attempts.get(&query.attempt_id).ok_or_else(|| {
-            CallError::Domain(error(ProviderErrorCode::NotFound, "auth attempt not found"))
-        })?;
-        if started.elapsed() > Duration::from_secs(600) {
-            state.attempts.remove(&query.attempt_id);
-            return Ok(AuthAttemptState::Expired);
+        let identity = scoped_profile(host)?;
+        if let Some(terminal) = state
+            .attempts
+            .check(&identity, &query.attempt_id)
+            .map_err(CallError::Domain)?
+        {
+            return Ok(terminal);
         }
         let current = profile(host)?;
         match current.status {
-            CredentialProfileStatus::Authenticated => {
-                state.attempts.remove(&query.attempt_id);
-                Ok(AuthAttemptState::Completed {
-                    profile: AuthenticatedProfile {
+            CredentialProfileStatus::Authenticated => state
+                .attempts
+                .complete(
+                    &identity,
+                    &query.attempt_id,
+                    AuthenticatedProfile {
                         id: current.id,
                         label: current.label,
                         method_id: current.method_id,
                     },
-                })
-            }
+                )
+                .map_err(CallError::Domain),
             CredentialProfileStatus::Unavailable { .. } => Ok(AuthAttemptState::Pending),
         }
     }
@@ -545,13 +534,11 @@ mod plugin {
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        if state.attempts.remove(&query.attempt_id).is_none() {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::NotFound,
-                "auth attempt not found",
-            )));
-        }
-        Ok(AuthAttemptState::Cancelled)
+        let identity = scoped_profile(host)?;
+        state
+            .attempts
+            .cancel(&identity, &query.attempt_id)
+            .map_err(CallError::Domain)
     }
 }
 
@@ -576,6 +563,18 @@ mod tests {
         assert_eq!(
             parse_model_ids(br#"{"object":"list","data":[{"id":"ft:gpt-4.1:team:run"}]}"#).unwrap(),
             vec!["ft:gpt-4.1:team:run"],
+        );
+        assert_eq!(
+            parse_model_ids(br#"{"data":[{"id":"gpt-5"}]}"#)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Unavailable,
+        );
+        assert_eq!(
+            parse_model_ids(br#"{"object":"list","data":[{"id":"bad model"}]}"#)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Unavailable,
         );
         let wrong = br#"{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5"}]}"#;
         assert_eq!(

@@ -3,6 +3,7 @@
 use super::{ProviderError, ProviderErrorCode};
 use phenix_sdk::{contract, Blob, Code, Failure, Portable, StaticField, StaticSchema, Value};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// Validated, immutable scope identity: only checked constructors and strict
 /// wire/serde decoding can create it. Values are selectors, never grants.
@@ -205,7 +206,7 @@ pub struct CredentialSecret(Vec<u8>);
 impl CredentialSecret {
     pub fn new(mut bytes: Vec<u8>) -> Result<Self, ProviderError> {
         if bytes.is_empty() || bytes.len() > 64 * 1024 || bytes.contains(&0) {
-            bytes.fill(0);
+            bytes.zeroize();
             return Err(ProviderError {
                 code: ProviderErrorCode::InvalidInput,
                 message: "invalid credential secret".into(),
@@ -227,7 +228,7 @@ impl std::fmt::Debug for CredentialSecret {
 
 impl Drop for CredentialSecret {
     fn drop(&mut self) {
-        self.0.fill(0);
+        self.0.zeroize();
     }
 }
 

@@ -422,7 +422,9 @@
       # default Basic composition and metadata-only provider remain unchanged.
       providerOpenAiApiSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-openai-api
+        ./crates/phenix-provider-auth-strategies
         ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
         ./crates/phenix-basic-contracts
