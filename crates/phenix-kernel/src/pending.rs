@@ -254,7 +254,13 @@ impl Kernel {
         }
         if failed {
             self.cells.borrow_mut().release_ticket(id);
-            self.cancel_children(id);
+            if let Err(failure) = self.cancel_children(id) {
+                let selection = self.state.borrow().tickets[&id].selection.clone();
+                self.observe_propagation(
+                    &failure,
+                    Kernel::context(super::runtime::Caller::Root, &selection),
+                );
+            }
         }
         self.refresh_quiescence();
     }
@@ -283,15 +289,27 @@ impl Kernel {
                 .quiescent = quiet;
         }
     }
-    fn cancel_children(&self, id: u64) {
+    fn cancel_children(&self, id: u64) -> Result<(), Failure> {
+        // Attempt every child even when one native cancellation fails.
+        // The first failure propagates through an explicit caller's cancel;
+        // terminal/root-drop paths observe it instead of silently discarding it.
+        let mut first_failure = None;
         for child in self.children(id) {
             let state = self.state.borrow();
             let should_cancel =
                 !state.tickets[&child].cancelled && !state.tickets[&child].quiescent;
             drop(state);
             if should_cancel {
-                let _ = self.cancel_ticket(child);
+                if let Err(failure) = self.cancel_ticket(child) {
+                    if first_failure.is_none() {
+                        first_failure = Some(failure);
+                    }
+                }
             }
+        }
+        match first_failure {
+            Some(failure) => Err(failure),
+            None => Ok(()),
         }
     }
     fn authenticate_ticket(&self, root: u64, ticket: &Ticket) -> Result<(), Failure> {
@@ -367,8 +385,14 @@ impl Kernel {
                 record.logical = Logical::Cancelled;
             }
         }
-        self.cancel_children(id);
-        self.enter_ticket(id, true)?;
+        // Do not skip the parent's native cancel if a child fails: report
+        // the failure after attempting both physical cancellation paths.
+        let descendant_failure = self.cancel_children(id).err();
+        let own_result = self.enter_ticket(id, true);
+        if let Some(failure) = descendant_failure {
+            return Err(failure);
+        }
+        own_result?;
         Ok(self.state.borrow().tickets[&id].quiescent)
     }
     fn drain_children(&self, id: u64) -> Result<(), Failure> {
@@ -406,7 +430,16 @@ impl Kernel {
             if !self.state.borrow().tickets[&id].quiescent
                 && !self.state.borrow().tickets[&id].cancelled
             {
-                let _ = self.cancel_ticket(id);
+                if let Err(failure) = self.cancel_ticket(id) {
+                    // Root::drop cannot return an error. Surface the failure
+                    // through the existing propagation channel, and leave
+                    // unfinished physical work for drain_cancelled().
+                    let selection = self.state.borrow().tickets[&id].selection.clone();
+                    self.observe_propagation(
+                        &failure,
+                        Kernel::context(super::runtime::Caller::Root, &selection),
+                    );
+                }
             }
         }
         self.release_abandoned();
