@@ -237,28 +237,16 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
     actions: &[],
-    nodes: &[
-        StaticGraphNode {
-            id: "model-advance",
-            triggers: &["state:phenix.basic.agent/prepared_model_request"],
-            after: &["phenix.basic.agent/prepare"],
-            selector: "",
-            operation: "phenix.basic.turn-advance@1/advance",
-            writes: &["phenix.basic.agent/pending_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "prepare",
-            triggers: &["phenix.basic.prompt"],
-            after: &[],
-            selector: "",
-            operation: "phenix.basic.turn-prepare@1/prepare",
-            writes: &["phenix.basic.agent/pending_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-    ],
+    nodes: &[StaticGraphNode {
+        id: "prepare",
+        triggers: &["phenix.basic.prompt"],
+        after: &[],
+        selector: "",
+        operation: "phenix.basic.turn-prepare@1/prepare",
+        writes: &["phenix.basic.agent/pending_model_request"],
+        join: JoinPolicy::AllActive,
+        failure: FailurePolicy::FailRoot,
+    }],
 };
 
 #[cfg(all(test, feature = "staged-graph"))]
@@ -282,13 +270,15 @@ mod staged_graph_tests;
     // Preserve Storage authority for nested Session, Journal and memory calls.
     // The agent does not select or invoke a Storage provider itself.
     require(phenix_basic_contracts::Storage, slot = "Storage", optional),
+    // Bound only by the opt-in Advanced graph composition.
+    require(phenix_basic_contracts::AdvancedPreparedModelRequest, slot = "Prepared", optional),
     graph(super::GRAPH)
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
-        CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
-        GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
+        error, AdvancedPreparedModelRequest, BasicError, BasicInput, BasicOutput, BasicTurnAdvance,
+        BasicTurnPrepare, CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind,
+        EventPage, GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
         ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
         SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
         ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
@@ -321,10 +311,6 @@ mod plugin {
         #[expose]
         #[watch]
         pending_model_request: Option<ModelRequest>,
-        #[get]
-        #[set]
-        #[watch]
-        prepared_model_request: Option<ModelRequest>,
     }
 
     fn event(
@@ -916,14 +902,20 @@ mod plugin {
         host: &Host<'_>,
         notice: GraphStateChange,
     ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
-        if notice.epoch == 0 || notice.properties != ["phenix.basic.agent/prepared_model_request"] {
+        if notice.epoch == 0
+            || notice.properties != ["phenix.advanced.graph-preparer/prepared_model_request"]
+        {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
                 "Model advance requires a committed prepared-request state change",
             ))));
         }
         let source = state.pending_model_request.clone();
-        let prepared = match state.prepared_model_request.read(host) {
+        let selected = match AdvancedPreparedModelRequest::get::locate(host, "Prepared") {
+            Ok(selected) => selected,
+            Err(failure) => return PendingResult::QuiescentFailure(failure),
+        };
+        let prepared = match selected.read(host) {
             Ok(snapshot) => snapshot.value.as_ref().clone(),
             Err(failure) => {
                 return PendingResult::QuiescentFailure(Failure::new(

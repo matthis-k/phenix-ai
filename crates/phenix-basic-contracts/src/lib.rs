@@ -581,14 +581,15 @@ pub trait BasicTurnAdvance {
     fn advance(&self, notification: GraphStateChange) -> Result<TurnAdvanceOutcome, BasicError>;
 }
 
+// The selected Advanced graph preparer owns the prepared request.
+// Basic Agent imports only its read-only view for source-bound admission.
 #[property(
-    owner = "phenix.basic.agent",
+    owner = "phenix.advanced.graph-preparer",
     id = "prepared_model_request",
     get,
-    set,
     watch
 )]
-pub type BasicPreparedModelRequest = Option<ModelRequest>;
+pub type AdvancedPreparedModelRequest = Option<ModelRequest>;
 
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
@@ -627,6 +628,9 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(BasicInput),
     define(BasicTurnPrepare),
     define(BasicTurnAdvance),
+    // Optional imports must have a canonical definition even when the
+    // advanced provider is not selected in the Basic-only composition.
+    define(AdvancedPreparedModelRequest),
     define(BasicOutput),
     define(Frontend),
     graph(super::GRAPH)
@@ -911,7 +915,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 13);
+        assert_eq!(metadata.definitions.len(), 14);
         assert!(metadata
             .definitions
             .iter()

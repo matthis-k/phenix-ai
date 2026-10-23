@@ -16,9 +16,11 @@ fn source() -> ModelRequest {
 }
 
 #[test]
-fn staged_graph_requires_distinct_prepare_then_model_advance_nodes() {
+fn staged_graph_exposes_only_the_basic_owned_prepare_node() {
+    // The opt-in Advanced graph contributes the resume node and owns its
+    // trigger property. Basic-only staging must remain independently usable.
     let graph = GRAPH.owned().unwrap();
-    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(graph.nodes.len(), 1);
     let first = graph
         .nodes
         .iter()
@@ -28,20 +30,6 @@ fn staged_graph_requires_distinct_prepare_then_model_advance_nodes() {
     assert_eq!(first.triggers, ["phenix.basic.prompt"]);
     assert_eq!(first.operation, "phenix.basic.turn-prepare@1/prepare");
     assert_eq!(first.writes, ["phenix.basic.agent/pending_model_request"]);
-
-    let next = graph
-        .nodes
-        .iter()
-        .find(|node| node.id == "model-advance")
-        .unwrap();
-    assert_eq!(next.id, "model-advance");
-    assert_eq!(
-        next.triggers,
-        ["state:phenix.basic.agent/prepared_model_request"]
-    );
-    assert_eq!(next.operation, "phenix.basic.turn-advance@1/advance");
-    assert_eq!(next.after, ["phenix.basic.agent/prepare"]);
-    assert_eq!(next.writes, ["phenix.basic.agent/pending_model_request"]);
 }
 
 #[test]
@@ -84,12 +72,11 @@ fn pending_model_request_is_owned_and_exposes_only_get_and_watch() {
         "consumers must not mutate the pending request"
     );
 
-    // The temporary prepared request cell remains writable until the
-    // Advanced Preparer handoff is migrated to producer-owned output.
-    let prepared = metadata
-        .properties
-        .iter()
-        .find(|property| property.id == "prepared_model_request")
-        .unwrap();
-    assert!(prepared.set);
+    assert!(
+        metadata
+            .properties
+            .iter()
+            .all(|property| property.id != "prepared_model_request"),
+        "Basic Agent no longer exports or owns a prepared request"
+    );
 }
