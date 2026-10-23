@@ -393,7 +393,7 @@ struct CredentialManagement {
 
 /// The credential composition is a separate control-plane grant, never an
 /// operation from the ordinary Basic session or provider-list root.
-fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialIdentity), String> {
     const CONTRACT: &str = "phenix.provider.credentials@1";
     let resource = spec
         .resource
@@ -441,6 +441,11 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     {
         return Err("credential management composition has unexpected authority".into());
     }
+    Ok((resource.into(), identity))
+}
+
+fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+    let (resource, identity) = validate_credentials_spec(spec)?;
     let kernel = Prepared::prepare(spec.clone())
         .map_err(|_| "invalid credential management composition".to_string())?
         .load()
@@ -448,7 +453,7 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     Ok(CredentialManagement {
         kernel,
         importer: spec.entry.clone(),
-        resource: resource.into(),
+        resource,
         identity,
     })
 }
