@@ -108,14 +108,14 @@ mod plugin {
                 edits: vec![StorageEdit {
                     key: RECORD.into(),
                     expected,
-                    data,
+                    data: data.clone(),
                 }],
             },
         )?;
-        if records.len() != 1 || records[0].revision != snapshot.revision {
+        if records.len() != 1 || !records[0].matches_commit(expected, &data) {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
-                "storage returned invalid session revision",
+                "storage returned invalid session commit",
             )));
         }
         Ok(snapshot)

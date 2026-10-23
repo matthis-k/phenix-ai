@@ -203,7 +203,7 @@ mod plugin {
                 }],
             },
         )?;
-        if records.len() != 1 || records[0].revision != saved.revision || records[0].data != data {
+        if records.len() != 1 || !records[0].matches_commit(current.revision, &data) {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
                 "storage returned an invalid observer checkpoint",
@@ -251,14 +251,14 @@ mod plugin {
                 edits: vec![StorageEdit {
                     key: JOURNAL_KEY.into(),
                     expected: revision,
-                    data,
+                    data: data.clone(),
                 }],
             },
         )?;
-        if records.len() != 1 || records[0].revision <= revision {
+        if records.len() != 1 || !records[0].matches_commit(revision, &data) {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
-                "storage transaction returned an invalid revision",
+                "storage transaction returned an invalid journal commit",
             )));
         }
         Ok(count)
