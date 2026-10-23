@@ -113,9 +113,9 @@ impl Kernel {
                 StateRequest::Create { .. } => return Err(Error::Denied),
                 StateRequest::Read(r) => self.authorize_state(caller, r, "get")?,
                 StateRequest::CompareExchange(edit) => {
-                self.cells.borrow_mut().compare_exchange(edit)
-            }
-            StateRequest::Batch(edits) => {
+                    self.authorize_state(caller, &edit.location, "set")?
+                }
+                StateRequest::Batch(edits) => {
                     for edit in edits {
                         self.authorize_state(caller, &edit.location, "set")?;
                     }
@@ -143,13 +143,7 @@ impl Kernel {
             StateRequest::Create { .. } => Err(Error::Denied),
             StateRequest::Read(r) => self.cells.borrow().read(&r),
             StateRequest::CompareExchange(edit) => {
-                let Value::List(mut batch) = self.cells.borrow_mut().commit(&[edit])? else {
-                    unreachable!()
-                };
-                let Value::List(mut snapshots) = batch.pop().unwrap() else {
-                    unreachable!()
-                };
-                Ok(snapshots.pop().unwrap())
+                self.cells.borrow_mut().compare_exchange(edit)
             }
             StateRequest::Batch(edits) => self.cells.borrow_mut().commit(&edits),
             StateRequest::Subscribe(r) => {
