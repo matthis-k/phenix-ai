@@ -455,7 +455,11 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         importer: spec.entry.clone(),
         resource,
         identity,
-        allowed: spec.grants.iter().map(|grant| grant.operation.clone()).collect(),
+        allowed: spec
+            .grants
+            .iter()
+            .map(|grant| grant.operation.clone())
+            .collect(),
     })
 }
 
