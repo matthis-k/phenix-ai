@@ -622,7 +622,7 @@ mod plugin {
         })();
         match result {
             Ok((verified, _)) => {
-                let _ = callback.confirm_chatgpt(&verified);
+                let _ = callback.confirm_verified(verified.verified_subject());
                 Ok(AuthAttemptState::Completed {
                     profile: AuthenticatedProfile {
                         id: identity.profile_id().into(),

@@ -268,7 +268,7 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 13
+        assert len(report["definitions"]) == 14
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
         assert report["plugin"] == "phenix.basic-contracts"
@@ -422,7 +422,9 @@
       # default Basic composition and metadata-only provider remain unchanged.
       providerOpenAiApiSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-openai-api
+        ./crates/phenix-provider-auth-strategies
         ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
         ./crates/phenix-basic-contracts
@@ -574,10 +576,11 @@
             interface = "phenix.provider.credentials@1";
             inherit operation;
             resources = [ openAiApiCredentialResource ];
-          }) [ "import" "revoke" ];
+          }) [ "import" "bind_environment" "revoke" ];
           authority = {
             operations = [
               "phenix.provider.credentials@1/import"
+              "phenix.provider.credentials@1/bind_environment"
               "phenix.provider.credentials@1/revoke"
             ];
             resources = [ openAiApiCredentialResource ];
@@ -2721,16 +2724,22 @@
               echo "This opt-in composition authorizes only openai/api/personal." >&2
               exit 2
             fi
-            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
-               [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
-              echo "Configure a protected 0700 credential directory and explicitly opt into the file backend." >&2
-              echo "Set PHENIX_CREDENTIAL_FILE_DIRECTORY and PHENIX_CREDENTIAL_FILE_CONSENT=1." >&2
+            # The provider's ApiKeyOptions advertises OPENAI_API_KEY, but
+            # deployments may select a different *name*, never a key value.
+            # The exact-root credential backend reads that value only when a
+            # provider operation has already been authorized by the kernel.
+            export PHENIX_CREDENTIAL_API_KEY_ENV_NAME="''${PHENIX_CREDENTIAL_API_KEY_ENV_NAME:-OPENAI_API_KEY}"
+            if { [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
+                 [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; } &&
+               ! printenv "$PHENIX_CREDENTIAL_API_KEY_ENV_NAME" >/dev/null; then
+              echo "Provide an API-key environment variable, or configure a protected 0700 credential directory for masked input." >&2
+              echo "Set PHENIX_CREDENTIAL_FILE_DIRECTORY and PHENIX_CREDENTIAL_FILE_CONSENT=1, or supply PHENIX_CREDENTIAL_API_KEY_ENV_NAME (default OPENAI_API_KEY)." >&2
               exit 2
             fi
             export PHENIX_OPENAI_API_PROFILE=personal
-            # Disable legacy preset credentials. Native HTTP sessions still
-            # require the provider-owned, freshly checked selected identity.
-            unset PHENIX_MODEL_HTTP_API_KEY OPENAI_API_KEY
+            # Disable unrelated legacy model credentials. The selected native
+            # HTTP model can receive only the exact authorized resolved key.
+            unset PHENIX_MODEL_HTTP_API_KEY
             export PHENIX_MODEL_HTTP_ENDPOINT=http://127.0.0.1:1/not-selected
             export PHENIX_MODEL_HTTP_MODEL=unselected
             ${basicSqliteEnvironment "basic-openai-api.sqlite"}

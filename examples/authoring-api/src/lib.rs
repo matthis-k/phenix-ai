@@ -4,6 +4,7 @@ use phenix_sdk::{contract, live::ValueRef, property};
 pub trait Counter {
     fn slow(&mut self, input: String) -> Result<u64, String>;
     fn reference(&self) -> Result<ValueRef<u64>, String>;
+    fn observed_reference(&self) -> Result<ValueRef<u64>, String>;
     fn run(&mut self, input: String) -> Result<u64, String>;
 }
 #[contract(id = "test.authored.relay@1")]
@@ -12,6 +13,9 @@ pub trait Relay {
 }
 #[property(owner = "test.authored-provider", id = "counter", get, set, watch)]
 pub type Count = u64;
+
+#[property(owner = "test.authored-provider", id = "observed", get, watch)]
+pub type Observed = u64;
 
 #[property(owner = "test.authored-field", id = "notes", get)]
 pub type Notes = Vec<String>;

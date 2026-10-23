@@ -210,6 +210,13 @@ impl Cells {
             ),
         ]))
     }
+    /// Return the newly committed snapshot directly. Single-property callers
+    /// must not unpack the batch operation's portable wire representation.
+    pub(super) fn compare_exchange(&mut self, edit: CompareExchange) -> Result<Value, Error> {
+        let location = edit.location;
+        self.commit(&[edit])?;
+        self.read(&location)
+    }
     pub(super) fn commit(&mut self, edits: &[CompareExchange]) -> Result<Value, Error> {
         let epoch = self.epoch.0.checked_add(1).ok_or(Error::EpochExhausted)?;
         for edit in edits {
@@ -364,6 +371,32 @@ mod reactive_epoch_tests {
     }
 
     use phenix_contract::ValueSchema;
+
+    #[test]
+    fn single_compare_exchange_returns_committed_snapshot() {
+        let mut cells = Cells::new(&[9; 32]).unwrap();
+        cells.register_owner("test.owner").unwrap();
+        let location = cells
+            .create("test.owner", &field("counter", true), Value::U64(1))
+            .unwrap();
+        let committed = cells
+            .compare_exchange(CompareExchange {
+                location,
+                expected: Revision(0),
+                value: Value::U64(2),
+            })
+            .unwrap();
+        assert_eq!(committed, cells.read(&location).unwrap());
+        assert_eq!(cells.epoch(), Epoch(1));
+        assert!(matches!(
+            cells.compare_exchange(CompareExchange {
+                location,
+                expected: Revision(0),
+                value: Value::U64(3),
+            }),
+            Err(Error::Conflict { .. })
+        ));
+    }
 
     #[test]
     fn watched_changes_are_committed_coalesced_and_sorted() {

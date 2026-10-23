@@ -73,6 +73,49 @@ impl Kernel {
         )
         .map_err(|_| Error::Denied)
     }
+    fn owner_readonly(&self, caller: &str, location: &ValueLocation) -> Result<bool, Error> {
+        let cells = self.cells.borrow();
+        let (owner, property) = cells.identity(location)?;
+        Ok(owner == caller && !property.set)
+    }
+
+    /// Owner publication is separate from the public property `set` contract.
+    ///
+    /// Only the currently executing owner may publish a new observation.
+    /// The executing frame must still carry the property resource grant.
+    /// In particular, publication does not make a read-only property writable
+    /// to imported consumers or to the root.
+    fn authorize_owner_publish(&self, caller: &str, location: &ValueLocation) -> Result<(), Error> {
+        let cells = self.cells.borrow();
+        let (owner, property) = cells.identity(location)?;
+        if owner != caller || (!property.get && !property.watch) {
+            return Err(Error::Denied);
+        }
+        let interface =
+            phenix_contract::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
+        let owner = owner.to_owned();
+        drop(cells);
+
+        let authority = {
+            let state = self.state.borrow();
+            let Some(frame) = state.stack.last() else {
+                return Err(Error::Denied);
+            };
+            if frame.provider != owner || state.stack.iter().any(|frame| frame.revoked) {
+                return Err(Error::Denied);
+            }
+            frame.authority.clone()
+        };
+        self.require_property_resource(
+            &Selection {
+                interface,
+                operation: "get".into(),
+                provider: owner,
+            },
+            &authority,
+        )
+        .map_err(|_| Error::Denied)
+    }
     pub(super) fn state_request(
         &self,
         root: u64,
@@ -113,11 +156,22 @@ impl Kernel {
                 StateRequest::Create { .. } => return Err(Error::Denied),
                 StateRequest::Read(r) => self.authorize_state(caller, r, "get")?,
                 StateRequest::CompareExchange(edit) => {
-                    self.authorize_state(caller, &edit.location, "set")?
+                    // The owner may publish a read-only observation under its
+                    // active resource authority. All other writes continue to
+                    // require a selected public `set` operation.
+                    if self.owner_readonly(caller, &edit.location)? {
+                        self.authorize_owner_publish(caller, &edit.location)?;
+                    } else {
+                        self.authorize_state(caller, &edit.location, "set")?;
+                    }
                 }
                 StateRequest::Batch(edits) => {
                     for edit in edits {
-                        self.authorize_state(caller, &edit.location, "set")?;
+                        if self.owner_readonly(caller, &edit.location)? {
+                            self.authorize_owner_publish(caller, &edit.location)?;
+                        } else {
+                            self.authorize_state(caller, &edit.location, "set")?;
+                        }
                     }
                 }
                 StateRequest::Subscribe(r) => self.authorize_state(caller, r, "watch")?,
@@ -142,15 +196,7 @@ impl Kernel {
         match request {
             StateRequest::Create { .. } => Err(Error::Denied),
             StateRequest::Read(r) => self.cells.borrow().read(&r),
-            StateRequest::CompareExchange(edit) => {
-                let Value::List(mut batch) = self.cells.borrow_mut().commit(&[edit])? else {
-                    unreachable!()
-                };
-                let Value::List(mut snapshots) = batch.pop().unwrap() else {
-                    unreachable!()
-                };
-                Ok(snapshots.pop().unwrap())
-            }
+            StateRequest::CompareExchange(edit) => self.cells.borrow_mut().compare_exchange(edit),
             StateRequest::Batch(edits) => self.cells.borrow_mut().commit(&edits),
             StateRequest::Subscribe(r) => {
                 self.cells.borrow_mut().subscribe(root, caller, ticket, r)

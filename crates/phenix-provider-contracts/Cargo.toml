@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+zeroize = "=1.9.1"
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-provider-protocols = { path = "../phenix-provider-protocols" }
 serde.workspace = true

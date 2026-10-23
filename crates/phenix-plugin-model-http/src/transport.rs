@@ -144,16 +144,18 @@ pub(crate) fn run_with_notify(
         headers.append("Content-Type: application/json")?;
         headers.append("Accept: text/event-stream")?;
         headers.append("Expect:")?;
+        // Credential presentation is an authentication strategy. It is NOT
+        // inferred from the request/response protocol or the provider name.
         if let Some(token) = authorization {
-            match config.protocol {
-                phenix_provider_protocols::Protocol::AnthropicMessages => {
-                    headers.append(&format!("x-api-key: {token}"))?;
-                    headers.append("anthropic-version: 2023-06-01")?;
-                }
-                _ => {
-                    headers.append(&format!("Authorization: Bearer {token}"))?;
-                }
-            }
+            headers.append(&format!(
+                "{}: {}",
+                config.presentation.header_name(),
+                config.presentation.header_value(token)
+            ))?;
+        }
+        // Protocol-specific *nonsecret* headers remain with their codec.
+        if config.protocol == phenix_provider_protocols::Protocol::AnthropicMessages {
+            headers.append("anthropic-version: 2023-06-01")?;
         }
         handle.http_headers(headers)?;
         Ok(())

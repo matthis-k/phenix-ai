@@ -9,6 +9,7 @@ siwc-verified = ["dep:openidconnect", "dep:serde_json", "dep:curl"]
 model-codecs = ["dep:phenix-sdk", "dep:phenix-basic-contracts", "dep:serde_json", "dep:sse-parse"]
 
 [dependencies]
+zeroize = "=1.9.1"
 url = "=2.5.8"
 phenix-sdk = { path = "../phenix-sdk", optional = true }
 phenix-basic-contracts = { path = "../phenix-basic-contracts", optional = true }

@@ -9,11 +9,12 @@ use phenix_sdk::*;
 use serde::{Deserialize, Serialize};
 
 pub mod adapter;
-pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions};
+pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions, ApiKeyPresentation};
 
 pub mod credentials;
 pub use credentials::{
-    CredentialIdentity, CredentialImport, CredentialSecret, ProviderCredentials,
+    CredentialEnvironmentBinding, CredentialIdentity, CredentialImport, CredentialSecret,
+    ProviderCredentials,
 };
 
 pub mod model_session;

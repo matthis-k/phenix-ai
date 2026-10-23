@@ -113,9 +113,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         artifacts=[credentials_artifact], slots=[],
         grants=[{"caller": "root", "interface": credential_contract,
                  "operation": operation, "resources": [resource]}
-                for operation in ("import", "revoke")],
+                for operation in ("import", "bind_environment", "revoke")],
         authority={"operations": [credential_contract + "/" + op
-                                  for op in ("import", "revoke")],
+                                  for op in ("import", "bind_environment", "revoke")],
                    "resources": [resource]},
         resource=resource,
     )
@@ -202,8 +202,12 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                PHENIX_MODEL_HTTP_ENDPOINT="http://127.0.0.1:1/forged-preset",
                PHENIX_MODEL_HTTP_API_KEY="no-preset-token")
 
-    def launch(configured_profile="personal"):
+    env.pop("PHENIX_CREDENTIAL_API_KEY_ENV_NAME", None)
+
+    def launch(configured_profile="personal", extra_env=None):
         launch_env = dict(env)
+        if extra_env is not None:
+            launch_env.update(extra_env)
         if configured_profile is None:
             launch_env.pop("PHENIX_OPENAI_API_PROFILE", None)
         else:
@@ -230,7 +234,11 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         p.stdin.flush()
         for _ in range(256):
             raw = p.responses.get(timeout=40)
-            assert raw is not None, (method, p.poll())
+            if raw is None:
+                # Process exits before ACP can respond are transport startup
+                # failures. Keep a bounded, fixture-key-redacted diagnostic.
+                stderr = p.stderr.read()[-1200:].replace(key, "[REDACTED]")
+                raise AssertionError((method, p.poll(), stderr))
             assert key not in raw, "secret leaked in ACP response"
             data = json.loads(raw)
             if data.get("method") == "session/update": continue
@@ -367,8 +375,83 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     close(after_revoke)
 
     assert not list(vault.iterdir()), "key not revoked from vault"
+
+    # The same reusable API-key method also works with an environment source.
+    # It uses no masked ACP import, no plaintext vault and no new provider or
+    # model transport implementation.
+    environment_only = dict(
+        PHENIX_CREDENTIAL_API_KEY_ENV_NAME="PHENIX_C14_TEST_API_KEY",
+        PHENIX_C14_TEST_API_KEY=key,
+        PHENIX_CREDENTIAL_FILE_CONSENT="0",
+        PHENIX_CREDENTIAL_FILE_DIRECTORY="",
+    )
+    sourced = launch(extra_env=environment_only)
+    init(sourced)
+    sourced_status = call(sourced, 90, "_phenix/providers/auth/status", user)
+    assert sourced_status["result"]["profiles"][0]["status"] == "Authenticated", sourced_status
+    sourced_models = call(sourced, 91, "_phenix/providers/models",
+                         {**user, "profile_id": "personal", "cursor": None, "limit": 256})
+    assert [m["id"] for m in sourced_models["result"]["models"]] == ["gpt-5"]
+    new_session = call(sourced, 92, "session/new", {"cwd": "/tmp", "mcpServers": []})
+    selected_model = [
+        option["value"]
+        for option in new_session["result"]["configOptions"][0]["options"]
+        if option["value"].startswith("phenix.native-model@1:")
+    ]
+    assert len(selected_model) == 1
+    selected_in_env = call(sourced, 93, "session/set_config_option", {
+        "sessionId": new_session["result"]["sessionId"], "configId": "model",
+        "value": selected_model[0],
+    })
+    assert "result" in selected_in_env
+    env_answer = call(sourced, 94, "session/prompt", {
+        "sessionId": new_session["result"]["sessionId"],
+        "prompt": [{"type": "text", "text": "hello from env"}],
+    })
+    assert env_answer.get("result", {}).get("stopReason") == "end_turn", env_answer
+    cannot_revoke_env = call(sourced, 95, "_phenix/credentials/revoke", account)
+    assert "error" in cannot_revoke_env, "environment source cannot report false revocation"
+    close(sourced)
+    assert not list(vault.iterdir()), "environment key must never be stored in the vault"
+
+    # Name only in the exact account; the API key never enters the vault.
+    explicit = launch(extra_env={"PHENIX_C15_SELECTED_API_KEY": key})
+    init(explicit)
+    forged = call(explicit, 97, "_phenix/credentials/env-bind",
+                  {**account, "profile_id": "work",
+                   "environment_variable": "PHENIX_C15_SELECTED_API_KEY"})
+    assert "error" in forged
+    invalid_name = call(explicit, 98, "_phenix/credentials/env-bind",
+                        {**account, "environment_variable": "BAD/NAME"})
+    assert "error" in invalid_name
+    bound = call(explicit, 99, "_phenix/credentials/env-bind",
+                 {**account, "environment_variable": "PHENIX_C15_SELECTED_API_KEY"})
+    assert bound["result"]["ok"] is True, bound
+    verified = call(explicit, 100, "_phenix/providers/auth/status", user)
+    assert verified["result"]["profiles"][0]["status"] == "Authenticated"
+    close(explicit)
+    for item in vault.iterdir():
+        if item.is_file():
+            assert key.encode() not in item.read_bytes(), "secret was persisted"
+
+    # A new ACP process checks the current environment for the same named
+    # account. The bound name alone must never imply authenticated status.
+    absent = launch()
+    init(absent)
+    missing = call(absent, 101, "_phenix/providers/auth/status", user)
+    assert missing["result"]["profiles"][0]["status"]["Unavailable"]
+    close(absent)
+    restored = launch(extra_env={"PHENIX_C15_SELECTED_API_KEY": key})
+    init(restored)
+    again = call(restored, 102, "_phenix/providers/auth/status", user)
+    assert again["result"]["profiles"][0]["status"] == "Authenticated"
+    revoked = call(restored, 103, "_phenix/credentials/revoke", account)
+    assert revoked["result"]["ok"] is True
+    close(restored)
+    assert not list(vault.iterdir()), "revoked env name persisted"
+
     assert state["redirected"] == 0, state
-    assert state["get"] >= 10 and state["post"] == 1, state
+    assert state["get"] >= 12 and state["post"] == 2, state
 
 server.shutdown()
 (output / "openai-api-auth-product.json").write_text(json.dumps({
@@ -382,6 +465,9 @@ server.shutdown()
     "cross_profile_model_denied": True, "unsupported_oauth_denied": True,
     "root_selected_account_without_env": True,
     "deployment_mismatch_denied_before_network": True,
+    "environment_key_selected_inference_without_vault": True,
+    "environment_source_revoke_denied": True,
+    "explicit_name_only_bound_verified_and_revoked": True,
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
 }, sort_keys=True, indent=2))

@@ -9,6 +9,7 @@ fn selected_http_install_is_per_session_consumed_once_and_never_falls_back() {
         protocol: phenix_provider_protocols::Protocol::OpenaiChat,
         provider_max_tokens: None,
         credential: None,
+        presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
         ca_file: None,
     };
     let mut mode = ModelConfiguration::default();

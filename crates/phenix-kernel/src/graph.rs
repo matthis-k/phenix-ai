@@ -368,11 +368,29 @@ impl crate::resolve::Prepared {
                             format!("graph property {write} not selected"),
                         )
                     })?;
+                // A read-only published field can only be written by the
+                // *executing provider* of the node, which must be the
+                // property owner. A different graph plugin may contribute
+                // the node by selecting that provider through a typed import.
+                // Runtime separately checks the live frame, effective scope,
+                // and owner identity; this admission cannot grant them.
                 if !target.set {
-                    return Err(Failure::new(
-                        Code::Denied,
-                        format!("graph property {write} is read-only"),
-                    ));
+                    let property_contract = phenix_contract::property_contract(owner, property)?;
+                    let resource = property_contract.trim_end_matches("@1");
+                    let node_grant = self
+                        .grants
+                        .get(&(node.owner.clone(), node.definition.operation.clone()));
+                    if node.provider != owner
+                        || (!target.get && !target.watch)
+                        || !self.authority.resources.contains(resource)
+                        || !node_grant.is_some_and(|resources| resources.contains(resource))
+                    {
+                        return Err(Failure::new(
+                            Code::Denied,
+                            format!("graph property {write} is not owner-publishable"),
+                        ));
+                    }
+                    continue;
                 }
                 let key = format!(
                     "{}/set",
