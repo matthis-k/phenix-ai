@@ -32,6 +32,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
 
 type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
@@ -134,7 +135,7 @@ impl std::fmt::Debug for CredentialImportRequest {
 
 impl Drop for CredentialImportRequest {
     fn drop(&mut self) {
-        std::mem::take(&mut self.secret).into_bytes().fill(0);
+        self.secret.zeroize();
     }
 }
 
@@ -430,7 +431,6 @@ impl ProviderManagement {
     /// preflight result as an executable kernel grant. The later native
     /// installation must recheck auth/registration, resolve the exact secret
     /// and use the same session kernel.
-    #[allow(dead_code)]
     fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
         const SCOPE: &str = "user";
 
@@ -894,7 +894,6 @@ fn prepare_model_resolver(spec: &Composition) -> Result<ModelCredentialResolver,
 impl ModelCredentialResolver {
     /// Available only to the trusted controller after checking fresh model
     /// binding and authorization. No ACP command can call this method.
-    #[allow(dead_code)]
     fn resolve_for(&self, identity: &CredentialIdentity) -> Result<CredentialSecret, String> {
         if *identity != self.identity {
             return Err("model credential identity is not launcher-authorized".into());
@@ -933,7 +932,7 @@ fn installed_model_provider(composition: &Composition) -> Option<&str> {
 // CredentialSecret owns and zeroizes the original independently.
 fn scrub_portable_secret_bytes(value: &mut Value) {
     match value {
-        Value::Bytes(bytes) => bytes.fill(0),
+        Value::Bytes(bytes) => bytes.as_mut_slice().zeroize(),
         Value::List(items) => {
             for item in items {
                 scrub_portable_secret_bytes(item);
@@ -1442,7 +1441,7 @@ impl Controller {
         // Overwrite its serialized payload copy even on domain or host denial.
         if let Value::Map(fields) = &mut value {
             if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
-                bytes.fill(0);
+                bytes.zeroize();
             }
         }
         response

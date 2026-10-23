@@ -2,6 +2,7 @@ use crate::failed;
 use phenix_basic_contracts::{error, BasicError, ErrorCode};
 use phenix_provider_protocols::Protocol;
 use std::env;
+use zeroize::Zeroize;
 
 #[cfg(test)]
 pub(crate) use phenix_provider_protocols::request::encode;
@@ -72,7 +73,7 @@ fn validated_credential(
         .ok()
         .is_some_and(|text| !text.is_empty() && !text.chars().any(char::is_control));
     if !valid {
-        bytes.fill(0);
+        bytes.zeroize();
         return Err(error(ErrorCode::InvalidInput, "invalid HTTP credential"));
     }
     phenix_provider_contracts::CredentialSecret::new(bytes)
