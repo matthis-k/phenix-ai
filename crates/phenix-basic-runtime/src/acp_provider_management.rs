@@ -80,29 +80,45 @@ impl ModelPageAccumulator {
     }
 }
 
+// Preserve the plugin's declared domain outcome until the outer ACP adapter
+// maps it to protocol errors. A provider denial is not a native host failure.
+fn decode_provider_outcome<R: Portable>(
+    outcome: Outcome,
+) -> Result<Result<R, ProviderError>, phenix_contract::Failure> {
+    match outcome {
+        Outcome::Success(value) => Ok(Ok(R::from_value(value)?)),
+        Outcome::Domain(value) => Ok(Err(ProviderError::from_value(value)?)),
+    }
+}
+
 impl ProviderManagement {
+    fn invoke_typed<Q: Portable, R: Portable>(
+        &self,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> Result<Result<R, ProviderError>, phenix_contract::Failure> {
+        let root = self.kernel.admit_root(Selection {
+            interface: interface.into(),
+            operation: operation.into(),
+            provider: self.selected.provider.clone(),
+        })?;
+        decode_provider_outcome(root.invoke(&query.to_value())?)
+    }
+
     pub(super) fn read<Q: Portable, R: Portable>(
         &self,
         interface: &str,
         operation: &str,
         query: &Q,
     ) -> acp::Result<R> {
-        let root = self
-            .kernel
-            .admit_root(Selection {
-                interface: interface.into(),
-                operation: operation.into(),
-                provider: self.selected.provider.clone(),
-            })
-            .map_err(internal)?;
-        let value = match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => value,
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                return Err(provider_rejection(problem));
-            }
-        };
-        R::from_value(value).map_err(internal)
+        match self
+            .invoke_typed(interface, operation, query)
+            .map_err(internal)?
+        {
+            Ok(value) => Ok(value),
+            Err(problem) => Err(provider_rejection(problem)),
+        }
     }
 
     /// Controller-only preflight. Never treat UI-discovered models or a
@@ -459,5 +475,33 @@ impl ProviderManagement {
             return Err(invalid("duplicate native model option"));
         }
         Ok(offered)
+    }
+}
+
+#[cfg(test)]
+mod typed_result_tests {
+    use super::*;
+
+    #[test]
+    fn domain_failure_remains_typed_before_acp_mapping() {
+        let failure = ProviderError {
+            code: ProviderErrorCode::Denied,
+            message: "denied".into(),
+        };
+        let reply = decode_provider_outcome::<ModelPage>(Outcome::Domain(failure.to_value()))
+            .expect("valid native reply");
+        assert_eq!(reply.unwrap_err().code, ProviderErrorCode::Denied);
+    }
+
+    #[test]
+    fn successful_native_reply_decodes_through_the_contract() {
+        let page = ProviderPage {
+            providers: Vec::new(),
+            revision: 1,
+        };
+        let response = decode_provider_outcome::<ProviderPage>(Outcome::Success(page.to_value()))
+            .expect("valid native reply")
+            .expect("provider success");
+        assert_eq!(response.revision, 1);
     }
 }
