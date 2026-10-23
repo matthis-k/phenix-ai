@@ -1,4 +1,4 @@
-use example_authoring_api::{Count, Counter, Notes, Relay};
+use example_authoring_api::{Count, Counter, Notes, Observed, Relay};
 use phenix_sdk::{live, *};
 
 #[plugin(
@@ -10,6 +10,7 @@ use phenix_sdk::{live, *};
     require(Counter, slot = "fallback", optional),
     require(Counter, slot = "all", many(min = 0)),
     require(Count, slot = "count"),
+    require(Observed, slot = "observed"),
     require(Notes, slot = "notes")
 )]
 mod client {
@@ -29,6 +30,26 @@ mod client {
                     .invoke::<Notes::get>("notes", &location)
                     .map_err(property_error)?
                     .len() as u64);
+            }
+            "foreign-publish" => {
+                let reference = Observed::get::locate(host, "observed")?;
+                let before = reference.read(host).map_err(|error| {
+                    Failure::new(Code::PluginFailed, format!("foreign read: {error}"))
+                })?;
+                if !matches!(
+                    host.publish(reference, before.revision, &999_u64),
+                    Err(live::AccessError::State(ValueAccessError::Denied))
+                        | Err(live::AccessError::Kernel(Failure {
+                            code: Code::Denied,
+                            ..
+                        }))
+                ) {
+                    return Err(Failure::new(Code::PluginFailed, "foreign publication was not denied").into());
+                }
+                let after = reference.read(host).map_err(|error| {
+                    Failure::new(Code::PluginFailed, format!("foreign read after denial: {error}"))
+                })?;
+                return Ok(*after.value);
             }
             "locate-count" => {
                 let location = Count::get::locate(host, "count")?;
