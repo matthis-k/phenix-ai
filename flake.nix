@@ -669,10 +669,11 @@
             interface = "phenix.provider.credentials@1";
             inherit operation;
             resources = [ chatGptCredentialResource ];
-          }) [ "resolve" "import" ]);
+          }) [ "resolve" "import" "compare_exchange" ]);
           authority = {
             operations = (map (entry: "${entry.interface}/${entry.operation}") openAiApiProviderOperations)
-              ++ [ "phenix.provider.credentials@1/resolve" "phenix.provider.credentials@1/import" ];
+              ++ [ "phenix.provider.credentials@1/resolve" "phenix.provider.credentials@1/import"
+                   "phenix.provider.credentials@1/compare_exchange" ];
             resources = [ chatGptCredentialResource ];
           };
           resource = chatGptCredentialResource;
@@ -712,9 +713,16 @@
               operation = "resolve";
               resources = [ chatGptCredentialResource ];
             }
+            {
+              caller = "phenix.provider.chatgpt";
+              interface = "phenix.provider.credentials@1";
+              operation = "compare_exchange";
+              resources = [ chatGptCredentialResource ];
+            }
           ];
           authority = {
-            operations = [ "phenix.provider.credentials@1/resolve" ];
+            operations = [ "phenix.provider.credentials@1/resolve"
+              "phenix.provider.credentials@1/compare_exchange" ];
             resources = [ chatGptCredentialResource ];
           };
           resource = chatGptCredentialResource;
