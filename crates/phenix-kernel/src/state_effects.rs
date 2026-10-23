@@ -73,6 +73,12 @@ impl Kernel {
         )
         .map_err(|_| Error::Denied)
     }
+    fn owner_readonly(&self, caller: &str, location: &ValueLocation) -> Result<bool, Error> {
+        let cells = self.cells.borrow();
+        let (owner, property) = cells.identity(location)?;
+        Ok(owner == caller && !property.set)
+    }
+
     /// Owner publication is separate from the public property `set` contract.
     ///
     /// Only the currently executing owner may publish a new observation.
@@ -91,6 +97,7 @@ impl Kernel {
         }
         let interface =
             phenix_contract::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
+        let owner = owner.to_owned();
         drop(cells);
 
         let state = self.state.borrow();
@@ -154,9 +161,7 @@ impl Kernel {
                     // The owner may publish a read-only observation under its
                     // active resource authority. All other writes continue to
                     // require a selected public `set` operation.
-                    if self.cells.borrow().identity(&edit.location)?.0 == caller
-                        && !self.cells.borrow().identity(&edit.location)?.1.set
-                    {
+                    if self.owner_readonly(caller, &edit.location)? {
                         self.authorize_owner_publish(caller, &edit.location)?;
                     } else {
                         self.authorize_state(caller, &edit.location, "set")?;
@@ -164,7 +169,7 @@ impl Kernel {
                 }
                 StateRequest::Batch(edits) => {
                     for edit in edits {
-                        if self.cells.borrow().identity(&edit.location)?.0 == caller {
+                        if self.owner_readonly(caller, &edit.location)? {
                             self.authorize_owner_publish(caller, &edit.location)?;
                         } else {
                             self.authorize_state(caller, &edit.location, "set")?;
