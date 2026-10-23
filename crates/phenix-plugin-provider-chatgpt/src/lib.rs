@@ -114,6 +114,24 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
     {
         return Err(unavailable("ChatGPT OAuth connection is not installed"));
     }
+    // The built-in registration intentionally only advertises metadata.
+    // An authenticated ChatGPT-plan provider must contribute the explicit,
+    // public inference origin before it can install an executable model.
+    // SIWC documents /v1/responses, not private ChatGPT backend APIs.
+    let connection = &mut provider.connections[0];
+    connection.base_url = Some("https://api.openai.com/v1".into());
+    for protocol in &mut connection.protocols {
+        if protocol.id == "openai-responses" {
+            protocol.endpoint = Some("https://api.openai.com/v1/responses".into());
+        }
+    }
+    if connection.protocols.len() != 1
+        || connection.protocols[0].id != "openai-responses"
+        || connection.protocols[0].endpoint.as_deref()
+            != Some("https://api.openai.com/v1/responses")
+    {
+        return Err(unavailable("ChatGPT plan inference endpoint is not installed"));
+    }
     Ok(provider)
 }
 
