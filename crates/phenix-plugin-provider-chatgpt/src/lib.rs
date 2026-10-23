@@ -17,7 +17,8 @@ use phenix_provider_protocols::{
     siwc_models::parse_chatgpt_models,
     siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
     siwc_verified::{
-        refresh_form, verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity,
+        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
+        GeneratedPkce, VerifiedChatGptIdentity,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -361,12 +362,12 @@ mod plugin {
             })?;
             let keys = issuer_jwks()
                 .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
-            let verified = verify_chatgpt_identity(
+            let verified = verify_chatgpt_persisted_identity(
                 &tokens,
                 &keys,
                 &previous.issued_client_id,
                 &previous.id_token_nonce,
-                Some(&previous.subject),
+                &previous.subject,
             )
             .map_err(|_| {
                 CallError::Domain(denied("refreshed account identity or plan grant invalid"))
@@ -410,12 +411,12 @@ mod plugin {
             expires_in: account.expires_at.saturating_sub(now),
             granted_scope: account.granted_scope.clone(),
         };
-        verify_chatgpt_identity(
+        verify_chatgpt_persisted_identity(
             &bundle,
             &keys,
             &account.issued_client_id,
             &account.id_token_nonce,
-            Some(&account.subject),
+            &account.subject,
         )
         .map_err(|_| {
             CallError::Domain(denied("ChatGPT identity or plan permission not verified"))
