@@ -13,7 +13,8 @@ use phenix_provider_contracts::{
     ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
     ProviderModel,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use phenix_provider_discovery::{parse, CatalogFormat};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 const PROVIDER: &str = "openai";
@@ -231,36 +232,36 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
             "OpenAI model catalog too large",
         ));
     }
-    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+    // The documented list envelope is mandatory. Entry parsing and duplicate
+    // detection are shared with other provider discovery implementations.
+    let document: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
         error(
             ProviderErrorCode::Unavailable,
             "invalid OpenAI model response",
         )
     })?;
-    if response.get("object").and_then(serde_json::Value::as_str) != Some("list") {
+    if document.get("object").and_then(serde_json::Value::as_str) != Some("list") {
         return Err(error(
             ProviderErrorCode::Unavailable,
             "unexpected OpenAI catalog shape",
         ));
     }
-    let entries = response
-        .get("data")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| error(ProviderErrorCode::Unavailable, "missing OpenAI models"))?;
-    if entries.len() > MAX_MODELS {
+    let page = parse(CatalogFormat::OpenAi, body).map_err(|_| {
+        error(
+            ProviderErrorCode::Unavailable,
+            "invalid OpenAI model response",
+        )
+    })?;
+    if page.models.len() > MAX_MODELS {
         return Err(error(
             ProviderErrorCode::Unavailable,
             "too many OpenAI models",
         ));
     }
-    let mut ids = BTreeSet::new();
-    for entry in entries {
-        let id = entry
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| error(ProviderErrorCode::Unavailable, "invalid OpenAI model ID"))?;
-        if id.is_empty()
-            || id.len() > 128
+    let mut ids = Vec::with_capacity(page.models.len());
+    for model in page.models {
+        let id = model.id;
+        if id.len() > 128
             || !id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
@@ -270,14 +271,10 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
                 "invalid OpenAI model identity",
             ));
         }
-        if !ids.insert(id.to_owned()) {
-            return Err(error(
-                ProviderErrorCode::Unavailable,
-                "duplicate OpenAI model ID",
-            ));
-        }
+        ids.push(id);
     }
-    Ok(ids.into_iter().collect())
+    ids.sort_unstable();
+    Ok(ids)
 }
 
 /// Supported Responses families, rather than treating image, embedding,
@@ -576,6 +573,18 @@ mod tests {
         assert_eq!(
             parse_model_ids(br#"{"object":"list","data":[{"id":"ft:gpt-4.1:team:run"}]}"#).unwrap(),
             vec!["ft:gpt-4.1:team:run"],
+        );
+        assert_eq!(
+            parse_model_ids(br#"{"data":[{"id":"gpt-5"}]}"#)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Unavailable,
+        );
+        assert_eq!(
+            parse_model_ids(br#"{"object":"list","data":[{"id":"bad model"}]}"#)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Unavailable,
         );
         let wrong = br#"{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5"}]}"#;
         assert_eq!(

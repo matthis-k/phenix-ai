@@ -19,6 +19,7 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
+use zeroize::Zeroize;
 
 const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_PROFILE_COMPONENT: usize = 64;
@@ -52,7 +53,7 @@ pub struct Secret {
 impl Secret {
     pub fn new(mut data: Vec<u8>) -> Result<Self, CredentialError> {
         if data.is_empty() || data.len() > MAX_SECRET_BYTES || data.contains(&0) {
-            data.fill(0);
+            data.zeroize();
             return Err(CredentialError::InvalidIdentity);
         }
         Ok(Self { data })
@@ -71,7 +72,7 @@ impl std::fmt::Debug for Secret {
 
 impl Drop for Secret {
     fn drop(&mut self) {
-        self.data.fill(0);
+        self.data.zeroize();
     }
 }
 
@@ -407,7 +408,7 @@ impl CredentialFiles {
             .read_to_end(&mut bytes)
             .map_err(|_| CredentialError::Io)?;
         if bytes.len() > MAX_SECRET_BYTES {
-            bytes.fill(0);
+            bytes.zeroize();
             return Err(CredentialError::InsecureFile);
         }
         Secret::new(bytes)
