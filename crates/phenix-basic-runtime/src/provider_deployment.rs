@@ -89,11 +89,9 @@ fn grant(caller: &str, interface: &str, operation: &str, resource: &str) -> Scop
 }
 
 fn root(
-    provider: &str,
+    entry: Selection,
     artifacts: Vec<String>,
     definitions: Vec<String>,
-    contract: &str,
-    operation: &str,
     slots: Vec<SlotBinding>,
     grants: Vec<ScopedGrant>,
     resource: &str,
@@ -101,11 +99,7 @@ fn root(
     let operations = grants.iter().map(ScopedGrant::key).collect();
     Composition {
         format: "phenix.composition.v3".into(),
-        entry: Selection {
-            interface: contract.into(),
-            operation: operation.into(),
-            provider: provider.into(),
-        },
+        entry,
         artifacts,
         definitions,
         slots,
@@ -183,11 +177,13 @@ impl ProviderDeployment {
             return Err("invalid credential management operation selection".into());
         }
         let management = root(
-            &provider.id,
+            Selection {
+                interface: CATALOG.into(),
+                operation: "list".into(),
+                provider: provider.id.clone(),
+            },
             vec![provider.artifact, credentials.artifact.clone()],
             definitions.clone(),
-            CATALOG,
-            "list",
             vec![SlotBinding {
                 caller: provider.id.clone(),
                 slot: "Credentials".into(),
@@ -200,11 +196,13 @@ impl ProviderDeployment {
         );
         let credentials_root = (!managed.is_empty()).then(|| {
             root(
-                &credentials.id,
+                Selection {
+                    interface: CREDENTIALS.into(),
+                    operation: "import".into(),
+                    provider: credentials.id.clone(),
+                },
                 vec![credentials.artifact.clone()],
                 definitions.clone(),
-                CREDENTIALS,
-                "import",
                 vec![],
                 managed
                     .iter()
@@ -215,11 +213,13 @@ impl ProviderDeployment {
         });
         let resolver = model_resolution.then(|| {
             root(
-                &credentials.id,
+                Selection {
+                    interface: CREDENTIALS.into(),
+                    operation: "resolve".into(),
+                    provider: credentials.id.clone(),
+                },
                 vec![credentials.artifact],
                 definitions,
-                CREDENTIALS,
-                "resolve",
                 vec![],
                 vec![grant("root", CREDENTIALS, "resolve", &resource)],
                 &resource,
