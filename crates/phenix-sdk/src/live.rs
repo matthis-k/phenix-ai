@@ -216,6 +216,16 @@ pub enum AccessError {
     Kernel(Failure),
 }
 pub type AccessResult<T> = Result<T, AccessError>;
+
+/// A plugin-owned value update failed before publication, or publication
+/// failed after the owner's candidate was constructed. In either case the
+/// generated updater leaves the owner's Rust field unchanged.
+#[derive(Debug)]
+pub enum OwnedUpdateError<E> {
+    Rejected(E),
+    Publish(AccessError),
+}
+
 impl From<Failure> for AccessError {
     fn from(e: Failure) -> Self {
         Self::Kernel(e)

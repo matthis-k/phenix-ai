@@ -233,6 +233,43 @@ fn main() {
             .unwrap(),
         Outcome::Success(Value::U64(42))
     );
+    // Rejected candidates must not produce any publication, revision or
+    // epoch change. Successful updates commit the authoritative Rust field
+    // after the read-only property CAS succeeds.
+    let before_reject = kernel.inspect()["live_state"]["epoch"].as_u64().unwrap();
+    assert_eq!(
+        kernel
+            .admit_root(selection(COUNTER, "run", PROVIDER))
+            .unwrap()
+            .invoke(&Value::String("owned-reject".into()))
+            .unwrap(),
+        Outcome::Domain(Value::String("candidate rejected".into()))
+    );
+    assert_eq!(kernel.inspect()["live_state"]["epoch"], before_reject);
+    assert_eq!(
+        kernel
+            .admit_root(selection(OBSERVED, "get", PROVIDER))
+            .unwrap()
+            .invoke(&owned_reference)
+            .unwrap(),
+        Outcome::Success(Value::U64(42))
+    );
+    assert_eq!(
+        kernel
+            .admit_root(selection(COUNTER, "run", PROVIDER))
+            .unwrap()
+            .invoke(&Value::String("owned-update".into()))
+            .unwrap(),
+        Outcome::Success(Value::U64(43))
+    );
+    assert_eq!(
+        kernel
+            .admit_root(selection(OBSERVED, "get", PROVIDER))
+            .unwrap()
+            .invoke(&owned_reference)
+            .unwrap(),
+        Outcome::Success(Value::U64(43))
+    );
     // The owner can publish even though the property declares no external set.
     assert!(kernel
         .admit_root(selection(OBSERVED, "set", PROVIDER))
@@ -467,6 +504,25 @@ fn main() {
                 .code,
             Code::Denied,
             "owner publication must retain the property resource grant"
+        );
+        assert_eq!(
+            kernel
+                .admit_root(selection(COUNTER, "run", PROVIDER))
+                .unwrap()
+                .invoke(&Value::String("owned-update".into()))
+                .unwrap_err()
+                .code,
+            Code::Denied,
+            "transactional owned update must not bypass owner publication grants"
+        );
+        assert_eq!(
+            kernel
+                .admit_root(selection(COUNTER, "run", PROVIDER))
+                .unwrap()
+                .invoke(&Value::String("owned-value".into()))
+                .unwrap(),
+            Outcome::Success(Value::U64(0)),
+            "failed publication must not modify the owner's Rust field"
         );
         assert_eq!(
             kernel

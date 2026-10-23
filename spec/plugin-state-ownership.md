@@ -1,7 +1,8 @@
 # Plugin state ownership
 
-Status: proposed authoring invariant. The M1 ABI, canonical ValueSchema, graph
-scheduling, and kernel admission rules remain unchanged. Migration is staged.
+Status: implemented ownership invariant; remaining SDK ergonomics are staged.
+The M1 ABI, canonical ValueSchema, graph scheduling, and kernel admission
+rules remain unchanged.
 
 ## Ownership rule
 
@@ -48,15 +49,16 @@ accidental substitute for internal fields.
 9. Removing durable calls must not remove interruption recovery, replay,
    provenance, exact-account credential protection, or persistence guarantees.
 
-## SDK changes required
+## SDK implementation and mutation policy
 
 The existing `#[get]`, `#[set]`, and `#[watch]` field annotations in
 `phenix-macros/src/state.rs` rewrite fields to host-backed `Cell<T>`.
 `Cell<T>` creates a host value and leaves only a `ValueRef<T>` in the plugin.
 That is not the intended default for a plugin-owned field.
 
-Introduce an opt-in owned-field publication path before migrating dependent
-graph implementations:
+The `#[expose]` owner-held publication path is merged (PR #1108). It
+preserves the Rust field and generates typed reference/publication methods.
+PR #1114 adds generated candidate-update helpers. The invariants are:
 
 - Preserve the authored Rust field as the internal source of truth.
 - Generate the authorized read/watch view and typed publication metadata.
@@ -65,7 +67,9 @@ graph implementations:
 - Stage and validate changes before committing them. Provide a clear failure
   policy for publication and persistence, including rollback or explicit
   reconciliation when atomic commit across systems is unavailable.
-- Generate checked external setters that call plugin-owned mutation logic.
+- External mutation remains an explicitly provided plugin operation; it can
+  validate proposed data with `try_update_FIELD(host, |current| Result<T, E>)`.
+  Never generate a directly writable host `set` property for owned state.
 - Retain raw host value cells for explicitly shared value-state use cases.
   These are a separate abstraction, not the default meaning of an exposed
   Rust field.
@@ -78,35 +82,55 @@ make host mirrors writable to every consumer just to make publication work.
 
 | Plugin | Ownership adjustment | Status |
 | --- | --- | --- |
-| Basic Agent | Own pending and prepared run transitions; publish read-only request views | Pending SDK and graph protocol |
-| Advanced Preparer Graph | Own its prepared output, publish it, and submit a source-bound handoff | Pending Basic Agent protocol |
-| Basic Memory | Own skills and context per session; restore/save declared durable data | Pending; coordinate with memory validation PR |
-| Workspace Selection | Retain selected snapshots per authorized session while preserving durable CAS and cross-instance refresh | Compatibility step in this PR |
-| Basic Session | Own active session transitions while preserving recovery snapshots and reconciliation | Pending; coordinate with session validation PR |
-| Event Journal | Preserve durable append/observer semantics; consider owned indexes only after concurrency review | Review |
-| Compaction Checkpoints | Preserve append-only durable checkpoint and source ancestry guarantees | Review |
-| Evidence Store | Preserve durable provenance and version rules | Review |
-| Other plugins | Already internal-state or stateless, or a dedicated durable backend | No ownership migration |
+| Basic Agent | Owner-held, read-only published pending Model request | Merged #1109 |
+| Advanced Preparer Graph | Own prepared output and invoke selected Basic advance | Merged #1110 |
+| Basic Memory | Own session Skills/Context; persist by CAS | Merged #1111 |
+| Workspace Selection | Own session selection; restore once, persist by CAS | Merged #1103 and #1113 |
+| Basic Session | Own session aggregate; persist restart/reconcile snapshots | Merged #1112 |
+| Event Journal | Durable event and observer records remain canonical | Reviewed; retain durable authority (#1107) |
+| Compaction Checkpoints | Durable checkpoint lineage and source ancestry remain canonical | Reviewed; retain durable authority (#1107) |
+| Evidence Store | Durable evidence ledger and source validation remain canonical | Reviewed; retain durable authority (#1107) |
+| Other plugins | Already private-state, stateless or dedicated durable providers | No migration necessary |
 
 ## Migration stages and acceptance
 
-- [x] Inventory plugin state and the SDK's current host-backed field behavior.
-- [x] Record ownership, external writer, and persistence invariants.
-- [x] Begin retaining Workspace Selection snapshots in plugin state without
-      removing the current cross-instance refresh and durable CAS.
-- [ ] Add SDK conformance fixtures for a plugin-owned private field, published
-      read/watch view, denied external mutation, and checked owner update.
-- [ ] Implement typed owner publication with failure and cancellation tests.
-- [ ] Move Basic Agent's published fields onto that API.
-- [ ] Move Advanced Preparer's prepared request to its own output and replace
-      the cross-plugin write with an owner-checked handoff.
-- [ ] Separate Basic Memory state from durable restoration and save logic.
-- [ ] Separate Basic Session live transitions from durable recovery data.
-- [ ] Review journal, checkpoints, and evidence caches under concurrent writers.
-- [ ] Run full M1 contract, graph, cancellation, generation, and persistence
-      conformance before declaring the migration complete.
+- [x] Inventory plugin state and the SDK's old host-backed field behavior.
+- [x] Record ownership, external writer and persistence invariants (#1103).
+- [x] Introduce `#[expose]` with owner-held Rust state, typed read/watch
+      publication, and denied public setters (#1108).
+- [x] M1 native authoring fixture validates read-only publication and
+      resource-authorized mutation (#1108).
+- [x] Basic Agent owns its pending request (#1109).
+- [x] Advanced Preparer owns its output and hands off through the selected
+      Basic advance operation (#1110).
+- [x] Basic Memory, Basic Session, and Workspace Selection separate live
+      Rust state from durable CAS/recovery (#1111, #1112, #1113).
+- [x] Durable journals, checkpoints and evidence retain persistent records
+      as intentional domain state (#1107).
+- [ ] Transactional `update_FIELD` / `try_update_FIELD` helpers and native
+      rejected-candidate conformance (#1114; verification pending).
+- [ ] Close SDK ergonomics (#1104) only after #1114's complete CI evidence.
 
-The workspace compatibility step is not the final storage abstraction. It
-continues to refresh from durable storage on each entry because another
-authorized instance can change a workspace selection. Removing that refresh
-requires a documented invalidation or single-writer protocol.
+## Coherence and API limitations
+
+Owned state is private and remains the source of truth during a live instance.
+Generated `update_FIELD` helpers require the change closure to produce a
+new `T`; no clone of `T` is needed. Validated `try_update_FIELD` rejects
+candidates without mutating state or publishing a Phenix value. Owner-only
+publication commits the Rust field only after CAS succeeds; no external
+property setter is generated.
+
+Regular `#[provide]` operations still own the external mutation contract,
+including validation and authorization. Direct assignments to a Rust field
+bypass publication, so authors must call the generated owner-update method
+for observable changes; macro-level interception of arbitrary Rust field
+writes is not promised.
+
+Live session caches do not silently absorb concurrent writes from other
+instances. Durable CAS detects stale writers, and a rejected/ambiguous
+write invalidates the affected cached entry. Immediate cross-instance
+read refresh requires a separate revision-watch/invalidation contract.
+
+The kernel continues to own graph scheduling, admission, cancellation,
+generation validity, and resource authority. This work adds no new M1
+request opcodes or wire format.
