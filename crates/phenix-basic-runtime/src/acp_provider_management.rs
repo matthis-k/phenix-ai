@@ -94,7 +94,9 @@ impl ProviderManagementGroup {
                 root.read(
                     "phenix.provider.catalog@1",
                     "list",
-                    &ProviderQuery { scope: "user".into() },
+                    &ProviderQuery {
+                        scope: "user".into(),
+                    },
                 )
             })
             .collect()
@@ -113,7 +115,10 @@ impl ProviderManagementGroup {
         for (root, page) in self.roots.iter().zip(pages.iter()) {
             if page.providers.iter().any(|provider| {
                 provider.id == provider_id
-                    && provider.connections.iter().any(|conn| conn.id == connection_id)
+                    && provider
+                        .connections
+                        .iter()
+                        .any(|conn| conn.id == connection_id)
             }) {
                 if selected.replace(root).is_some() {
                     return Err(invalid("ambiguous provider connection root"));
@@ -716,10 +721,7 @@ mod multi_provider_tests {
         assert_eq!(merged.providers[0].connections[1].id, "chatgpt");
         assert_ne!(merged.revision, 0);
         assert_eq!(merge_provider_pages(&[api.clone()]).unwrap(), api);
-        let changed = merge_provider_pages(&[
-            api,
-            page("openai", "OpenAI", "chatgpt", 6),
-        ]).unwrap();
+        let changed = merge_provider_pages(&[api, page("openai", "OpenAI", "chatgpt", 6)]).unwrap();
         assert_ne!(merged.revision, changed.revision);
     }
 
@@ -730,10 +732,9 @@ mod multi_provider_tests {
         assert!(merge_provider_pages(&[
             page("openai", "OpenAI", "api", 1),
             page("openai", "OpenAI ChatGPT", "chatgpt", 2),
-        ]).is_err());
-        assert!(merge_provider_pages(&[
-            page("openai", "OpenAI", "api", 0)
-        ]).is_err());
+        ])
+        .is_err());
+        assert!(merge_provider_pages(&[page("openai", "OpenAI", "api", 0)]).is_err());
         assert!(merge_provider_pages(&[]).is_err());
     }
 
@@ -742,7 +743,8 @@ mod multi_provider_tests {
         let page = merge_provider_pages(&[
             page("openai", "OpenAI", "api", 1),
             page("anthropic", "Anthropic", "api", 2),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(page.providers.len(), 2);
         assert_eq!(page.providers[0].id, "openai");
         assert_eq!(page.providers[1].id, "anthropic");
