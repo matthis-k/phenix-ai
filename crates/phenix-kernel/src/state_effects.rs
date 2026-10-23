@@ -73,6 +73,44 @@ impl Kernel {
         )
         .map_err(|_| Error::Denied)
     }
+    /// Owner publication is separate from the public property `set` contract.
+    ///
+    /// Only the currently executing owner may publish a new observation.
+    /// The executing frame must still carry the property resource grant.
+    /// In particular, publication does not make a read-only property writable
+    /// to imported consumers or to the root.
+    fn authorize_owner_publish(
+        &self,
+        caller: &str,
+        location: &ValueLocation,
+    ) -> Result<(), Error> {
+        let cells = self.cells.borrow();
+        let (owner, property) = cells.identity(location)?;
+        if owner != caller || (!property.get && !property.watch) {
+            return Err(Error::Denied);
+        }
+        let interface =
+            phenix_contract::property_contract(owner, &property.id).map_err(|_| Error::Denied)?;
+        drop(cells);
+
+        let state = self.state.borrow();
+        let Some(frame) = state.stack.last() else {
+            return Err(Error::Denied);
+        };
+        if frame.provider != owner || frame.revoked {
+            return Err(Error::Denied);
+        }
+        let authority = &frame.authority;
+        self.require_property_resource(
+            &Selection {
+                interface,
+                operation: "get".into(),
+                provider: owner.into(),
+            },
+            authority,
+        )
+        .map_err(|_| Error::Denied)
+    }
     pub(super) fn state_request(
         &self,
         root: u64,
@@ -113,11 +151,22 @@ impl Kernel {
                 StateRequest::Create { .. } => return Err(Error::Denied),
                 StateRequest::Read(r) => self.authorize_state(caller, r, "get")?,
                 StateRequest::CompareExchange(edit) => {
-                    self.authorize_state(caller, &edit.location, "set")?
+                    // The owner may publish a read-only observation under its
+                    // active resource authority. All other writes continue to
+                    // require a selected public `set` operation.
+                    if self.cells.borrow().identity(&edit.location)?.0 == caller {
+                        self.authorize_owner_publish(caller, &edit.location)?;
+                    } else {
+                        self.authorize_state(caller, &edit.location, "set")?;
+                    }
                 }
                 StateRequest::Batch(edits) => {
                     for edit in edits {
-                        self.authorize_state(caller, &edit.location, "set")?;
+                        if self.cells.borrow().identity(&edit.location)?.0 == caller {
+                            self.authorize_owner_publish(caller, &edit.location)?;
+                        } else {
+                            self.authorize_state(caller, &edit.location, "set")?;
+                        }
                     }
                 }
                 StateRequest::Subscribe(r) => self.authorize_state(caller, r, "watch")?,
