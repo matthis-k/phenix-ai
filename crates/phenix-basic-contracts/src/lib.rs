@@ -460,6 +460,13 @@ pub struct StoredRecord {
     pub revision: u64,
     pub data: Blob,
 }
+impl StoredRecord {
+    /// An acknowledged single-record CAS must return the exact committed
+    /// revision and payload, not just any later revision or unrelated bytes.
+    pub fn matches_commit(&self, expected: u64, data: &Blob) -> bool {
+        expected.checked_add(1) == Some(self.revision) && &self.data == data
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct StorageEdit {
     pub key: String,
@@ -631,6 +638,24 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_ack_requires_exact_revision_and_payload() {
+        let data = Blob(vec![1, 2, 3]);
+        let accepted = StoredRecord {
+            revision: 5,
+            data: data.clone(),
+        };
+        assert!(accepted.matches_commit(4, &data));
+        assert!(!accepted.matches_commit(3, &data));
+        assert!(!accepted.matches_commit(5, &data));
+        assert!(!accepted.matches_commit(4, &Blob(vec![1, 2, 4])));
+        assert!(!StoredRecord {
+            revision: 0,
+            data,
+        }
+        .matches_commit(u64::MAX, &Blob(vec![1, 2, 3])));
+    }
     #[test]
     fn tool_pages_reject_foreign_cursor_skips_and_unbounded_response() {
         let request = ToolQuery {
