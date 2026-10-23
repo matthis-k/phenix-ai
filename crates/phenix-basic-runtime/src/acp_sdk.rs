@@ -476,7 +476,10 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
     {
         return Err("model resolver requires exactly one resolve-only root authority".into());
     }
-    let grant = spec.grants.iter().find(|grant| grant.caller == "root")
+    let grant = spec
+        .grants
+        .iter()
+        .find(|grant| grant.caller == "root")
         .ok_or("missing selected resolver grant")?;
     if grant.interface != CONTRACT
         || grant.operation != "resolve"
