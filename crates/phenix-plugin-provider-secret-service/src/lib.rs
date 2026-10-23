@@ -162,7 +162,6 @@ mod plugin {
         resolve_stored(bytes).map_err(CallError::Domain)
     }
 
-
     #[provide(ProviderCredentials::compare_exchange)]
     fn compare_exchange(
         host: &Host<'_>,
