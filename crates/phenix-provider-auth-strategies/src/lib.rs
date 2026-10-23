@@ -113,6 +113,14 @@ impl ApiKeyAttempts {
         if let Some(expired) = self.check(owner, id)? {
             return Ok(expired);
         }
+        // The provider must not complete an attempt for a different account
+        // or with an unspecified authentication method.
+        if profile.id != owner.profile_id() || profile.method_id.trim().is_empty() {
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "authenticated profile does not match the requested account",
+            ));
+        }
         self.pending.remove(id);
         Ok(AuthAttemptState::Completed { profile })
     }
@@ -171,6 +179,34 @@ mod tests {
             attempts.check(&owner("work"), &id).unwrap_err().code,
             ProviderErrorCode::NotFound
         );
+    }
+
+    #[test]
+    fn completion_rejects_foreign_account_without_consuming_attempt() {
+        let mut attempts = ApiKeyAttempts::default();
+        let id = begin(&mut attempts, owner("work"));
+        let mismatched = AuthenticatedProfile {
+            id: "personal".into(),
+            label: "Personal".into(),
+            method_id: "api-key".into(),
+        };
+        assert_eq!(
+            attempts
+                .complete(&owner("work"), &id, mismatched)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::InvalidInput
+        );
+        assert_eq!(attempts.check(&owner("work"), &id).unwrap(), None);
+        let completed = AuthenticatedProfile {
+            id: "work".into(),
+            label: "Work".into(),
+            method_id: "api-key".into(),
+        };
+        assert!(matches!(
+            attempts.complete(&owner("work"), &id, completed),
+            Ok(AuthAttemptState::Completed { .. })
+        ));
     }
 
     #[test]
