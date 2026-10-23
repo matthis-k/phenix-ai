@@ -771,5 +771,14 @@ mod tests {
         assert_eq!(catalog.connections.len(), 1);
         assert_eq!(catalog.connections[0].id, CONNECTION);
         assert_eq!(catalog.connections[0].auth_methods[0].id, METHOD);
+        assert_eq!(
+            catalog.connections[0].base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(catalog.connections[0].protocols.len(), 1);
+        assert_eq!(
+            catalog.connections[0].protocols[0].endpoint.as_deref(),
+            Some("https://api.openai.com/v1/responses")
+        );
     }
 }
