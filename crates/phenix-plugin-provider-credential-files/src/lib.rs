@@ -172,7 +172,8 @@ fn authorize(
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials,
+        CredentialEnvironmentBinding, CredentialImport, CredentialRotation, CredentialSecret,
+        ProviderCredentials,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
