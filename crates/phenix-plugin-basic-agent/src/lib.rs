@@ -316,8 +316,9 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
-        #[get]
-        #[set]
+        // The staged request is authoritative in this plugin. The graph
+        // consumes a read-only, watched Phenix view of this Rust field.
+        #[expose]
         #[watch]
         pending_model_request: Option<ModelRequest>,
         #[get]
@@ -655,19 +656,13 @@ mod plugin {
         // Model::complete is NOT invoked by this operation. A later graph
         // contribution will validate a selected replacement and resume the
         // same run, without re-creating a new Basic agent loop.
-        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property read: {err}"),
-            )
-        })?;
-        *edit = Some(projected.clone());
-        edit.commit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property CAS: {err}"),
-            )
-        })?;
+        // Publication CAS succeeds before the owned request is committed.
+        // A failed publish leaves the plugin's previous request untouched.
+        state
+            .publish_pending_model_request(host, Some(projected.clone()))
+            .map_err(|err| {
+                Failure::new(Code::PluginFailed, format!("staged request publish: {err}"))
+            })?;
         state.active = Some(running);
         Ok(projected)
     }
@@ -927,15 +922,7 @@ mod plugin {
                 "Model advance requires a committed prepared-request state change",
             ))));
         }
-        let source = match state.pending_model_request.read(host) {
-            Ok(snapshot) => snapshot.value.as_ref().clone(),
-            Err(failure) => {
-                return PendingResult::QuiescentFailure(Failure::new(
-                    Code::PluginFailed,
-                    failure.to_string(),
-                ));
-            }
-        };
+        let source = state.pending_model_request.clone();
         let prepared = match state.prepared_model_request.read(host) {
             Ok(snapshot) => snapshot.value.as_ref().clone(),
             Err(failure) => {
@@ -998,19 +985,11 @@ mod plugin {
             return Ok(Advance::Done(done));
         }
         let next = prepare_next_model_request(host, running)?;
-        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property read: {err}"),
-            )
-        })?;
-        *edit = Some(next);
-        edit.commit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property CAS: {err}"),
-            )
-        })?;
+        state
+            .publish_pending_model_request(host, Some(next))
+            .map_err(|err| {
+                Failure::new(Code::PluginFailed, format!("staged request publish: {err}"))
+            })?;
         Ok(Advance::RePrepared)
     }
 
