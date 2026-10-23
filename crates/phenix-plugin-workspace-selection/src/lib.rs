@@ -63,13 +63,26 @@ mod plugin {
         decode, encode, ErrorCode, RecordKey, Storage, StorageEdit, StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Host};
+    use std::collections::BTreeMap;
     use phenix_workspace_contracts::{
         Workspace, WorkspaceError, WorkspaceProblem, WorkspaceQuery, WorkspaceSnapshot,
         WorkspaceUpdate,
     };
 
+    // Workspace selection is plugin-owned. Persistent snapshots restore and
+    // reconcile it across instances; they are not a replacement for State.
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        selections: BTreeMap<String, WorkspaceSnapshot>,
+    }
+
+    impl State {
+        fn apply_persisted(&mut self, snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
+            self.selections
+                .insert(snapshot.session.clone(), snapshot.clone());
+            snapshot
+        }
+    }
 
     fn check(host: &Host<'_>, session: &str) -> CallResult<(), WorkspaceError> {
         phenix_basic_contracts::check_session(host, session).map_err(|err| match err {
@@ -116,17 +129,20 @@ mod plugin {
 
     #[provide(Workspace::get)]
     fn get(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: WorkspaceQuery,
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
-        load(host, &request.session)
+        // Refresh before exposing a cached selection. Another authorized
+        // instance may have committed a newer durable revision.
+        let snapshot = load(host, &request.session)?;
+        Ok(state.apply_persisted(snapshot))
     }
 
     #[provide(Workspace::set)]
     fn set(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: WorkspaceUpdate,
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
@@ -166,13 +182,42 @@ mod plugin {
                 "invalid workspace transaction response",
             )));
         }
-        Ok(current)
+        // Do not mutate live state until durable CAS and reply validation
+        // succeed. Failed writes leave the previous selection untouched.
+        Ok(state.apply_persisted(current))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_state_owns_restored_session_selections() {
+        let mut state = plugin::State::default();
+        let one = phenix_workspace_contracts::WorkspaceSnapshot {
+            session: "one".into(),
+            cwd: Some("/work/one".into()),
+            revision: 1,
+        };
+        let two = phenix_workspace_contracts::WorkspaceSnapshot {
+            session: "two".into(),
+            cwd: None,
+            revision: 2,
+        };
+        assert_eq!(state.apply_persisted(one.clone()), one);
+        state.apply_persisted(two.clone());
+        assert_eq!(state.selections.get("one"), Some(&one));
+        assert_eq!(state.selections.get("two"), Some(&two));
+        let changed = phenix_workspace_contracts::WorkspaceSnapshot {
+            session: "one".into(),
+            cwd: Some("/work/new".into()),
+            revision: 3,
+        };
+        state.apply_persisted(changed.clone());
+        assert_eq!(state.selections.get("one"), Some(&changed));
+        assert_eq!(state.selections.get("two"), Some(&two));
+    }
 
     #[test]
     fn reject_relative_parent_or_control_character_paths() {
