@@ -7,7 +7,7 @@
 //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
 //! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
-use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError};
+use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError, VerifiedSubject};
 use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
@@ -140,10 +140,30 @@ impl Drop for TokenEnvelope {
     }
 }
 
+/// A verified OIDC subject witness, not caller-provided profile metadata.
+/// Only the signature/issuer/audience/nonce verifier can construct this
+/// identity; the browser's verified completion consumes this witness after
+/// the concrete provider has securely persisted the authorized account.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedChatGptIdentity {
-    pub subject: String,
-    pub issued_client_id: String,
+    subject: VerifiedSubject,
+    issued_client_id: String,
+}
+
+impl VerifiedChatGptIdentity {
+    pub fn subject(&self) -> &str {
+        self.subject.as_str()
+    }
+
+    pub fn issued_client_id(&self) -> &str {
+        &self.issued_client_id
+    }
+
+    /// Passed to OAuthLoopback::CallbackRequest::confirm_verified only after
+    /// the verified account and current credentials have been stored.
+    pub fn verified_subject(&self) -> &VerifiedSubject {
+        &self.subject
+    }
 }
 
 /// This is the only entrance to the authenticated-account state. A caller
@@ -187,7 +207,7 @@ pub fn verify_chatgpt_identity(
         }
     })?;
     Ok(VerifiedChatGptIdentity {
-        subject: subject.as_str().to_owned(),
+        subject,
         issued_client_id: issued_client_id.to_owned(),
     })
 }
@@ -293,6 +313,23 @@ mod tests {
         assert_eq!(fields["resource"], crate::siwc::RESOURCE);
         assert!(!fields.contains_key("scope"));
         assert!(refresh_form("dynamic_agent_client", "secret").is_err());
+    }
+
+    #[test]
+    fn verified_identity_witness_matches_browser_completion_contract() {
+        // This bridge compiles without constructing or forging a verified
+        // subject. Providers may call it only after durable authorized
+        // credential persistence and correct-account verification.
+        fn finish_after_persistence(
+            callback: crate::oauth_loopback::CallbackRequest,
+            identity: &VerifiedChatGptIdentity,
+        ) -> Result<(), crate::oauth_loopback::CallbackError> {
+            callback.confirm_verified(identity.verified_subject())
+        }
+        let _typed_bridge: fn(
+            crate::oauth_loopback::CallbackRequest,
+            &VerifiedChatGptIdentity,
+        ) -> Result<(), crate::oauth_loopback::CallbackError> = finish_after_persistence;
     }
 
     #[test]
