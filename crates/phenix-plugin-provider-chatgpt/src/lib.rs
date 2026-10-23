@@ -7,8 +7,8 @@
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
-    AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialProfile,
-    CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery,
+    AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
+    CredentialProfile, CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery,
     ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
@@ -429,6 +429,38 @@ mod plugin {
         })
     }
 
+    // This provider also implements the complete credentials contract because
+    // the M1 plugin descriptor requires a concrete handler for every supplied
+    // operation. Only resolve is launcher-granted: interactive secret import,
+    // variable binding and remote revocation cannot be invoked through this
+    // OAuth-only bearer adapter. ProviderAuth owns its token persistence.
+    #[provide(ProviderCredentials::import)]
+    fn reject_direct_import(
+        _: &mut State,
+        _: &Host<'_>,
+        _: CredentialImport,
+    ) -> CallResult<(), ProviderError> {
+        Err(CallError::Domain(denied("ChatGPT OAuth does not import API keys")))
+    }
+
+    #[provide(ProviderCredentials::bind_environment)]
+    fn reject_environment_binding(
+        _: &mut State,
+        _: &Host<'_>,
+        _: CredentialEnvironmentBinding,
+    ) -> CallResult<(), ProviderError> {
+        Err(CallError::Domain(denied("ChatGPT OAuth has no API-key environment source")))
+    }
+
+    #[provide(ProviderCredentials::revoke)]
+    fn reject_unscoped_revoke(
+        _: &mut State,
+        _: &Host<'_>,
+        _: CredentialIdentity,
+    ) -> CallResult<(), ProviderError> {
+        Err(CallError::Domain(denied("OAuth revocation requires the account lifecycle")))
+    }
+
     /// Controller-only selected-model resolution. This is intentionally the
     /// existing ProviderCredentials contract so the P1 Model installation
     /// remains generic. It is never mapped to a frontend credential RPC.
@@ -586,16 +618,14 @@ mod plugin {
                 .accept_callback(callback.uri())
                 .map_err(|_| CallError::Domain(denied("OAuth callback state was invalid")))?;
             let client_id = correlated.issued_client_id().to_owned();
-            let mut form = correlated
+            // The typed SIWC exchange_form already returns Zeroizing<String>:
+            // dropping it clears its allocation on both successful and failed
+            // transport paths, without illegally moving from a Zeroizing guard.
+            let form = correlated
                 .exchange_form(pending.pkce.verifier())
                 .map_err(|_| CallError::Domain(denied("invalid OAuth exchange")))?;
-            // Wipe the authorization-code form on *both* successful and
-            // rejected exchanges; a failed request must not leave a copy.
-            let exchange = exchange_token(&form);
-            let mut form_bytes = std::mem::take(&mut form).into_bytes();
-            form_bytes.fill(0);
-            let tokens =
-                exchange.map_err(|_| CallError::Domain(denied("OAuth code exchange rejected")))?;
+            let tokens = exchange_token(&form)
+                .map_err(|_| CallError::Domain(denied("OAuth code exchange rejected")))?;
             let jwks = issuer_jwks()
                 .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
             let verified = verify_chatgpt_identity(
