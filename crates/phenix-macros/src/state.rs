@@ -352,7 +352,11 @@ pub fn expand(
                                 "exposed Rust state is owner-published; external set needs an owner handler",
                             ));
                         }
-                        let access = if exposed { [true, false, watch] } else { access };
+                        let access = if exposed {
+                            [true, false, watch]
+                        } else {
+                            access
+                        };
                         let [get, set, watch] = access;
                         properties.push(quote!(::phenix_sdk::StaticProperty { id: #stable, schema: <#ty as ::phenix_sdk::live::Portable>::SCHEMA, get: #get, set: #set, watch: #watch }));
                         property_symbols.push(crate::property::symbols(
@@ -367,14 +371,9 @@ pub fn expand(
                             // A sidecar keeps the owner-only property reference
                             // and its last committed revision. The actual T
                             // remains a plain Rust field in State.
-                            let sidecar = syn::Ident::new(
-                                &format!("__published_{}", name),
-                                name.span(),
-                            );
-                            let method = syn::Ident::new(
-                                &format!("publish_{}", name),
-                                name.span(),
-                            );
+                            let sidecar =
+                                syn::Ident::new(&format!("__published_{}", name), name.span());
+                            let method = syn::Ident::new(&format!("publish_{}", name), name.span());
                             sidecars.push(syn::Field::parse_named.parse2(quote!(
                                 #sidecar: Option<(::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Revision)>
                             ))?);
@@ -412,7 +411,10 @@ pub fn expand(
                 }
                 if !sidecars.is_empty() {
                     let syn::Fields::Named(named) = &mut s.fields else {
-                        return Err(syn::Error::new(s.span(), "exposed state needs named fields"));
+                        return Err(syn::Error::new(
+                            s.span(),
+                            "exposed state needs named fields",
+                        ));
                     };
                     named.named.extend(sidecars);
                 }
@@ -706,6 +708,8 @@ mod owned_state_tests {
             }
         };
         let error = expand(quote!(id = "test.owned"), module).unwrap_err();
-        assert!(error.to_string().contains("external set needs an owner handler"));
+        assert!(error
+            .to_string()
+            .contains("external set needs an owner handler"));
     }
 }
