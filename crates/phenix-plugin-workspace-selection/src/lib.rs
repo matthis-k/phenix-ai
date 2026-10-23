@@ -77,6 +77,27 @@ mod plugin {
     }
 
     impl State {
+        fn reconcile(&mut self, restored: WorkspaceSnapshot) -> Result<WorkspaceSnapshot, WorkspaceError> {
+            if let Some(current) = self.selections.get(&restored.session) {
+                if restored.revision < current.revision {
+                    return Err(error(
+                        WorkspaceProblem::Unavailable,
+                        "workspace storage revision regressed",
+                    ));
+                }
+                if restored.revision == current.revision {
+                    if restored.cwd != current.cwd {
+                        return Err(error(
+                            WorkspaceProblem::Unavailable,
+                            "workspace storage changed without a revision",
+                        ));
+                    }
+                    return Ok(current.clone());
+                }
+            }
+            Ok(self.apply_persisted(restored))
+        }
+
         fn apply_persisted(&mut self, snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
             self.selections
                 .insert(snapshot.session.clone(), snapshot.clone());
@@ -137,7 +158,7 @@ mod plugin {
         // Refresh before exposing a cached selection. Another authorized
         // instance may have committed a newer durable revision.
         let snapshot = load(host, &request.session)?;
-        Ok(state.apply_persisted(snapshot))
+        state.reconcile(snapshot).map_err(CallError::Domain)
     }
 
     #[provide(Workspace::set)]
@@ -148,7 +169,9 @@ mod plugin {
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
         validate_cwd(request.cwd.as_deref()).map_err(CallError::Domain)?;
-        let mut current = load(host, &request.session)?;
+        let mut current = state
+            .reconcile(load(host, &request.session)?)
+            .map_err(CallError::Domain)?;
         if current.revision != request.expected_revision {
             return Err(CallError::Domain(error(
                 WorkspaceProblem::Conflict,
@@ -203,8 +226,8 @@ mod plugin {
                 cwd: None,
                 revision: 2,
             };
-            assert_eq!(state.apply_persisted(one.clone()), one);
-            state.apply_persisted(two.clone());
+            assert_eq!(state.reconcile(one.clone()).unwrap(), one);
+            state.reconcile(two.clone()).unwrap();
             assert_eq!(state.selections.get("one"), Some(&one));
             assert_eq!(state.selections.get("two"), Some(&two));
             let changed = WorkspaceSnapshot {
@@ -212,9 +235,20 @@ mod plugin {
                 cwd: Some("/work/new".into()),
                 revision: 3,
             };
-            state.apply_persisted(changed.clone());
+            assert_eq!(state.reconcile(one.clone()).unwrap(), one);
+            state.reconcile(changed.clone()).unwrap();
             assert_eq!(state.selections.get("one"), Some(&changed));
             assert_eq!(state.selections.get("two"), Some(&two));
+            assert_eq!(
+                state.reconcile(one).unwrap_err().problem,
+                WorkspaceProblem::Unavailable
+            );
+            let mut mismatched = changed;
+            mismatched.cwd = Some("/work/changed-without-revision".into());
+            assert_eq!(
+                state.reconcile(mismatched).unwrap_err().problem,
+                WorkspaceProblem::Unavailable
+            );
         }
     }
 }
