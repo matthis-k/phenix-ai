@@ -110,7 +110,6 @@ mod plugin {
         }
     }
 
-
     fn load(host: &Host<'_>, session: &str) -> CallResult<SessionSnapshot, BasicError> {
         let result = host.invoke::<Storage::read>(
             "Storage",
