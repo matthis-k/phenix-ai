@@ -132,7 +132,12 @@ impl ProviderManagementGroup {
                 return Err(invalid("ambiguous provider connection root"));
             }
         }
-        selected.ok_or_else(|| invalid("provider connection is not installed"))
+        selected.ok_or_else(|| {
+            provider_rejection(ProviderError {
+                code: ProviderErrorCode::NotFound,
+                message: "provider connection is not installed".into(),
+            })
+        })
     }
 
     pub(super) fn read_for<Q: Portable, R: Portable>(
