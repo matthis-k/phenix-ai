@@ -345,15 +345,14 @@ pub fn expand(
                             ));
                         }
                         let ty = field.ty.clone();
-                        let [get, set, watch] = access;
-                        if exposed && set {
+                        if exposed && access[1] {
                             return Err(syn::Error::new(
                                 field.span(),
                                 "exposed Rust state is owner-published; external set needs an owner handler",
                             ));
                         }
                         let access = if exposed {
-                            [true, false, watch]
+                            [true, false, access[2]]
                         } else {
                             access
                         };
