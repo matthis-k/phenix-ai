@@ -413,9 +413,9 @@ mod plugin {
         let Some(record) = load(host, identity)? else {
             return Ok(None);
         };
-        let Some(account) = record.account else {
+        if record.account.is_none() {
             return Ok(None);
-        };
+        }
         // Reuse the same provider-authoritative renewal and signed-account
         // verification path as model discovery and selected bearer use.
         let ready = authorized_account(host, identity).is_ok();
