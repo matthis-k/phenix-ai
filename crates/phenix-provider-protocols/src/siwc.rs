@@ -94,7 +94,10 @@ impl VerifiedCallback {
 
     /// The token endpoint must be used by a provider-owned transport with TLS
     /// verification, no redirects and no secret-bearing logs or journal data.
-    pub fn exchange_form(self, code_verifier: &str) -> Result<Zeroizing<String>, RegistrationError> {
+    pub fn exchange_form(
+        self,
+        code_verifier: &str,
+    ) -> Result<Zeroizing<String>, RegistrationError> {
         if !valid_pkce_verifier(code_verifier) {
             return Err(RegistrationError::InvalidAttempt);
         }

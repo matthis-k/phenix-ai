@@ -4,12 +4,12 @@
 //! The caller must correlate state, validate the issued client, exchange the
 //! code, and verify signed OIDC claims before reporting Authenticated.
 //! Neither callback URLs nor authorization codes are ever logged here.
-use zeroize::Zeroize;
 use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
     time::{Duration, Instant},
 };
+use zeroize::Zeroize;
 
 const MAX_REQUEST: usize = 8192;
 const MAX_LIFETIME: Duration = Duration::from_secs(600);
