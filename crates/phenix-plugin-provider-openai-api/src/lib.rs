@@ -15,7 +15,6 @@ use phenix_provider_contracts::{
     ProviderModel,
 };
 use phenix_provider_discovery::{parse, CatalogFormat};
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 const PROVIDER: &str = "openai";
