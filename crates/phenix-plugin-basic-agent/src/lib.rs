@@ -486,27 +486,40 @@ mod plugin {
         session.checkpoint = next;
         session.history.push(Message::user(input.text.clone()));
         session = checkpoint(host, session)?;
-        event(
-            host,
-            &input.session,
-            &run,
-            EventKind::PromptAccepted,
-            input.text.clone(),
-            "",
-        )?;
-        let tools = catalog(host, &input.session)?;
-        let skills = host.invoke::<Skills::list>(
-            "Skills",
-            &Scope {
-                session: input.session.clone(),
-            },
-        )?;
-        let context = host.invoke::<Context::list>(
-            "Context",
-            &Scope {
-                session: input.session.clone(),
-            },
-        )?;
+        let initialization = (|| {
+            event(
+                host,
+                &input.session,
+                &run,
+                EventKind::PromptAccepted,
+                input.text.clone(),
+                "",
+            )?;
+            let tools = catalog(host, &input.session)?;
+            let skills = host.invoke::<Skills::list>(
+                "Skills",
+                &Scope {
+                    session: input.session.clone(),
+                },
+            )?;
+            let context = host.invoke::<Context::list>(
+                "Context",
+                &Scope {
+                    session: input.session.clone(),
+                },
+            )?;
+            Ok((tools, skills, context))
+        })();
+        let (tools, skills, context) = match initialization {
+            Ok(ready) => ready,
+            Err(failure) => {
+                // No Basic worker was installed. Never strand a durable
+                // Running checkpoint if journal/catalog/skills/context fails.
+                session.status = RunStatus::Failed;
+                checkpoint(host, session)?;
+                return Err(failure);
+            }
+        };
         Ok(Running {
             input,
             session,

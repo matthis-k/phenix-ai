@@ -277,6 +277,50 @@ fn main() {
     assert_eq!(untouched.status, phenix_basic_contracts::RunStatus::Idle);
     assert_eq!(untouched.checkpoint, 0);
     assert!(untouched.history.is_empty());
+
+    // Catalog access is checked after the Basic agent has written its Running
+    // checkpoint. A nested denial must not strand the durable session there.
+    let mut no_catalog = submit_scope.authority.clone();
+    no_catalog.operations.remove("phenix.basic.catalog@1/list");
+    let mut failed_preparation = kernel
+        .begin_action_scoped(
+            "phenix.basic.submit",
+            &PromptSubmitted {
+                session: "s1".into(),
+                text: "catalog denied".into(),
+                limits: Limits::default(),
+            }
+            .to_value(),
+            ScopedRequest {
+                authority: no_catalog,
+                resource: submit_scope.resource.clone(),
+            },
+        )
+        .unwrap();
+    while let GraphStatus::Pending | GraphStatus::Draining =
+        failed_preparation.pump(|_| {}).unwrap()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    match failed_preparation.completion().unwrap() {
+        GraphCompletion::Failure(failure) => assert_eq!(failure.code, Code::Denied),
+        other => panic!("restricted catalog unexpectedly completed: {other:?}"),
+    }
+    drop(failed_preparation);
+    let aborted = invoke::<phenix_basic_contracts::SessionSnapshot>(
+        &kernel,
+        "phenix.basic.session@1/open",
+        "phenix.basic.session",
+        Scope {
+            session: "s1".into(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(aborted.status, phenix_basic_contracts::RunStatus::Failed);
+    assert_eq!(aborted.checkpoint, 1);
+    // The next normal submit below proves the incomplete attempt did not
+    // leave an undiscoverable in-memory worker or block subsequent runs.
     invoke::<()>(
         &kernel,
         "phenix.basic.skills@1/set",
@@ -403,7 +447,8 @@ fn main() {
                 "skills-and-context-imports", "durable-session-checkpoints",
                 "journal-output", "cross-session-denial", "model-error",
                 "caller-turn-limit", "usage", "invalid-grant-rejection",
-                "nested-storage-attenuation-no-effect"],
+                "nested-storage-attenuation-no-effect",
+                "failed-preparation-does-not-strand-running-session"],
             "scripted_model_only": true,
             "pending_streaming_or_frontend_parity": false
         }))
