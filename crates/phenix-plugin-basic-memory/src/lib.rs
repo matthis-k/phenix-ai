@@ -55,9 +55,127 @@ mod plugin {
         Scope, Skill, SkillSet, Skills, Storage, StorageEdit, StorageTransaction,
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host, Portable};
+    use std::collections::BTreeMap;
 
+    /// Per-instance authoritative values. Storage restores and durably saves
+    /// selected session settings; it is not the default read path.
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        skills: BTreeMap<String, Cached<SkillSet>>,
+        context: BTreeMap<String, Cached<ContextSet>>,
+    }
+
+    struct Cached<T> {
+        revision: u64,
+        value: T,
+    }
+
+    impl State {
+        fn skills(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<&Cached<SkillSet>, BasicError> {
+            if !self.skills.contains_key(session) {
+                let snapshot = match load::<SkillSet>(host, session, SKILLS_KEY)? {
+                    Some((revision, value)) => {
+                        validate_loaded_items(
+                            session,
+                            &value.session,
+                            value.skills.iter().map(|item| item.id.as_str()),
+                        )
+                        .map_err(CallError::Domain)?;
+                        Cached { revision, value }
+                    }
+                    None => Cached {
+                        revision: 0,
+                        value: SkillSet {
+                            session: session.into(),
+                            skills: vec![],
+                        },
+                    },
+                };
+                self.skills.insert(session.into(), snapshot);
+            }
+            Ok(&self.skills[session])
+        }
+
+        fn context(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<&Cached<ContextSet>, BasicError> {
+            if !self.context.contains_key(session) {
+                let snapshot = match load::<ContextSet>(host, session, CONTEXT_KEY)? {
+                    Some((revision, value)) => {
+                        validate_loaded_items(
+                            session,
+                            &value.session,
+                            value.items.iter().map(|item| item.id.as_str()),
+                        )
+                        .map_err(CallError::Domain)?;
+                        Cached { revision, value }
+                    }
+                    None => Cached {
+                        revision: 0,
+                        value: ContextSet {
+                            session: session.into(),
+                            items: vec![],
+                        },
+                    },
+                };
+                self.context.insert(session.into(), snapshot);
+            }
+            Ok(&self.context[session])
+        }
+    }
+
+    #[cfg(test)]
+    mod state_tests {
+        use super::*;
+
+        #[test]
+        fn cached_session_data_has_separate_skills_and_context_revisions() {
+            let mut state = State::default();
+            state.skills.insert(
+                "one".into(),
+                Cached {
+                    revision: 3,
+                    value: SkillSet {
+                        session: "one".into(),
+                        skills: vec![],
+                    },
+                },
+            );
+            state.context.insert(
+                "one".into(),
+                Cached {
+                    revision: 7,
+                    value: ContextSet {
+                        session: "one".into(),
+                        items: vec![],
+                    },
+                },
+            );
+            state.skills.insert(
+                "two".into(),
+                Cached {
+                    revision: 2,
+                    value: SkillSet {
+                        session: "two".into(),
+                        skills: vec![],
+                    },
+                },
+            );
+            assert_eq!(state.skills["one"].revision, 3);
+            assert_eq!(state.context["one"].revision, 7);
+            assert_eq!(state.skills["two"].revision, 2);
+            state.skills.remove("one");
+            assert!(!state.skills.contains_key("one"));
+            assert!(state.context.contains_key("one"));
+            assert!(state.skills.contains_key("two"));
+        }
+    }
 
     fn load<T: Portable>(
         host: &Host<'_>,
@@ -86,22 +204,14 @@ mod plugin {
         host: &Host<'_>,
         session: &str,
         key: &str,
+        expected: u64,
         value: &T,
-    ) -> CallResult<(), BasicError> {
-        // The wire contract has no expected revision for callers. Read then
-        // CAS once. Competing writers receive Conflict instead of lost updates.
-        let expected = host.invoke::<Storage::read>(
-            "Storage",
-            &RecordKey {
-                session: session.into(),
-                key: key.into(),
-            },
-        );
-        let revision = match expected {
-            Ok(record) => record.revision,
-            Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => 0,
-            Err(err) => return Err(err),
-        };
+    ) -> CallResult<u64, BasicError> {
+        // The cached revision is the CAS precondition. Conflicting writers
+        // cannot overwrite each other; no uncommitted state is published.
+        let next = expected
+            .checked_add(1)
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "revision overflow")))?;
         let data = encode(value)?;
         let result = host.invoke::<Storage::transact>(
             "Storage",
@@ -109,78 +219,93 @@ mod plugin {
                 session: session.into(),
                 edits: vec![StorageEdit {
                     key: key.into(),
-                    expected: revision,
+                    expected,
                     data: data.clone(),
                 }],
             },
         )?;
-        if result.len() != 1 || !result[0].matches_commit(revision, &data) {
+        if result.len() != 1 || !result[0].matches_commit(expected, &data) {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
                 "storage returned invalid memory commit",
             )));
         }
-        Ok(())
+        Ok(next)
     }
 
     #[provide(Skills::list)]
     fn skills_list(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: Scope,
     ) -> CallResult<Vec<Skill>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        match load::<SkillSet>(host, &request.session, SKILLS_KEY)? {
-            Some((_, value)) => {
-                validate_loaded_items(
-                    &request.session,
-                    &value.session,
-                    value.skills.iter().map(|item| item.id.as_str()),
-                )
-                .map_err(CallError::Domain)?;
-                Ok(value.skills)
-            }
-            None => Ok(vec![]),
-        }
+        Ok(state.skills(host, &request.session)?.value.skills.clone())
     }
 
     #[provide(Skills::set)]
-    fn skills_set(_: &mut State, host: &Host<'_>, request: SkillSet) -> CallResult<(), BasicError> {
+    fn skills_set(
+        state: &mut State,
+        host: &Host<'_>,
+        request: SkillSet,
+    ) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         validate_skills(&request.skills).map_err(CallError::Domain)?;
-        save(host, &request.session, SKILLS_KEY, &request)
+        let revision = state.skills(host, &request.session)?.revision;
+        match save(host, &request.session, SKILLS_KEY, revision, &request) {
+            Ok(next) => {
+                state.skills.insert(
+                    request.session.clone(),
+                    Cached {
+                        revision: next,
+                        value: request,
+                    },
+                );
+                Ok(())
+            }
+            Err(error) => {
+                // On conflict or ambiguous acknowledgment, reload at next use.
+                state.skills.remove(&request.session);
+                Err(error)
+            }
+        }
     }
 
     #[provide(Context::list)]
     fn context_list(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: Scope,
     ) -> CallResult<Vec<ContextItem>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        match load::<ContextSet>(host, &request.session, CONTEXT_KEY)? {
-            Some((_, value)) => {
-                validate_loaded_items(
-                    &request.session,
-                    &value.session,
-                    value.items.iter().map(|item| item.id.as_str()),
-                )
-                .map_err(CallError::Domain)?;
-                Ok(value.items)
-            }
-            None => Ok(vec![]),
-        }
+        Ok(state.context(host, &request.session)?.value.items.clone())
     }
 
     #[provide(Context::set)]
     fn context_set(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: ContextSet,
     ) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         validate_context(&request.items).map_err(CallError::Domain)?;
-        save(host, &request.session, CONTEXT_KEY, &request)
+        let revision = state.context(host, &request.session)?.revision;
+        match save(host, &request.session, CONTEXT_KEY, revision, &request) {
+            Ok(next) => {
+                state.context.insert(
+                    request.session.clone(),
+                    Cached {
+                        revision: next,
+                        value: request,
+                    },
+                );
+                Ok(())
+            }
+            Err(error) => {
+                state.context.remove(&request.session);
+                Err(error)
+            }
+        }
     }
 }
 
