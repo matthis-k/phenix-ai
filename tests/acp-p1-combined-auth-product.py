@@ -14,7 +14,7 @@ import tempfile
 import threading
 
 (runtime, basic, api_management, oauth_management, api_credentials,
- api_resolver, oauth_resolver, destination) = sys.argv[1:]
+ api_resolver, oauth_resolver, oauth_logout, destination) = sys.argv[1:]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 
@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
         "--provider-management", api_management,
         "--provider-management", oauth_management,
         "--provider-credentials", api_credentials,
+        "--provider-credentials", oauth_logout,
         "--provider-model-resolver", api_resolver,
         "--provider-model-resolver", oauth_resolver,
     ]
@@ -87,6 +88,23 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
         assert api_status["result"]["connection_id"] == "api", api_status
         oauth_status = call(4, "_phenix/providers/auth/status", oauth)
         assert oauth_status["result"]["profiles"] == [], oauth_status
+        # A logout-only OAuth account root cannot be converted into a key
+        # importer or named environment credential by a forged ACP request.
+        credential_account = {
+            "provider_id": "openai",
+            "connection_id": "chatgpt",
+            "profile_id": "personal",
+        }
+        forged = call(40, "_phenix/credentials/import", {
+            **credential_account, "secret": "not-an-oauth-token",
+        })
+        assert "error" in forged, forged
+        forged_env = call(41, "_phenix/credentials/env-bind", {
+            **credential_account, "environment_variable": "OPENAI_API_KEY",
+        })
+        assert "error" in forged_env, forged_env
+        missing_logout = call(42, "_phenix/credentials/revoke", credential_account)
+        assert "error" in missing_logout, missing_logout
         api_begin = call(5, "_phenix/providers/auth/begin", {**api, "method_id": "api-key"})
         api_attempt = api_begin["result"]["ApiKeyInput"]["attempt_id"]
         api_cancel = call(6, "_phenix/providers/auth/cancel", {
@@ -133,6 +151,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
     "api_key_challenge_cancelled": True,
     "oauth_browser_pkce_challenge_cancelled": True,
     "cross_connection_attempt_denied": True,
+    "oauth_only_local_logout_granted": True,
+    "oauth_import_and_api_env_binding_denied": True,
     "unauthenticated_native_model_denied": True,
     "live_external_login_verified": False,
 }, indent=2, sort_keys=True))
