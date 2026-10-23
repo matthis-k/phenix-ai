@@ -101,7 +101,7 @@ impl Kernel {
             let Some(frame) = state.stack.last() else {
                 return Err(Error::Denied);
             };
-            if frame.provider != owner || frame.revoked {
+            if frame.provider != owner || state.stack.iter().any(|frame| frame.revoked) {
                 return Err(Error::Denied);
             }
             frame.authority.clone()
