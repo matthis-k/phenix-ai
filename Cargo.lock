@@ -1735,7 +1735,8 @@ dependencies = [
  "serde_json",
 ]
 
-[[package]]
+[[package] "zeroize",
+]
 name = "phenix-basic-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2016,7 +2017,8 @@ dependencies = [
  "serde_json",
 ]
 
-[[package]]
+[[package] "zeroize",
+]
 name = "phenix-plugin-model-http"
 version = "0.1.0"
 dependencies = [

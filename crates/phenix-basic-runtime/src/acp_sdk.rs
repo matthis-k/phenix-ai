@@ -32,6 +32,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
 
 type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
@@ -134,7 +135,7 @@ impl std::fmt::Debug for CredentialImportRequest {
 
 impl Drop for CredentialImportRequest {
     fn drop(&mut self) {
-        std::mem::take(&mut self.secret).into_bytes().fill(0);
+        self.secret.zeroize();
     }
 }
 
@@ -933,7 +934,7 @@ fn installed_model_provider(composition: &Composition) -> Option<&str> {
 // CredentialSecret owns and zeroizes the original independently.
 fn scrub_portable_secret_bytes(value: &mut Value) {
     match value {
-        Value::Bytes(bytes) => bytes.fill(0),
+        Value::Bytes(bytes) => bytes.zeroize(),
         Value::List(items) => {
             for item in items {
                 scrub_portable_secret_bytes(item);
@@ -1442,7 +1443,7 @@ impl Controller {
         // Overwrite its serialized payload copy even on domain or host denial.
         if let Value::Map(fields) = &mut value {
             if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
-                bytes.fill(0);
+                bytes.zeroize();
             }
         }
         response
