@@ -85,11 +85,7 @@ impl Kernel {
     /// The executing frame must still carry the property resource grant.
     /// In particular, publication does not make a read-only property writable
     /// to imported consumers or to the root.
-    fn authorize_owner_publish(
-        &self,
-        caller: &str,
-        location: &ValueLocation,
-    ) -> Result<(), Error> {
+    fn authorize_owner_publish(&self, caller: &str, location: &ValueLocation) -> Result<(), Error> {
         let cells = self.cells.borrow();
         let (owner, property) = cells.identity(location)?;
         if owner != caller || (!property.get && !property.watch) {
