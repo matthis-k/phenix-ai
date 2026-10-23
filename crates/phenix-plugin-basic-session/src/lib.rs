@@ -6,6 +6,20 @@ use phenix_basic_contracts::{
 
 const RECORD: &str = "session.snapshot.v1";
 
+/// Validate the same structural invariants at the serialized Storage boundary
+/// and before a new checkpoint. A decodable snapshot is not necessarily a
+/// valid durable session or an unambiguous set of pending tool effects.
+fn well_formed_snapshot(snapshot: &SessionSnapshot) -> bool {
+    if snapshot.status == RunStatus::Running && snapshot.run.is_empty() {
+        return false;
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    snapshot
+        .pending
+        .iter()
+        .all(|call| !call.id.is_empty() && ids.insert(call.id.as_str()))
+}
+
 pub fn empty(session: &str) -> SessionSnapshot {
     SessionSnapshot {
         session: session.into(),
@@ -57,7 +71,7 @@ pub fn reconcile_snapshot(
     require(phenix_basic_contracts::Storage, slot = "Storage")
 )]
 mod plugin {
-    use super::{empty, reconcile_snapshot, RECORD};
+    use super::{empty, reconcile_snapshot, well_formed_snapshot, RECORD};
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, ErrorCode, ReconcileTool, RecordKey, RunStatus, Scope,
         Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
@@ -79,10 +93,13 @@ mod plugin {
                 let snapshot: SessionSnapshot = decode(&record.data).map_err(|_| {
                     CallError::Domain(error(ErrorCode::StorageFailed, "invalid snapshot"))
                 })?;
-                if snapshot.revision != record.revision || snapshot.session != session {
+                if snapshot.revision != record.revision
+                    || snapshot.session != session
+                    || !well_formed_snapshot(&snapshot)
+                {
                     return Err(CallError::Domain(error(
                         ErrorCode::StorageFailed,
-                        "snapshot revision or session mismatch",
+                        "snapshot revision, session or state is invalid",
                     )));
                 }
                 Ok(snapshot)
@@ -154,10 +171,10 @@ mod plugin {
                 "pending tools require reconciliation",
             )));
         }
-        if request.status == RunStatus::Running && request.run.is_empty() {
+        if !well_formed_snapshot(&request) {
             return Err(CallError::Domain(error(
                 ErrorCode::InvalidInput,
-                "running session has no run id",
+                "session checkpoint has invalid running state or pending calls",
             )));
         }
         commit(host, request)
@@ -180,6 +197,27 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_basic_contracts::{Role, ToolCall, ToolOutcome};
+
+    #[test]
+    fn persistent_session_rejects_running_without_run_and_duplicate_pending_ids() {
+        let mut state = empty("s1");
+        assert!(well_formed_snapshot(&state));
+        state.status = RunStatus::Running;
+        assert!(!well_formed_snapshot(&state));
+        state.run = "run-1".into();
+        assert!(well_formed_snapshot(&state));
+        let pending = ToolCall {
+            id: "call-1".into(),
+            tool: "uppercase".into(),
+            arguments: r#""hello""#.into(),
+        };
+        state.pending = vec![pending.clone(), pending];
+        assert!(!well_formed_snapshot(&state));
+        state.pending[1].id = "call-2".into();
+        assert!(well_formed_snapshot(&state));
+        state.pending[0].id.clear();
+        assert!(!well_formed_snapshot(&state));
+    }
 
     #[test]
     fn interrupted_tool_recovery_requires_explicit_call_id() {
