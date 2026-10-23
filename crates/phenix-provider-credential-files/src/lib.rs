@@ -331,6 +331,18 @@ impl CredentialFiles {
     ) -> Result<(), CredentialError> {
         let destination = id.file_name()?;
         let _lock = self.lock_and_recover()?;
+        self.store_locked(&destination, secret, checkpoint)
+    }
+
+    /// Write a new credential while the caller holds the directory flock.
+    /// Callers must not unlock between observing the old token and publishing
+    /// its replacement. This is shared by unconditional import and CAS renewal.
+    fn store_locked(
+        &self,
+        destination: &str,
+        secret: &Secret,
+        checkpoint: impl Fn(&str),
+    ) -> Result<(), CredentialError> {
         // No named plaintext candidate exists while writing/syncing. Unsupported
         // filesystems fail closed, rather than falling back to orphanable files.
         let mut output = self
@@ -381,9 +393,14 @@ impl CredentialFiles {
     }
 
     pub fn read(&self, id: &CredentialId) -> Result<Secret, CredentialError> {
+        let destination = id.file_name()?;
         let _lock = self.lock_and_recover()?;
+        self.read_locked(&destination)
+    }
+
+    fn read_locked(&self, destination: &str) -> Result<Secret, CredentialError> {
         let input = self
-            .open_relative(&id.file_name()?, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+            .open_relative(destination, libc::O_RDONLY | libc::O_NONBLOCK, 0)
             .map_err(|err| {
                 if err.kind() == io::ErrorKind::NotFound {
                     CredentialError::NotFound
@@ -412,6 +429,33 @@ impl CredentialFiles {
             return Err(CredentialError::InsecureFile);
         }
         Secret::new(bytes)
+    }
+
+    /// Atomic exact-account compare-and-replace for rotating OAuth secrets.
+    /// The same exclusive *directory* flock covers checked read, secret
+    /// comparison, O_TMPFILE write, rename, and directory fsync. A racing
+    /// refresh cannot overwrite a newer replacement token. A mismatch is
+    /// ordinary contention, not permission to perform an unconditional import.
+    pub fn compare_and_store(
+        &self,
+        id: &CredentialId,
+        expected: &Secret,
+        replacement: &Secret,
+    ) -> Result<bool, CredentialError> {
+        let destination = id.file_name()?;
+        let _lock = self.lock_and_recover()?;
+        let current = self.read_locked(&destination)?;
+        let actual = current.expose_for_authorized_provider();
+        let before = expected.expose_for_authorized_provider();
+        let mut different = u8::from(actual.len() != before.len());
+        for (left, right) in actual.iter().zip(before.iter()) {
+            different |= left ^ right;
+        }
+        if different != 0 {
+            return Ok(false);
+        }
+        self.store_locked(&destination, replacement, |_| {})?;
+        Ok(true)
     }
 
     pub fn revoke(&self, id: &CredentialId) -> Result<(), CredentialError> {
@@ -526,6 +570,62 @@ mod tests {
                 .unwrap()
                 .expose_for_authorized_provider(),
             b"beta"
+        );
+    }
+
+    #[test]
+    fn rotation_uses_exact_old_secret_and_never_overwrites_newer_generation() {
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        let old = Secret::new(b"refresh:epoch-1".to_vec()).unwrap();
+        let next = Secret::new(b"refresh:epoch-2".to_vec()).unwrap();
+        let stale = Secret::new(b"refresh:stale".to_vec()).unwrap();
+        root.store(&id("personal"), &old).unwrap();
+        assert!(root.compare_and_store(&id("personal"), &old, &next).unwrap());
+        assert!(!root.compare_and_store(&id("personal"), &old, &stale).unwrap());
+        assert_eq!(
+            root.read(&id("personal"))
+                .unwrap()
+                .expose_for_authorized_provider(),
+            next.expose_for_authorized_provider()
+        );
+        assert_eq!(
+            root.compare_and_store(&id("work"), &old, &next),
+            Err(CredentialError::NotFound)
+        );
+    }
+
+    #[test]
+    fn concurrent_rotations_cannot_publish_two_winners() {
+        use std::sync::{Arc, Barrier};
+        let fixture = Fixture::new();
+        let root = CredentialFiles::open(&fixture.0, true).unwrap();
+        root.store(
+            &id("personal"),
+            &Secret::new(b"refresh:initial".to_vec()).unwrap(),
+        )
+        .unwrap();
+
+        let started = Arc::new(Barrier::new(3));
+        let mut tasks = Vec::new();
+        for label in ["worker-a", "worker-b"] {
+            let directory = fixture.0.clone();
+            let barrier = Arc::clone(&started);
+            tasks.push(std::thread::spawn(move || {
+                let root = CredentialFiles::open(&directory, true).unwrap();
+                let old = Secret::new(b"refresh:initial".to_vec()).unwrap();
+                let next = Secret::new(label.as_bytes().to_vec()).unwrap();
+                barrier.wait();
+                root.compare_and_store(&id("personal"), &old, &next).unwrap()
+            }));
+        }
+        started.wait();
+        let winners = tasks.into_iter().filter(|task| task.join().unwrap()).count();
+        assert_eq!(winners, 1);
+        let final_value = root.read(&id("personal")).unwrap();
+        assert!(
+            [b"worker-a".as_slice(), b"worker-b".as_slice()]
+                .contains(&final_value.expose_for_authorized_provider())
         );
     }
 
