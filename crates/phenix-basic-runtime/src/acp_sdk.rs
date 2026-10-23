@@ -20,7 +20,7 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
+    bind_http_model, validate_model_selection, ApiKeyOptions, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
     AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialIdentity,
     CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
     ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderErrorCode,
@@ -33,6 +33,37 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
+
+/// Project public, non-secret provider auth hints onto the ACP read-only
+/// catalog. An adapter's typed configuration is never an authority grant and
+/// is not interpreted by the editor. Only the declared standard API-key
+/// strategy may supply an environment-variable input suggestion.
+fn provider_page_for_acp(page: ProviderPage) -> acp::Result<serde_json::Value> {
+    let mut json = serde_json::to_value(&page).map_err(internal)?;
+    for (pi, provider) in page.providers.iter().enumerate() {
+        for (ci, connection) in provider.connections.iter().enumerate() {
+            for (mi, method) in connection.auth_methods.iter().enumerate() {
+                if method.kind != AuthenticationKind::ApiKey || method.adapter.id != "api-key" {
+                    continue;
+                }
+                let Ok(options) = method.adapter.config.decode::<ApiKeyOptions>() else {
+                    continue;
+                };
+                if options.validate().is_err() {
+                    continue;
+                }
+                let Some(name) = options.environment_variable else {
+                    continue;
+                };
+                // Only append a validated *name*, not the variable value,
+                // any credential or a provider-owned executable descriptor.
+                json["providers"][pi]["connections"][ci]["auth_methods"][mi]
+                    ["environment_variable"] = serde_json::Value::String(name);
+            }
+        }
+    }
+    Ok(json)
+}
 
 type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
@@ -757,13 +788,18 @@ impl Controller {
         if request.scope != "user" {
             return Err(invalid("provider query must request user scope only"));
         }
-        self.provider_read::<_, ProviderPage>(
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let page: ProviderPage = management.read(
             "phenix.provider.catalog@1",
             "list",
             &ProviderQuery {
                 scope: request.scope,
             },
-        )
+        )?;
+        provider_page_for_acp(page)
     }
 
     fn provider_auth_status(
@@ -1779,6 +1815,49 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_environment_hint_is_validated_nonsecret_metadata() {
+        use phenix_provider_contracts::{
+            AdapterBinding, ApiKeyPresentation, AuthenticationMethod, ConnectionDescriptor,
+        };
+        let key = AuthenticationMethod {
+            id: "api-key".into(),
+            label: "API key".into(),
+            kind: AuthenticationKind::ApiKey,
+            adapter: AdapterBinding::from_typed(
+                "api-key",
+                &ApiKeyOptions {
+                    environment_variable: Some("ANTHROPIC_API_KEY".into()),
+                    interactive: true,
+                    presentation: ApiKeyPresentation::Bearer,
+                },
+            )
+            .unwrap(),
+        };
+        let mut wrong_adapter = key.clone();
+        wrong_adapter.adapter.id = "plugin-owned-auth".into();
+        let page = ProviderPage {
+            revision: 1,
+            providers: vec![ProviderDescriptor {
+                id: "example".into(),
+                label: "Example".into(),
+                connections: vec![ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "API".into(),
+                    protocols: vec![],
+                    base_url: None,
+                    auth_methods: vec![key, wrong_adapter],
+                    model_sources: vec![],
+                }],
+            }],
+        };
+        let wire = provider_page_for_acp(page).unwrap();
+        let methods = &wire["providers"][0]["connections"][0]["auth_methods"];
+        assert_eq!(methods[0]["environment_variable"], "ANTHROPIC_API_KEY");
+        assert!(methods[1].get("environment_variable").is_none());
+        assert!(!wire.to_string().contains("Bearer secret"));
+    }
 
     #[test]
     fn model_picker_budgets_all_connections_and_pages_globally() {
