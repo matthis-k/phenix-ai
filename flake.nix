@@ -548,10 +548,11 @@
             interface = "phenix.provider.credentials@1";
             inherit operation;
             resources = [ openAiApiCredentialResource ];
-          }) [ "import" "revoke" ];
+          }) [ "import" "bind_environment" "revoke" ];
           authority = {
             operations = [
               "phenix.provider.credentials@1/import"
+              "phenix.provider.credentials@1/bind_environment"
               "phenix.provider.credentials@1/revoke"
             ];
             resources = [ openAiApiCredentialResource ];

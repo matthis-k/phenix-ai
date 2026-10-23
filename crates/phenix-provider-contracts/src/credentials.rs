@@ -252,11 +252,20 @@ pub struct CredentialImport {
     pub secret: CredentialSecret,
 }
 
+/// Non-secret credential acquisition policy scoped to one exact account.
+/// No API key bytes enter this request, Nix config or frontend history.
+#[derive(Debug, Portable)]
+pub struct CredentialEnvironmentBinding {
+    pub identity: CredentialIdentity,
+    pub environment_variable: String,
+}
+
 /// Storage presence is not authentication/entitlement evidence. ProviderAuth
 /// still owns method validity; selection still requires fresh provider proof.
 #[contract(id = "phenix.provider.credentials@1")]
 pub trait ProviderCredentials {
     fn import(&self, request: CredentialImport) -> Result<(), ProviderError>;
+    fn bind_environment(&self, request: CredentialEnvironmentBinding) -> Result<(), ProviderError>;
     fn resolve(&self, request: CredentialIdentity) -> Result<CredentialSecret, ProviderError>;
     fn revoke(&self, request: CredentialIdentity) -> Result<(), ProviderError>;
 }
