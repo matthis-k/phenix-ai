@@ -61,7 +61,6 @@ fn request_with_auth(
     limit: usize,
     bearer: Option<&str>,
 ) -> Result<Vec<u8>, TransportError> {
-    let mut easy = Easy2::new(
     let mut easy = Easy2::new(BoundedBody {
         bytes: Vec::new(),
         bound: limit,
@@ -77,8 +76,9 @@ fn request_with_auth(
             .map_err(|_| TransportError::Unavailable)?;
     }
     if let Some(token) = bearer {
-        if token.is_empty() || token.len() > 4096 ||
-            !token.bytes().all(|byte| byte.is_ascii_graphic() && byte != b':')
+        if token.is_empty()
+            || token.len() > 4096
+            || !token.bytes().all(|byte| byte.is_ascii_graphic() && byte != b':')
         {
             return Err(TransportError::InvalidForm);
         }
