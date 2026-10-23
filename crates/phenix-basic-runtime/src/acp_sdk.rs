@@ -458,6 +458,7 @@ struct ModelCredentialResolver {
 fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity, String> {
     const CONTRACT: &str = "phenix.provider.credentials@1";
     const RESOLVE: &str = "phenix.provider.credentials@1/resolve";
+    const ROTATE: &str = "phenix.provider.credentials@1/compare_exchange";
     let resource = spec
         .resource
         .as_deref()
@@ -465,16 +466,28 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid model resolver credential resource")?;
     let allowed_resource = std::collections::BTreeSet::from([resource.to_string()]);
+    let rotate = spec.slots.len() == 1 && spec.grants.iter().any(|grant| {
+        grant.caller == spec.entry.provider
+            && grant.interface == CONTRACT
+            && grant.operation == "compare_exchange"
+            && grant.resources == allowed_resource
+    });
+    let expected_authority = if rotate {
+        std::collections::BTreeSet::from([RESOLVE.into(), ROTATE.into()])
+    } else {
+        std::collections::BTreeSet::from([RESOLVE.into()])
+    };
     if spec.entry.interface != CONTRACT
         || spec.entry.operation != "resolve"
-        || spec.authority.operations != std::collections::BTreeSet::from([RESOLVE.into()])
+        || spec.authority.operations != expected_authority
         || spec.authority.resources != allowed_resource
         || !(spec.grants.len() == 1 && spec.slots.is_empty()
-            || spec.grants.len() == 2 && spec.slots.len() == 1)
+            || spec.grants.len() == 2 && spec.slots.len() == 1 && !rotate
+            || spec.grants.len() == 3 && spec.slots.len() == 1 && rotate)
         || !spec.excluded.is_empty()
         || !spec.substitutions.is_empty()
     {
-        return Err("model resolver requires exactly one resolve-only root authority".into());
+        return Err("model resolver requires one selected root with exact private credential grants".into());
     }
     let grant = spec
         .grants
@@ -488,9 +501,9 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
         return Err("model resolver grant must match selected credential resource".into());
     }
     if let Some(binding) = spec.slots.first() {
-        // A typed OAuth provider may resolve its protected record through a
-        // single exact-account backend slot, returning only the verified
-        // short-lived bearer. The provider, not the kernel, owns OAuth semantics.
+        // Only the already-declared provider may resolve its own protected
+        // credential record. A refresh CAS grant is restricted to the same
+        // exact account backend; it cannot become a root ACP operation.
         if binding.caller != spec.entry.provider
             || binding.provider == spec.entry.provider
             || binding.slot != "Credentials"
@@ -504,6 +517,16 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
             })
         {
             return Err("invalid nested model credential resolver grant".into());
+        }
+        if rotate
+            && !spec.grants.iter().any(|g| {
+                g.caller == binding.caller
+                    && g.interface == CONTRACT
+                    && g.operation == "compare_exchange"
+                    && g.resources == allowed_resource
+            })
+        {
+            return Err("invalid nested model credential rotation grant".into());
         }
     }
     Ok(identity)
