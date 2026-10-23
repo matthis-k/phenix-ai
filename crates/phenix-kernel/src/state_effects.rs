@@ -113,9 +113,9 @@ impl Kernel {
                 StateRequest::Create { .. } => return Err(Error::Denied),
                 StateRequest::Read(r) => self.authorize_state(caller, r, "get")?,
                 StateRequest::CompareExchange(edit) => {
-                    self.authorize_state(caller, &edit.location, "set")?
-                }
-                StateRequest::Batch(edits) => {
+                self.cells.borrow_mut().compare_exchange(edit)
+            }
+            StateRequest::Batch(edits) => {
                     for edit in edits {
                         self.authorize_state(caller, &edit.location, "set")?;
                     }
