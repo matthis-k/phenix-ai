@@ -217,7 +217,9 @@ mod plugin {
             )
             .map_err(storage_failure)
             .and_then(|records| {
-                if records.len() != 1 || !records[0].matches_commit(request.expected_revision, &blob) {
+                if records.len() != 1
+                    || !records[0].matches_commit(request.expected_revision, &blob)
+                {
                     return Err(CallError::Domain(error(
                         WorkspaceProblem::Unavailable,
                         "invalid workspace transaction response",
@@ -275,6 +277,11 @@ mod plugin {
                 state.reconcile(mismatched).unwrap_err().problem,
                 WorkspaceProblem::Unavailable
             );
+            // Conflict/ambiguous acknowledgment only invalidates one
+            // session; other live selections are unaffected.
+            state.invalidate("one");
+            assert!(!state.selections.contains_key("one"));
+            assert_eq!(state.selections.get("two"), Some(&two));
         }
     }
 }
