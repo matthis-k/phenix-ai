@@ -206,7 +206,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         assert source["credentials"]["artifact"] == credentials_artifact
         assert source["definitions"] == [definitions]
         assert source["provider_credential_operations"] == ["resolve"]
-        assert source["credential_management_operations"] == ["import", "revoke"]
+        assert source["credential_management_operations"] == ["import", "bind_environment", "revoke"]
         assert source["model_resolution"] is True
         # Swap only the production provider artifact for the isolated local
         # HTTP fixture, preserving the implementation IDs and all grants.
@@ -432,8 +432,48 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     close(sourced)
     assert not list(vault.iterdir()), "environment key must never be stored in the vault"
 
+    # The shipping provider bundle must also support the interactive Neovim
+    # "use environment variable name" path, independently of the old
+    # process-global PHENIX_CREDENTIAL_API_KEY_ENV_NAME launcher shortcut.
+    if bundle_file is not None:
+        named = launch(extra_env={"PHENIX_C15_TEST_API_KEY": key})
+        init(named)
+        bound = call(named, 96, "_phenix/credentials/env-bind",
+                     {**account, "environment_variable": "PHENIX_C15_TEST_API_KEY"})
+        assert bound["result"]["ok"] is True, bound
+        verified = call(named, 97, "_phenix/providers/auth/status", user)
+        assert verified["result"]["profiles"][0]["status"] == "Authenticated", verified
+        named_session = call(named, 98, "session/new", {"cwd": "/tmp", "mcpServers": []})
+        named_options = [
+            option["value"]
+            for option in named_session["result"]["configOptions"][0]["options"]
+            if option["value"].startswith("phenix.native-model@1:")
+        ]
+        assert len(named_options) == 1, named_session
+        chosen = call(named, 99, "session/set_config_option", {
+            "sessionId": named_session["result"]["sessionId"],
+            "configId": "model", "value": named_options[0],
+        })
+        assert "result" in chosen, chosen
+        named_answer = call(named, 100, "session/prompt", {
+            "sessionId": named_session["result"]["sessionId"],
+            "prompt": [{"type": "text", "text": "hello from named env source"}],
+        })
+        assert named_answer.get("result", {}).get("stopReason") == "end_turn", named_answer
+        cleared = call(named, 101, "_phenix/credentials/revoke", account)
+        assert cleared["result"]["ok"] is True, cleared
+        no_more_auth = call(named, 102, "_phenix/providers/auth/status", user)
+        assert no_more_auth["result"]["profiles"][0]["status"]["Unavailable"], no_more_auth
+        close(named)
+        reloaded = launch(extra_env={"PHENIX_C15_TEST_API_KEY": key})
+        init(reloaded)
+        no_resurrection = call(reloaded, 103, "_phenix/providers/auth/status", user)
+        assert no_resurrection["result"]["profiles"][0]["status"]["Unavailable"], no_resurrection
+        close(reloaded)
+        assert not list(vault.iterdir()), "revoke must remove exact env source binding"
+
     assert state["redirected"] == 0, state
-    assert state["get"] >= 12 and state["post"] == 2, state
+    assert state["get"] >= 12 and state["post"] == (3 if bundle_file else 2), state
 
 server.shutdown()
 (output / "openai-api-auth-product.json").write_text(json.dumps({
@@ -452,4 +492,5 @@ server.shutdown()
     "cancelled_auth_attempt_not_replayable": True,
     "shipping_launcher_authority_exercised": bool(packaged_paths),
     "generic_provider_bundle_e2e": bundle_file is not None,
+    "bundled_named_environment_auth_and_stream": bundle_file is not None,
 }, sort_keys=True, indent=2))
