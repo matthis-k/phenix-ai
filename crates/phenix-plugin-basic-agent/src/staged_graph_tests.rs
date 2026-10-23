@@ -68,3 +68,26 @@ fn staged_graph_has_no_extra_public_action() {
     assert!(graph.actions.is_empty());
     assert!(graph.events.is_empty());
 }
+
+#[test]
+fn pending_model_request_is_owned_and_exposes_only_get_and_watch() {
+    let metadata =
+        phenix_sdk::ContractMetadata::decode(super::plugin::METADATA.bytes()).unwrap();
+    let pending = metadata
+        .properties
+        .iter()
+        .find(|property| property.id == "pending_model_request")
+        .unwrap();
+    assert!(pending.get);
+    assert!(pending.watch);
+    assert!(!pending.set, "consumers must not mutate the pending request");
+
+    // The temporary prepared request cell remains writable until the
+    // Advanced Preparer handoff is migrated to producer-owned output.
+    let prepared = metadata
+        .properties
+        .iter()
+        .find(|property| property.id == "prepared_model_request")
+        .unwrap();
+    assert!(prepared.set);
+}
