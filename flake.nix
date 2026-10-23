@@ -721,6 +721,21 @@
           excluded = [];
           substitutions = [];
         });
+      p1CombinedAuthProductCheck = pkgs.runCommand "phenix-p1-combined-auth-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        set -eu
+        mkdir -p "$out"
+        ${pkgs.python3}/bin/python ${./tests/acp-p1-combined-auth-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicHttpComposition} \
+          ${openAiApiManagementComposition} \
+          ${chatGptManagementComposition} \
+          ${openAiApiCredentialComposition} \
+          ${openAiApiResolverComposition} \
+          ${chatGptResolverComposition} \
+          "$out"
+      '';
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2865,6 +2880,7 @@
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-openai-api = providerOpenAiApi;
         provider-chatgpt = providerChatGpt;
+        p1-combined-auth-product = p1CombinedAuthProductCheck;
         provider-openai-api-product = providerOpenAiApiProductCheck;
         provider-openai-api-launcher = providerOpenAiApiLauncherCheck;
         b4-scripted = scriptedModelCheck;
