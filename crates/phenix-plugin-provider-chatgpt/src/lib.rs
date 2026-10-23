@@ -9,22 +9,23 @@ use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
     CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelOrigin,
-    ModelPage,
-    ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
+    ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
     siwc::{AuthorizationAttempt, Registration},
     siwc_models::parse_chatgpt_models,
     siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
-    siwc_verified::{refresh_form, verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity},
+    siwc_verified::{
+        refresh_form, verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity,
+    },
 };
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
 use std::{
     collections::BTreeMap,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use zeroize::Zeroizing;
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "chatgpt";
@@ -264,7 +265,8 @@ mod plugin {
         let resource = identity.resource().map_err(CallError::Domain)?;
         let scope = ScopedRequest {
             authority: Authority {
-                operations: [<ProviderCredentials::compare_exchange as Operation>::KEY.into()].into(),
+                operations: [<ProviderCredentials::compare_exchange as Operation>::KEY.into()]
+                    .into(),
                 resources: [resource.clone()].into(),
             },
             resource: Some(resource),
@@ -334,7 +336,11 @@ mod plugin {
                 "ChatGPT login not completed",
             )));
         }
-        if record.account.as_ref().is_some_and(|account| expired(account, now)) {
+        if record
+            .account
+            .as_ref()
+            .is_some_and(|account| expired(account, now))
+        {
             let previous = record.account.as_ref().unwrap();
             // Token forms contain a rotating credential. A zeroizing guard
             // ensures both network error and successful exchange clear it.
@@ -342,8 +348,11 @@ mod plugin {
                 refresh_form(&previous.issued_client_id, &previous.refresh_token)
                     .map_err(|_| CallError::Domain(denied("invalid saved refresh token")))?,
             );
-            let tokens = exchange_token(&form)
-                .map_err(|_| CallError::Domain(unavailable("ChatGPT refresh failed; reauthorize if revoked")))?;
+            let tokens = exchange_token(&form).map_err(|_| {
+                CallError::Domain(unavailable(
+                    "ChatGPT refresh failed; reauthorize if revoked",
+                ))
+            })?;
             let keys = issuer_jwks()
                 .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
             let verified = verify_chatgpt_identity(
@@ -353,7 +362,9 @@ mod plugin {
                 &previous.id_token_nonce,
                 Some(&previous.subject),
             )
-            .map_err(|_| CallError::Domain(denied("refreshed account identity or plan grant invalid")))?;
+            .map_err(|_| {
+                CallError::Domain(denied("refreshed account identity or plan grant invalid"))
+            })?;
             let expires_at = now
                 .checked_add(tokens.expires_in)
                 .ok_or_else(|| CallError::Domain(denied("invalid refreshed expiry")))?;
