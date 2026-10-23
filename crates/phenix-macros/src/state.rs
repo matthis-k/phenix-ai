@@ -373,6 +373,10 @@ pub fn expand(
                             let sidecar =
                                 syn::Ident::new(&format!("__published_{}", name), name.span());
                             let method = syn::Ident::new(&format!("publish_{}", name), name.span());
+                            let update_method =
+                                syn::Ident::new(&format!("update_{}", name), name.span());
+                            let try_update_method =
+                                syn::Ident::new(&format!("try_update_{}", name), name.span());
                             let reference_method =
                                 syn::Ident::new(&format!("reference_{}", name), name.span());
                             sidecars.push(syn::Field::parse_named.parse2(quote!(
@@ -414,6 +418,33 @@ pub fn expand(
                                     self.#name = next;
                                     self.#sidecar = Some((reference, published.revision));
                                     Ok(published)
+                                }
+
+                                /// Construct, publish and commit a candidate without
+                                /// mutating the authoritative field speculatively.
+                                #[allow(dead_code)]
+                                pub fn #update_method(
+                                    &mut self,
+                                    host: &::phenix_sdk::live::Host<'_>,
+                                    change: impl FnOnce(&#ty) -> #ty,
+                                ) -> ::phenix_sdk::live::AccessResult<::phenix_sdk::live::Snapshot<#ty>> {
+                                    let candidate = change(&self.#name);
+                                    self.#method(host, candidate)
+                                }
+
+                                /// Validate a proposed change before publication. The
+                                /// domain rejection and CAS failure are distinct; neither
+                                /// changes the plugin-owned field.
+                                #[allow(dead_code)]
+                                pub fn #try_update_method<E>(
+                                    &mut self,
+                                    host: &::phenix_sdk::live::Host<'_>,
+                                    change: impl FnOnce(&#ty) -> Result<#ty, E>,
+                                ) -> Result<::phenix_sdk::live::Snapshot<#ty>, ::phenix_sdk::live::OwnedUpdateError<E>> {
+                                    let candidate = change(&self.#name)
+                                        .map_err(::phenix_sdk::live::OwnedUpdateError::Rejected)?;
+                                    self.#method(host, candidate)
+                                        .map_err(::phenix_sdk::live::OwnedUpdateError::Publish)
                                 }
                             });
                         } else {
@@ -701,6 +732,11 @@ mod owned_state_tests {
             .to_string();
         assert!(generated.contains("__published_counter"));
         assert!(generated.contains("publish_counter"));
+        assert!(generated.contains("update_counter"));
+        assert!(generated.contains("try_update_counter"));
+        assert!(generated.contains("OwnedUpdateError"));
+        assert!(generated.contains("Rejected"));
+        assert!(generated.contains("Publish"));
         assert!(generated.contains("state . counter"));
         assert!(generated.contains("get : true"));
         assert!(generated.contains("set : false"));

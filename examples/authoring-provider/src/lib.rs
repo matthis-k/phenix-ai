@@ -44,6 +44,31 @@ mod provider {
                 })?;
                 Ok(state.observed)
             }
+            "owned-value" => Ok(state.observed),
+            "owned-update" => {
+                state
+                    .update_observed(host, |previous| previous + 1)
+                    .map_err(|error| {
+                        Failure::new(Code::Denied, format!("owner update publication: {error:?}"))
+                    })?;
+                Ok(state.observed)
+            }
+            "owned-reject" => {
+                state
+                    .try_update_observed(host, |_previous| -> Result<u64, String> {
+                        Err("candidate rejected".into())
+                    })
+                    .map_err(|error| match error {
+                        live::OwnedUpdateError::Rejected(problem) => CallError::Domain(problem),
+                        live::OwnedUpdateError::Publish(problem) => {
+                            CallError::Kernel(Failure::new(
+                                Code::Denied,
+                                format!("owner update publication: {problem:?}"),
+                            ))
+                        }
+                    })?;
+                Ok(state.observed)
+            }
             _ => (|| {
                 let mut edit = state
                     .counter
