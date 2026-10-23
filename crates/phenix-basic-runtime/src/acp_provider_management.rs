@@ -727,7 +727,10 @@ mod multi_provider_tests {
         assert_eq!(merged.providers[0].connections[0].id, "api");
         assert_eq!(merged.providers[0].connections[1].id, "chatgpt");
         assert_ne!(merged.revision, 0);
-        assert_eq!(merge_provider_pages(std::slice::from_ref(&api)).unwrap(), api);
+        assert_eq!(
+            merge_provider_pages(std::slice::from_ref(&api)).unwrap(),
+            api
+        );
         let changed = merge_provider_pages(&[api, page("openai", "OpenAI", "chatgpt", 6)]).unwrap();
         assert_ne!(merged.revision, changed.revision);
     }
