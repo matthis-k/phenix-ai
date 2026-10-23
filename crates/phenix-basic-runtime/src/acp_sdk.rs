@@ -2294,6 +2294,53 @@ mod tests {
     }
 
     #[test]
+    fn oauth_logout_management_exposes_only_revoke_for_one_account() {
+        let identity = CredentialIdentity::new("openai", "chatgpt", "personal").unwrap();
+        let resource = identity.resource().unwrap();
+        let contract = "phenix.provider.credentials@1";
+        let spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": contract, "operation": "revoke",
+                      "provider": "phenix.provider.credential-files"},
+            "artifacts": [], "definitions": [], "slots": [],
+            "grants": [{"caller": "root", "interface": contract,
+                        "operation": "revoke", "resources": [resource]}],
+            "excluded": [], "substitutions": [],
+            "authority": {
+                "operations": ["phenix.provider.credentials@1/revoke"],
+                "resources": [resource]
+            },
+            "resource": resource
+        }))
+        .unwrap();
+        assert_eq!(
+            validate_credentials_spec(&spec).unwrap(),
+            (resource.clone(), identity)
+        );
+        let mut forged_import = spec.clone();
+        forged_import.entry.operation = "import".into();
+        assert!(validate_credentials_spec(&forged_import).is_err());
+
+        let mut widened = spec.clone();
+        widened.grants.push(phenix_kernel::Grant {
+            caller: "root".into(),
+            interface: contract.into(),
+            operation: "import".into(),
+            resources: std::collections::BTreeSet::from([resource.clone()]),
+        });
+        assert!(validate_credentials_spec(&widened).is_err());
+
+        let mut foreign = spec.clone();
+        foreign.authority.resources.insert(
+            CredentialIdentity::new("openai", "api", "personal")
+                .unwrap()
+                .resource()
+                .unwrap(),
+        );
+        assert!(validate_credentials_spec(&foreign).is_err());
+    }
+
+    #[test]
     fn private_model_resolver_composition_has_one_exact_resolve_only_grant() {
         let identity = CredentialIdentity::new("openai", "api", "personal").unwrap();
         let resource = identity.resource().unwrap();
