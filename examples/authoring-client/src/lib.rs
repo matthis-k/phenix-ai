@@ -57,7 +57,10 @@ mod client {
                     .into());
                 }
                 let after = count.read(host).map_err(|error| {
-                    Failure::new(Code::PluginFailed, format!("counter after denied batch: {error}"))
+                    Failure::new(
+                        Code::PluginFailed,
+                        format!("counter after denied batch: {error}"),
+                    )
                 })?;
                 return Ok(*after.value);
             }
