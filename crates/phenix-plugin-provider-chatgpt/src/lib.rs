@@ -8,14 +8,14 @@ use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialProfile,
-    CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor,
-    ProviderError, ProviderErrorCode, ProviderModel,
+    CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery,
+    ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
     siwc::{AuthorizationAttempt, Registration},
-    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
     siwc_models::parse_chatgpt_models,
+    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
     siwc_verified::{verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity},
 };
 use serde::{Deserialize, Serialize};
@@ -278,8 +278,8 @@ mod plugin {
                 "ChatGPT access token requires refresh or reauthentication",
             )));
         }
-        let keys = issuer_jwks()
-            .map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
+        let keys =
+            issuer_jwks().map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
         let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
             access_token: account.access_token.clone(),
             refresh_token: account.refresh_token.clone(),
@@ -294,7 +294,9 @@ mod plugin {
             &account.id_token_nonce,
             Some(&account.subject),
         )
-        .map_err(|_| CallError::Domain(denied("ChatGPT identity or plan permission not verified")))?;
+        .map_err(|_| {
+            CallError::Domain(denied("ChatGPT identity or plan permission not verified"))
+        })?;
         Ok(account)
     }
 
@@ -386,7 +388,9 @@ mod plugin {
             )));
         }
         if query.cursor.is_some() || query.limit == 0 || query.limit > 256 {
-            return Err(CallError::Domain(denied("invalid ChatGPT model page request")));
+            return Err(CallError::Domain(denied(
+                "invalid ChatGPT model page request",
+            )));
         }
         let account = authorized_account(host, &identity)?;
         let response = chatgpt_models(&account.access_token)
@@ -403,19 +407,23 @@ mod plugin {
             .flat_map(|item| item.slug.bytes().chain([0]))
             .fold(14695981039346656037u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(1099511628211)
-            }).max(1);
+            })
+            .max(1);
         Ok(ModelPage {
             profile_id: Some(identity.profile_id().into()),
-            models: discovered.into_iter().map(|item| ProviderModel {
-                id: item.slug,
-                label: item.display_name,
-                connection_id: CONNECTION.into(),
-                protocol_id: "openai-responses".into(),
-                endpoint_id: "responses".into(),
-                capabilities: Vec::new(),
-                origin: ModelOrigin::Discovered,
-                selectable: true,
-            }).collect(),
+            models: discovered
+                .into_iter()
+                .map(|item| ProviderModel {
+                    id: item.slug,
+                    label: item.display_name,
+                    connection_id: CONNECTION.into(),
+                    protocol_id: "openai-responses".into(),
+                    endpoint_id: "responses".into(),
+                    capabilities: Vec::new(),
+                    origin: ModelOrigin::Discovered,
+                    selectable: true,
+                })
+                .collect(),
             next_cursor: None,
             revision,
         })
@@ -432,8 +440,7 @@ mod plugin {
         host: &Host<'_>,
         request: CredentialIdentity,
     ) -> CallResult<CredentialSecret, ProviderError> {
-        let authorized = exact_identity(host.resource()?.as_deref())
-            .map_err(CallError::Domain)?;
+        let authorized = exact_identity(host.resource()?.as_deref()).map_err(CallError::Domain)?;
         require_attempt_owner(&request, &authorized).map_err(CallError::Domain)?;
         let mut account = authorized_account(host, &authorized)?;
         let access = std::mem::take(&mut account.access_token);
