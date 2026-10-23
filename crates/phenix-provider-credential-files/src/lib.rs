@@ -378,7 +378,7 @@ impl CredentialFiles {
         }
         let result = (|| -> Result<(), CredentialError> {
             checkpoint("linked");
-            self.rename_relative(PENDING, &destination)?;
+            self.rename_relative(PENDING, destination)?;
             self.directory.sync_all().map_err(|_| CredentialError::Io)?;
             self.unlink_relative(PENDING_MARKER_NAME)?;
             self.directory.sync_all().map_err(|_| CredentialError::Io)?;
