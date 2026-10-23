@@ -87,7 +87,11 @@ mod plugin {
     }
 
     impl State {
-        fn current(&mut self, host: &Host<'_>, session: &str) -> CallResult<&SessionSnapshot, BasicError> {
+        fn current(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<&SessionSnapshot, BasicError> {
             if !self.sessions.contains_key(session) {
                 let restored = load(host, session)?;
                 self.sessions.insert(session.into(), restored);
@@ -96,7 +100,8 @@ mod plugin {
         }
 
         fn committed(&mut self, snapshot: SessionSnapshot) -> SessionSnapshot {
-            self.sessions.insert(snapshot.session.clone(), snapshot.clone());
+            self.sessions
+                .insert(snapshot.session.clone(), snapshot.clone());
             snapshot
         }
 
