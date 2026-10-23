@@ -156,9 +156,9 @@ struct Pending {
     identity: CredentialIdentity,
     listener: OAuthLoopbackListener,
     pkce: GeneratedPkce,
-    host_id: String,
-    issued_client_id: Option<String>,
-    expected_subject: Option<String>,
+    /// Credential generation captured at browser begin. The callback
+    /// cannot replace any newer login, refresh, or revocation of this account.
+    prior: StoredOAuth,
 }
 
 #[phenix_sdk::plugin(
@@ -460,9 +460,10 @@ mod plugin {
             listener: OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
                 .unwrap(),
             pkce: GeneratedPkce::new(),
-            host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
-            issued_client_id: None,
-            expected_subject: None,
+            prior: StoredOAuth {
+                host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
+                account: None,
+            },
         };
         let mut state = State::default();
         let now = Instant::now();
@@ -699,9 +700,7 @@ mod plugin {
                 identity,
                 listener,
                 pkce,
-                host_id: record.host_id,
-                issued_client_id: record.account.as_ref().map(|a| a.issued_client_id.clone()),
-                expected_subject: record.account.as_ref().map(|a| a.subject.clone()),
+                prior: record,
             },
         );
         Ok(AuthChallenge::OpenBrowser {
@@ -746,9 +745,9 @@ mod plugin {
             }
         };
         let redirect = pending.listener.redirect_uri();
-        let registration = match pending.issued_client_id.as_deref() {
-            Some(issued_client_id) => Registration::Returning {
-                issued_client_id,
+        let registration = match pending.prior.account.as_ref() {
+            Some(account) => Registration::Returning {
+                issued_client_id: &account.issued_client_id,
                 id_token_hint: None,
                 login_hint: None,
             },
@@ -758,7 +757,7 @@ mod plugin {
         };
         let attempt = AuthorizationAttempt {
             registration,
-            host_id: &pending.host_id,
+            host_id: &pending.prior.host_id,
             redirect_uri: &redirect,
             state: pending.pkce.state(),
             nonce: pending.pkce.nonce(),
@@ -784,7 +783,7 @@ mod plugin {
                 &jwks,
                 &client_id,
                 pending.pkce.nonce(),
-                pending.expected_subject.as_deref(),
+                pending.prior.account.as_ref().map(|account| account.subject.as_str()),
             )
             .map_err(|_| CallError::Domain(denied("OAuth identity or plan grant not verified")))?;
             let expires_at = now_epoch()
@@ -802,10 +801,15 @@ mod plugin {
                 expires_at,
             };
             let record = StoredOAuth {
-                host_id: pending.host_id.clone(),
+                host_id: pending.prior.host_id.clone(),
                 account: Some(account),
             };
-            save(host, &identity, &record)?;
+            if !rotate(host, &identity, &pending.prior, &record)? {
+                return Err(CallError::Domain(problem(
+                    ProviderErrorCode::Conflict,
+                    "ChatGPT login was superseded; sign in again for this account",
+                )));
+            }
             Ok((verified, record))
         })();
         match result {
