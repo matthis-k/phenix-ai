@@ -9,6 +9,180 @@ pub(super) struct ProviderManagement {
     pub(super) selected: Selection,
 }
 
+/// Trusted host multiplexer. Each root remains an independently authorized
+/// kernel/composition, with no shared token store and no inferred grants.
+pub(super) struct ProviderManagementGroup {
+    pub(super) roots: Vec<ProviderManagement>,
+}
+
+/// Merge *descriptors*, not credentials or provider-owned mutable state.
+/// Multiple connection implementations may contribute to the same displayed
+/// provider, but claiming the same provider+connection is ambiguous and denied.
+fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
+    if pages.is_empty() || pages.len() > 32 {
+        return Err(invalid("provider management root count is invalid"));
+    }
+    if pages.len() == 1 {
+        let page = &pages[0];
+        if page.revision == 0 || page.providers.len() > 32 {
+            return Err(invalid("provider catalog is invalid"));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut provider_ids = std::collections::BTreeSet::new();
+        for provider in &page.providers {
+            if provider.connections.len() > 32
+                || provider.id.is_empty()
+                || !provider_ids.insert(provider.id.clone())
+            {
+                return Err(invalid("invalid registered provider"));
+            }
+            for connection in &provider.connections {
+                if !seen.insert((provider.id.clone(), connection.id.clone())) {
+                    return Err(invalid("ambiguous provider connection"));
+                }
+            }
+        }
+        return Ok(page.clone());
+    }
+    let mut merged: Vec<ProviderDescriptor> = Vec::new();
+    let mut identities = std::collections::BTreeSet::new();
+    let mut digest = 14695981039346656037u64;
+    for page in pages {
+        if page.revision == 0 || page.providers.len() > 32 {
+            return Err(invalid("provider catalog has invalid revision or size"));
+        }
+        for byte in page.revision.to_le_bytes() {
+            digest = (digest ^ u64::from(byte)).wrapping_mul(1099511628211);
+        }
+        let mut source_ids = std::collections::BTreeSet::new();
+        for provider in &page.providers {
+            if provider.id.is_empty()
+                || provider.connections.len() > 32
+                || !source_ids.insert(provider.id.clone())
+            {
+                return Err(invalid("invalid registered provider"));
+            }
+            if let Some(existing) = merged.iter_mut().find(|item| item.id == provider.id) {
+                if existing.label != provider.label {
+                    return Err(invalid("conflicting provider labels"));
+                }
+                for connection in &provider.connections {
+                    if !identities.insert((provider.id.clone(), connection.id.clone())) {
+                        return Err(invalid("ambiguous provider connection"));
+                    }
+                    existing.connections.push(connection.clone());
+                }
+            } else {
+                for connection in &provider.connections {
+                    if !identities.insert((provider.id.clone(), connection.id.clone())) {
+                        return Err(invalid("ambiguous provider connection"));
+                    }
+                }
+                merged.push(provider.clone());
+            }
+            for byte in provider.id.bytes().chain([0]) {
+                digest = (digest ^ u64::from(byte)).wrapping_mul(1099511628211);
+            }
+        }
+    }
+    if merged.len() > 32 || identities.len() > 32 {
+        return Err(invalid("combined provider catalog exceeds limits"));
+    }
+    Ok(ProviderPage {
+        providers: merged,
+        revision: digest.max(1),
+    })
+}
+
+impl ProviderManagementGroup {
+    fn pages(&self) -> acp::Result<Vec<ProviderPage>> {
+        self.roots
+            .iter()
+            .map(|root| {
+                root.read(
+                    "phenix.provider.catalog@1",
+                    "list",
+                    &ProviderQuery {
+                        scope: "user".into(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    pub(super) fn list(&self) -> acp::Result<ProviderPage> {
+        merge_provider_pages(&self.pages()?)
+    }
+
+    /// Route by the complete provider+connection identity after verifying no
+    /// root duplicates it. An ACP supplied name is never a kernel grant.
+    fn root_for(&self, provider_id: &str, connection_id: &str) -> acp::Result<&ProviderManagement> {
+        let pages = self.pages()?;
+        merge_provider_pages(&pages)?;
+        let mut selected = None;
+        for (root, page) in self.roots.iter().zip(pages.iter()) {
+            if page.providers.iter().any(|provider| {
+                provider.id == provider_id
+                    && provider
+                        .connections
+                        .iter()
+                        .any(|conn| conn.id == connection_id)
+            }) && selected.replace(root).is_some()
+            {
+                return Err(invalid("ambiguous provider connection root"));
+            }
+        }
+        selected.ok_or_else(|| invalid("provider connection is not installed"))
+    }
+
+    pub(super) fn read_for<Q: Portable, R: Portable>(
+        &self,
+        provider_id: &str,
+        connection_id: &str,
+        interface: &str,
+        operation: &str,
+        query: &Q,
+    ) -> acp::Result<R> {
+        self.root_for(provider_id, connection_id)?
+            .read(interface, operation, query)
+    }
+
+    pub(super) fn current_http_binding(
+        &self,
+        selection: &ModelSelection,
+    ) -> acp::Result<HttpModelBinding> {
+        self.root_for(&selection.provider_id, &selection.connection_id)?
+            .current_http_binding(selection)
+    }
+
+    pub(super) fn authorized_http_offers(
+        &self,
+        resolvers: &[ModelCredentialResolver],
+    ) -> acp::Result<Vec<NativeModelOffer>> {
+        // Verify installation identity before allowing any provider to
+        // publish an executable choice. A duplicate is always a hard error.
+        self.list()?;
+        let mut offers = Vec::new();
+        let mut ids = std::collections::BTreeSet::new();
+        for root in &self.roots {
+            for offer in root.authorized_http_offers(resolvers)? {
+                if offers.len() >= 128 || !ids.insert(offer.id.clone()) {
+                    return Err(invalid("ambiguous or oversized native model options"));
+                }
+                offers.push(offer);
+            }
+        }
+        Ok(offers)
+    }
+
+    pub(super) fn shutdown(self) -> Result<(), String> {
+        for root in self.roots {
+            root.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        }
+        Ok(())
+    }
+}
+
 /// Preserve the native provider's typed denial code without forwarding
 /// provider prose (which may contain identity or credential fragments).
 pub(super) fn provider_rejection(problem: ProviderError) -> acp::Error {
@@ -513,5 +687,85 @@ mod typed_result_tests {
             .expect("valid native reply")
             .expect("provider success");
         assert_eq!(response.revision, 1);
+    }
+}
+
+#[cfg(test)]
+mod multi_provider_tests {
+    use super::*;
+    use phenix_provider_contracts::ConnectionDescriptor;
+
+    fn connection(id: &str) -> ConnectionDescriptor {
+        ConnectionDescriptor {
+            id: id.into(),
+            label: id.into(),
+            protocols: Vec::new(),
+            base_url: None,
+            auth_methods: Vec::new(),
+            model_sources: Vec::new(),
+        }
+    }
+
+    fn page(provider: &str, label: &str, connection_id: &str, revision: u64) -> ProviderPage {
+        ProviderPage {
+            revision,
+            providers: vec![ProviderDescriptor {
+                id: provider.into(),
+                label: label.into(),
+                connections: vec![connection(connection_id)],
+            }],
+        }
+    }
+
+    #[test]
+    fn one_product_exposes_separate_api_and_oauth_connections() {
+        let api = page("openai", "OpenAI", "api", 4);
+        let oauth = page("openai", "OpenAI", "chatgpt", 5);
+        let merged = merge_provider_pages(&[api.clone(), oauth]).unwrap();
+        assert_eq!(merged.providers.len(), 1);
+        assert_eq!(merged.providers[0].connections.len(), 2);
+        assert_eq!(merged.providers[0].connections[0].id, "api");
+        assert_eq!(merged.providers[0].connections[1].id, "chatgpt");
+        assert_ne!(merged.revision, 0);
+        assert_eq!(
+            merge_provider_pages(std::slice::from_ref(&api)).unwrap(),
+            api
+        );
+        let changed = merge_provider_pages(&[api, page("openai", "OpenAI", "chatgpt", 6)]).unwrap();
+        assert_ne!(merged.revision, changed.revision);
+    }
+
+    #[test]
+    fn two_roots_cannot_shadow_an_account_connection() {
+        let api = page("openai", "OpenAI", "api", 4);
+        assert!(merge_provider_pages(&[api.clone(), api]).is_err());
+        assert!(merge_provider_pages(&[
+            page("openai", "OpenAI", "api", 1),
+            page("openai", "OpenAI ChatGPT", "chatgpt", 2),
+        ])
+        .is_err());
+        assert!(merge_provider_pages(&[page("openai", "OpenAI", "api", 0)]).is_err());
+        assert!(merge_provider_pages(&[]).is_err());
+        // A single malicious provider implementation cannot split one
+        // provider descriptor into two records and evade duplicate detection.
+        let mut duplicate = page("openai", "OpenAI", "api", 7);
+        duplicate.providers.push(ProviderDescriptor {
+            id: "openai".into(),
+            label: "OpenAI".into(),
+            connections: vec![connection("chatgpt")],
+        });
+        assert!(merge_provider_pages(&[duplicate]).is_err());
+    }
+
+    #[test]
+    fn different_installed_provider_identities_remain_distinct() {
+        let page = merge_provider_pages(&[
+            page("openai", "OpenAI", "api", 1),
+            page("anthropic", "Anthropic", "api", 2),
+        ])
+        .unwrap();
+        assert_eq!(page.providers.len(), 2);
+        assert_eq!(page.providers[0].id, "openai");
+        assert_eq!(page.providers[1].id, "anthropic");
     }
 }
