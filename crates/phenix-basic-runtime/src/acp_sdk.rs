@@ -389,6 +389,9 @@ struct CredentialManagement {
     importer: Selection,
     resource: String,
     identity: CredentialIdentity,
+    // The launcher-validated root grants determine what ACP may advertise
+    // and dispatch. In particular, OAuth logout-only is never an API-key import.
+    allowed: std::collections::BTreeSet<String>,
 }
 
 /// The credential composition is a separate control-plane grant, never an
@@ -452,6 +455,7 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         importer: spec.entry.clone(),
         resource,
         identity,
+        allowed: spec.grants.iter().map(|grant| grant.operation.clone()).collect(),
     })
 }
 
@@ -1040,8 +1044,8 @@ impl Controller {
                     "provider_id": item.identity.provider_id(),
                     "connection_id": item.identity.connection_id(),
                     "profile_id": item.identity.profile_id(),
-                    "import": true,
-                    "revoke": true,
+                    "import": item.allowed.contains("import"),
+                    "revoke": item.allowed.contains("revoke"),
                 })
             })
             .collect::<Vec<_>>();
@@ -1073,6 +1077,11 @@ impl Controller {
             .iter()
             .find(|item| item.resource == resource)
             .ok_or_else(|| invalid("credential identity is not authorized"))?;
+        // Check the same authorized method set used for capability discovery
+        // before entering the kernel. Kernel authority remains the final gate.
+        if !management.allowed.contains(operation) {
+            return Err(invalid("credential operation is not authorized"));
+        }
         let selected = Selection {
             operation: operation.into(),
             ..management.importer.clone()
