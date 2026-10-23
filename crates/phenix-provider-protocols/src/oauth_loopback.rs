@@ -161,7 +161,7 @@ fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackEr
     let mut chunk = Zeroizing::new([0u8; 1024]);
     loop {
         let count = stream
-            .read(&mut chunk)
+            .read(&mut chunk[..])
             .map_err(|_| CallbackError::InvalidRequest)?;
         if count == 0 {
             return Err(CallbackError::InvalidRequest);
