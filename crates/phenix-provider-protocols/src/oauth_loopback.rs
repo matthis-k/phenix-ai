@@ -9,6 +9,7 @@ use std::{
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
     time::{Duration, Instant},
 };
+use zeroize::{Zeroize, Zeroizing};
 
 const MAX_REQUEST: usize = 8192;
 const MAX_LIFETIME: Duration = Duration::from_secs(600);
@@ -148,16 +149,19 @@ impl Drop for CallbackRequest {
         // The URI can contain a short-lived authorization code. Do not
         // retain an unzeroized heap allocation after processing this request.
         let mut bytes = std::mem::take(&mut self.uri).into_bytes();
-        bytes.fill(0);
+        bytes.zeroize();
     }
 }
 
 fn parse_request(stream: &mut TcpStream, port: u16) -> Result<String, CallbackError> {
-    let mut buffer = Vec::with_capacity(1024);
-    let mut chunk = [0u8; 1024];
+    // The request line contains a short-lived OAuth authorization code.
+    // Scrub both the assembled HTTP request and every read chunk on success
+    // and on early parser rejection, not only the returned callback URI.
+    let mut buffer = Zeroizing::new(Vec::with_capacity(1024));
+    let mut chunk = Zeroizing::new([0u8; 1024]);
     loop {
         let count = stream
-            .read(&mut chunk)
+            .read(&mut chunk[..])
             .map_err(|_| CallbackError::InvalidRequest)?;
         if count == 0 {
             return Err(CallbackError::InvalidRequest);
