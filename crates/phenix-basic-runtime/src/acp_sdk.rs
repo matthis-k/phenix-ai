@@ -466,12 +466,13 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid model resolver credential resource")?;
     let allowed_resource = std::collections::BTreeSet::from([resource.to_string()]);
-    let rotate = spec.slots.len() == 1 && spec.grants.iter().any(|grant| {
-        grant.caller == spec.entry.provider
-            && grant.interface == CONTRACT
-            && grant.operation == "compare_exchange"
-            && grant.resources == allowed_resource
-    });
+    let rotate = spec.slots.len() == 1
+        && spec.grants.iter().any(|grant| {
+            grant.caller == spec.entry.provider
+                && grant.interface == CONTRACT
+                && grant.operation == "compare_exchange"
+                && grant.resources == allowed_resource
+        });
     let expected_authority = if rotate {
         std::collections::BTreeSet::from([RESOLVE.into(), ROTATE.into()])
     } else {
@@ -487,7 +488,9 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
         || !spec.excluded.is_empty()
         || !spec.substitutions.is_empty()
     {
-        return Err("model resolver requires one selected root with exact private credential grants".into());
+        return Err(
+            "model resolver requires one selected root with exact private credential grants".into(),
+        );
     }
     let grant = spec
         .grants
