@@ -2791,6 +2791,32 @@
               --provider-model-resolver ${chatGptResolverComposition} "$@"
           '';
         };
+        # P1 combined authentication product: the ACP host selects exactly
+        # one provider+connection per method call and checks its existing
+        # independent kernel authority. The runtime multi-management support
+        # is introduced by #1117; neither plugin can borrow the other's vault.
+        phenix-basic-p1-auth-acp = pkgs.writeShellApplication {
+          name = "phenix-basic-p1-auth-acp";
+          text = ''
+            set -eu
+            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
+               [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
+              echo "P1 authentication requires an opted-in protected credential backend." >&2
+              exit 2
+            fi
+            unset PHENIX_CREDENTIAL_API_KEY_ENV_NAME
+            unset PHENIX_MODEL_HTTP_API_KEY OPENAI_API_KEY
+            export PHENIX_MODEL_HTTP_ENDPOINT=http://127.0.0.1:1/not-selected
+            export PHENIX_MODEL_HTTP_MODEL=unselected
+            ${basicSqliteEnvironment "basic-p1-auth.sqlite"}
+            exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
+              --provider-management ${openAiApiManagementComposition} \
+              --provider-management ${chatGptManagementComposition} \
+              --provider-credentials ${openAiApiCredentialComposition} \
+              --provider-model-resolver ${openAiApiResolverComposition} \
+              --provider-model-resolver ${chatGptResolverComposition} "$@"
+          '';
+        };
         phenix-basic-jsonl = pkgs.writeShellApplication {
           name = "phenix-basic-jsonl";
           text = ''
