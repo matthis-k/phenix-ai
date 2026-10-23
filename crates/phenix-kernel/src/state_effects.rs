@@ -96,21 +96,23 @@ impl Kernel {
         let owner = owner.to_owned();
         drop(cells);
 
-        let state = self.state.borrow();
-        let Some(frame) = state.stack.last() else {
-            return Err(Error::Denied);
+        let authority = {
+            let state = self.state.borrow();
+            let Some(frame) = state.stack.last() else {
+                return Err(Error::Denied);
+            };
+            if frame.provider != owner || frame.revoked {
+                return Err(Error::Denied);
+            }
+            frame.authority.clone()
         };
-        if frame.provider != owner || frame.revoked {
-            return Err(Error::Denied);
-        }
-        let authority = &frame.authority;
         self.require_property_resource(
             &Selection {
                 interface,
                 operation: "get".into(),
-                provider: owner.into(),
+                provider: owner,
             },
-            authority,
+            &authority,
         )
         .map_err(|_| Error::Denied)
     }
