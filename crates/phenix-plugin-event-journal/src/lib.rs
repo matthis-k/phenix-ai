@@ -61,9 +61,15 @@ pub fn page_from(events: &[Event], query: &JournalQuery) -> Result<EventPage, Ba
             "page limit must be positive",
         ));
     }
+    let tail = u64::try_from(events.len()).map_err(|_| storage_error())?;
+    if query.after > tail {
+        return Err(error(
+            ErrorCode::InvalidCursor,
+            "journal offset is beyond the committed tail",
+        ));
+    }
     let start = usize::try_from(query.after)
-        .unwrap_or(usize::MAX)
-        .min(events.len());
+        .map_err(|_| error(ErrorCode::InvalidCursor, "invalid journal cursor offset"))?;
     let limit = usize::try_from(query.limit).unwrap_or(usize::MAX);
     let end = start.saturating_add(limit).min(events.len());
     Ok(EventPage {
@@ -346,6 +352,55 @@ mod tests {
                 .text,
             "three"
         );
+    }
+
+    #[test]
+    fn reject_future_cursor_but_accept_exact_tail_and_empty_journal() {
+        let events = append_checked(
+            &[],
+            &JournalAppend {
+                session: "s1".into(),
+                events: vec![event("s1", "r1", "one")],
+            },
+        )
+        .unwrap();
+        for after in [2, u64::MAX] {
+            assert_eq!(
+                page_from(
+                    &events,
+                    &JournalQuery {
+                        session: "s1".into(),
+                        after,
+                        limit: 5,
+                    },
+                )
+                .unwrap_err()
+                .code,
+                ErrorCode::InvalidCursor
+            );
+        }
+        let at_tail = page_from(
+            &events,
+            &JournalQuery {
+                session: "s1".into(),
+                after: 1,
+                limit: 5,
+            },
+        )
+        .unwrap();
+        assert!(at_tail.events.is_empty());
+        assert_eq!(at_tail.next, 1);
+        let empty = page_from(
+            &[],
+            &JournalQuery {
+                session: "s1".into(),
+                after: 0,
+                limit: 5,
+            },
+        )
+        .unwrap();
+        assert!(empty.events.is_empty());
+        assert_eq!(empty.next, 0);
     }
 
     #[test]
