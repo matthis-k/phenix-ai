@@ -288,27 +288,22 @@ pub(super) fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
     )
 }
 
+// Missing discovery is a permitted optional capability, not a malformed
+// success reply or a blanket suppression of provider/authority denials.
+fn classify_model_page(result: Result<ModelPage, ProviderError>) -> acp::Result<Option<ModelPage>> {
+    match result {
+        Ok(page) => Ok(Some(page)),
+        Err(problem) if is_missing_model_discovery(&problem.code) => Ok(None),
+        Err(problem) => Err(provider_rejection(problem)),
+    }
+}
+
 impl ProviderManagement {
     fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
-        let root = self
-            .kernel
-            .admit_root(Selection {
-                interface: "phenix.provider.catalog@1".into(),
-                operation: "models".into(),
-                provider: self.selected.provider.clone(),
-            })
+        let reply = self
+            .invoke_typed("phenix.provider.catalog@1", "models", query)
             .map_err(internal)?;
-        match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => ModelPage::from_value(value).map(Some).map_err(internal),
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                if is_missing_model_discovery(&problem.code) {
-                    Ok(None)
-                } else {
-                    Err(provider_rejection(problem))
-                }
-            }
-        }
+        classify_model_page(reply)
     }
 
     /// Enumerate only models executable with the launcher's exact credential
@@ -491,6 +486,21 @@ mod typed_result_tests {
         let reply = decode_provider_outcome::<ModelPage>(Outcome::Domain(failure.to_value()))
             .expect("valid native reply");
         assert_eq!(reply.unwrap_err().code, ProviderErrorCode::Denied);
+    }
+
+    #[test]
+    fn missing_discovery_is_optional_but_denied_discovery_is_not() {
+        let missing = ProviderError {
+            code: ProviderErrorCode::AuthenticationRequired,
+            message: "no credentials".into(),
+        };
+        assert!(classify_model_page(Err(missing)).unwrap().is_none());
+
+        let denied = ProviderError {
+            code: ProviderErrorCode::Denied,
+            message: "access denied".into(),
+        };
+        assert!(classify_model_page(Err(denied)).is_err());
     }
 
     #[test]
