@@ -8,7 +8,8 @@ use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
-    CredentialProfile, CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage,
+    CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelOrigin,
+    ModelPage,
     ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
@@ -16,9 +17,10 @@ use phenix_provider_protocols::{
     siwc::{AuthorizationAttempt, Registration},
     siwc_models::parse_chatgpt_models,
     siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
-    siwc_verified::{verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity},
+    siwc_verified::{refresh_form, verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity},
 };
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 use std::{
     collections::BTreeMap,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -248,6 +250,46 @@ mod plugin {
         )
     }
 
+    /// Native-only exact-account durable refresh replacement. The backend
+    /// compares the *whole* original protected record under its exclusive
+    /// lock. It can never replace a newer refresh generation, even if another
+    /// process completed a refresh concurrently. Caller and backend each
+    /// independently enforce exact resource scope.
+    fn rotate(
+        host: &Host<'_>,
+        identity: &CredentialIdentity,
+        expected: &StoredOAuth,
+        replacement: &StoredOAuth,
+    ) -> CallResult<bool, ProviderError> {
+        let resource = identity.resource().map_err(CallError::Domain)?;
+        let scope = ScopedRequest {
+            authority: Authority {
+                operations: [<ProviderCredentials::compare_exchange as Operation>::KEY.into()].into(),
+                resources: [resource.clone()].into(),
+            },
+            resource: Some(resource),
+        };
+        let expected = CredentialSecret::new(
+            serde_json::to_vec(expected)
+                .map_err(|_| CallError::Domain(unavailable("invalid previous OAuth record")))?,
+        )
+        .map_err(CallError::Domain)?;
+        let replacement = CredentialSecret::new(
+            serde_json::to_vec(replacement)
+                .map_err(|_| CallError::Domain(unavailable("invalid refreshed OAuth record")))?,
+        )
+        .map_err(CallError::Domain)?;
+        host.invoke_scoped::<ProviderCredentials::compare_exchange>(
+            "Credentials",
+            &scope,
+            &CredentialRotation {
+                identity: identity.clone(),
+                expected,
+                replacement,
+            },
+        )
+    }
+
     fn valid_host_id(value: &str) -> bool {
         value
             .strip_prefix("urn:uuid:")
@@ -279,25 +321,69 @@ mod plugin {
         host: &Host<'_>,
         identity: &CredentialIdentity,
     ) -> CallResult<OAuthAccount, ProviderError> {
-        let record = load(host, identity)?.ok_or_else(|| {
+        let mut record = load(host, identity)?.ok_or_else(|| {
             CallError::Domain(problem(
                 ProviderErrorCode::AuthenticationRequired,
                 "ChatGPT account is not authenticated",
             ))
         })?;
+        let now = now_epoch().map_err(CallError::Domain)?;
+        if record.account.is_none() {
+            return Err(CallError::Domain(problem(
+                ProviderErrorCode::AuthenticationRequired,
+                "ChatGPT login not completed",
+            )));
+        }
+        if record.account.as_ref().is_some_and(|account| expired(account, now)) {
+            let previous = record.account.as_ref().unwrap();
+            // Token forms contain a rotating credential. A zeroizing guard
+            // ensures both network error and successful exchange clear it.
+            let form = Zeroizing::new(
+                refresh_form(&previous.issued_client_id, &previous.refresh_token)
+                    .map_err(|_| CallError::Domain(denied("invalid saved refresh token")))?,
+            );
+            let tokens = exchange_token(&form)
+                .map_err(|_| CallError::Domain(unavailable("ChatGPT refresh failed; reauthorize if revoked")))?;
+            let keys = issuer_jwks()
+                .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
+            let verified = verify_chatgpt_identity(
+                &tokens,
+                &keys,
+                &previous.issued_client_id,
+                &previous.id_token_nonce,
+                Some(&previous.subject),
+            )
+            .map_err(|_| CallError::Domain(denied("refreshed account identity or plan grant invalid")))?;
+            let expires_at = now
+                .checked_add(tokens.expires_in)
+                .ok_or_else(|| CallError::Domain(denied("invalid refreshed expiry")))?;
+            let next = StoredOAuth {
+                host_id: record.host_id.clone(),
+                account: Some(OAuthAccount {
+                    subject: verified.subject().to_owned(),
+                    issued_client_id: verified.issued_client_id().to_owned(),
+                    id_token_nonce: previous.id_token_nonce.clone(),
+                    access_token: tokens.access_token.clone(),
+                    refresh_token: tokens.refresh_token.clone(),
+                    id_token: tokens.id_token.clone(),
+                    granted_scope: tokens.granted_scope.clone(),
+                    expires_at,
+                }),
+            };
+            if !rotate(host, identity, &record, &next)? {
+                return Err(CallError::Domain(problem(
+                    ProviderErrorCode::Conflict,
+                    "ChatGPT refresh was superseded; retry the selected account",
+                )));
+            }
+            record = next;
+        }
         let account = record.account.ok_or_else(|| {
             CallError::Domain(problem(
                 ProviderErrorCode::AuthenticationRequired,
                 "ChatGPT login not completed",
             ))
         })?;
-        let now = now_epoch().map_err(CallError::Domain)?;
-        if expired(&account, now) {
-            return Err(CallError::Domain(problem(
-                ProviderErrorCode::AuthenticationRequired,
-                "ChatGPT access token requires refresh or reauthentication",
-            )));
-        }
         let keys =
             issuer_jwks().map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
         let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
@@ -330,28 +416,9 @@ mod plugin {
         let Some(account) = record.account else {
             return Ok(None);
         };
-        let ready = !expired(&account, now_epoch().map_err(CallError::Domain)?)
-            && issuer_jwks()
-                .ok()
-                .and_then(|jwks| {
-                    verify_chatgpt_identity(
-                        &phenix_provider_protocols::siwc_verified::TokenEnvelope {
-                            access_token: account.access_token.clone(),
-                            refresh_token: account.refresh_token.clone(),
-                            id_token: account.id_token.clone(),
-                            expires_in: account
-                                .expires_at
-                                .saturating_sub(now_epoch().unwrap_or(u64::MAX)),
-                            granted_scope: account.granted_scope.clone(),
-                        },
-                        &jwks,
-                        &account.issued_client_id,
-                        &account.id_token_nonce,
-                        Some(&account.subject),
-                    )
-                    .ok()
-                })
-                .is_some();
+        // Reuse the same provider-authoritative renewal and signed-account
+        // verification path as model discovery and selected bearer use.
+        let ready = authorized_account(host, identity).is_ok();
         Ok(Some(CredentialProfile {
             id: identity.profile_id().into(),
             label: identity.profile_id().into(),
@@ -484,6 +551,17 @@ mod plugin {
     ) -> CallResult<(), ProviderError> {
         Err(CallError::Domain(denied(
             "OAuth revocation requires the account lifecycle",
+        )))
+    }
+
+    #[provide(ProviderCredentials::compare_exchange)]
+    fn reject_external_rotation(
+        _: &mut State,
+        _: &Host<'_>,
+        _: CredentialRotation,
+    ) -> CallResult<bool, ProviderError> {
+        Err(CallError::Domain(denied(
+            "ChatGPT OAuth refresh state is only renewable through the selected account",
         )))
     }
 
