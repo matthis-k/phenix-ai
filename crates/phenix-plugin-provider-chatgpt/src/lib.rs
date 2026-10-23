@@ -466,8 +466,12 @@ mod plugin {
         };
         let mut state = State::default();
         let now = Instant::now();
-        state.attempts.insert("expired".into(), pending(now - Duration::from_secs(1)));
-        state.attempts.insert("live".into(), pending(now + Duration::from_secs(60)));
+        state
+            .attempts
+            .insert("expired".into(), pending(now - Duration::from_secs(1)));
+        state
+            .attempts
+            .insert("live".into(), pending(now + Duration::from_secs(60)));
         state.reap_expired_attempts();
         assert_eq!(state.attempts.len(), 1);
         assert!(state.attempts.contains_key("live"));
