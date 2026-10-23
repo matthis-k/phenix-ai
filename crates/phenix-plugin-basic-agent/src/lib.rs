@@ -530,7 +530,8 @@ mod plugin {
         mut after: u64,
     ) -> CallResult<(u64, Vec<Event>), BasicError> {
         let mut collected = Vec::new();
-        for _ in 0..super::MAX_JOURNAL_PAGES {
+        let mut pages = 0;
+        loop {
             let page = host.invoke::<EventJournal::read>(
                 "Journal",
                 &JournalQuery {
@@ -543,13 +544,18 @@ mod plugin {
             if page.events.is_empty() {
                 return Ok((after, collected));
             }
+            // The final empty-page probe must remain possible after exactly
+            // MAX_JOURNAL_PAGES full pages. Reject a 65th nonempty page.
+            if pages == super::MAX_JOURNAL_PAGES {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "journal pagination budget exceeded",
+                )));
+            }
+            pages += 1;
             after = page.next;
             collected.extend(page.events);
         }
-        Err(CallError::Domain(error(
-            ErrorCode::InvalidReply,
-            "journal pagination budget exceeded",
-        )))
     }
 
     fn reconcile_text(
