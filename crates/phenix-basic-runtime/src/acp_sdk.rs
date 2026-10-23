@@ -20,11 +20,11 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, ApiKeyOptions, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
-    AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialIdentity,
-    CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
-    ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderErrorCode,
-    ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, ApiKeyOptions, AuthAttemptQuery, AuthAttemptState,
+    AuthChallenge, AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus,
+    CredentialIdentity, CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall,
+    ModelPage, ModelQuery, ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError,
+    ProviderErrorCode, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
