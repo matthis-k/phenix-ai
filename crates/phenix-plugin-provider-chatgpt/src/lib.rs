@@ -152,7 +152,7 @@ fn require_attempt_owner(
 }
 
 struct Pending {
-    created_at: Instant,
+    expires_at: Instant,
     identity: CredentialIdentity,
     listener: OAuthLoopbackListener,
     pkce: GeneratedPkce,
@@ -188,9 +188,8 @@ mod plugin {
         // loopback listeners before enforcing the bounded attempt budget.
         // Expiry is monotonic and never makes an attempt authenticated.
         fn reap_expired_attempts(&mut self) {
-            self.attempts.retain(|_, pending| {
-                pending.created_at.elapsed() < Duration::from_secs(MAX_ATTEMPT_SECONDS)
-            });
+            let now = Instant::now();
+            self.attempts.retain(|_, pending| pending.expires_at > now);
         }
     }
 
@@ -455,8 +454,8 @@ mod plugin {
     #[test]
     fn abandoned_oauth_attempts_do_not_exhaust_login_capacity() {
         let identity = CredentialIdentity::new(PROVIDER, CONNECTION, "personal").unwrap();
-        let pending = |age: Duration| Pending {
-            created_at: Instant::now() - age,
+        let pending = |expires_at: Instant| Pending {
+            expires_at,
             identity: identity.clone(),
             listener: OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
                 .unwrap(),
@@ -466,11 +465,9 @@ mod plugin {
             expected_subject: None,
         };
         let mut state = State::default();
-        state.attempts.insert(
-            "expired".into(),
-            pending(Duration::from_secs(MAX_ATTEMPT_SECONDS + 1)),
-        );
-        state.attempts.insert("live".into(), pending(Duration::ZERO));
+        let now = Instant::now();
+        state.attempts.insert("expired".into(), pending(now - Duration::from_secs(1)));
+        state.attempts.insert("live".into(), pending(now + Duration::from_secs(60)));
         state.reap_expired_attempts();
         assert_eq!(state.attempts.len(), 1);
         assert!(state.attempts.contains_key("live"));
@@ -694,7 +691,7 @@ mod plugin {
         state.attempts.insert(
             id.clone(),
             Pending {
-                created_at: Instant::now(),
+                expires_at: Instant::now() + Duration::from_secs(MAX_ATTEMPT_SECONDS),
                 identity,
                 listener,
                 pkce,
