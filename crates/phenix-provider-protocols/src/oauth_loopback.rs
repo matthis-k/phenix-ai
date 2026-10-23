@@ -4,6 +4,7 @@
 //! The caller must correlate state, validate the issued client, exchange the
 //! code, and verify signed OIDC claims before reporting Authenticated.
 //! Neither callback URLs nor authorization codes are ever logged here.
+use zeroize::Zeroize;
 use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
@@ -148,7 +149,7 @@ impl Drop for CallbackRequest {
         // The URI can contain a short-lived authorization code. Do not
         // retain an unzeroized heap allocation after processing this request.
         let mut bytes = std::mem::take(&mut self.uri).into_bytes();
-        bytes.fill(0);
+        bytes.zeroize();
     }
 }
 

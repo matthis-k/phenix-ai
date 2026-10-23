@@ -8,6 +8,7 @@
 //! Nothing here authenticates a user or grants model execution.
 
 use url::Url;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const AUTHORIZE_URL: &str = "https://auth.openai.com/api/accounts/authorize";
 pub const TOKEN_URL: &str = "https://auth.openai.com/api/accounts/oauth/token";
@@ -80,6 +81,12 @@ pub struct VerifiedCallback {
     redirect_uri: String,
 }
 
+impl Drop for VerifiedCallback {
+    fn drop(&mut self) {
+        self.code.zeroize();
+    }
+}
+
 impl VerifiedCallback {
     pub fn issued_client_id(&self) -> &str {
         &self.issued_client_id
@@ -87,7 +94,7 @@ impl VerifiedCallback {
 
     /// The token endpoint must be used by a provider-owned transport with TLS
     /// verification, no redirects and no secret-bearing logs or journal data.
-    pub fn exchange_form(self, code_verifier: &str) -> Result<String, RegistrationError> {
+    pub fn exchange_form(self, code_verifier: &str) -> Result<Zeroizing<String>, RegistrationError> {
         if !valid_pkce_verifier(code_verifier) {
             return Err(RegistrationError::InvalidAttempt);
         }
@@ -98,7 +105,7 @@ impl VerifiedCallback {
             .append_pair("code_verifier", code_verifier)
             .append_pair("redirect_uri", &self.redirect_uri)
             .append_pair("resource", RESOURCE);
-        Ok(form.finish())
+        Ok(Zeroizing::new(form.finish()))
     }
 }
 
