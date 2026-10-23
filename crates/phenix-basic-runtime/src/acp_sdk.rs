@@ -377,7 +377,8 @@ fn bounded_transport(
 mod provider_management;
 #[cfg(test)]
 use provider_management::{
-    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator, ProviderManagementGroup,
+    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
+    ProviderManagementGroup,
 };
 use provider_management::{
     is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
@@ -805,7 +806,8 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let result: R = management.read_for(provider_id, connection_id, interface, operation, query)?;
+        let result: R =
+            management.read_for(provider_id, connection_id, interface, operation, query)?;
         serde_json::to_value(result).map_err(internal)
     }
 
@@ -1619,7 +1621,9 @@ pub(super) fn run(
                 if spec.entry.interface != "phenix.provider.catalog@1"
                     || spec.entry.operation != "list"
                 {
-                    return Err("ACP management composition must select provider catalog list".into());
+                    return Err(
+                        "ACP management composition must select provider catalog list".into(),
+                    );
                 }
                 let selected = spec.entry.clone();
                 let kernel = Prepared::prepare(spec.clone())
