@@ -32,7 +32,11 @@ pub(super) struct ModelPageAccumulator {
 }
 
 impl ModelPageAccumulator {
-    pub(super) fn push(&mut self, page: ModelPage, profile: &Option<String>) -> acp::Result<Option<String>> {
+    pub(super) fn push(
+        &mut self,
+        page: ModelPage,
+        profile: &Option<String>,
+    ) -> acp::Result<Option<String>> {
         if self.pages >= 64
             || page.revision == 0
             || self.revision.is_some_and(|prev| prev != page.revision)
@@ -105,7 +109,10 @@ impl ProviderManagement {
     /// preflight result as an executable kernel grant. The later native
     /// installation must recheck auth/registration, resolve the exact secret
     /// and use the same session kernel.
-    pub(super) fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
+    pub(super) fn current_http_binding(
+        &self,
+        desired: &ModelSelection,
+    ) -> acp::Result<HttpModelBinding> {
         const SCOPE: &str = "user";
 
         let listed: ProviderPage = self.read(
@@ -189,7 +196,10 @@ pub(super) struct NativeModelOffer {
 /// representation; this selector is NOT an authority token. On submission,
 /// compare the whole ID with current runtime-generated offers, not decoded
 /// client claims. Distinct account choices must never alias one model name.
-pub(super) fn native_model_option_id(selection: &ModelSelection, revision: u64) -> acp::Result<String> {
+pub(super) fn native_model_option_id(
+    selection: &ModelSelection,
+    revision: u64,
+) -> acp::Result<String> {
     let mut fields = serde_json::to_value(selection).map_err(internal)?;
     let object = fields
         .as_object_mut()
@@ -451,4 +461,3 @@ impl ProviderManagement {
         Ok(offered)
     }
 }
-
