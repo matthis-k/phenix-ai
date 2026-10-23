@@ -292,6 +292,48 @@ mod plugin {
         }
     }
 
+
+    #[provide(ProviderCredentials::compare_exchange)]
+    fn compare_exchange(
+        state: &mut State,
+        host: &Host<'_>,
+        request: CredentialRotation,
+    ) -> CallResult<bool, ProviderError> {
+        let id =
+            authorize(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        // Account-local OAuth rotation is never a variable-name binding and
+        // must not resolve through inherited process environment fallbacks.
+        for credential in [&request.expected, &request.replacement] {
+            if credential
+                .expose_for_authorized_provider()
+                .starts_with(ENV_BIND_PREFIX)
+            {
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::InvalidInput,
+                    "rotation does not accept environment name markers",
+                )));
+            }
+        }
+        if std::env::var("PHENIX_CREDENTIAL_FILE_CONSENT").as_deref() != Ok("1") {
+            return Err(CallError::Domain(backend_error(
+                CredentialError::ConsentRequired,
+            )));
+        }
+        let old = Secret::new(request.expected.expose_for_authorized_provider().to_vec())
+            .map_err(backend_error)
+            .map_err(CallError::Domain)?;
+        let replacement =
+            Secret::new(request.replacement.expose_for_authorized_provider().to_vec())
+                .map_err(backend_error)
+                .map_err(CallError::Domain)?;
+        state
+            .backend()
+            .map_err(CallError::Domain)?
+            .compare_and_store(&id, &old, &replacement)
+            .map_err(backend_error)
+            .map_err(CallError::Domain)
+    }
+
     #[provide(ProviderCredentials::revoke)]
     fn revoke(
         state: &mut State,
