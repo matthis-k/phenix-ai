@@ -13,6 +13,7 @@ use crate::siwc_transport::{exchange_token, issuer_jwks, TransportError};
 use crate::siwc_verified::{
     verify_chatgpt_identity, TokenEnvelope, VerificationError, VerifiedChatGptIdentity,
 };
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExchangeError {
@@ -70,10 +71,15 @@ where
     J: FnOnce() -> Result<Vec<u8>, TransportError>,
 {
     let issued_client_id = callback.issued_client_id().to_owned();
-    let form = callback
-        .exchange_form(verifier)
-        .map_err(ExchangeError::Callback)?;
-    let tokens = exchange(&form).map_err(ExchangeError::Transport)?;
+    // An authorization-code form is a bearer credential even on a failed
+    // exchange. Wipe it on every return path, including transport/JWKS
+    // rejection; ordinary String drop would retain its heap bytes.
+    let form = Zeroizing::new(
+        callback
+            .exchange_form(verifier)
+            .map_err(ExchangeError::Callback)?,
+    );
+    let tokens = exchange(form.as_str()).map_err(ExchangeError::Transport)?;
     // Never trust the ID token to provide a JWKS location. This must remain
     // the pinned issuer transport; token success without signed identity
     // and the granted plan scope is not authentication.
