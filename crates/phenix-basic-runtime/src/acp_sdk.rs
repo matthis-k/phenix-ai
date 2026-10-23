@@ -336,6 +336,10 @@ use provider_management::{
     is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
     stale_native_model_choice, ProviderManagement,
 };
+#[cfg(test)]
+use provider_management::{
+    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
+};
 
 struct CredentialManagement {
     kernel: Kernel,
