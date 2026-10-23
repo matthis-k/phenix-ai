@@ -120,8 +120,8 @@ fn main() {
         .all(|binding| binding["operation"]
             .as_str()
             .is_some_and(|key| key.starts_with("count:")
-                    || key.starts_with("notes:")
-                    || key.starts_with("observed:"))));
+                || key.starts_with("notes:")
+                || key.starts_with("observed:"))));
     let field_package =
         phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&args[3])).unwrap();
     let field = field_package.metadata();
