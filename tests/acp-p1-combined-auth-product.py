@@ -88,6 +88,22 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
         assert api_status["result"]["connection_id"] == "api", api_status
         oauth_status = call(4, "_phenix/providers/auth/status", oauth)
         assert oauth_status["result"]["profiles"] == [], oauth_status
+        # These are per-root *granted* operations, not generic credential
+        # method names. OAuth is provider-owned; only local revoke is exposed.
+        capabilities = call(39, "_phenix/credentials/capabilities", {})
+        assert "result" in capabilities, capabilities
+        profiles = {
+            (p["provider_id"], p["connection_id"], p["profile_id"]): p
+            for p in capabilities["result"]["profiles"]
+        }
+        assert set(profiles) == {
+            ("openai", "api", "personal"),
+            ("openai", "chatgpt", "personal"),
+        }, capabilities
+        assert profiles[("openai", "api", "personal")]["import"] is True
+        assert profiles[("openai", "api", "personal")]["revoke"] is True
+        assert profiles[("openai", "chatgpt", "personal")]["import"] is False
+        assert profiles[("openai", "chatgpt", "personal")]["revoke"] is True
         # A logout-only OAuth account root cannot be converted into a key
         # importer or named environment credential by a forged ACP request.
         credential_account = {
@@ -98,11 +114,11 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
         forged = call(40, "_phenix/credentials/import", {
             **credential_account, "secret": "not-an-oauth-token",
         })
-        assert "error" in forged, forged
+        assert forged["error"]["code"] == -32602, forged
         forged_env = call(41, "_phenix/credentials/env-bind", {
             **credential_account, "environment_variable": "OPENAI_API_KEY",
         })
-        assert "error" in forged_env, forged_env
+        assert forged_env["error"]["code"] == -32602, forged_env
         missing_logout = call(42, "_phenix/credentials/revoke", credential_account)
         assert "error" in missing_logout, missing_logout
         api_begin = call(5, "_phenix/providers/auth/begin", {**api, "method_id": "api-key"})
