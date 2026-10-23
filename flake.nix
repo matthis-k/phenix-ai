@@ -602,7 +602,7 @@
             profile_id = "personal";
           };
           provider_credential_operations = [ "resolve" ];
-          credential_management_operations = [ "import" "revoke" ];
+          credential_management_operations = [ "import" "bind_environment" "revoke" ];
           model_resolution = true;
         });
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
