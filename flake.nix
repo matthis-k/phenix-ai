@@ -2805,7 +2805,9 @@
               exit 2
             fi
             unset PHENIX_CREDENTIAL_API_KEY_ENV_NAME
-            unset PHENIX_MODEL_HTTP_API_KEY OPENAI_API_KEY
+            # Keep operator-chosen key variables such as OPENAI_API_KEY intact.
+            # The selected API credential source alone decides whether to read it.
+            unset PHENIX_MODEL_HTTP_API_KEY
             export PHENIX_MODEL_HTTP_ENDPOINT=http://127.0.0.1:1/not-selected
             export PHENIX_MODEL_HTTP_MODEL=unselected
             ${basicSqliteEnvironment "basic-p1-auth.sqlite"}
