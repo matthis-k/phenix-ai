@@ -138,7 +138,9 @@ mod tests {
         assert!(exchanged);
         assert!(matches!(
             failed,
-            Err(ExchangeError::Verification(VerificationError::InvalidIdToken))
+            Err(ExchangeError::Verification(
+                VerificationError::InvalidIdToken
+            ))
         ));
     }
 
@@ -177,7 +179,10 @@ mod tests {
             },
             || Ok(Vec::new()),
         );
-        assert!(matches!(failed, Err(ExchangeError::Callback(RegistrationError::InvalidAttempt))));
+        assert!(matches!(
+            failed,
+            Err(ExchangeError::Callback(RegistrationError::InvalidAttempt))
+        ));
         assert!(!network);
     }
 }

@@ -15,11 +15,11 @@ pub mod oauth_oidc;
 /// This is protocol data handling, not a ProviderAuth implementation.
 pub mod siwc;
 #[cfg(feature = "siwc-verified")]
+pub mod siwc_flow;
+#[cfg(feature = "siwc-verified")]
 pub mod siwc_transport;
 #[cfg(feature = "siwc-verified")]
 pub mod siwc_verified;
-#[cfg(feature = "siwc-verified")]
-pub mod siwc_flow;
 
 #[cfg(feature = "model-codecs")]
 pub mod request;
