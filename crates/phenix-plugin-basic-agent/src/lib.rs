@@ -50,7 +50,7 @@ fn validate_journal_page_with_limit(
             "journal returned an invalid event page",
         )
     };
-    if limit == 0 || u64::try_from(page.events.len()).is_err_or(|count| count > limit) {
+    if limit == 0 || u64::try_from(page.events.len()).map_or(true, |count| count > limit) {
         return Err(invalid());
     }
     let mut sequence = after;
