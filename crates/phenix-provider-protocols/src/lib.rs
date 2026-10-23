@@ -18,6 +18,8 @@ pub mod siwc;
 pub mod siwc_transport;
 #[cfg(feature = "siwc-verified")]
 pub mod siwc_verified;
+#[cfg(feature = "siwc-verified")]
+pub mod siwc_flow;
 
 #[cfg(feature = "model-codecs")]
 pub mod request;
