@@ -20,7 +20,7 @@ use phenix_provider_protocols::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const PROVIDER: &str = "openai";
