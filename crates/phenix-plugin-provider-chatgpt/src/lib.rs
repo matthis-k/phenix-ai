@@ -8,13 +8,14 @@ use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialImport, CredentialProfile,
-    CredentialProfileStatus, CredentialSecret, ModelPage, ModelQuery, ProviderDescriptor,
-    ProviderError, ProviderErrorCode,
+    CredentialProfileStatus, CredentialSecret, ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor,
+    ProviderError, ProviderErrorCode, ProviderModel,
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
     siwc::{AuthorizationAttempt, Registration},
-    siwc_transport::{exchange_token, issuer_jwks},
+    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
+    siwc_models::parse_chatgpt_models,
     siwc_verified::{verify_chatgpt_identity, GeneratedPkce, VerifiedChatGptIdentity},
 };
 use serde::{Deserialize, Serialize};
@@ -147,6 +148,7 @@ struct Pending {
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
+    provide(phenix_provider_contracts::ProviderCredentials, slot = "Bearer"),
     require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials")
 )]
 mod plugin {
@@ -249,6 +251,53 @@ mod plugin {
         Ok(record)
     }
 
+    /// Single provider-owned boundary shared by catalog discovery and
+    /// the private selected-model bearer resolver. The encrypted/storage
+    /// record is not itself a valid model credential; validate account,
+    /// signature, scope, nonce and expiry on every use.
+    fn authorized_account(
+        host: &Host<'_>,
+        identity: &CredentialIdentity,
+    ) -> CallResult<OAuthAccount, ProviderError> {
+        let record = load(host, identity)?.ok_or_else(|| {
+            CallError::Domain(problem(
+                ProviderErrorCode::AuthenticationRequired,
+                "ChatGPT account is not authenticated",
+            ))
+        })?;
+        let account = record.account.ok_or_else(|| {
+            CallError::Domain(problem(
+                ProviderErrorCode::AuthenticationRequired,
+                "ChatGPT login not completed",
+            ))
+        })?;
+        let now = now_epoch().map_err(CallError::Domain)?;
+        if expired(&account, now) {
+            return Err(CallError::Domain(problem(
+                ProviderErrorCode::AuthenticationRequired,
+                "ChatGPT access token requires refresh or reauthentication",
+            )));
+        }
+        let keys = issuer_jwks()
+            .map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
+        let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
+            access_token: account.access_token.clone(),
+            refresh_token: account.refresh_token.clone(),
+            id_token: account.id_token.clone(),
+            expires_in: account.expires_at.saturating_sub(now),
+            granted_scope: account.granted_scope.clone(),
+        };
+        verify_chatgpt_identity(
+            &bundle,
+            &keys,
+            &account.issued_client_id,
+            &account.id_token_nonce,
+            Some(&account.subject),
+        )
+        .map_err(|_| CallError::Domain(denied("ChatGPT identity or plan permission not verified")))?;
+        Ok(account)
+    }
+
     fn current_profile(
         host: &Host<'_>,
         identity: &CredentialIdentity,
@@ -336,9 +385,59 @@ mod plugin {
                 "model catalog account not authorized",
             )));
         }
-        Err(CallError::Domain(unavailable(
-            "ChatGPT model discovery requires authenticated selected HTTP transport",
-        )))
+        if query.cursor.is_some() || query.limit == 0 || query.limit > 256 {
+            return Err(CallError::Domain(denied("invalid ChatGPT model page request")));
+        }
+        let account = authorized_account(host, &identity)?;
+        let response = chatgpt_models(&account.access_token)
+            .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+        let discovered = parse_chatgpt_models(&response)
+            .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
+        if discovered.len() > query.limit as usize {
+            return Err(CallError::Domain(unavailable(
+                "ChatGPT catalog exceeds requested page limit",
+            )));
+        }
+        let revision = discovered
+            .iter()
+            .flat_map(|item| item.slug.bytes().chain([0]))
+            .fold(14695981039346656037u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(1099511628211)
+            }).max(1);
+        Ok(ModelPage {
+            profile_id: Some(identity.profile_id().into()),
+            models: discovered.into_iter().map(|item| ProviderModel {
+                id: item.slug,
+                label: item.display_name,
+                connection_id: CONNECTION.into(),
+                protocol_id: "openai-responses".into(),
+                endpoint_id: "responses".into(),
+                capabilities: Vec::new(),
+                origin: ModelOrigin::Discovered,
+                selectable: true,
+            }).collect(),
+            next_cursor: None,
+            revision,
+        })
+    }
+
+    /// Controller-only selected-model resolution. This is intentionally the
+    /// existing ProviderCredentials contract so the P1 Model installation
+    /// remains generic. It is never mapped to a frontend credential RPC.
+    /// Unlike the backing vault, this implementation returns only a currently
+    /// validated access token, not the persisted OAuth JSON or refresh token.
+    #[provide(ProviderCredentials::resolve)]
+    fn resolve_bearer(
+        _: &mut State,
+        host: &Host<'_>,
+        request: CredentialIdentity,
+    ) -> CallResult<CredentialSecret, ProviderError> {
+        let authorized = exact_identity(host.resource()?.as_deref())
+            .map_err(CallError::Domain)?;
+        require_attempt_owner(&request, &authorized).map_err(CallError::Domain)?;
+        let mut account = authorized_account(host, &authorized)?;
+        let access = std::mem::take(&mut account.access_token);
+        CredentialSecret::new(access.into_bytes()).map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]

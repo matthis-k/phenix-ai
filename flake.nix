@@ -656,6 +656,48 @@
           excluded = [];
           substitutions = [];
         });
+      # Private account-bound OAuth bearer handoff: the same plugin verifies
+      # its protected OAuth record before exposing a short-lived bearer to
+      # the existing generic selected Model installation.
+      chatGptResolverComposition = pkgs.writeText "phenix-chatgpt-resolver.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.credentials@1";
+            operation = "resolve";
+            provider = "phenix.provider.chatgpt";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerChatGpt}" "${providerCredentialStore}" ];
+          slots = [{
+            caller = "phenix.provider.chatgpt";
+            slot = "Credentials";
+            provider = "phenix.provider.credential-files";
+            export = "Credentials";
+            index = 0;
+          }];
+          grants = [
+            {
+              caller = "root";
+              interface = "phenix.provider.credentials@1";
+              operation = "resolve";
+              resources = [ chatGptCredentialResource ];
+            }
+            {
+              caller = "phenix.provider.chatgpt";
+              interface = "phenix.provider.credentials@1";
+              operation = "resolve";
+              resources = [ chatGptCredentialResource ];
+            }
+          ];
+          authority = {
+            operations = [ "phenix.provider.credentials@1/resolve" ];
+            resources = [ chatGptCredentialResource ];
+          };
+          resource = chatGptCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
       providerOpenAiApiLauncherCheck = pkgs.runCommand "phenix-openai-api-launcher-check" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2718,7 +2760,8 @@
             export PHENIX_MODEL_HTTP_MODEL=unselected
             ${basicSqliteEnvironment "basic-chatgpt.sqlite"}
             exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
-              --provider-management ${chatGptManagementComposition} "$@"
+              --provider-management ${chatGptManagementComposition} \
+              --provider-model-resolver ${chatGptResolverComposition} "$@"
           '';
         };
         phenix-basic-jsonl = pkgs.writeShellApplication {

@@ -860,20 +860,39 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
         || spec.entry.operation != "resolve"
         || spec.authority.operations != std::collections::BTreeSet::from([RESOLVE.into()])
         || spec.authority.resources != allowed_resource
-        || spec.grants.len() != 1
-        || !spec.slots.is_empty()
+        || !(spec.grants.len() == 1 && spec.slots.is_empty()
+            || spec.grants.len() == 2 && spec.slots.len() == 1)
         || !spec.excluded.is_empty()
         || !spec.substitutions.is_empty()
     {
         return Err("model resolver requires exactly one resolve-only root authority".into());
     }
-    let grant = &spec.grants[0];
-    if grant.caller != "root"
-        || grant.interface != CONTRACT
+    let grant = spec.grants.iter().find(|grant| grant.caller == "root")
+        .ok_or("missing selected resolver grant")?;
+    if grant.interface != CONTRACT
         || grant.operation != "resolve"
         || grant.resources != allowed_resource
     {
-        return Err("model resolver grant must match the selected credential resource".into());
+        return Err("model resolver grant must match selected credential resource".into());
+    }
+    if let Some(binding) = spec.slots.first() {
+        // A typed OAuth provider may resolve its protected record through a
+        // single exact-account backend slot, returning only the verified
+        // short-lived bearer. The provider, not the kernel, owns OAuth semantics.
+        if binding.caller != spec.entry.provider
+            || binding.provider == spec.entry.provider
+            || binding.slot != "Credentials"
+            || binding.export != "Credentials"
+            || binding.index != 0
+            || !spec.grants.iter().any(|g| {
+                g.caller == binding.caller
+                    && g.interface == CONTRACT
+                    && g.operation == "resolve"
+                    && g.resources == allowed_resource
+            })
+        {
+            return Err("invalid nested model credential resolver grant".into());
+        }
     }
     Ok(identity)
 }
