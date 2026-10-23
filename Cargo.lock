@@ -2090,6 +2090,7 @@ version = "0.1.0"
 dependencies = [
  "curl",
  "phenix-provider-builtins",
+ "phenix-provider-auth-strategies",
  "phenix-provider-discovery",
  "phenix-provider-contracts",
  "phenix-sdk",
@@ -2130,6 +2131,13 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "phenix-workspace-contracts",
+]
+
+[[package]]
+name = "phenix-provider-auth-strategies"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-contracts",
 ]
 
 [[package]]
