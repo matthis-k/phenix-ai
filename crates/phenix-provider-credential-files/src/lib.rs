@@ -10,7 +10,6 @@
 #![cfg(target_os = "linux")]
 
 use std::ffi::CString;
-use zeroize::Zeroize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -20,6 +19,7 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
+use zeroize::Zeroize;
 
 const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_PROFILE_COMPONENT: usize = 64;

@@ -7,13 +7,13 @@
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use curl::easy::{Easy2, Handler, List, WriteError};
 use phenix_provider_builtins::registrations;
-use phenix_provider_discovery::{parse, CatalogFormat};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
     ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
     ProviderModel,
 };
+use phenix_provider_discovery::{parse, CatalogFormat};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -235,7 +235,10 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
     // The documented list envelope is mandatory. Entry parsing and duplicate
     // detection are shared with other provider discovery implementations.
     let document: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
-        error(ProviderErrorCode::Unavailable, "invalid OpenAI model response")
+        error(
+            ProviderErrorCode::Unavailable,
+            "invalid OpenAI model response",
+        )
     })?;
     if document.get("object").and_then(serde_json::Value::as_str) != Some("list") {
         return Err(error(
@@ -244,7 +247,10 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
         ));
     }
     let page = parse(CatalogFormat::OpenAi, body).map_err(|_| {
-        error(ProviderErrorCode::Unavailable, "invalid OpenAI model response")
+        error(
+            ProviderErrorCode::Unavailable,
+            "invalid OpenAI model response",
+        )
     })?;
     if page.models.len() > MAX_MODELS {
         return Err(error(
@@ -569,11 +575,15 @@ mod tests {
             vec!["ft:gpt-4.1:team:run"],
         );
         assert_eq!(
-            parse_model_ids(br#"{"data":[{"id":"gpt-5"}]}"#).unwrap_err().code,
+            parse_model_ids(br#"{"data":[{"id":"gpt-5"}]}"#)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Unavailable,
         );
         assert_eq!(
-            parse_model_ids(br#"{"object":"list","data":[{"id":"bad model"}]}"#).unwrap_err().code,
+            parse_model_ids(br#"{"object":"list","data":[{"id":"bad model"}]}"#)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Unavailable,
         );
         let wrong = br#"{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5"}]}"#;

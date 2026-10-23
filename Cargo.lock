@@ -1735,8 +1735,7 @@ dependencies = [
  "serde_json",
 ]
 
-[[package] "zeroize",
-]
+[[package]]
 name = "phenix-basic-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1751,6 +1750,7 @@ dependencies = [
  "phenix-sdk",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -2017,8 +2017,7 @@ dependencies = [
  "serde_json",
 ]
 
-[[package] "zeroize",
-]
+[[package]]
 name = "phenix-plugin-model-http"
 version = "0.1.0"
 dependencies = [
@@ -2028,6 +2027,7 @@ dependencies = [
  "phenix-provider-protocols",
  "phenix-sdk",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -2140,8 +2140,7 @@ dependencies = [
  "phenix-provider-protocols",
 ]
 
-[[package] "zeroize",
-]
+[[package]]
 name = "phenix-provider-contracts"
 version = "0.1.0"
 dependencies = [
@@ -2149,14 +2148,15 @@ dependencies = [
  "phenix-sdk",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
-[[package] "zeroize",
-]
+[[package]]
 name = "phenix-provider-credential-files"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "zeroize",
 ]
 
 [[package]]
@@ -2166,8 +2166,7 @@ dependencies = [
  "serde_json",
 ]
 
-[[package] "zeroize",
-]
+[[package]]
 name = "phenix-provider-protocols"
 version = "0.1.0"
 dependencies = [
@@ -2178,6 +2177,7 @@ dependencies = [
  "serde_json",
  "sse-parse",
  "url",
+ "zeroize",
 ]
 
 [[package]]
