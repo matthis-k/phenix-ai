@@ -77,6 +77,25 @@ mod plugin {
     }
 
     impl State {
+        fn current(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
+            if let Some(selected) = self.selections.get(session) {
+                return Ok(selected.clone());
+            }
+            // Hydrate once per instance/session. Other writers cannot
+            // silently overwrite this live selection; their CAS conflicts
+            // are detected when we next save.
+            let restored = load(host, session)?;
+            self.reconcile(restored).map_err(CallError::Domain)
+        }
+
+        fn invalidate(&mut self, session: &str) {
+            self.selections.remove(session);
+        }
+
         fn reconcile(
             &mut self,
             restored: WorkspaceSnapshot,
@@ -158,10 +177,7 @@ mod plugin {
         request: WorkspaceQuery,
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
-        // Refresh before exposing a cached selection. Another authorized
-        // instance may have committed a newer durable revision.
-        let snapshot = load(host, &request.session)?;
-        state.reconcile(snapshot).map_err(CallError::Domain)
+        state.current(host, &request.session)
     }
 
     #[provide(Workspace::set)]
@@ -172,9 +188,7 @@ mod plugin {
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
         validate_cwd(request.cwd.as_deref()).map_err(CallError::Domain)?;
-        let mut current = state
-            .reconcile(load(host, &request.session)?)
-            .map_err(CallError::Domain)?;
+        let mut current = state.current(host, &request.session)?;
         if current.revision != request.expected_revision {
             return Err(CallError::Domain(error(
                 WorkspaceProblem::Conflict,
@@ -189,28 +203,39 @@ mod plugin {
         })?;
         current.cwd = request.cwd;
         let blob = encode(&current)?;
-        let records = host
+        let committed = host
             .invoke::<Storage::transact>(
                 "Storage",
                 &StorageTransaction {
-                    session: request.session,
+                    session: request.session.clone(),
                     edits: vec![StorageEdit {
                         key: KEY.into(),
                         expected: request.expected_revision,
-                        data: blob,
+                        data: blob.clone(),
                     }],
                 },
             )
-            .map_err(storage_failure)?;
-        if records.len() != 1 || records[0].revision != current.revision {
-            return Err(CallError::Domain(error(
-                WorkspaceProblem::Unavailable,
-                "invalid workspace transaction response",
-            )));
+            .map_err(storage_failure)
+            .and_then(|records| {
+                if records.len() != 1
+                    || !records[0].matches_commit(request.expected_revision, &blob)
+                {
+                    return Err(CallError::Domain(error(
+                        WorkspaceProblem::Unavailable,
+                        "invalid workspace transaction response",
+                    )));
+                }
+                Ok(())
+            });
+        match committed {
+            Ok(()) => Ok(state.apply_persisted(current)),
+            Err(failure) => {
+                // The durable commit may have raced or the acknowledgment
+                // may be ambiguous; the next access must rehydrate.
+                state.invalidate(&request.session);
+                Err(failure)
+            }
         }
-        // Do not mutate live state until durable CAS and reply validation
-        // succeed. Failed writes leave the previous selection untouched.
-        Ok(state.apply_persisted(current))
     }
     #[cfg(test)]
     mod state_tests {
@@ -252,6 +277,11 @@ mod plugin {
                 state.reconcile(mismatched).unwrap_err().problem,
                 WorkspaceProblem::Unavailable
             );
+            // Conflict/ambiguous acknowledgment only invalidates one
+            // session; other live selections are unaffected.
+            state.invalidate("one");
+            assert!(!state.selections.contains_key("one"));
+            assert_eq!(state.selections.get("two"), Some(&two));
         }
     }
 }
