@@ -1178,12 +1178,13 @@ impl Controller {
             return Err(invalid("ambiguous or unauthorized model choice"));
         }
         let desired = found.pop().ok_or_else(|| invalid("model unavailable"))?;
-        // After admission, remember any attempt to install a native Model:
-        // even a later failed CAS must not silently route a no-record prompt
-        // via the legacy environment while an uncommitted Model is installed.
-        self.selected_http_seen.insert(session.clone());
-        self.install_current_http_model(&session, &desired)?;
+        // The durable selection is the source of truth. Never activate a
+        // transport for a choice whose revision-CAS may still fail. Preflight
+        // proves current provider evidence, not an executable grant.
         let checked = management.current_http_binding(&desired)?;
+        // Once a switch has been admitted, the session must never fall back
+        // to the legacy preset, including on CAS or installation failure.
+        self.selected_http_seen.insert(session.clone());
         super::model_selection_state::compare_and_swap(
             self.sessions
                 .get(&session)
@@ -1207,6 +1208,10 @@ impl Controller {
                 "selected model CAS receipt did not become effective",
             ));
         }
+        // Only a confirmed durable choice may mutate native Model state.
+        // If installation fails, the selected intent remains fail-closed;
+        // subsequent prompts must revalidate and reinstall, never use preset.
+        self.install_current_http_model(&session, &desired)?;
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
