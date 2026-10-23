@@ -349,6 +349,21 @@ impl<'call> Host<'call> {
             }),
         )?)?)
     }
+    /// Publish a plugin-owned value to its selected observers.
+    ///
+    /// Read-only properties can only be published from the currently
+    /// executing owner, under its admitted property resource. This uses the
+    /// existing M1 compare-and-swap state request; it grants no external
+    /// property `set` authority. The caller must commit its local Rust value
+    /// only after this operation succeeds.
+    pub fn publish<T: Portable>(
+        &self,
+        r: ValueRef<T>,
+        expected: Revision,
+        value: &T,
+    ) -> AccessResult<Snapshot<T>> {
+        self.compare_exchange(r, expected, value)
+    }
     pub fn batch(&self, edits: Vec<BatchEdit>) -> AccessResult<BatchSnapshot> {
         let mut edits: Vec<_> = edits.into_iter().map(|v| v.0).collect();
         edits.sort_by_key(|e| e.location);
