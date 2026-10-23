@@ -431,7 +431,6 @@ impl ProviderManagement {
     /// preflight result as an executable kernel grant. The later native
     /// installation must recheck auth/registration, resolve the exact secret
     /// and use the same session kernel.
-    #[allow(dead_code)]
     fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
         const SCOPE: &str = "user";
 
@@ -895,7 +894,6 @@ fn prepare_model_resolver(spec: &Composition) -> Result<ModelCredentialResolver,
 impl ModelCredentialResolver {
     /// Available only to the trusted controller after checking fresh model
     /// binding and authorization. No ACP command can call this method.
-    #[allow(dead_code)]
     fn resolve_for(&self, identity: &CredentialIdentity) -> Result<CredentialSecret, String> {
         if *identity != self.identity {
             return Err("model credential identity is not launcher-authorized".into());
