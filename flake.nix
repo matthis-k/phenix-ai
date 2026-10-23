@@ -641,6 +641,33 @@
       # not an implicit no-auth or API-key provider fallback.
       chatGptCredentialResource =
         "phenix.credentials.6f70656e6169.63686174677074.706572736f6e616c";
+      # Explicit local sign-out only. Never grant the editor root the
+      # private OAuth record import or refresh-token compare_exchange.
+      chatGptLogoutComposition = pkgs.writeText "phenix-chatgpt-local-logout.json"
+        (builtins.toJSON {
+          format = "phenix.composition.v3";
+          entry = {
+            interface = "phenix.provider.credentials@1";
+            operation = "revoke";
+            provider = "phenix.provider.credential-files";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          artifacts = [ "${providerCredentialStore}" ];
+          slots = [];
+          grants = [{
+            caller = "root";
+            interface = "phenix.provider.credentials@1";
+            operation = "revoke";
+            resources = [ chatGptCredentialResource ];
+          }];
+          authority = {
+            operations = [ "phenix.provider.credentials@1/revoke" ];
+            resources = [ chatGptCredentialResource ];
+          };
+          resource = chatGptCredentialResource;
+          excluded = [];
+          substitutions = [];
+        });
       chatGptManagementComposition = pkgs.writeText "phenix-chatgpt-management.json"
         (builtins.toJSON {
           format = "phenix.composition.v3";
@@ -2838,6 +2865,7 @@
               --provider-management ${openAiApiManagementComposition} \
               --provider-management ${chatGptManagementComposition} \
               --provider-credentials ${openAiApiCredentialComposition} \
+              --provider-credentials ${chatGptLogoutComposition} \
               --provider-model-resolver ${openAiApiResolverComposition} \
               --provider-model-resolver ${chatGptResolverComposition} "$@"
           '';
