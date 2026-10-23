@@ -2090,6 +2090,7 @@ version = "0.1.0"
 dependencies = [
  "curl",
  "phenix-provider-builtins",
+ "phenix-provider-discovery",
  "phenix-provider-contracts",
  "phenix-sdk",
  "serde_json",
