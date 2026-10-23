@@ -108,7 +108,8 @@ fn entry(identity: &CredentialIdentity, actual: Option<&str>) -> Result<Entry, P
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials,
+        CredentialEnvironmentBinding, CredentialImport, CredentialRotation, CredentialSecret,
+        ProviderCredentials,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -159,6 +160,20 @@ mod plugin {
             .map_err(backend_error)
             .map_err(CallError::Domain)?;
         resolve_stored(bytes).map_err(CallError::Domain)
+    }
+
+    #[provide(ProviderCredentials::compare_exchange)]
+    fn compare_exchange(
+        host: &Host<'_>,
+        request: CredentialRotation,
+    ) -> CallResult<bool, ProviderError> {
+        // The Secret Service backend does not provide an atomic CAS contract.
+        // Never emulate token rotation with non-atomic read+set_secret.
+        entry(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        Err(CallError::Domain(error(
+            ProviderErrorCode::Unavailable,
+            "atomic credential rotation unsupported by this backend",
+        )))
     }
 
     #[provide(ProviderCredentials::revoke)]

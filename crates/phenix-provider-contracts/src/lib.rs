@@ -13,8 +13,8 @@ pub use adapter::{AdapterBinding, AdapterConfig, ApiKeyOptions, ApiKeyPresentati
 
 pub mod credentials;
 pub use credentials::{
-    CredentialEnvironmentBinding, CredentialIdentity, CredentialImport, CredentialSecret,
-    ProviderCredentials,
+    CredentialEnvironmentBinding, CredentialIdentity, CredentialImport, CredentialRotation,
+    CredentialSecret, ProviderCredentials,
 };
 
 pub mod model_session;
