@@ -5,9 +5,7 @@ use phenix_advanced_contracts::{
     ModelPreparationChange, ModelPreparationError, ModelPreparationInput, ModelPreparationProblem,
     ModelPreparationProposal, PreparationReceipt,
 };
-use phenix_basic_contracts::{
-    BasicPendingModelRequest, BasicPreparedModelRequest, GraphStateChange,
-};
+use phenix_basic_contracts::{BasicPendingModelRequest, GraphStateChange, ModelRequest};
 use phenix_sdk::{
     CallError, CallResult, Code, Failure, FailurePolicy, Host, JoinPolicy, StaticGraphContribution,
     StaticGraphNode,
@@ -17,16 +15,31 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.advanced.graph-preparer",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "prepare",
-        triggers: &["state:phenix.basic.agent/pending_model_request"],
-        after: &[],
-        selector: "",
-        operation: "phenix.advanced.model-preparation-change@1/run",
-        writes: &["phenix.basic.agent/prepared_model_request"],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[
+        StaticGraphNode {
+            id: "advance",
+            triggers: &["state:phenix.advanced.graph-preparer/prepared_model_request"],
+            after: &[
+                "phenix.advanced.graph-preparer/prepare",
+                "phenix.basic.agent/prepare",
+            ],
+            selector: "Advance",
+            operation: "phenix.basic.turn-advance@1/advance",
+            writes: &["phenix.basic.agent/pending_model_request"],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+        StaticGraphNode {
+            id: "prepare",
+            triggers: &["state:phenix.basic.agent/pending_model_request"],
+            after: &[],
+            selector: "",
+            operation: "phenix.advanced.model-preparation-change@1/run",
+            writes: &["phenix.advanced.graph-preparer/prepared_model_request"],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 fn invalid(problem: ModelPreparationProblem, message: &str) -> CallError<ModelPreparationError> {
@@ -44,17 +57,24 @@ fn host_failure(error: impl std::fmt::Display) -> CallError<ModelPreparationErro
     version = "1.0.0",
     provide(phenix_advanced_contracts::ModelPreparationChange, slot = "Change"),
     require(phenix_basic_contracts::BasicPendingModelRequest, slot = "Source"),
-    require(phenix_basic_contracts::BasicPreparedModelRequest, slot = "Prepared"),
+    require(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     require(phenix_advanced_contracts::ModelPreparation, slot = "Preparer"),
     graph(super::GRAPH)
 )]
 mod provider {
     use super::*;
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        // Advanced owns its prepared output. Basic receives a read-only
+        // versioned view through the selected Prepared property import.
+        #[expose]
+        #[watch]
+        prepared_model_request: Option<ModelRequest>,
+    }
 
     #[provide(ModelPreparationChange::run)]
     fn run(
+        state: &mut State,
         host: &Host<'_>,
         notification: GraphStateChange,
     ) -> CallResult<PreparationReceipt, ModelPreparationError> {
@@ -117,11 +137,31 @@ mod provider {
                 "changed prepared requests need verified checkpoint admission",
             ));
         }
-        let selected = BasicPreparedModelRequest::set::locate(host, "Prepared")?;
-        let mut draft = selected.edit(host).map_err(host_failure)?;
-        *draft = Some(proposal.candidate);
-        draft.commit(host).map_err(host_failure)?;
-        PreparationReceipt::new(source_epoch, input.original_sha256)
-            .map_err(|problem| invalid(problem, "invalid source-bound preparation receipt"))
+        let receipt = PreparationReceipt::new(source_epoch, input.original_sha256)
+            .map_err(|problem| invalid(problem, "invalid source-bound preparation receipt"))?;
+        // Committing the exported observation also commits the Advanced
+        // plugin's internal field. Basic never grants this plugin write
+        // access to Basic-owned state.
+        state
+            .publish_prepared_model_request(host, Some(proposal.candidate))
+            .map_err(host_failure)?;
+        Ok(receipt)
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    #[test]
+    fn prepared_request_is_only_observable_from_outside() {
+        let metadata =
+            phenix_sdk::ContractMetadata::decode(super::provider::METADATA.bytes()).unwrap();
+        let field = metadata
+            .properties
+            .iter()
+            .find(|field| field.id == "prepared_model_request")
+            .unwrap();
+        assert!(field.get && field.watch);
+        assert!(!field.set, "Advanced alone publishes this owned value");
+        assert_eq!(metadata.plugin, "phenix.advanced.graph-preparer");
     }
 }

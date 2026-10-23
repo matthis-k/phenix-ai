@@ -369,17 +369,18 @@ impl crate::resolve::Prepared {
                         )
                     })?;
                 // A read-only published field can only be written by the
-                // *executing owner*. The runtime separately checks the live
-                // frame, effective resource scope, and owner identity before
-                // the publication CAS; this admission check cannot grant them.
+                // *executing provider* of the node, which must be the
+                // property owner. A different graph plugin may contribute
+                // the node by selecting that provider through a typed import.
+                // Runtime separately checks the live frame, effective scope,
+                // and owner identity; this admission cannot grant them.
                 if !target.set {
                     let property_contract = phenix_contract::property_contract(owner, property)?;
                     let resource = property_contract.trim_end_matches("@1");
                     let node_grant = self
                         .grants
                         .get(&(node.owner.clone(), node.definition.operation.clone()));
-                    if node.owner != owner
-                        || node.provider != owner
+                    if node.provider != owner
                         || (!target.get && !target.watch)
                         || !self.authority.resources.contains(resource)
                         || !node_grant.is_some_and(|resources| resources.contains(resource))
