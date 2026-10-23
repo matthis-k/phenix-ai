@@ -8,6 +8,7 @@ use crate::siwc::TOKEN_URL;
 use crate::siwc_verified::{TokenEnvelope, JWKS_URL, MAX_JWKS_BODY, MAX_TOKEN_BODY};
 use curl::easy::{Easy2, Handler, List, WriteError};
 use std::time::Duration;
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
@@ -24,6 +25,14 @@ struct BoundedBody {
     bound: usize,
     too_large: bool,
 }
+// Protect partial token responses on rejected, interrupted and oversized
+// exchanges, not just on successful token parsing.
+impl Drop for BoundedBody {
+    fn drop(&mut self) {
+        self.bytes.zeroize();
+    }
+}
+
 impl Handler for BoundedBody {
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
         if self
@@ -118,7 +127,7 @@ pub fn exchange_token(form: &str) -> Result<TokenEnvelope, TransportError> {
     }
     let mut raw = request(TOKEN_URL, Some(form), MAX_TOKEN_BODY)?;
     let parsed = TokenEnvelope::parse(&raw).map_err(|_| TransportError::InvalidTokenResponse);
-    raw.fill(0);
+    raw.zeroize();
     parsed
 }
 

@@ -27,10 +27,9 @@ stage["artifacts"] = [
 ]
 stage["authority"]["operations"].extend([key, advance_key])
 pending_property = "phenix.basic.agent.property.pending_model_request@1"
-stage["authority"]["operations"].extend([
-    pending_property + "/set",
-    pending_property + "/get",
-])
+# Basic owns this value. The graph may observe it, but neither the root
+# nor an imported consumer can set it through a property operation.
+stage["authority"]["operations"].append(pending_property + "/get")
 stage["authority"]["resources"].append(pending_property[:-2])
 # The root Basic action is the authority ceiling for its entire graph wave.
 # Unless this root grant contains the property resource, the child node's
@@ -43,7 +42,7 @@ for grant in stage["grants"]:
 stage["grants"].extend([
     {"caller": "phenix.basic.agent", "interface": pending_property,
      "operation": operation, "resources": [scoped, pending_property[:-2]]}
-    for operation in ("get", "set")
+    for operation in ("get",)
 ])
 stage["grants"].append({
     "caller": "phenix.basic.agent",
@@ -57,28 +56,6 @@ stage["grants"].append({
     "operation": "advance",
     "resources": [scoped],
 })
-prepared_property = "phenix.basic.agent.property.prepared_model_request@1"
-stage["authority"]["operations"].extend([
-    prepared_property + "/get",
-    prepared_property + "/watch",
-])
-stage["authority"]["resources"].append(prepared_property[:-2])
-for grant in stage["grants"]:
-    if (grant["caller"] == "root"
-            and grant["interface"] == "phenix.basic.input@1"
-            and grant["operation"] == "submit"):
-        grant["resources"].append(prepared_property[:-2])
-stage["grants"].extend([
-    {"caller": "phenix.basic.agent", "interface": prepared_property,
-     "operation": operation, "resources": [scoped, prepared_property[:-2]]}
-    for operation in ("get", "watch")
-])
-for grant in stage["grants"]:
-    if (grant["caller"] == "phenix.basic.agent"
-            and grant["interface"] == "phenix.basic.turn-advance@1"):
-        grant["resources"].extend([
-            pending_property[:-2], prepared_property[:-2],
-        ])
 stage_path = out / "staged-graph.json"
 stage_path.write_text(json.dumps(stage))
 
@@ -135,13 +112,37 @@ if len(sys.argv) in (9, 10):
     selected = json.loads(json.dumps(stage))
     selected["artifacts"].extend([graph_plugin, noop_plugin])
     selected["definitions"].append(advanced_definitions)
+    prepared_property = "phenix.advanced.graph-preparer.property.prepared_model_request@1"
+    selected["authority"]["operations"].extend([
+        prepared_property + "/get",
+        prepared_property + "/watch",
+    ])
+    selected["authority"]["resources"].append(prepared_property[:-2])
+    # The root's submitted graph wave is the authority ceiling for both
+    # producer publication and selected Basic advance.
+    for grant in selected["grants"]:
+        if (grant["caller"] == "root"
+                and grant["interface"] == "phenix.basic.input@1"
+                and grant["operation"] == "submit"):
+            grant["resources"].append(prepared_property[:-2])
+    # The executing Basic handler reads Advanced's exported candidate.
+    for grant in selected["grants"]:
+        if (grant["caller"] == "phenix.basic.agent"
+                and grant["interface"] == "phenix.basic.turn-advance@1"
+                and grant["operation"] == "advance"):
+            grant["resources"].extend([
+                pending_property[:-2], prepared_property[:-2],
+            ])
     selected["slots"].extend([
         {"caller": "phenix.advanced.graph-preparer", "slot": "Source",
          "index": 0, "provider": "phenix.basic.agent",
          "export": "property.pending_model_request"},
-        {"caller": "phenix.advanced.graph-preparer", "slot": "Prepared",
-         "index": 0, "provider": "phenix.basic.agent",
+        {"caller": "phenix.basic.agent", "slot": "Prepared",
+         "index": 0, "provider": "phenix.advanced.graph-preparer",
          "export": "property.prepared_model_request"},
+        {"caller": "phenix.advanced.graph-preparer", "slot": "Advance",
+         "index": 0, "provider": "phenix.basic.agent",
+         "export": "Advance"},
         {"caller": "phenix.advanced.graph-preparer", "slot": "Preparer",
          "index": 0, "provider": "phenix.advanced.preparer-noop",
          "export": "Prepare"},
@@ -161,17 +162,24 @@ if len(sys.argv) in (9, 10):
          "resources": [scoped, pending_property[:-2]]}
         for op in ("get", "watch")
     ])
+    # Advanced is the only writer of the prepared value. The state trigger
+    # and Basic consumer need read/watch, never property set authority.
     selected["grants"].extend([
         {"caller": "phenix.advanced.graph-preparer",
-         "interface": prepared_property, "operation": operation,
-         "resources": [scoped, prepared_property[:-2]]}
-        for operation in ("get", "set")
+         "interface": prepared_property, "operation": "watch",
+         "resources": [scoped, prepared_property[:-2]]},
+        {"caller": "phenix.basic.agent",
+         "interface": prepared_property, "operation": "get",
+         "resources": [scoped, prepared_property[:-2]]},
+        {"caller": "phenix.advanced.graph-preparer",
+         "interface": "phenix.basic.turn-advance@1",
+         "operation": "advance",
+         "resources": [scoped, pending_property[:-2], prepared_property[:-2]]},
     ])
     selected["authority"]["operations"].extend([
         "phenix.advanced.model-preparation-change@1/run",
         "phenix.advanced.model-preparation@1/prepare",
         pending_property + "/watch",
-        prepared_property + "/set",
     ])
     selected_path = out / "selected-graph.json"
     selected_path.write_text(json.dumps(selected))
@@ -268,16 +276,15 @@ if len(sys.argv) in (9, 10):
                     if event["kind"] == "Answer"] == ["fixture:after-failure"], retry_events
             assert not any(event["kind"] == "ToolStarted" for event in retry_events)
 
-    # Removing the separately selected advanced hook's effective write
-    # authority must reject the whole graph before Basic journals any turn.
+    # Removing the selected Advanced producer's *property resource* from
+    # its operation grant must deny publication before any Basic answer.
     denied_selected = json.loads(json.dumps(selected))
-    denied_selected["grants"] = [
-        grant for grant in denied_selected["grants"]
-        if not (grant["caller"] == "phenix.advanced.graph-preparer"
-                and grant["interface"] == prepared_property
-                and grant["operation"] == "set")
-    ]
-    denied_selected_path = out / "selected-no-write-grant.json"
+    for grant in denied_selected["grants"]:
+        if (grant["caller"] == "phenix.advanced.graph-preparer"
+                and grant["interface"] == "phenix.advanced.model-preparation-change@1"
+                and grant["operation"] == "run"):
+            grant["resources"].remove(prepared_property[:-2])
+    denied_selected_path = out / "selected-no-publish-resource.json"
     denied_selected_path.write_text(json.dumps(denied_selected))
     denied_result, denied_events = submit(
         denied_selected_path, "selected-denied.sqlite",

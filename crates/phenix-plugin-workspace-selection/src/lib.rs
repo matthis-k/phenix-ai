@@ -67,9 +67,65 @@ mod plugin {
         Workspace, WorkspaceError, WorkspaceProblem, WorkspaceQuery, WorkspaceSnapshot,
         WorkspaceUpdate,
     };
+    use std::collections::BTreeMap;
 
+    // Workspace selection is plugin-owned. Persistent snapshots restore and
+    // reconcile it across instances; they are not a replacement for State.
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        selections: BTreeMap<String, WorkspaceSnapshot>,
+    }
+
+    impl State {
+        fn current(
+            &mut self,
+            host: &Host<'_>,
+            session: &str,
+        ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
+            if let Some(selected) = self.selections.get(session) {
+                return Ok(selected.clone());
+            }
+            // Hydrate once per instance/session. Other writers cannot
+            // silently overwrite this live selection; their CAS conflicts
+            // are detected when we next save.
+            let restored = load(host, session)?;
+            self.reconcile(restored).map_err(CallError::Domain)
+        }
+
+        fn invalidate(&mut self, session: &str) {
+            self.selections.remove(session);
+        }
+
+        fn reconcile(
+            &mut self,
+            restored: WorkspaceSnapshot,
+        ) -> Result<WorkspaceSnapshot, WorkspaceError> {
+            if let Some(current) = self.selections.get(&restored.session) {
+                if restored.revision < current.revision {
+                    return Err(error(
+                        WorkspaceProblem::Unavailable,
+                        "workspace storage revision regressed",
+                    ));
+                }
+                if restored.revision == current.revision {
+                    if restored.cwd != current.cwd {
+                        return Err(error(
+                            WorkspaceProblem::Unavailable,
+                            "workspace storage changed without a revision",
+                        ));
+                    }
+                    return Ok(current.clone());
+                }
+            }
+            Ok(self.apply_persisted(restored))
+        }
+
+        fn apply_persisted(&mut self, snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
+            self.selections
+                .insert(snapshot.session.clone(), snapshot.clone());
+            snapshot
+        }
+    }
 
     fn check(host: &Host<'_>, session: &str) -> CallResult<(), WorkspaceError> {
         phenix_basic_contracts::check_session(host, session).map_err(|err| match err {
@@ -116,23 +172,23 @@ mod plugin {
 
     #[provide(Workspace::get)]
     fn get(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: WorkspaceQuery,
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
-        load(host, &request.session)
+        state.current(host, &request.session)
     }
 
     #[provide(Workspace::set)]
     fn set(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: WorkspaceUpdate,
     ) -> CallResult<WorkspaceSnapshot, WorkspaceError> {
         check(host, &request.session)?;
         validate_cwd(request.cwd.as_deref()).map_err(CallError::Domain)?;
-        let mut current = load(host, &request.session)?;
+        let mut current = state.current(host, &request.session)?;
         if current.revision != request.expected_revision {
             return Err(CallError::Domain(error(
                 WorkspaceProblem::Conflict,
@@ -147,26 +203,86 @@ mod plugin {
         })?;
         current.cwd = request.cwd;
         let blob = encode(&current)?;
-        let records = host
+        let committed = host
             .invoke::<Storage::transact>(
                 "Storage",
                 &StorageTransaction {
-                    session: request.session,
+                    session: request.session.clone(),
                     edits: vec![StorageEdit {
                         key: KEY.into(),
                         expected: request.expected_revision,
-                        data: blob,
+                        data: blob.clone(),
                     }],
                 },
             )
-            .map_err(storage_failure)?;
-        if records.len() != 1 || records[0].revision != current.revision {
-            return Err(CallError::Domain(error(
-                WorkspaceProblem::Unavailable,
-                "invalid workspace transaction response",
-            )));
+            .map_err(storage_failure)
+            .and_then(|records| {
+                if records.len() != 1
+                    || !records[0].matches_commit(request.expected_revision, &blob)
+                {
+                    return Err(CallError::Domain(error(
+                        WorkspaceProblem::Unavailable,
+                        "invalid workspace transaction response",
+                    )));
+                }
+                Ok(())
+            });
+        match committed {
+            Ok(()) => Ok(state.apply_persisted(current)),
+            Err(failure) => {
+                // The durable commit may have raced or the acknowledgment
+                // may be ambiguous; the next access must rehydrate.
+                state.invalidate(&request.session);
+                Err(failure)
+            }
         }
-        Ok(current)
+    }
+    #[cfg(test)]
+    mod state_tests {
+        use super::*;
+
+        #[test]
+        fn plugin_state_owns_restored_session_selections() {
+            let mut state = State::default();
+            let one = WorkspaceSnapshot {
+                session: "one".into(),
+                cwd: Some("/work/one".into()),
+                revision: 1,
+            };
+            let two = WorkspaceSnapshot {
+                session: "two".into(),
+                cwd: None,
+                revision: 2,
+            };
+            assert_eq!(state.reconcile(one.clone()).unwrap(), one);
+            state.reconcile(two.clone()).unwrap();
+            assert_eq!(state.selections.get("one"), Some(&one));
+            assert_eq!(state.selections.get("two"), Some(&two));
+            let changed = WorkspaceSnapshot {
+                session: "one".into(),
+                cwd: Some("/work/new".into()),
+                revision: 3,
+            };
+            assert_eq!(state.reconcile(one.clone()).unwrap(), one);
+            state.reconcile(changed.clone()).unwrap();
+            assert_eq!(state.selections.get("one"), Some(&changed));
+            assert_eq!(state.selections.get("two"), Some(&two));
+            assert_eq!(
+                state.reconcile(one).unwrap_err().problem,
+                WorkspaceProblem::Unavailable
+            );
+            let mut mismatched = changed;
+            mismatched.cwd = Some("/work/changed-without-revision".into());
+            assert_eq!(
+                state.reconcile(mismatched).unwrap_err().problem,
+                WorkspaceProblem::Unavailable
+            );
+            // Conflict/ambiguous acknowledgment only invalidates one
+            // session; other live selections are unaffected.
+            state.invalidate("one");
+            assert!(!state.selections.contains_key("one"));
+            assert_eq!(state.selections.get("two"), Some(&two));
+        }
     }
 }
 

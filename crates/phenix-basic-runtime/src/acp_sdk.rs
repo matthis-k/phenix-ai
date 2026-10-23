@@ -20,11 +20,11 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, AuthAttemptQuery, AuthAttemptState, AuthChallenge,
-    AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus, CredentialIdentity,
-    CredentialImport, CredentialSecret, HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery,
-    ModelSelection, ProviderDescriptor, ProviderDetailsQuery, ProviderError, ProviderErrorCode,
-    ProviderPage, ProviderQuery,
+    bind_http_model, validate_model_selection, ApiKeyOptions, AuthAttemptQuery, AuthAttemptState,
+    AuthChallenge, AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus,
+    CredentialEnvironmentBinding, CredentialIdentity, CredentialImport, CredentialSecret,
+    HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery, ModelSelection, ProviderDescriptor,
+    ProviderDetailsQuery, ProviderError, ProviderErrorCode, ProviderPage, ProviderQuery,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -32,6 +32,38 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
+
+/// Project public, non-secret provider auth hints onto the ACP read-only
+/// catalog. An adapter's typed configuration is never an authority grant and
+/// is not interpreted by the editor. Only the declared standard API-key
+/// strategy may supply an environment-variable input suggestion.
+fn provider_page_for_acp(page: ProviderPage) -> acp::Result<serde_json::Value> {
+    let mut json = serde_json::to_value(&page).map_err(internal)?;
+    for (pi, provider) in page.providers.iter().enumerate() {
+        for (ci, connection) in provider.connections.iter().enumerate() {
+            for (mi, method) in connection.auth_methods.iter().enumerate() {
+                if method.kind != AuthenticationKind::ApiKey || method.adapter.id != "api-key" {
+                    continue;
+                }
+                let Ok(options) = method.adapter.config.decode::<ApiKeyOptions>() else {
+                    continue;
+                };
+                if options.validate().is_err() {
+                    continue;
+                }
+                let Some(name) = options.environment_variable else {
+                    continue;
+                };
+                // Only append a validated *name*, not the variable value,
+                // any credential or a provider-owned executable descriptor.
+                json["providers"][pi]["connections"][ci]["auth_methods"][mi]
+                    ["environment_variable"] = serde_json::Value::String(name);
+            }
+        }
+    }
+    Ok(json)
+}
 
 type Reply<T> = Responder<T>;
 type Peer = ConnectionTo<Client>;
@@ -134,8 +166,18 @@ impl std::fmt::Debug for CredentialImportRequest {
 
 impl Drop for CredentialImportRequest {
     fn drop(&mut self) {
-        std::mem::take(&mut self.secret).into_bytes().fill(0);
+        self.secret.zeroize();
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/credentials/env-bind", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct CredentialEnvironmentRequest {
+    provider_id: String,
+    connection_id: String,
+    profile_id: String,
+    environment_variable: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
@@ -173,6 +215,7 @@ enum Command {
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
     CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
+    CredentialEnvironment(CredentialEnvironmentRequest, Reply<serde_json::Value>),
     CredentialRevoke(CredentialRevokeRequest, Reply<serde_json::Value>),
     Prompt(PromptRequest, Reply<PromptResponse>, Peer, Arc<AtomicBool>),
     Closed,
@@ -193,6 +236,7 @@ impl Command {
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
             Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
+            Self::CredentialEnvironment(_, reply) => reply.respond_with_error(error),
             Self::CredentialRevoke(_, reply) => reply.respond_with_error(error),
             Self::Prompt(_, reply, _, _) => reply.respond_with_error(error),
             Self::Closed => Ok(()),
@@ -329,454 +373,16 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
-struct ProviderManagement {
-    kernel: Kernel,
-    selected: Selection,
-}
-
-/// Preserve the native provider's typed denial code without forwarding
-/// provider prose (which may contain identity or credential fragments).
-fn provider_rejection(problem: ProviderError) -> acp::Error {
-    acp::Error::invalid_params().data(serde_json::json!({
-        "format": "phenix.provider.error.v1",
-        "code": problem.code,
-    }))
-}
-
-// Trusted catalog reads are made through the launcher's already-admitted
-// control-plane kernel. Selector values never select a provider implementation
-// or create new native grants.
-/// Complete one provider-owned model catalog before admitting a choice.
-/// A cursor is only pagination state, never a revision or authorization token.
-#[derive(Default)]
-struct ModelPageAccumulator {
-    models: Vec<phenix_provider_contracts::ProviderModel>,
-    revision: Option<u64>,
-    cursors: std::collections::BTreeSet<String>,
-    pages: usize,
-}
-
-impl ModelPageAccumulator {
-    fn push(&mut self, page: ModelPage, profile: &Option<String>) -> acp::Result<Option<String>> {
-        if self.pages >= 64
-            || page.revision == 0
-            || self.revision.is_some_and(|prev| prev != page.revision)
-            || &page.profile_id != profile
-            || page.models.len() > 256
-            || self
-                .models
-                .len()
-                .checked_add(page.models.len())
-                .is_none_or(|count| count > 4096)
-        {
-            return Err(invalid(
-                "provider catalog page changed or exceeded its budget",
-            ));
-        }
-        self.pages += 1;
-        self.revision = Some(page.revision);
-        let next = page.next_cursor;
-        if let Some(cursor) = &next {
-            if page.models.is_empty()
-                || cursor.is_empty()
-                || cursor.len() > 1024
-                || !self.cursors.insert(cursor.clone())
-            {
-                return Err(invalid("invalid or repeated provider catalog cursor"));
-            }
-        }
-        self.models.extend(page.models);
-        Ok(next)
-    }
-
-    fn complete(self, profile: Option<String>) -> acp::Result<ModelPage> {
-        Ok(ModelPage {
-            profile_id: profile,
-            models: self.models,
-            next_cursor: None,
-            revision: self
-                .revision
-                .ok_or_else(|| invalid("missing model catalog"))?,
-        })
-    }
-}
-
-impl ProviderManagement {
-    fn read<Q: Portable, R: Portable>(
-        &self,
-        interface: &str,
-        operation: &str,
-        query: &Q,
-    ) -> acp::Result<R> {
-        let root = self
-            .kernel
-            .admit_root(Selection {
-                interface: interface.into(),
-                operation: operation.into(),
-                provider: self.selected.provider.clone(),
-            })
-            .map_err(internal)?;
-        let value = match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => value,
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                return Err(provider_rejection(problem));
-            }
-        };
-        R::from_value(value).map_err(internal)
-    }
-
-    /// Controller-only preflight. Never treat UI-discovered models or a
-    /// preflight result as an executable kernel grant. The later native
-    /// installation must recheck auth/registration, resolve the exact secret
-    /// and use the same session kernel.
-    #[allow(dead_code)]
-    fn current_http_binding(&self, desired: &ModelSelection) -> acp::Result<HttpModelBinding> {
-        const SCOPE: &str = "user";
-
-        let listed: ProviderPage = self.read(
-            "phenix.provider.catalog@1",
-            "list",
-            &ProviderQuery {
-                scope: SCOPE.into(),
-            },
-        )?;
-        if listed.revision == 0 {
-            return Err(invalid("provider list has no current revision"));
-        }
-        let mut candidates = listed
-            .providers
-            .iter()
-            .filter(|p| p.id == desired.provider_id);
-        let provided = candidates
-            .next()
-            .ok_or_else(|| invalid("unknown selected provider"))?;
-        if candidates.next().is_some() {
-            return Err(invalid("ambiguous selected provider"));
-        }
-        let described: ProviderDescriptor = self.read(
-            "phenix.provider.catalog@1",
-            "describe",
-            &ProviderDetailsQuery {
-                scope: SCOPE.into(),
-                provider_id: desired.provider_id.clone(),
-            },
-        )?;
-        if provided != &described {
-            return Err(invalid("provider registration changed during selection"));
-        }
-        let auth: AuthenticationStatus = self.read(
-            "phenix.provider.auth@1",
-            "status",
-            &AuthQuery {
-                scope: SCOPE.into(),
-                provider_id: desired.provider_id.clone(),
-                connection_id: desired.connection_id.clone(),
-            },
-        )?;
-
-        let mut collected = ModelPageAccumulator::default();
-        let mut cursor: Option<String> = None;
-        loop {
-            let page: ModelPage = self.read(
-                "phenix.provider.catalog@1",
-                "models",
-                &ModelQuery {
-                    scope: SCOPE.into(),
-                    provider_id: desired.provider_id.clone(),
-                    connection_id: desired.connection_id.clone(),
-                    profile_id: desired.profile_id.clone(),
-                    cursor: cursor.clone(),
-                    limit: 256,
-                },
-            )?;
-            cursor = collected.push(page, &desired.profile_id)?;
-            if cursor.is_none() {
-                let complete = collected.complete(desired.profile_id.clone())?;
-                let checked = validate_model_selection(&described, &auth, &complete, desired, true)
-                    .map_err(provider_rejection)?;
-                return bind_http_model(&described, checked).map_err(provider_rejection);
-            }
-        }
-    }
-}
-
-/// A non-secret ACP option assembled from CURRENT plugin-owned provider
-/// evidence, never from an arbitrary frontend model list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NativeModelOffer {
-    id: String,
-    label: String,
-    selected: ModelSelection,
-}
-
-/// The complete provider/connection/account/protocol/endpoint identity is
-/// carried by the ACP option ID. JSON is already the protocol's typed wire
-/// representation; this selector is NOT an authority token. On submission,
-/// compare the whole ID with current runtime-generated offers, not decoded
-/// client claims. Distinct account choices must never alias one model name.
-fn native_model_option_id(selection: &ModelSelection, revision: u64) -> acp::Result<String> {
-    let mut fields = serde_json::to_value(selection).map_err(internal)?;
-    let object = fields
-        .as_object_mut()
-        .ok_or_else(|| internal("invalid native selection"))?;
-    object.insert("session_revision".into(), serde_json::json!(revision));
-    serde_json::to_string(&fields)
-        .map(|value| format!("phenix.native-model@1:{value}"))
-        .map_err(internal)
-}
-
-/// Classify a stale menu without treating client JSON as authority. Only
-/// current runtime-issued catalog choices ever reach native installation.
-fn stale_native_model_choice(chosen: &str, current_revision: u64) -> bool {
-    const PREFIX: &str = "phenix.native-model@1:";
-    if chosen.len() > 4096 {
-        return false;
-    }
-    chosen
-        .strip_prefix(PREFIX)
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-        .and_then(|json| {
-            json.get("session_revision")
-                .and_then(|value| value.as_u64())
-        })
-        .is_some_and(|revision| revision < current_revision)
-}
-
-fn stale_model_conflict() -> acp::Error {
-    acp::Error::invalid_params().data(serde_json::json!({
-        "format": "phenix.basic.error.v1",
-        "code": ErrorCode::Conflict,
-        "message": "model selection changed; refresh the ACP session model menu",
-    }))
-}
-
-/// A prior revision choice is idempotent ONLY when it selected the exact
-/// current model. A stale choice for another model is rejected on admission.
-fn is_previous_native_selection(
-    chosen: &str,
-    current: &ModelSelection,
-    revision: u64,
-) -> acp::Result<bool> {
-    let Some(previous) = revision.checked_sub(1) else {
-        return Ok(false);
-    };
-    Ok(native_model_option_id(current, previous)? == chosen)
-}
-
-/// One controller model-menu refresh must have a global bound, not one
-/// budget independently repeated for every provider and connection.
-fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
-    if *used >= maximum {
-        return Err(invalid(
-            "provider model selection exceeded discovery budget",
-        ));
-    }
-    *used += 1;
-    Ok(())
-}
-
-/// Only explicitly unavailable/not-yet-discovered provider catalogs are
-/// absent choices. A transport/authority denial, malformed typed reply or
-/// conflicting revision must not be confused with an empty model list.
-fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
-    matches!(
-        code,
-        ProviderErrorCode::Unavailable
-            | ProviderErrorCode::AuthenticationRequired
-            | ProviderErrorCode::NotFound
-    )
-}
-
-impl ProviderManagement {
-    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
-        let root = self
-            .kernel
-            .admit_root(Selection {
-                interface: "phenix.provider.catalog@1".into(),
-                operation: "models".into(),
-                provider: self.selected.provider.clone(),
-            })
-            .map_err(internal)?;
-        match root.invoke(&query.to_value()).map_err(internal)? {
-            Outcome::Success(value) => ModelPage::from_value(value).map(Some).map_err(internal),
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                if is_missing_model_discovery(&problem.code) {
-                    Ok(None)
-                } else {
-                    Err(provider_rejection(problem))
-                }
-            }
-        }
-    }
-
-    /// Enumerate only models executable with the launcher's exact credential
-    /// identity (or explicit no-auth). A stored key/profile is not itself a
-    /// capability. Each choice is checked again before native install.
-    fn authorized_http_offers(
-        &self,
-        resolvers: &[ModelCredentialResolver],
-    ) -> acp::Result<Vec<NativeModelOffer>> {
-        let listed: ProviderPage = self.read(
-            "phenix.provider.catalog@1",
-            "list",
-            &ProviderQuery {
-                scope: "user".into(),
-            },
-        )?;
-        if listed.revision == 0 || listed.providers.len() > 32 {
-            return Err(invalid(
-                "provider selection catalog is invalid or too large",
-            ));
-        }
-        let mut ids = std::collections::BTreeSet::new();
-        let mut offered = Vec::new();
-        let mut inspected_connections = 0;
-        let mut inspected_pages = 0;
-        for provider in listed.providers {
-            if provider.connections.len() > 32 || !ids.insert(provider.id.clone()) {
-                return Err(invalid("ambiguous or oversized provider selection"));
-            }
-            let exact: ProviderDescriptor = self.read(
-                "phenix.provider.catalog@1",
-                "describe",
-                &ProviderDetailsQuery {
-                    scope: "user".into(),
-                    provider_id: provider.id.clone(),
-                },
-            )?;
-            if exact != provider {
-                return Err(invalid("provider changed while listing model options"));
-            }
-            let mut connections = std::collections::BTreeSet::new();
-            for connection in &exact.connections {
-                charge_model_option_budget(&mut inspected_connections, 32)?;
-                if !connections.insert(&connection.id) {
-                    return Err(invalid("duplicate provider connection"));
-                }
-                let profiles = if connection.auth_methods.is_empty() {
-                    vec![None]
-                } else {
-                    // Each resolver corresponds to one independently granted
-                    // exact resource. Named accounts on the same connection
-                    // are separate catalog/authorization selections.
-                    resolvers
-                        .iter()
-                        .filter(|source| {
-                            source.identity.provider_id() == exact.id
-                                && source.identity.connection_id() == connection.id
-                        })
-                        .map(|source| Some(source.identity.profile_id().to_owned()))
-                        .collect::<Vec<_>>()
-                };
-                if profiles.is_empty() {
-                    continue;
-                }
-                let auth: AuthenticationStatus = self.read(
-                    "phenix.provider.auth@1",
-                    "status",
-                    &AuthQuery {
-                        scope: "user".into(),
-                        provider_id: exact.id.clone(),
-                        connection_id: connection.id.clone(),
-                    },
-                )?;
-                for profile in profiles {
-                    if let Some(profile_id) = profile.as_deref() {
-                        if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
-                            continue;
-                        }
-                    }
-
-                    let mut collected = ModelPageAccumulator::default();
-                    let mut cursor = None;
-                    let full = loop {
-                        charge_model_option_budget(&mut inspected_pages, 128)?;
-                        let Some(page) = self.optional_model_page(&ModelQuery {
-                            scope: "user".into(),
-                            provider_id: exact.id.clone(),
-                            connection_id: connection.id.clone(),
-                            profile_id: profile.clone(),
-                            cursor: cursor.clone(),
-                            limit: 256,
-                        })?
-                        else {
-                            // Registration without discovery is not a selectable
-                            // model or a reason to break unrelated ACP sessions.
-                            break None;
-                        };
-                        cursor = collected.push(page, &profile)?;
-                        if cursor.is_none() {
-                            break Some(collected.complete(profile.clone())?);
-                        }
-                    };
-                    let Some(full) = full else {
-                        continue;
-                    };
-                    for model in &full.models {
-                        if !model.selectable || model.connection_id != connection.id {
-                            continue;
-                        }
-                        let desired = ModelSelection {
-                            provider_id: exact.id.clone(),
-                            connection_id: connection.id.clone(),
-                            profile_id: profile.clone(),
-                            model_id: model.id.clone(),
-                            protocol_id: model.protocol_id.clone(),
-                            endpoint_id: model.endpoint_id.clone(),
-                            catalog_revision: full.revision,
-                        };
-                        let Ok(admitted) =
-                            validate_model_selection(&exact, &auth, &full, &desired, true)
-                        else {
-                            continue;
-                        };
-                        let Ok(binding) = bind_http_model(&exact, admitted) else {
-                            continue;
-                        };
-                        // Only installed and verified API key or OAuth
-                        // bearer methods can become executable selections.
-                        if !matches!(
-                            binding.authentication_kind(),
-                            None | Some(AuthenticationKind::ApiKey)
-                                | Some(AuthenticationKind::OAuthAuthorizationCode)
-                                | Some(AuthenticationKind::OAuthDeviceCode)
-                        ) {
-                            continue;
-                        }
-                        if binding.credential_identity().is_some()
-                            && !resolvers
-                                .iter()
-                                .any(|r| binding.credential_identity() == Some(&r.identity))
-                        {
-                            continue;
-                        }
-                        if offered.len() >= 128 {
-                            return Err(invalid("too many selectable HTTP models"));
-                        }
-                        offered.push(NativeModelOffer {
-                            id: native_model_option_id(&desired, 0)?,
-                            label: format!(
-                                "{} / {} / {} / {}",
-                                exact.label,
-                                connection.label,
-                                profile.as_deref().unwrap_or("local"),
-                                model.label
-                            ),
-                            selected: desired,
-                        });
-                    }
-                }
-            }
-        }
-        let mut distinct = std::collections::BTreeSet::new();
-        if offered.iter().any(|entry| !distinct.insert(&entry.id)) {
-            return Err(invalid("duplicate native model option"));
-        }
-        Ok(offered)
-    }
-}
+#[path = "acp_provider_management.rs"]
+mod provider_management;
+#[cfg(test)]
+use provider_management::{
+    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
+};
+use provider_management::{
+    is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
+    stale_native_model_choice, ProviderManagement,
+};
 
 struct CredentialManagement {
     kernel: Kernel,
@@ -796,10 +402,10 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         .ok_or("credential management requires one explicit credential resource")?;
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid launcher credential resource")?;
-    // The *launcher* selects which supported management methods exist.
-    // This controller only checks the exact allowlist and scope; it must not
-    // hard-code a count that breaks when a new typed credential operation is
-    // installed. The kernel independently checks the actual contract export.
+    // Validate the exact launcher-granted subset, not a fixed operation
+    // count. Existing import/revoke roots remain valid while newer backends
+    // may grant the independently typed variable-name source operation.
+    // The kernel checks that each granted method actually exists.
     let permitted = ["import", "bind_environment", "revoke"];
     let mut seen = std::collections::BTreeSet::new();
     for grant in &spec.grants {
@@ -897,7 +503,6 @@ fn prepare_model_resolver(spec: &Composition) -> Result<ModelCredentialResolver,
 impl ModelCredentialResolver {
     /// Available only to the trusted controller after checking fresh model
     /// binding and authorization. No ACP command can call this method.
-    #[allow(dead_code)]
     fn resolve_for(&self, identity: &CredentialIdentity) -> Result<CredentialSecret, String> {
         if *identity != self.identity {
             return Err("model credential identity is not launcher-authorized".into());
@@ -936,7 +541,7 @@ fn installed_model_provider(composition: &Composition) -> Option<&str> {
 // CredentialSecret owns and zeroizes the original independently.
 fn scrub_portable_secret_bytes(value: &mut Value) {
     match value {
-        Value::Bytes(bytes) => bytes.fill(0),
+        Value::Bytes(bytes) => bytes.as_mut_slice().zeroize(),
         Value::List(items) => {
             for item in items {
                 scrub_portable_secret_bytes(item);
@@ -1155,6 +760,14 @@ impl Controller {
                 };
                 let _ = reply.respond_with_result(result);
             }
+            Command::CredentialEnvironment(request, reply) => {
+                let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
+                    Err(invalid("active initialized ACP connection required"))
+                } else {
+                    self.credential_environment(request)
+                };
+                let _ = reply.respond_with_result(result);
+            }
             Command::CredentialRevoke(request, reply) => {
                 let result = if !self.initialized || self.closed.load(Ordering::Acquire) {
                     Err(invalid("active initialized ACP connection required"))
@@ -1198,13 +811,18 @@ impl Controller {
         if request.scope != "user" {
             return Err(invalid("provider query must request user scope only"));
         }
-        self.provider_read::<_, ProviderPage>(
+        let management = self
+            .management
+            .as_ref()
+            .ok_or_else(acp::Error::method_not_found)?;
+        let page: ProviderPage = management.read(
             "phenix.provider.catalog@1",
             "list",
             &ProviderQuery {
                 scope: request.scope,
             },
-        )
+        )?;
+        provider_page_for_acp(page)
     }
 
     fn provider_auth_status(
@@ -1445,10 +1063,40 @@ impl Controller {
         // Overwrite its serialized payload copy even on domain or host denial.
         if let Value::Map(fields) = &mut value {
             if let Some(Value::Bytes(bytes)) = fields.get_mut("secret") {
-                bytes.fill(0);
+                bytes.zeroize();
             }
         }
         response
+    }
+
+    fn credential_environment(
+        &self,
+        request: CredentialEnvironmentRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let identity = CredentialIdentity::new(
+            request.provider_id,
+            request.connection_id,
+            request.profile_id,
+        )
+        .map_err(|_| invalid("invalid credential identity"))?;
+        let name = &request.environment_variable;
+        if name.is_empty()
+            || name.len() > 128
+            || !name.bytes().enumerate().all(|(i, b)| {
+                if i == 0 {
+                    b.is_ascii_uppercase() || b == b'_'
+                } else {
+                    b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'
+                }
+            })
+        {
+            return Err(invalid("invalid API-key environment variable name"));
+        }
+        let payload = CredentialEnvironmentBinding {
+            identity: identity.clone(),
+            environment_variable: request.environment_variable,
+        };
+        self.credential_operation("bind_environment", &identity, &payload.to_value())
     }
 
     fn credential_revoke(
@@ -1619,12 +1267,13 @@ impl Controller {
             return Err(invalid("ambiguous or unauthorized model choice"));
         }
         let desired = found.pop().ok_or_else(|| invalid("model unavailable"))?;
-        // After admission, remember any attempt to install a native Model:
-        // even a later failed CAS must not silently route a no-record prompt
-        // via the legacy environment while an uncommitted Model is installed.
-        self.selected_http_seen.insert(session.clone());
-        self.install_current_http_model(&session, &desired)?;
+        // The durable selection is the source of truth. Never activate a
+        // transport for a choice whose revision-CAS may still fail. Preflight
+        // proves current provider evidence, not an executable grant.
         let checked = management.current_http_binding(&desired)?;
+        // Once a switch has been admitted, the session must never fall back
+        // to the legacy preset, including on CAS or installation failure.
+        self.selected_http_seen.insert(session.clone());
         super::model_selection_state::compare_and_swap(
             self.sessions
                 .get(&session)
@@ -1648,6 +1297,10 @@ impl Controller {
                 "selected model CAS receipt did not become effective",
             ));
         }
+        // Only a confirmed durable choice may mutate native Model state.
+        // If installation fails, the selected intent remains fail-closed;
+        // subsequent prompts must revalidate and reinstall, never use preset.
+        self.install_current_http_model(&session, &desired)?;
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
@@ -2013,6 +1666,7 @@ pub(super) fn run(
     let provider_models = tx.clone();
     let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
+    let credential_environment = tx.clone();
     let credential_revoke = tx.clone();
     let prompt = tx.clone();
     let on_close = tx.clone();
@@ -2108,6 +1762,15 @@ pub(super) fn run(
                 submit(
                     &credential_import,
                     Command::CredentialImport(request, reply),
+                )
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: CredentialEnvironmentRequest, reply, _peer| {
+                submit(
+                    &credential_environment,
+                    Command::CredentialEnvironment(request, reply),
                 )
             },
             acp::on_receive_request!(),
@@ -2215,6 +1878,49 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_environment_hint_is_validated_nonsecret_metadata() {
+        use phenix_provider_contracts::{
+            AdapterBinding, ApiKeyPresentation, AuthenticationMethod, ConnectionDescriptor,
+        };
+        let key = AuthenticationMethod {
+            id: "api-key".into(),
+            label: "API key".into(),
+            kind: AuthenticationKind::ApiKey,
+            adapter: AdapterBinding::from_typed(
+                "api-key",
+                &ApiKeyOptions {
+                    environment_variable: Some("ANTHROPIC_API_KEY".into()),
+                    interactive: true,
+                    presentation: ApiKeyPresentation::Bearer,
+                },
+            )
+            .unwrap(),
+        };
+        let mut wrong_adapter = key.clone();
+        wrong_adapter.adapter.id = "plugin-owned-auth".into();
+        let page = ProviderPage {
+            revision: 1,
+            providers: vec![ProviderDescriptor {
+                id: "example".into(),
+                label: "Example".into(),
+                connections: vec![ConnectionDescriptor {
+                    id: "api".into(),
+                    label: "API".into(),
+                    protocols: vec![],
+                    base_url: None,
+                    auth_methods: vec![key, wrong_adapter],
+                    model_sources: vec![],
+                }],
+            }],
+        };
+        let wire = provider_page_for_acp(page).unwrap();
+        let methods = &wire["providers"][0]["connections"][0]["auth_methods"];
+        assert_eq!(methods[0]["environment_variable"], "ANTHROPIC_API_KEY");
+        assert!(methods[1].get("environment_variable").is_none());
+        assert!(!wire.to_string().contains("Bearer secret"));
+    }
 
     #[test]
     fn model_picker_budgets_all_connections_and_pages_globally() {

@@ -460,6 +460,13 @@ pub struct StoredRecord {
     pub revision: u64,
     pub data: Blob,
 }
+impl StoredRecord {
+    /// An acknowledged single-record CAS must return the exact committed
+    /// revision and payload, not just any later revision or unrelated bytes.
+    pub fn matches_commit(&self, expected: u64, data: &Blob) -> bool {
+        expected.checked_add(1) == Some(self.revision) && &self.data == data
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct StorageEdit {
     pub key: String,
@@ -574,14 +581,15 @@ pub trait BasicTurnAdvance {
     fn advance(&self, notification: GraphStateChange) -> Result<TurnAdvanceOutcome, BasicError>;
 }
 
+// The selected Advanced graph preparer owns the prepared request.
+// Basic Agent imports only its read-only view for source-bound admission.
 #[property(
-    owner = "phenix.basic.agent",
+    owner = "phenix.advanced.graph-preparer",
     id = "prepared_model_request",
     get,
-    set,
     watch
 )]
-pub type BasicPreparedModelRequest = Option<ModelRequest>;
+pub type AdvancedPreparedModelRequest = Option<ModelRequest>;
 
 #[contract(id = "phenix.basic.output@1")]
 pub trait BasicOutput {
@@ -620,6 +628,9 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(BasicInput),
     define(BasicTurnPrepare),
     define(BasicTurnAdvance),
+    // Optional imports must have a canonical definition even when the
+    // advanced provider is not selected in the Basic-only composition.
+    define(AdvancedPreparedModelRequest),
     define(BasicOutput),
     define(Frontend),
     graph(super::GRAPH)
@@ -631,6 +642,21 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_ack_requires_exact_revision_and_payload() {
+        let data = Blob(vec![1, 2, 3]);
+        let accepted = StoredRecord {
+            revision: 5,
+            data: data.clone(),
+        };
+        assert!(accepted.matches_commit(4, &data));
+        assert!(!accepted.matches_commit(3, &data));
+        assert!(!accepted.matches_commit(5, &data));
+        assert!(!accepted.matches_commit(4, &Blob(vec![1, 2, 4])));
+        let overflow = StoredRecord { revision: 0, data };
+        assert!(!overflow.matches_commit(u64::MAX, &Blob(vec![1, 2, 3])));
+    }
     #[test]
     fn tool_pages_reject_foreign_cursor_skips_and_unbounded_response() {
         let request = ToolQuery {
@@ -889,7 +915,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 13);
+        assert_eq!(metadata.definitions.len(), 14);
         assert!(metadata
             .definitions
             .iter()

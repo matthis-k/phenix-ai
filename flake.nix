@@ -268,7 +268,7 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 13
+        assert len(report["definitions"]) == 14
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
         assert report["plugin"] == "phenix.basic-contracts"
@@ -422,7 +422,9 @@
       # default Basic composition and metadata-only provider remain unchanged.
       providerOpenAiApiSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-openai-api
+        ./crates/phenix-provider-auth-strategies
         ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
         ./crates/phenix-basic-contracts
@@ -546,10 +548,11 @@
             interface = "phenix.provider.credentials@1";
             inherit operation;
             resources = [ openAiApiCredentialResource ];
-          }) [ "import" "revoke" ];
+          }) [ "import" "bind_environment" "revoke" ];
           authority = {
             operations = [
               "phenix.provider.credentials@1/import"
+              "phenix.provider.credentials@1/bind_environment"
               "phenix.provider.credentials@1/revoke"
             ];
             resources = [ openAiApiCredentialResource ];

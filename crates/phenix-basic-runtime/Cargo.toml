@@ -10,6 +10,7 @@ license.workspace = true
 acp_v2_preview = []
 
 [dependencies]
+zeroize = "=1.9.1"
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 phenix-environment-contracts = { path = "../phenix-environment-contracts" }
 phenix-provider-contracts = { path = "../phenix-provider-contracts" }

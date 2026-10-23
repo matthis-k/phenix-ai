@@ -33,6 +33,37 @@ pub fn project_model_request(
 // This is the Basic agent's bounded discovery budget, not a kernel limit.
 const MAX_CATALOG_PAGES: usize = 64;
 const MAX_CATALOG_TOOLS: usize = 1024;
+// Basic must not trust an arbitrary EventJournal implementation to bound
+// replay work or honor the query's sequence/session identity.
+const JOURNAL_PAGE_LIMIT: u64 = 128;
+const MAX_JOURNAL_PAGES: usize = 64;
+
+fn validate_journal_page(
+    session: &str,
+    after: u64,
+    page: &phenix_basic_contracts::EventPage,
+) -> Result<(), phenix_basic_contracts::BasicError> {
+    let invalid = || {
+        phenix_basic_contracts::error(
+            phenix_basic_contracts::ErrorCode::InvalidReply,
+            "journal returned an invalid event page",
+        )
+    };
+    if page.events.len() > JOURNAL_PAGE_LIMIT as usize {
+        return Err(invalid());
+    }
+    let mut sequence = after;
+    for event in &page.events {
+        sequence = sequence.checked_add(1).ok_or_else(invalid)?;
+        if event.sequence != sequence || event.session != session || event.run.is_empty() {
+            return Err(invalid());
+        }
+    }
+    if page.next != sequence {
+        return Err(invalid());
+    }
+    Ok(())
+}
 
 fn admit_catalog_page(
     pages: usize,
@@ -97,6 +128,93 @@ pub fn verify_staged_model_candidate(
     Ok(())
 }
 
+#[cfg(test)]
+mod journal_page_tests {
+    use super::*;
+    use phenix_basic_contracts::{Event, EventKind, EventPage};
+    use phenix_sdk::Blob;
+
+    fn event(sequence: u64, session: &str) -> Event {
+        Event {
+            sequence,
+            session: session.into(),
+            run: "run-1".into(),
+            kind: EventKind::TextDelta,
+            call_id: String::new(),
+            text: "delta".into(),
+            data: Blob(vec![]),
+        }
+    }
+
+    #[test]
+    fn valid_contiguous_pages_and_empty_terminal_page() {
+        let page = EventPage {
+            events: vec![event(11, "s1"), event(12, "s1")],
+            next: 12,
+        };
+        assert!(validate_journal_page("s1", 10, &page).is_ok());
+        assert!(validate_journal_page(
+            "s1",
+            12,
+            &EventPage {
+                events: vec![],
+                next: 12
+            }
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_cross_session_gaps_cursor_mismatch_and_invalid_run() {
+        let good = EventPage {
+            events: vec![event(11, "s1"), event(12, "s1")],
+            next: 12,
+        };
+        let mut cases = Vec::new();
+        let mut foreign = good.clone();
+        foreign.events[0].session = "s2".into();
+        cases.push(foreign);
+        let mut gap = good.clone();
+        gap.events[1].sequence = 13;
+        cases.push(gap);
+        let mut duplicate = good.clone();
+        duplicate.events[1].sequence = 11;
+        cases.push(duplicate);
+        let mut wrong_cursor = good.clone();
+        wrong_cursor.next = 13;
+        cases.push(wrong_cursor);
+        let mut empty_run = good.clone();
+        empty_run.events[0].run.clear();
+        cases.push(empty_run);
+        cases.push(EventPage {
+            events: vec![],
+            next: 13,
+        });
+        for case in cases {
+            assert_eq!(
+                validate_journal_page("s1", 10, &case).unwrap_err().code,
+                phenix_basic_contracts::ErrorCode::InvalidReply,
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_and_overflowing_pages_fail_closed() {
+        let large = EventPage {
+            events: (1..=JOURNAL_PAGE_LIMIT + 1)
+                .map(|n| event(n, "s1"))
+                .collect(),
+            next: JOURNAL_PAGE_LIMIT + 1,
+        };
+        assert!(validate_journal_page("s1", 0, &large).is_err());
+        let wrapped = EventPage {
+            events: vec![event(0, "s1")],
+            next: 0,
+        };
+        assert!(validate_journal_page("s1", u64::MAX, &wrapped).is_err());
+    }
+}
+
 #[cfg(not(feature = "staged-graph"))]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
@@ -119,28 +237,16 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
     actions: &[],
-    nodes: &[
-        StaticGraphNode {
-            id: "model-advance",
-            triggers: &["state:phenix.basic.agent/prepared_model_request"],
-            after: &["phenix.basic.agent/prepare"],
-            selector: "",
-            operation: "phenix.basic.turn-advance@1/advance",
-            writes: &["phenix.basic.agent/pending_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "prepare",
-            triggers: &["phenix.basic.prompt"],
-            after: &[],
-            selector: "",
-            operation: "phenix.basic.turn-prepare@1/prepare",
-            writes: &["phenix.basic.agent/pending_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-    ],
+    nodes: &[StaticGraphNode {
+        id: "prepare",
+        triggers: &["phenix.basic.prompt"],
+        after: &[],
+        selector: "",
+        operation: "phenix.basic.turn-prepare@1/prepare",
+        writes: &["phenix.basic.agent/pending_model_request"],
+        join: JoinPolicy::AllActive,
+        failure: FailurePolicy::FailRoot,
+    }],
 };
 
 #[cfg(all(test, feature = "staged-graph"))]
@@ -164,13 +270,15 @@ mod staged_graph_tests;
     // Preserve Storage authority for nested Session, Journal and memory calls.
     // The agent does not select or invoke a Storage provider itself.
     require(phenix_basic_contracts::Storage, slot = "Storage", optional),
+    // Bound only by the opt-in Advanced graph composition.
+    require(phenix_basic_contracts::AdvancedPreparedModelRequest, slot = "Prepared", optional),
     graph(super::GRAPH)
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, BasicError, BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare,
-        CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind, EventPage,
-        GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
+        error, AdvancedPreparedModelRequest, BasicError, BasicInput, BasicOutput, BasicTurnAdvance,
+        BasicTurnPrepare, CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind,
+        EventPage, GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
         ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
         SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
         ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
@@ -198,14 +306,11 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
-        #[get]
-        #[set]
+        // The staged request is authoritative in this plugin. The graph
+        // consumes a read-only, watched Phenix view of this Rust field.
+        #[expose]
         #[watch]
         pending_model_request: Option<ModelRequest>,
-        #[get]
-        #[set]
-        #[watch]
-        prepared_model_request: Option<ModelRequest>,
     }
 
     fn event(
@@ -368,27 +473,40 @@ mod plugin {
         session.checkpoint = next;
         session.history.push(Message::user(input.text.clone()));
         session = checkpoint(host, session)?;
-        event(
-            host,
-            &input.session,
-            &run,
-            EventKind::PromptAccepted,
-            input.text.clone(),
-            "",
-        )?;
-        let tools = catalog(host, &input.session)?;
-        let skills = host.invoke::<Skills::list>(
-            "Skills",
-            &Scope {
-                session: input.session.clone(),
-            },
-        )?;
-        let context = host.invoke::<Context::list>(
-            "Context",
-            &Scope {
-                session: input.session.clone(),
-            },
-        )?;
+        let initialization = (|| {
+            event(
+                host,
+                &input.session,
+                &run,
+                EventKind::PromptAccepted,
+                input.text.clone(),
+                "",
+            )?;
+            let tools = catalog(host, &input.session)?;
+            let skills = host.invoke::<Skills::list>(
+                "Skills",
+                &Scope {
+                    session: input.session.clone(),
+                },
+            )?;
+            let context = host.invoke::<Context::list>(
+                "Context",
+                &Scope {
+                    session: input.session.clone(),
+                },
+            )?;
+            Ok((tools, skills, context))
+        })();
+        let (tools, skills, context) = match initialization {
+            Ok(ready) => ready,
+            Err(failure) => {
+                // No Basic worker was installed. Never strand a durable
+                // Running checkpoint if journal/catalog/skills/context fails.
+                session.status = RunStatus::Failed;
+                checkpoint(host, session)?;
+                return Err(failure);
+            }
+        };
         Ok(Running {
             input,
             session,
@@ -412,24 +530,29 @@ mod plugin {
         mut after: u64,
     ) -> CallResult<(u64, Vec<Event>), BasicError> {
         let mut collected = Vec::new();
+        let mut pages = 0;
         loop {
             let page = host.invoke::<EventJournal::read>(
                 "Journal",
                 &JournalQuery {
                     session: session.into(),
                     after,
-                    limit: 128,
+                    limit: super::JOURNAL_PAGE_LIMIT,
                 },
             )?;
+            super::validate_journal_page(session, after, &page).map_err(CallError::Domain)?;
             if page.events.is_empty() {
                 return Ok((after, collected));
             }
-            if page.next <= after {
+            // The final empty-page probe must remain possible after exactly
+            // MAX_JOURNAL_PAGES full pages. Reject a 65th nonempty page.
+            if pages == super::MAX_JOURNAL_PAGES {
                 return Err(CallError::Domain(error(
                     ErrorCode::InvalidReply,
-                    "journal cursor did not advance",
+                    "journal pagination budget exceeded",
                 )));
             }
+            pages += 1;
             after = page.next;
             collected.extend(page.events);
         }
@@ -519,19 +642,13 @@ mod plugin {
         // Model::complete is NOT invoked by this operation. A later graph
         // contribution will validate a selected replacement and resume the
         // same run, without re-creating a new Basic agent loop.
-        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property read: {err}"),
-            )
-        })?;
-        *edit = Some(projected.clone());
-        edit.commit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property CAS: {err}"),
-            )
-        })?;
+        // Publication CAS succeeds before the owned request is committed.
+        // A failed publish leaves the plugin's previous request untouched.
+        state
+            .publish_pending_model_request(host, Some(projected.clone()))
+            .map_err(|err| {
+                Failure::new(Code::PluginFailed, format!("staged request publish: {err}"))
+            })?;
         state.active = Some(running);
         Ok(projected)
     }
@@ -785,22 +902,20 @@ mod plugin {
         host: &Host<'_>,
         notice: GraphStateChange,
     ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
-        if notice.epoch == 0 || notice.properties != ["phenix.basic.agent/prepared_model_request"] {
+        if notice.epoch == 0
+            || notice.properties != ["phenix.advanced.graph-preparer/prepared_model_request"]
+        {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
                 "Model advance requires a committed prepared-request state change",
             ))));
         }
-        let source = match state.pending_model_request.read(host) {
-            Ok(snapshot) => snapshot.value.as_ref().clone(),
-            Err(failure) => {
-                return PendingResult::QuiescentFailure(Failure::new(
-                    Code::PluginFailed,
-                    failure.to_string(),
-                ));
-            }
+        let source = state.pending_model_request.clone();
+        let selected = match AdvancedPreparedModelRequest::get::locate(host, "Prepared") {
+            Ok(selected) => selected,
+            Err(failure) => return PendingResult::QuiescentFailure(failure),
         };
-        let prepared = match state.prepared_model_request.read(host) {
+        let prepared = match selected.read(host) {
             Ok(snapshot) => snapshot.value.as_ref().clone(),
             Err(failure) => {
                 return PendingResult::QuiescentFailure(Failure::new(
@@ -862,19 +977,11 @@ mod plugin {
             return Ok(Advance::Done(done));
         }
         let next = prepare_next_model_request(host, running)?;
-        let mut edit = state.pending_model_request.edit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property read: {err}"),
-            )
-        })?;
-        *edit = Some(next);
-        edit.commit(host).map_err(|err| {
-            Failure::new(
-                Code::PluginFailed,
-                format!("staged request property CAS: {err}"),
-            )
-        })?;
+        state
+            .publish_pending_model_request(host, Some(next))
+            .map_err(|err| {
+                Failure::new(Code::PluginFailed, format!("staged request publish: {err}"))
+            })?;
         Ok(Advance::RePrepared)
     }
 
