@@ -216,6 +216,16 @@ pub enum AccessError {
     Kernel(Failure),
 }
 pub type AccessResult<T> = Result<T, AccessError>;
+
+/// A plugin-owned value update failed before publication, or publication
+/// failed after the owner's candidate was constructed. In either case the
+/// generated updater leaves the owner's Rust field unchanged.
+#[derive(Debug)]
+pub enum OwnedUpdateError<E> {
+    Rejected(E),
+    Publish(AccessError),
+}
+
 impl From<Failure> for AccessError {
     fn from(e: Failure) -> Self {
         Self::Kernel(e)
@@ -348,6 +358,21 @@ impl<'call> Host<'call> {
                 value: value.to_value(),
             }),
         )?)?)
+    }
+    /// Publish a plugin-owned value to its selected observers.
+    ///
+    /// Read-only properties can only be published from the currently
+    /// executing owner, under its admitted property resource. This uses the
+    /// existing M1 compare-and-swap state request; it grants no external
+    /// property `set` authority. The caller must commit its local Rust value
+    /// only after this operation succeeds.
+    pub fn publish<T: Portable>(
+        &self,
+        r: ValueRef<T>,
+        expected: Revision,
+        value: &T,
+    ) -> AccessResult<Snapshot<T>> {
+        self.compare_exchange(r, expected, value)
     }
     pub fn batch(&self, edits: Vec<BatchEdit>) -> AccessResult<BatchSnapshot> {
         let mut edits: Vec<_> = edits.into_iter().map(|v| v.0).collect();

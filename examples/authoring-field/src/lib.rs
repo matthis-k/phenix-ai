@@ -2,13 +2,15 @@
 mod field {
     #[derive(Default)]
     struct State {
-        #[get(id = "notes")]
+        // The Rust Vec remains authoritative, while Phenix sees a read-only
+        // typed value. No Cell<T> replaces this field.
+        #[expose]
         notes: Vec<String>,
         local: usize,
     }
     #[start]
     fn start(state: &mut State) -> Result<(), phenix_sdk::Failure> {
-        state.notes.reference()?;
+        assert!(state.notes.is_empty());
         state.local = 1;
         Ok(())
     }

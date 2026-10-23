@@ -1,4 +1,4 @@
-use example_authoring_api::{Count, Counter, Notes, Relay};
+use example_authoring_api::{Count, Counter, Notes, Observed, Relay};
 use phenix_sdk::{live, *};
 
 #[plugin(
@@ -10,6 +10,7 @@ use phenix_sdk::{live, *};
     require(Counter, slot = "fallback", optional),
     require(Counter, slot = "all", many(min = 0)),
     require(Count, slot = "count"),
+    require(Observed, slot = "observed"),
     require(Notes, slot = "notes")
 )]
 mod client {
@@ -29,6 +30,66 @@ mod client {
                     .invoke::<Notes::get>("notes", &location)
                     .map_err(property_error)?
                     .len() as u64);
+            }
+            "foreign-batch-publish" => {
+                let count = Count::get::locate(host, "count")?;
+                let mut allowed = count.edit(host).map_err(|error| {
+                    Failure::new(Code::PluginFailed, format!("counter edit: {error}"))
+                })?;
+                *allowed = 99;
+                let exposed = Observed::get::locate(host, "observed")?;
+                let mut denied = exposed.edit(host).map_err(|error| {
+                    Failure::new(Code::PluginFailed, format!("observed edit: {error}"))
+                })?;
+                *denied = 999;
+                if !matches!(
+                    host.batch(vec![allowed.batch_edit(), denied.batch_edit()]),
+                    Err(live::AccessError::State(ValueAccessError::Denied))
+                        | Err(live::AccessError::Kernel(Failure {
+                            code: Code::Denied,
+                            ..
+                        }))
+                ) {
+                    return Err(Failure::new(
+                        Code::PluginFailed,
+                        "foreign batch publication was not denied",
+                    )
+                    .into());
+                }
+                let after = count.read(host).map_err(|error| {
+                    Failure::new(
+                        Code::PluginFailed,
+                        format!("counter after denied batch: {error}"),
+                    )
+                })?;
+                return Ok(*after.value);
+            }
+            "foreign-publish" => {
+                let reference = Observed::get::locate(host, "observed")?;
+                let before = reference.read(host).map_err(|error| {
+                    Failure::new(Code::PluginFailed, format!("foreign read: {error}"))
+                })?;
+                if !matches!(
+                    host.publish(reference, before.revision, &999_u64),
+                    Err(live::AccessError::State(ValueAccessError::Denied))
+                        | Err(live::AccessError::Kernel(Failure {
+                            code: Code::Denied,
+                            ..
+                        }))
+                ) {
+                    return Err(Failure::new(
+                        Code::PluginFailed,
+                        "foreign publication was not denied",
+                    )
+                    .into());
+                }
+                let after = reference.read(host).map_err(|error| {
+                    Failure::new(
+                        Code::PluginFailed,
+                        format!("foreign read after denial: {error}"),
+                    )
+                })?;
+                return Ok(*after.value);
             }
             "locate-count" => {
                 let location = Count::get::locate(host, "count")?;

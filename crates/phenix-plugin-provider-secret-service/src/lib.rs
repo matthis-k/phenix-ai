@@ -30,6 +30,66 @@ fn authorize(identity: &CredentialIdentity, actual: Option<&str>) -> Result<Stri
     Ok(resource)
 }
 
+const ENV_BIND_PREFIX: &[u8] = b"phenix-credential-env-v1:";
+
+fn valid_name(name: &str) -> bool {
+    phenix_provider_contracts::ApiKeyOptions {
+        environment_variable: Some(name.to_owned()),
+        interactive: true,
+        presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+    }
+    .validate()
+    .is_ok()
+}
+
+fn encode_name(name: &str) -> Result<Vec<u8>, ProviderError> {
+    if !valid_name(name) {
+        return Err(error(
+            ProviderErrorCode::InvalidInput,
+            "invalid environment variable name",
+        ));
+    }
+    let mut bytes = ENV_BIND_PREFIX.to_vec();
+    bytes.extend_from_slice(name.as_bytes());
+    Ok(bytes)
+}
+
+fn resolve_stored(
+    bytes: Vec<u8>,
+) -> Result<phenix_provider_contracts::CredentialSecret, ProviderError> {
+    if let Some(encoded) = bytes.strip_prefix(ENV_BIND_PREFIX) {
+        let name = std::str::from_utf8(encoded).map_err(|_| {
+            error(
+                ProviderErrorCode::InvalidInput,
+                "invalid bound environment name",
+            )
+        })?;
+        if !valid_name(name) {
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid bound environment name",
+            ));
+        }
+        let bytes = std::env::var_os(name)
+            .ok_or_else(|| {
+                error(
+                    ProviderErrorCode::NotFound,
+                    "bound environment variable is unset",
+                )
+            })?
+            .into_encoded_bytes();
+        if bytes.is_empty() || bytes.len() > 4096 || !bytes.iter().all(u8::is_ascii_graphic) {
+            return Err(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid API key environment value",
+            ));
+        }
+        phenix_provider_contracts::CredentialSecret::new(bytes)
+    } else {
+        phenix_provider_contracts::CredentialSecret::new(bytes)
+    }
+}
+
 fn entry(identity: &CredentialIdentity, actual: Option<&str>) -> Result<Entry, ProviderError> {
     // Authenticate before contacting D-Bus, including entry construction.
     let resource = authorize(identity, actual)?;
@@ -47,7 +107,9 @@ fn entry(identity: &CredentialIdentity, actual: Option<&str>) -> Result<Entry, P
 )]
 mod plugin {
     use super::*;
-    use phenix_provider_contracts::{CredentialImport, CredentialSecret, ProviderCredentials};
+    use phenix_provider_contracts::{
+        CredentialEnvironmentBinding, CredentialImport, CredentialSecret, ProviderCredentials,
+    };
     use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
@@ -55,9 +117,33 @@ mod plugin {
 
     #[provide(ProviderCredentials::import)]
     fn import(host: &Host<'_>, request: CredentialImport) -> CallResult<(), ProviderError> {
+        if request
+            .secret
+            .expose_for_authorized_provider()
+            .starts_with(ENV_BIND_PREFIX)
+        {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "reserved credential source marker",
+            )));
+        }
         entry(&request.identity, host.resource()?.as_deref())
             .map_err(CallError::Domain)?
             .set_secret(request.secret.expose_for_authorized_provider())
+            .map_err(backend_error)
+            .map_err(CallError::Domain)
+    }
+
+    #[provide(ProviderCredentials::bind_environment)]
+    fn bind_environment(
+        host: &Host<'_>,
+        request: CredentialEnvironmentBinding,
+    ) -> CallResult<(), ProviderError> {
+        let target =
+            entry(&request.identity, host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        let tagged = encode_name(&request.environment_variable).map_err(CallError::Domain)?;
+        target
+            .set_secret(&tagged)
             .map_err(backend_error)
             .map_err(CallError::Domain)
     }
@@ -72,7 +158,7 @@ mod plugin {
             .get_secret()
             .map_err(backend_error)
             .map_err(CallError::Domain)?;
-        CredentialSecret::new(bytes).map_err(CallError::Domain)
+        resolve_stored(bytes).map_err(CallError::Domain)
     }
 
     #[provide(ProviderCredentials::revoke)]
@@ -89,6 +175,20 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_sdk::ContractMetadata;
+
+    #[test]
+    fn secret_service_environment_binding_is_only_the_variable_name() {
+        let encoded = encode_name("OPENAI_API_KEY").unwrap();
+        assert!(encoded.starts_with(ENV_BIND_PREFIX));
+        assert_eq!(&encoded[ENV_BIND_PREFIX.len()..], b"OPENAI_API_KEY");
+        assert!(encode_name("BAD/NAME").is_err());
+        assert_eq!(
+            resolve_stored(b"plain-direct-test".to_vec())
+                .unwrap()
+                .expose_for_authorized_provider(),
+            b"plain-direct-test"
+        );
+    }
 
     #[test]
     fn selectors_do_not_grant_service_access() {
