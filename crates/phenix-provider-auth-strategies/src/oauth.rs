@@ -190,7 +190,7 @@ impl OAuthAttempts {
         query: &AuthAttemptQuery,
         challenge: AuthChallenge,
     ) -> Result<(), ProviderError> {
-        if let Some(_) = self.check(query)? {
+        if self.check(query)?.is_some() {
             return Err(unknown());
         }
         if challenge_id(&challenge)? != query.attempt_id {
