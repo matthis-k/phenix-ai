@@ -677,3 +677,74 @@ mod typed_result_tests {
         assert_eq!(response.revision, 1);
     }
 }
+
+#[cfg(test)]
+mod multi_provider_tests {
+    use super::*;
+    use phenix_provider_contracts::ConnectionDescriptor;
+
+    fn connection(id: &str) -> ConnectionDescriptor {
+        ConnectionDescriptor {
+            id: id.into(),
+            label: id.into(),
+            protocols: Vec::new(),
+            base_url: None,
+            auth_methods: Vec::new(),
+            model_sources: Vec::new(),
+        }
+    }
+
+    fn page(provider: &str, label: &str, connection_id: &str, revision: u64) -> ProviderPage {
+        ProviderPage {
+            revision,
+            providers: vec![ProviderDescriptor {
+                id: provider.into(),
+                label: label.into(),
+                connections: vec![connection(connection_id)],
+            }],
+        }
+    }
+
+    #[test]
+    fn one_product_exposes_separate_api_and_oauth_connections() {
+        let api = page("openai", "OpenAI", "api", 4);
+        let oauth = page("openai", "OpenAI", "chatgpt", 5);
+        let merged = merge_provider_pages(&[api.clone(), oauth]).unwrap();
+        assert_eq!(merged.providers.len(), 1);
+        assert_eq!(merged.providers[0].connections.len(), 2);
+        assert_eq!(merged.providers[0].connections[0].id, "api");
+        assert_eq!(merged.providers[0].connections[1].id, "chatgpt");
+        assert_ne!(merged.revision, 0);
+        assert_eq!(merge_provider_pages(&[api.clone()]).unwrap(), api);
+        let changed = merge_provider_pages(&[
+            api,
+            page("openai", "OpenAI", "chatgpt", 6),
+        ]).unwrap();
+        assert_ne!(merged.revision, changed.revision);
+    }
+
+    #[test]
+    fn two_roots_cannot_shadow_an_account_connection() {
+        let api = page("openai", "OpenAI", "api", 4);
+        assert!(merge_provider_pages(&[api.clone(), api]).is_err());
+        assert!(merge_provider_pages(&[
+            page("openai", "OpenAI", "api", 1),
+            page("openai", "OpenAI ChatGPT", "chatgpt", 2),
+        ]).is_err());
+        assert!(merge_provider_pages(&[
+            page("openai", "OpenAI", "api", 0)
+        ]).is_err());
+        assert!(merge_provider_pages(&[]).is_err());
+    }
+
+    #[test]
+    fn different_installed_provider_identities_remain_distinct() {
+        let page = merge_provider_pages(&[
+            page("openai", "OpenAI", "api", 1),
+            page("anthropic", "Anthropic", "api", 2),
+        ]).unwrap();
+        assert_eq!(page.providers.len(), 2);
+        assert_eq!(page.providers[0].id, "openai");
+        assert_eq!(page.providers[1].id, "anthropic");
+    }
+}
