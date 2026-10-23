@@ -375,9 +375,9 @@ pub fn expand(
                                 &format!("publish_{}", name),
                                 name.span(),
                             );
-                            sidecars.push(syn::parse_quote!(
+                            sidecars.push(syn::Field::parse_named.parse2(quote!(
                                 #sidecar: Option<(::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Revision)>
-                            ));
+                            ))?);
                             bindings.push(quote! {
                                 let reference = host.create(#stable, &state.#name).map_err(|error| match error {
                                     ::phenix_sdk::live::AccessError::Kernel(error) => error,
@@ -662,4 +662,50 @@ pub fn expand(
     let extra: syn::File = syn::parse2(generated)?;
     items.extend(extra.items);
     Ok(quote!(#module))
+}
+
+#[cfg(test)]
+mod owned_state_tests {
+    use super::*;
+
+    #[test]
+    fn expose_preserves_plain_rust_state_and_omits_public_set() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct State {
+                    #[expose]
+                    #[watch]
+                    counter: u64,
+                    private: u64,
+                }
+            }
+        };
+        let generated = expand(quote!(id = "test.owned"), module)
+            .unwrap()
+            .to_string();
+        assert!(generated.contains("__published_counter"));
+        assert!(generated.contains("publish_counter"));
+        assert!(generated.contains("state . counter"));
+        assert!(generated.contains("get : true"));
+        assert!(generated.contains("set : false"));
+        assert!(generated.contains("watch : true"));
+        assert!(!generated.contains("state . counter . bind"));
+    }
+
+    #[test]
+    fn exposed_fields_reject_public_set() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct State {
+                    #[expose]
+                    #[set]
+                    secret: u64,
+                }
+            }
+        };
+        let error = expand(quote!(id = "test.owned"), module).unwrap_err();
+        assert!(error.to_string().contains("external set needs an owner handler"));
+    }
 }
