@@ -11,6 +11,7 @@ use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError};
 use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
+use zeroize::Zeroize;
 
 pub const ISSUER: &str = "https://auth.openai.com";
 pub const JWKS_URL: &str = "https://auth.openai.com/.well-known/jwks.json";
@@ -80,19 +81,9 @@ impl Default for GeneratedPkce {
 }
 impl Drop for GeneratedPkce {
     fn drop(&mut self) {
-        self.verifier.wipe();
-        self.nonce.wipe();
-        self.state.wipe();
-    }
-}
-trait WipeString {
-    fn wipe(&mut self);
-}
-impl WipeString for String {
-    fn wipe(&mut self) {
-        // Taking ownership avoids unsafe mutation of String's UTF-8 bytes.
-        let mut bytes = std::mem::take(self).into_bytes();
-        bytes.fill(0);
+        self.verifier.zeroize();
+        self.nonce.zeroize();
+        self.state.zeroize();
     }
 }
 
@@ -143,9 +134,9 @@ impl TokenEnvelope {
 }
 impl Drop for TokenEnvelope {
     fn drop(&mut self) {
-        self.access_token.wipe();
-        self.refresh_token.wipe();
-        self.id_token.wipe();
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.id_token.zeroize();
     }
 }
 
