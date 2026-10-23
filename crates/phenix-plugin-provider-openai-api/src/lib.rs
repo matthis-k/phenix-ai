@@ -6,6 +6,7 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use curl::easy::{Easy2, Handler, List, WriteError};
+use phenix_provider_auth_strategies::ApiKeyAttempts;
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
@@ -14,8 +15,7 @@ use phenix_provider_contracts::{
     ProviderModel,
 };
 use phenix_provider_discovery::{parse, CatalogFormat};
-use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
@@ -313,8 +313,7 @@ mod plugin {
 
     #[derive(Default)]
     pub struct State {
-        serial: u64,
-        attempts: BTreeMap<String, Instant>,
+        attempts: ApiKeyAttempts,
     }
 
     fn scoped_profile(host: &Host<'_>) -> CallResult<CredentialIdentity, ProviderError> {
@@ -482,25 +481,15 @@ mod plugin {
                 "unavailable authentication method",
             )));
         }
-        scoped_profile(host)?;
-        if state.attempts.len() >= 16 {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "too many open authentication attempts",
-            )));
-        }
-        state.serial = state.serial.checked_add(1).ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "auth attempt overflow",
-            ))
-        })?;
-        let id = format!("openai-api-{}", state.serial);
-        state.attempts.insert(id.clone(), Instant::now());
-        Ok(AuthChallenge::ApiKeyInput {
-            attempt_id: id,
-            prompt: "Import API key into the launcher-authorized credential profile, then poll this attempt".into(),
-        })
+        let identity = scoped_profile(host)?;
+        state
+            .attempts
+            .begin(
+                identity,
+                "openai-api",
+                "Import API key into the launcher-authorized credential profile, then poll this attempt",
+            )
+            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::poll)]
@@ -511,25 +500,28 @@ mod plugin {
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        let started = *state.attempts.get(&query.attempt_id).ok_or_else(|| {
-            CallError::Domain(error(ProviderErrorCode::NotFound, "auth attempt not found"))
-        })?;
-        if started.elapsed() > Duration::from_secs(600) {
-            state.attempts.remove(&query.attempt_id);
-            return Ok(AuthAttemptState::Expired);
+        let identity = scoped_profile(host)?;
+        if let Some(terminal) = state
+            .attempts
+            .check(&identity, &query.attempt_id)
+            .map_err(CallError::Domain)?
+        {
+            return Ok(terminal);
         }
         let current = profile(host)?;
         match current.status {
-            CredentialProfileStatus::Authenticated => {
-                state.attempts.remove(&query.attempt_id);
-                Ok(AuthAttemptState::Completed {
-                    profile: AuthenticatedProfile {
+            CredentialProfileStatus::Authenticated => state
+                .attempts
+                .complete(
+                    &identity,
+                    &query.attempt_id,
+                    AuthenticatedProfile {
                         id: current.id,
                         label: current.label,
                         method_id: current.method_id,
                     },
-                })
-            }
+                )
+                .map_err(CallError::Domain),
             CredentialProfileStatus::Unavailable { .. } => Ok(AuthAttemptState::Pending),
         }
     }
@@ -542,13 +534,11 @@ mod plugin {
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &query.scope)?;
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
-        if state.attempts.remove(&query.attempt_id).is_none() {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::NotFound,
-                "auth attempt not found",
-            )));
-        }
-        Ok(AuthAttemptState::Cancelled)
+        let identity = scoped_profile(host)?;
+        state
+            .attempts
+            .cancel(&identity, &query.attempt_id)
+            .map_err(CallError::Domain)
     }
 }
 
