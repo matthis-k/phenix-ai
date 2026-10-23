@@ -581,8 +581,12 @@ mod tests {
         let next = Secret::new(b"refresh:epoch-2".to_vec()).unwrap();
         let stale = Secret::new(b"refresh:stale".to_vec()).unwrap();
         root.store(&id("personal"), &old).unwrap();
-        assert!(root.compare_and_store(&id("personal"), &old, &next).unwrap());
-        assert!(!root.compare_and_store(&id("personal"), &old, &stale).unwrap());
+        assert!(root
+            .compare_and_store(&id("personal"), &old, &next)
+            .unwrap());
+        assert!(!root
+            .compare_and_store(&id("personal"), &old, &stale)
+            .unwrap());
         assert_eq!(
             root.read(&id("personal"))
                 .unwrap()
@@ -616,7 +620,8 @@ mod tests {
                 let old = Secret::new(b"refresh:initial".to_vec()).unwrap();
                 let next = Secret::new(label.as_bytes().to_vec()).unwrap();
                 barrier.wait();
-                root.compare_and_store(&id("personal"), &old, &next).unwrap()
+                root.compare_and_store(&id("personal"), &old, &next)
+                    .unwrap()
             }));
         }
         started.wait();
@@ -626,10 +631,8 @@ mod tests {
             .sum();
         assert_eq!(winners, 1);
         let final_value = root.read(&id("personal")).unwrap();
-        assert!(
-            [b"worker-a".as_slice(), b"worker-b".as_slice()]
-                .contains(&final_value.expose_for_authorized_provider())
-        );
+        assert!([b"worker-a".as_slice(), b"worker-b".as_slice()]
+            .contains(&final_value.expose_for_authorized_provider()));
     }
 
     #[test]
