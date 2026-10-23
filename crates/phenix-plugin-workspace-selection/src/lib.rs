@@ -216,9 +216,7 @@ mod plugin {
             assert_eq!(state.selections.get("one"), Some(&changed));
             assert_eq!(state.selections.get("two"), Some(&two));
         }
-
     }
-
 }
 
 #[cfg(test)]
