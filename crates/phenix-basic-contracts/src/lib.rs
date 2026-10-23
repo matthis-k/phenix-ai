@@ -650,11 +650,8 @@ mod tests {
         assert!(!accepted.matches_commit(3, &data));
         assert!(!accepted.matches_commit(5, &data));
         assert!(!accepted.matches_commit(4, &Blob(vec![1, 2, 4])));
-        assert!(!StoredRecord {
-            revision: 0,
-            data,
-        }
-        .matches_commit(u64::MAX, &Blob(vec![1, 2, 3])));
+        let overflow = StoredRecord { revision: 0, data };
+        assert!(!overflow.matches_commit(u64::MAX, &Blob(vec![1, 2, 3])));
     }
     #[test]
     fn tool_pages_reject_foreign_cursor_skips_and_unbounded_response() {
