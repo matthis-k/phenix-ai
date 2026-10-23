@@ -78,11 +78,14 @@ fn request_with_auth(
     if let Some(token) = bearer {
         if token.is_empty()
             || token.len() > 4096
-            || !token.bytes().all(|byte| byte.is_ascii_graphic() && byte != b':')
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && byte != b':')
         {
             return Err(TransportError::InvalidForm);
         }
-        headers.append(&format!("Authorization: Bearer {token}"))
+        headers
+            .append(&format!("Authorization: Bearer {token}"))
             .map_err(|_| TransportError::Unavailable)?;
     }
     easy.url(url).map_err(|_| TransportError::Unavailable)?;
@@ -243,10 +246,7 @@ mod tests {
     #[test]
     fn bearer_catalog_rejects_control_characters_before_network() {
         for token in ["", "bad\nheader", "bad:extra", "x\r", "a b"] {
-            assert_eq!(
-                chatgpt_models(token),
-                Err(TransportError::InvalidForm),
-            );
+            assert_eq!(chatgpt_models(token), Err(TransportError::InvalidForm),);
         }
     }
 
