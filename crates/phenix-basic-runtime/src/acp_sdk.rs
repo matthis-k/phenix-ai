@@ -2329,6 +2329,69 @@ mod tests {
     }
 
     #[test]
+    fn oauth_model_resolver_cas_requires_private_same_account_provider_slot() {
+        let identity = CredentialIdentity::new("openai", "chatgpt", "personal").unwrap();
+        let resource = identity.resource().unwrap();
+        let contract = "phenix.provider.credentials@1";
+        let provider = "phenix.provider.chatgpt";
+        let spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": contract, "operation": "resolve",
+                      "provider": provider},
+            "artifacts": [], "definitions": [],
+            "slots": [{
+                "caller": provider, "slot": "Credentials",
+                "provider": "phenix.provider.credential-files",
+                "export": "Credentials", "index": 0
+            }],
+            "grants": [
+                {"caller": "root", "interface": contract,
+                 "operation": "resolve", "resources": [resource]},
+                {"caller": provider, "interface": contract,
+                 "operation": "resolve", "resources": [resource]},
+                {"caller": provider, "interface": contract,
+                 "operation": "compare_exchange", "resources": [resource]}
+            ],
+            "excluded": [], "substitutions": [],
+            "authority": {
+                "operations": ["phenix.provider.credentials@1/resolve",
+                               "phenix.provider.credentials@1/compare_exchange"],
+                "resources": [resource]
+            },
+            "resource": resource
+        }))
+        .unwrap();
+        assert_eq!(validate_model_resolver_spec(&spec).unwrap(), identity);
+
+        let mut wrong_caller = spec.clone();
+        wrong_caller.grants[2].caller = "root".into();
+        assert!(validate_model_resolver_spec(&wrong_caller).is_err());
+
+        let mut overbroad = spec.clone();
+        overbroad.grants[2].resources.insert(
+            CredentialIdentity::new("openai", "chatgpt", "work")
+                .unwrap()
+                .resource()
+                .unwrap(),
+        );
+        assert!(validate_model_resolver_spec(&overbroad).is_err());
+
+        let mut no_backend = spec.clone();
+        no_backend.slots.clear();
+        assert!(validate_model_resolver_spec(&no_backend).is_err());
+
+        let mut wrong_provider = spec.clone();
+        wrong_provider.slots[0].provider = provider.into();
+        assert!(validate_model_resolver_spec(&wrong_provider).is_err());
+
+        let mut extra_root = spec.clone();
+        extra_root.authority.operations.insert(
+            "phenix.provider.credentials@1/revoke".into(),
+        );
+        assert!(validate_model_resolver_spec(&extra_root).is_err());
+    }
+
+    #[test]
     fn queued_cancel_targets_first_matching_session() {
         let oldest = Arc::new(AtomicBool::new(false));
         let another = Arc::new(AtomicBool::new(false));
