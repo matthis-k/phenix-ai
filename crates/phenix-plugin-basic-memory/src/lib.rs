@@ -84,9 +84,7 @@ mod plugin {
             Err(CallError::Domain(err)) if err.code == ErrorCode::NotFound => 0,
             Err(err) => return Err(err),
         };
-        let next = revision
-            .checked_add(1)
-            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "revision overflow")))?;
+        let data = encode(value)?;
         let result = host.invoke::<Storage::transact>(
             "Storage",
             &StorageTransaction {
@@ -94,14 +92,14 @@ mod plugin {
                 edits: vec![StorageEdit {
                     key: key.into(),
                     expected: revision,
-                    data: encode(value)?,
+                    data: data.clone(),
                 }],
             },
         )?;
-        if result.len() != 1 || result[0].revision != next {
+        if result.len() != 1 || !result[0].matches_commit(revision, &data) {
             return Err(CallError::Kernel(Failure::new(
                 Code::PluginFailed,
-                "storage returned invalid revision",
+                "storage returned invalid memory commit",
             )));
         }
         Ok(())
