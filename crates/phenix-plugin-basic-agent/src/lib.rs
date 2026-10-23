@@ -33,6 +33,37 @@ pub fn project_model_request(
 // This is the Basic agent's bounded discovery budget, not a kernel limit.
 const MAX_CATALOG_PAGES: usize = 64;
 const MAX_CATALOG_TOOLS: usize = 1024;
+// Basic must not trust an arbitrary EventJournal implementation to bound
+// replay work or honor the query's sequence/session identity.
+const JOURNAL_PAGE_LIMIT: u64 = 128;
+const MAX_JOURNAL_PAGES: usize = 64;
+
+fn validate_journal_page(
+    session: &str,
+    after: u64,
+    page: &phenix_basic_contracts::EventPage,
+) -> Result<(), phenix_basic_contracts::BasicError> {
+    let invalid = || {
+        phenix_basic_contracts::error(
+            phenix_basic_contracts::ErrorCode::InvalidReply,
+            "journal returned an invalid event page",
+        )
+    };
+    if page.events.len() > JOURNAL_PAGE_LIMIT as usize {
+        return Err(invalid());
+    }
+    let mut sequence = after;
+    for event in &page.events {
+        sequence = sequence.checked_add(1).ok_or_else(invalid)?;
+        if event.sequence != sequence || event.session != session || event.run.is_empty() {
+            return Err(invalid());
+        }
+    }
+    if page.next != sequence {
+        return Err(invalid());
+    }
+    Ok(())
+}
 
 fn admit_catalog_page(
     pages: usize,
@@ -95,6 +126,93 @@ pub fn verify_staged_model_candidate(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod journal_page_tests {
+    use super::*;
+    use phenix_basic_contracts::{Event, EventKind, EventPage};
+    use phenix_sdk::Blob;
+
+    fn event(sequence: u64, session: &str) -> Event {
+        Event {
+            sequence,
+            session: session.into(),
+            run: "run-1".into(),
+            kind: EventKind::TextDelta,
+            call_id: String::new(),
+            text: "delta".into(),
+            data: Blob(vec![]),
+        }
+    }
+
+    #[test]
+    fn valid_contiguous_pages_and_empty_terminal_page() {
+        let page = EventPage {
+            events: vec![event(11, "s1"), event(12, "s1")],
+            next: 12,
+        };
+        assert!(validate_journal_page("s1", 10, &page).is_ok());
+        assert!(validate_journal_page(
+            "s1",
+            12,
+            &EventPage {
+                events: vec![],
+                next: 12
+            }
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_cross_session_gaps_cursor_mismatch_and_invalid_run() {
+        let good = EventPage {
+            events: vec![event(11, "s1"), event(12, "s1")],
+            next: 12,
+        };
+        let mut cases = Vec::new();
+        let mut foreign = good.clone();
+        foreign.events[0].session = "s2".into();
+        cases.push(foreign);
+        let mut gap = good.clone();
+        gap.events[1].sequence = 13;
+        cases.push(gap);
+        let mut duplicate = good.clone();
+        duplicate.events[1].sequence = 11;
+        cases.push(duplicate);
+        let mut wrong_cursor = good.clone();
+        wrong_cursor.next = 13;
+        cases.push(wrong_cursor);
+        let mut empty_run = good.clone();
+        empty_run.events[0].run.clear();
+        cases.push(empty_run);
+        cases.push(EventPage {
+            events: vec![],
+            next: 13,
+        });
+        for case in cases {
+            assert_eq!(
+                validate_journal_page("s1", 10, &case).unwrap_err().code,
+                phenix_basic_contracts::ErrorCode::InvalidReply,
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_and_overflowing_pages_fail_closed() {
+        let large = EventPage {
+            events: (1..=JOURNAL_PAGE_LIMIT + 1)
+                .map(|n| event(n, "s1"))
+                .collect(),
+            next: JOURNAL_PAGE_LIMIT + 1,
+        };
+        assert!(validate_journal_page("s1", 0, &large).is_err());
+        let wrapped = EventPage {
+            events: vec![event(0, "s1")],
+            next: 0,
+        };
+        assert!(validate_journal_page("s1", u64::MAX, &wrapped).is_err());
+    }
 }
 
 #[cfg(not(feature = "staged-graph"))]
@@ -412,24 +530,29 @@ mod plugin {
         mut after: u64,
     ) -> CallResult<(u64, Vec<Event>), BasicError> {
         let mut collected = Vec::new();
+        let mut pages = 0;
         loop {
             let page = host.invoke::<EventJournal::read>(
                 "Journal",
                 &JournalQuery {
                     session: session.into(),
                     after,
-                    limit: 128,
+                    limit: super::JOURNAL_PAGE_LIMIT,
                 },
             )?;
+            super::validate_journal_page(session, after, &page).map_err(CallError::Domain)?;
             if page.events.is_empty() {
                 return Ok((after, collected));
             }
-            if page.next <= after {
+            // The final empty-page probe must remain possible after exactly
+            // MAX_JOURNAL_PAGES full pages. Reject a 65th nonempty page.
+            if pages == super::MAX_JOURNAL_PAGES {
                 return Err(CallError::Domain(error(
                     ErrorCode::InvalidReply,
-                    "journal cursor did not advance",
+                    "journal pagination budget exceeded",
                 )));
             }
+            pages += 1;
             after = page.next;
             collected.extend(page.events);
         }
