@@ -37,6 +37,7 @@ fn composition(artifacts: Vec<String>) -> Composition {
         (CLIENT, COUNTER, vec!["run", "reference"]),
         (PROVIDER, PROPERTY, vec!["get", "set", "watch"]),
         (CLIENT, PROPERTY, vec!["get", "set", "watch"]),
+        (CLIENT, OBSERVED, vec!["get"]),
         (CLIENT, FIELD_PROPERTY, vec!["get"]),
     ] {
         for operation in names {
@@ -68,6 +69,13 @@ fn composition(artifacts: Vec<String>) -> Composition {
                     index: 0,
                     provider: PROVIDER.into(),
                     export: "property.counter".into(),
+                },
+                SlotBinding {
+                    caller: CLIENT.into(),
+                    slot: "observed".into(),
+                    index: 0,
+                    provider: PROVIDER.into(),
+                    export: "property.observed".into(),
                 },
                 SlotBinding {
                     caller: CLIENT.into(),
@@ -111,7 +119,9 @@ fn main() {
                 .contains(".property."))
         .all(|binding| binding["operation"]
             .as_str()
-            .is_some_and(|key| key.starts_with("count:") || key.starts_with("notes:"))));
+            .is_some_and(|key| key.starts_with("count:")
+                || key.starts_with("notes:")
+                || key.starts_with("observed:"))));
     let field_package =
         phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&args[3])).unwrap();
     let field = field_package.metadata();
@@ -180,6 +190,40 @@ fn main() {
             .invoke(&Value::String("owned-publish".into()))
             .unwrap(),
         Outcome::Success(Value::U64(42))
+    );
+    assert_eq!(
+        kernel
+            .admit_root(selection(OBSERVED, "get", PROVIDER))
+            .unwrap()
+            .invoke(&owned_reference)
+            .unwrap(),
+        Outcome::Success(Value::U64(42))
+    );
+    // A selected foreign reader with the property resource cannot use the
+    // low-level state CAS to publish or mutate the owner's read-only value.
+    let before_foreign = kernel.inspect()["live_state"]["epoch"].clone();
+    assert_eq!(
+        kernel
+            .admit_default_root()
+            .unwrap()
+            .invoke(&Value::String("foreign-publish".into()))
+            .unwrap(),
+        Outcome::Success(Value::U64(42))
+    );
+    assert_eq!(kernel.inspect()["live_state"]["epoch"], before_foreign);
+    assert_eq!(
+        kernel
+            .admit_default_root()
+            .unwrap()
+            .invoke(&Value::String("foreign-batch-publish".into()))
+            .unwrap(),
+        Outcome::Success(Value::U64(7)),
+        "a mixed authorized/foreign batch must not commit its authorized edit"
+    );
+    assert_eq!(
+        kernel.inspect()["live_state"]["epoch"],
+        before_foreign,
+        "denied batch must not advance the global state epoch"
     );
     assert_eq!(
         kernel
