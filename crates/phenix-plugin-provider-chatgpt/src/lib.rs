@@ -17,8 +17,8 @@ use phenix_provider_protocols::{
     siwc_models::parse_chatgpt_models,
     siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
     siwc_verified::{
-        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
-        GeneratedPkce, VerifiedChatGptIdentity,
+        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
+        VerifiedChatGptIdentity,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -784,7 +784,11 @@ mod plugin {
                 &jwks,
                 &client_id,
                 pending.pkce.nonce(),
-                pending.prior.account.as_ref().map(|account| account.subject.as_str()),
+                pending
+                    .prior
+                    .account
+                    .as_ref()
+                    .map(|account| account.subject.as_str()),
             )
             .map_err(|_| CallError::Domain(denied("OAuth identity or plan grant not verified")))?;
             let expires_at = now_epoch()
