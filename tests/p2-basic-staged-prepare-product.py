@@ -27,10 +27,9 @@ stage["artifacts"] = [
 ]
 stage["authority"]["operations"].extend([key, advance_key])
 pending_property = "phenix.basic.agent.property.pending_model_request@1"
-stage["authority"]["operations"].extend([
-    pending_property + "/set",
-    pending_property + "/get",
-])
+# Basic owns this value. The graph may observe it, but neither the root
+# nor an imported consumer can set it through a property operation.
+stage["authority"]["operations"].append(pending_property + "/get")
 stage["authority"]["resources"].append(pending_property[:-2])
 # The root Basic action is the authority ceiling for its entire graph wave.
 # Unless this root grant contains the property resource, the child node's
@@ -43,7 +42,7 @@ for grant in stage["grants"]:
 stage["grants"].extend([
     {"caller": "phenix.basic.agent", "interface": pending_property,
      "operation": operation, "resources": [scoped, pending_property[:-2]]}
-    for operation in ("get", "set")
+    for operation in ("get",)
 ])
 stage["grants"].append({
     "caller": "phenix.basic.agent",
