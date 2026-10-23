@@ -232,6 +232,25 @@ mod plugin {
             }
         }
     }
+    #[cfg(test)]
+    mod state_tests {
+        use super::*;
+
+        #[test]
+        fn live_sessions_are_isolated_and_ambiguous_commit_can_be_invalidated() {
+            let mut state = State::default();
+            let mut one = empty("one");
+            one.revision = 2;
+            let two = empty("two");
+            state.committed(one.clone());
+            state.committed(two.clone());
+            assert_eq!(state.sessions["one"], one);
+            assert_eq!(state.sessions["two"], two);
+            state.invalidate("one");
+            assert!(!state.sessions.contains_key("one"));
+            assert_eq!(state.sessions["two"], two);
+        }
+    }
 }
 
 #[cfg(test)]
