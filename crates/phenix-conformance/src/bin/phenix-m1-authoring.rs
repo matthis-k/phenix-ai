@@ -10,6 +10,7 @@ const CLIENT: &str = "test.authored-client";
 const COUNTER: &str = "test.authored.counter@1";
 const RELAY: &str = "test.authored.relay@1";
 const PROPERTY: &str = "test.authored-provider.property.counter@1";
+const OBSERVED: &str = "test.authored-provider.property.observed@1";
 const FIELD_PROPERTY: &str = "test.authored-field.property.notes@1";
 fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
     Selection {
@@ -19,15 +20,20 @@ fn selection(interface: &str, operation: &str, provider: &str) -> Selection {
     }
 }
 fn composition(artifacts: Vec<String>) -> Composition {
-    let resources: BTreeSet<_> = [PROPERTY, FIELD_PROPERTY]
+    let resources: BTreeSet<_> = [PROPERTY, OBSERVED, FIELD_PROPERTY]
         .map(|key| key.trim_end_matches("@1").to_owned())
         .into();
     let mut operations = BTreeSet::new();
     let mut grants = Vec::new();
     for (caller, interface, names) in [
-        ("root", COUNTER, vec!["run", "reference", "slow"]),
+        (
+            "root",
+            COUNTER,
+            vec!["run", "reference", "observed_reference", "slow"],
+        ),
         ("root", RELAY, vec!["run"]),
         ("root", PROPERTY, vec!["get", "set", "watch"]),
+        ("root", OBSERVED, vec!["get", "watch"]),
         (CLIENT, COUNTER, vec!["run", "reference"]),
         (PROVIDER, PROPERTY, vec!["get", "set", "watch"]),
         (CLIENT, PROPERTY, vec!["get", "set", "watch"]),
@@ -112,7 +118,7 @@ fn main() {
     assert!(field.provides.is_empty());
     assert_eq!(field.properties.len(), 1);
     let kernel = prepared.load().unwrap();
-    assert_eq!(kernel.inspect()["live_state"]["cells"], 2);
+    assert_eq!(kernel.inspect()["live_state"]["cells"], 3);
     assert_eq!(
         kernel
             .admit_root(selection(COUNTER, "slow", PROVIDER))
@@ -158,6 +164,35 @@ fn main() {
     }
     assert_eq!(kernel.inspect()["live_state"]["epoch"], 1);
     assert_eq!(kernel.inspect()["live_state"]["subscriptions"], 0);
+    // A published read-only property stays authoritative in Rust state.
+    let owned = kernel
+        .admit_root(selection(COUNTER, "observed_reference", PROVIDER))
+        .unwrap()
+        .invoke(&Value::map([] as [(&str, Value); 0]))
+        .unwrap();
+    let Outcome::Success(owned_reference) = owned else {
+        panic!("owned property reference");
+    };
+    assert_eq!(
+        kernel
+            .admit_root(selection(COUNTER, "run", PROVIDER))
+            .unwrap()
+            .invoke(&Value::String("owned-publish".into()))
+            .unwrap(),
+        Outcome::Success(Value::U64(42))
+    );
+    assert_eq!(
+        kernel
+            .admit_root(selection(OBSERVED, "get", PROVIDER))
+            .unwrap()
+            .invoke(&owned_reference)
+            .unwrap(),
+        Outcome::Success(Value::U64(42))
+    );
+    // The owner can publish even though the property declares no external set.
+    assert!(kernel
+        .admit_root(selection(OBSERVED, "set", PROVIDER))
+        .is_err());
     assert_eq!(
         kernel
             .admit_default_root()
@@ -354,6 +389,49 @@ fn main() {
                 .code,
             Code::Denied,
             "{denied_boundary}"
+        );
+        assert_eq!(kernel.inspect()["live_state"]["epoch"], 0);
+        kernel.shutdown().unwrap();
+    }
+    {
+        let mut denied = c.clone();
+        let resource = OBSERVED.trim_end_matches("@1");
+        denied
+            .grants
+            .iter_mut()
+            .filter(|grant| {
+                grant.caller == "root" && grant.interface == COUNTER && grant.operation == "run"
+            })
+            .for_each(|grant| {
+                grant.resources.remove(resource);
+            });
+        let kernel = Prepared::prepare(denied).unwrap().load().unwrap();
+        let reference = kernel
+            .admit_root(selection(COUNTER, "observed_reference", PROVIDER))
+            .unwrap()
+            .invoke(&Value::map([] as [(&str, Value); 0]))
+            .unwrap();
+        let Outcome::Success(reference) = reference else {
+            panic!("owned property reference");
+        };
+        assert_eq!(
+            kernel
+                .admit_root(selection(COUNTER, "run", PROVIDER))
+                .unwrap()
+                .invoke(&Value::String("owned-publish".into()))
+                .unwrap_err()
+                .code,
+            Code::Denied,
+            "owner publication must retain the property resource grant"
+        );
+        assert_eq!(
+            kernel
+                .admit_root(selection(OBSERVED, "get", PROVIDER))
+                .unwrap()
+                .invoke(&reference)
+                .unwrap(),
+            Outcome::Success(Value::U64(0)),
+            "failed publication must not change the observed value"
         );
         assert_eq!(kernel.inspect()["live_state"]["epoch"], 0);
         kernel.shutdown().unwrap();

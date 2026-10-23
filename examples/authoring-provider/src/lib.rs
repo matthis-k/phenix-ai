@@ -19,6 +19,9 @@ mod provider {
         #[set]
         #[watch]
         counter: u64,
+        #[expose]
+        #[watch]
+        observed: u64,
         pending: bool,
         worker: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
     }
@@ -26,10 +29,21 @@ mod provider {
     fn reference(state: &mut State) -> CallResult<live::ValueRef<u64>, String> {
         Ok(state.counter.reference()?)
     }
+    #[provide(Counter::observed_reference)]
+    fn observed_reference(state: &mut State) -> CallResult<live::ValueRef<u64>, String> {
+        Ok(state.reference_observed()?)
+    }
+
     #[provide(Counter::run)]
     fn run(state: &mut State, host: &live::Host<'_>, input: String) -> CallResult<u64, String> {
         match input.as_str() {
             "domain" => Err(CallError::Domain("recoverable".into())),
+            "owned-publish" => {
+                state.publish_observed(host, 42).map_err(|error| {
+                    Failure::new(Code::Denied, format!("owner publication: {error}"))
+                })?;
+                Ok(state.observed)
+            }
             _ => (|| {
                 let mut edit = state
                     .counter

@@ -254,6 +254,7 @@ pub fn expand(
     let mut properties = Vec::new();
     let mut property_symbols = Vec::new();
     let mut bindings = Vec::new();
+    let mut owned_fields = Vec::new();
     let mut property_ids = std::collections::BTreeSet::new();
     let mut handlers = Vec::new();
     let mut synchronous = Vec::new();
@@ -275,11 +276,23 @@ pub fn expand(
                     ));
                 }
                 state = true;
+                let mut sidecars = Vec::new();
                 for field in &mut s.fields {
                     let mut access = [false; 3];
+                    let mut exposed = false;
                     let mut stable = None;
                     let mut keep = Vec::new();
                     for attr in field.attrs.drain(..) {
+                        if attr.path().is_ident("expose") {
+                            if exposed || !matches!(attr.meta, Meta::Path(_)) {
+                                return Err(syn::Error::new(
+                                    attr.span(),
+                                    "expose must occur once without arguments",
+                                ));
+                            }
+                            exposed = true;
+                            continue;
+                        }
                         if let Some(index) = ["get", "set", "watch"]
                             .iter()
                             .position(|name| attr.path().is_ident(name))
@@ -315,7 +328,7 @@ pub fn expand(
                         }
                     }
                     field.attrs = keep;
-                    if access.iter().any(|v| *v) {
+                    if exposed || access.iter().any(|v| *v) {
                         if field.attrs.iter().any(|a| !a.path().is_ident("doc")) {
                             return Err(syn::Error::new(
                                 field.span(),
@@ -332,6 +345,17 @@ pub fn expand(
                             ));
                         }
                         let ty = field.ty.clone();
+                        if exposed && access[1] {
+                            return Err(syn::Error::new(
+                                field.span(),
+                                "exposed Rust state is owner-published; external set needs an owner handler",
+                            ));
+                        }
+                        let access = if exposed {
+                            [true, false, access[2]]
+                        } else {
+                            access
+                        };
                         let [get, set, watch] = access;
                         properties.push(quote!(::phenix_sdk::StaticProperty { id: #stable, schema: <#ty as ::phenix_sdk::live::Portable>::SCHEMA, get: #get, set: #set, watch: #watch }));
                         property_symbols.push(crate::property::symbols(
@@ -342,9 +366,70 @@ pub fn expand(
                             &ty,
                             access,
                         )?);
-                        bindings.push(quote!(state.#name.bind(&host, #stable).map_err(|error| match error { ::phenix_sdk::live::AccessError::Kernel(error) => error, ::phenix_sdk::live::AccessError::State(error) => ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, format!("property initialization: {error:?}")) })?;));
-                        field.ty = syn::parse_quote!(::phenix_sdk::live::Cell<#ty>);
+                        if exposed {
+                            // A sidecar keeps the owner-only property reference
+                            // and its last committed revision. The actual T
+                            // remains a plain Rust field in State.
+                            let sidecar =
+                                syn::Ident::new(&format!("__published_{}", name), name.span());
+                            let method = syn::Ident::new(&format!("publish_{}", name), name.span());
+                            let reference_method =
+                                syn::Ident::new(&format!("reference_{}", name), name.span());
+                            sidecars.push(syn::Field::parse_named.parse2(quote!(
+                                #sidecar: Option<(::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Revision)>
+                            ))?);
+                            bindings.push(quote! {
+                                let reference = host.create(#stable, &state.#name).map_err(|error| match error {
+                                    ::phenix_sdk::live::AccessError::Kernel(error) => error,
+                                    ::phenix_sdk::live::AccessError::State(error) =>
+                                        ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, format!("property initialization: {error:?}")),
+                                })?;
+                                state.#sidecar = Some((reference, ::phenix_sdk::Revision(0)));
+                            });
+                            owned_fields.push(quote! {
+                                #[allow(dead_code)]
+                                pub fn #reference_method(
+                                    &self,
+                                ) -> Result<::phenix_sdk::live::ValueRef<#ty>, ::phenix_sdk::Failure> {
+                                    self.#sidecar
+                                        .map(|(reference, _)| reference)
+                                        .ok_or_else(|| ::phenix_sdk::Failure::new(
+                                            ::phenix_sdk::Code::ScopeRejected,
+                                            "owned property is not initialized",
+                                        ))
+                                }
+
+                                #[allow(dead_code)]
+                                pub fn #method(
+                                    &mut self,
+                                    host: &::phenix_sdk::live::Host<'_>,
+                                    next: #ty,
+                                ) -> ::phenix_sdk::live::AccessResult<::phenix_sdk::live::Snapshot<#ty>> {
+                                    let (reference, revision) = self.#sidecar.ok_or_else(|| {
+                                        ::phenix_sdk::Failure::new(::phenix_sdk::Code::ScopeRejected, "owned property is not initialized")
+                                    })?;
+                                    // Publish first, then commit Rust state. Failed
+                                    // publication leaves the owner value unchanged.
+                                    let published = host.publish(reference, revision, &next)?;
+                                    self.#name = next;
+                                    self.#sidecar = Some((reference, published.revision));
+                                    Ok(published)
+                                }
+                            });
+                        } else {
+                            bindings.push(quote!(state.#name.bind(&host, #stable).map_err(|error| match error { ::phenix_sdk::live::AccessError::Kernel(error) => error, ::phenix_sdk::live::AccessError::State(error) => ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, format!("property initialization: {error:?}")) })?;));
+                            field.ty = syn::parse_quote!(::phenix_sdk::live::Cell<#ty>);
+                        }
                     }
+                }
+                if !sidecars.is_empty() {
+                    let syn::Fields::Named(named) = &mut s.fields else {
+                        return Err(syn::Error::new(
+                            s.span(),
+                            "exposed state needs named fields",
+                        ));
+                    };
+                    named.named.extend(sidecars);
                 }
             }
             syn::Item::Fn(function) => {
@@ -502,6 +587,9 @@ pub fn expand(
         pub static PHENIX_GRAPH: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = GRAPH_METADATA.native_section();
     });
     let generated = quote! {
+        impl State {
+            #(#owned_fields)*
+        }
         #graph_descriptor
         #[allow(clippy::large_const_arrays)]
         pub const METADATA: ::phenix_sdk::MetadataBytes = ::phenix_sdk::descriptor::static_metadata::metadata(#id, #version, ::phenix_sdk::MetadataExecution::StatePending, [#(#definitions),*], [#(#requirements),*], [#(#exports),*], [#(#properties),*]);
@@ -589,4 +677,52 @@ pub fn expand(
     let extra: syn::File = syn::parse2(generated)?;
     items.extend(extra.items);
     Ok(quote!(#module))
+}
+
+#[cfg(test)]
+mod owned_state_tests {
+    use super::*;
+
+    #[test]
+    fn expose_preserves_plain_rust_state_and_omits_public_set() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct State {
+                    #[expose]
+                    #[watch]
+                    counter: u64,
+                    private: u64,
+                }
+            }
+        };
+        let generated = expand(quote!(id = "test.owned"), module)
+            .unwrap()
+            .to_string();
+        assert!(generated.contains("__published_counter"));
+        assert!(generated.contains("publish_counter"));
+        assert!(generated.contains("state . counter"));
+        assert!(generated.contains("get : true"));
+        assert!(generated.contains("set : false"));
+        assert!(generated.contains("watch : true"));
+        assert!(!generated.contains("state . counter . bind"));
+    }
+
+    #[test]
+    fn exposed_fields_reject_public_set() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct State {
+                    #[expose]
+                    #[set]
+                    secret: u64,
+                }
+            }
+        };
+        let error = expand(quote!(id = "test.owned"), module).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("external set needs an owner handler"));
+    }
 }
