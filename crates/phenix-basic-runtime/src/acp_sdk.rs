@@ -334,9 +334,8 @@ fn bounded_transport(
 #[path = "acp_provider_management.rs"]
 mod provider_management;
 use provider_management::{
-    charge_model_option_budget, is_missing_model_discovery, is_previous_native_selection,
-    native_model_option_id, provider_rejection, stale_model_conflict, stale_native_model_choice,
-    ModelPageAccumulator, ProviderManagement,
+    is_previous_native_selection, native_model_option_id, provider_rejection,
+    stale_model_conflict, stale_native_model_choice, ProviderManagement,
 };
 
 struct CredentialManagement {
