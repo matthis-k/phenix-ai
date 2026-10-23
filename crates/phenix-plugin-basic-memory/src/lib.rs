@@ -23,6 +23,22 @@ pub fn validate_context(items: &[ContextItem]) -> Result<(), BasicError> {
     validate(items.iter().map(|item| item.id.as_str()))
 }
 
+/// Storage records are not trusted merely because their Portable encoding
+/// decodes. Reassert the same item invariants enforced by the write path.
+fn validate_loaded_items<'a>(
+    expected_session: &str,
+    stored_session: &str,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<(), BasicError> {
+    if expected_session != stored_session || validate(ids).is_err() {
+        return Err(error(
+            ErrorCode::StorageFailed,
+            "stored Basic items violate session or identity invariants",
+        ));
+    }
+    Ok(())
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.basic.memory",
     version = "1.0.0",
@@ -31,7 +47,9 @@ pub fn validate_context(items: &[ContextItem]) -> Result<(), BasicError> {
     require(phenix_basic_contracts::Storage, slot = "Storage")
 )]
 mod plugin {
-    use super::{validate_context, validate_skills, CONTEXT_KEY, SKILLS_KEY};
+    use super::{
+        validate_context, validate_loaded_items, validate_skills, CONTEXT_KEY, SKILLS_KEY,
+    };
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, Context, ContextItem, ContextSet, ErrorCode, RecordKey,
         Scope, Skill, SkillSet, Skills, Storage, StorageEdit, StorageTransaction,
@@ -113,11 +131,15 @@ mod plugin {
     ) -> CallResult<Vec<Skill>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         match load::<SkillSet>(host, &request.session, SKILLS_KEY)? {
-            Some((_, value)) if value.session == request.session => Ok(value.skills),
-            Some(_) => Err(CallError::Domain(error(
-                ErrorCode::StorageFailed,
-                "stored skill session mismatch",
-            ))),
+            Some((_, value)) => {
+                validate_loaded_items(
+                    &request.session,
+                    &value.session,
+                    value.skills.iter().map(|item| item.id.as_str()),
+                )
+                .map_err(CallError::Domain)?;
+                Ok(value.skills)
+            }
             None => Ok(vec![]),
         }
     }
@@ -137,11 +159,15 @@ mod plugin {
     ) -> CallResult<Vec<ContextItem>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         match load::<ContextSet>(host, &request.session, CONTEXT_KEY)? {
-            Some((_, value)) if value.session == request.session => Ok(value.items),
-            Some(_) => Err(CallError::Domain(error(
-                ErrorCode::StorageFailed,
-                "stored context session mismatch",
-            ))),
+            Some((_, value)) => {
+                validate_loaded_items(
+                    &request.session,
+                    &value.session,
+                    value.items.iter().map(|item| item.id.as_str()),
+                )
+                .map_err(CallError::Domain)?;
+                Ok(value.items)
+            }
             None => Ok(vec![]),
         }
     }
@@ -161,6 +187,26 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn loaded_items_revalidate_session_and_item_identity() {
+        assert!(validate_loaded_items("s1", "s1", ["skill-a", "skill-b"].into_iter()).is_ok());
+        assert_eq!(
+            validate_loaded_items("s1", "s2", ["skill-a"].into_iter())
+                .unwrap_err()
+                .code,
+            ErrorCode::StorageFailed
+        );
+        for ids in [vec!["skill-a", "skill-a"], vec!["", "skill-b"]] {
+            assert_eq!(
+                validate_loaded_items("s1", "s1", ids.into_iter())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::StorageFailed
+            );
+        }
+        assert!(validate_loaded_items("s1", "s1", std::iter::empty()).is_ok());
+    }
+
     #[test]
     fn unique_ids_are_required_before_storage_effects() {
         assert_eq!(
