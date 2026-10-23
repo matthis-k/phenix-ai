@@ -381,7 +381,7 @@ impl crate::resolve::Prepared {
                     if node.owner != owner
                         || node.provider != owner
                         || (!target.get && !target.watch)
-                        || !self.prepared.authority.resources.contains(resource)
+                        || !self.authority.resources.contains(resource)
                         || !node_grant.is_some_and(|resources| resources.contains(resource))
                     {
                         return Err(Failure::new(
