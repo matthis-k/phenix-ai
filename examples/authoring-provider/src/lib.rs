@@ -43,7 +43,7 @@ mod provider {
                     Failure::new(Code::Denied, format!("owner publication: {error}"))
                 })?;
                 Ok(state.observed)
-            },
+            }
             _ => (|| {
                 let mut edit = state
                     .counter
