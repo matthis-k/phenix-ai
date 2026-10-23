@@ -616,6 +616,26 @@
           excluded = [];
           substitutions = [];
         });
+      openAiApiProviderBundle = pkgs.writeText "phenix-openai-api-bundle.json"
+        (builtins.toJSON {
+          provider = {
+            id = "phenix.provider.openai-api";
+            artifact = "${providerOpenAiApi}";
+          };
+          credentials = {
+            id = "phenix.provider.credential-files";
+            artifact = "${providerCredentialStore}";
+          };
+          definitions = [ "${providerDefinitions}" ];
+          account = {
+            provider_id = "openai";
+            connection_id = "api";
+            profile_id = "personal";
+          };
+          provider_credential_operations = [ "resolve" ];
+          credential_management_operations = [ "import" "bind_environment" "revoke" ];
+          model_resolution = true;
+        });
       # C13f: browser OAuth provider runs in its own exact-account root.
       # A missing credential directory or import/resolve grant is a hard error,
       # not an implicit no-auth or API-key provider fallback.
@@ -727,7 +747,7 @@
         python ${./tests/acp-openai-api-key-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/streamed" \
-          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition}
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
         grep -F '"shipping_launcher_authority_exercised": true' "$out/streamed/openai-api-auth-product.json"
       '';
       providerCredentialStoreSource = subset (publicPaths ++ [
@@ -2744,9 +2764,7 @@
             export PHENIX_MODEL_HTTP_MODEL=unselected
             ${basicSqliteEnvironment "basic-openai-api.sqlite"}
             exec ${basicRuntime}/bin/phenix-basic-runtime acp ${basicHttpComposition} \
-              --provider-management ${openAiApiManagementComposition} \
-              --provider-credentials ${openAiApiCredentialComposition} \
-              --provider-model-resolver ${openAiApiResolverComposition} "$@"
+              --provider-bundle ${openAiApiProviderBundle} "$@"
           '';
         };
         # OAuth login becomes available to :Phenix auth without any Lua
