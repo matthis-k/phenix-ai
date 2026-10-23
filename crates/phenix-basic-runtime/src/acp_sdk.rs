@@ -377,7 +377,7 @@ fn bounded_transport(
 mod provider_management;
 #[cfg(test)]
 use provider_management::{
-    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
+    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator, ProviderManagementGroup,
 };
 use provider_management::{
     is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
@@ -614,7 +614,7 @@ fn can_switch_native_model(spec: &Composition) -> bool {
 
 struct Controller {
     composition: Composition,
-    management: Option<ProviderManagement>,
+    management: Option<ProviderManagementGroup>,
     credentials: Vec<CredentialManagement>,
     resolvers: Vec<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
@@ -629,7 +629,7 @@ struct Controller {
 impl Controller {
     fn start(
         composition: Composition,
-        management: Option<ProviderManagement>,
+        management: Option<ProviderManagementGroup>,
         credentials: Vec<CredentialManagement>,
         resolvers: Vec<ModelCredentialResolver>,
         queued: Arc<PendingPrompts>,
@@ -795,6 +795,8 @@ impl Controller {
     // operations can never infer model entitlement from a catalog entry.
     fn provider_read<Q: Portable, R: Portable + serde::Serialize>(
         &self,
+        provider_id: &str,
+        connection_id: &str,
         interface: &str,
         operation: &str,
         query: &Q,
@@ -803,7 +805,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let result: R = management.read(interface, operation, query)?;
+        let result: R = management.read_for(provider_id, connection_id, interface, operation, query)?;
         serde_json::to_value(result).map_err(internal)
     }
 
@@ -815,13 +817,7 @@ impl Controller {
             .management
             .as_ref()
             .ok_or_else(acp::Error::method_not_found)?;
-        let page: ProviderPage = management.read(
-            "phenix.provider.catalog@1",
-            "list",
-            &ProviderQuery {
-                scope: request.scope,
-            },
-        )?;
+        let page: ProviderPage = management.list()?;
         provider_page_for_acp(page)
     }
 
@@ -835,7 +831,11 @@ impl Controller {
         {
             return Err(invalid("invalid provider authentication query"));
         }
+        let selected_provider = request.provider_id.clone();
+        let selected_connection = request.connection_id.clone();
         self.provider_read::<_, AuthenticationStatus>(
+            &selected_provider,
+            &selected_connection,
             "phenix.provider.auth@1",
             "status",
             &AuthQuery {
@@ -860,7 +860,11 @@ impl Controller {
         {
             return Err(invalid("invalid provider authentication method"));
         }
+        let selected_provider = request.provider_id.clone();
+        let selected_connection = request.connection_id.clone();
         self.provider_read::<_, AuthChallenge>(
+            &selected_provider,
+            &selected_connection,
             "phenix.provider.auth@1",
             "begin",
             &AuthStart {
@@ -893,7 +897,11 @@ impl Controller {
         }
         // The attempt selector is not proof of authentication or a grant:
         // only the launcher-owned provider plugin can complete this operation.
+        let selected_provider = provider_id.clone();
+        let selected_connection = connection_id.clone();
         self.provider_read::<_, AuthAttemptState>(
+            &selected_provider,
+            &selected_connection,
             "phenix.provider.auth@1",
             operation,
             &AuthAttemptQuery {
@@ -944,7 +952,11 @@ impl Controller {
         {
             return Err(invalid("invalid provider model query"));
         }
+        let selected_provider = request.provider_id.clone();
+        let selected_connection = request.connection_id.clone();
         self.provider_read::<_, ModelPage>(
+            &selected_provider,
+            &selected_connection,
             "phenix.provider.catalog@1",
             "models",
             &ModelQuery {
@@ -1571,7 +1583,7 @@ impl Controller {
             kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         if let Some(management) = self.management {
-            management.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+            management.shutdown()?;
         }
         for credential in self.credentials {
             credential
@@ -1591,24 +1603,34 @@ impl Controller {
 
 pub(super) fn run(
     composition: &Composition,
-    management: Option<&Composition>,
+    management: &[Composition],
     credentials: &[Composition],
     resolvers: &[Composition],
 ) -> Result<(), String> {
-    let management = management
-        .map(|spec| -> Result<ProviderManagement, String> {
-            if spec.entry.interface != "phenix.provider.catalog@1" || spec.entry.operation != "list"
-            {
-                return Err("ACP management composition must select provider catalog list".into());
-            }
-            let selected = spec.entry.clone();
-            let kernel = Prepared::prepare(spec.clone())
-                .map_err(|e| format!("{e:?}"))?
-                .load()
-                .map_err(|e| format!("{e:?}"))?;
-            Ok(ProviderManagement { kernel, selected })
-        })
-        .transpose()?;
+    if management.len() > 32 {
+        return Err("too many authorized provider management compositions".into());
+    }
+    let management = if management.is_empty() {
+        None
+    } else {
+        let roots = management
+            .iter()
+            .map(|spec| -> Result<ProviderManagement, String> {
+                if spec.entry.interface != "phenix.provider.catalog@1"
+                    || spec.entry.operation != "list"
+                {
+                    return Err("ACP management composition must select provider catalog list".into());
+                }
+                let selected = spec.entry.clone();
+                let kernel = Prepared::prepare(spec.clone())
+                    .map_err(|e| format!("{e:?}"))?
+                    .load()
+                    .map_err(|e| format!("{e:?}"))?;
+                Ok(ProviderManagement { kernel, selected })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Some(ProviderManagementGroup { roots })
+    };
     if credentials.len() > 32 || resolvers.len() > 32 {
         return Err("too many authorized credential compositions".into());
     }
