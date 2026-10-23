@@ -620,7 +620,10 @@ mod tests {
             }));
         }
         started.wait();
-        let winners = tasks.into_iter().filter(|task| task.join().unwrap()).count();
+        let winners: usize = tasks
+            .into_iter()
+            .map(|task| usize::from(task.join().unwrap()))
+            .sum();
         assert_eq!(winners, 1);
         let final_value = root.read(&id("personal")).unwrap();
         assert!(
