@@ -25,7 +25,7 @@ use std::{
     collections::BTreeMap,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "chatgpt";
@@ -76,17 +76,12 @@ struct OAuthAccount {
 
 impl Drop for OAuthAccount {
     fn drop(&mut self) {
-        // The protected credential store owns persistence; temporary JSON
-        // projections must not leave the access/refresh/ID tokens in heap
-        // allocations longer than their Rust lifetimes.
-        for token in [
-            &mut self.access_token,
-            &mut self.refresh_token,
-            &mut self.id_token,
-        ] {
-            let mut bytes = std::mem::take(token).into_bytes();
-            bytes.fill(0);
-        }
+        // The protected credential store owns persistence. Use a
+        // compiler-resistant erasure primitive for in-memory token strings,
+        // including any temporary decoded JSON projections.
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.id_token.zeroize();
     }
 }
 
