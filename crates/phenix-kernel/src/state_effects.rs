@@ -154,7 +154,9 @@ impl Kernel {
                     // The owner may publish a read-only observation under its
                     // active resource authority. All other writes continue to
                     // require a selected public `set` operation.
-                    if self.cells.borrow().identity(&edit.location)?.0 == caller {
+                    if self.cells.borrow().identity(&edit.location)?.0 == caller
+                        && !self.cells.borrow().identity(&edit.location)?.1.set
+                    {
                         self.authorize_owner_publish(caller, &edit.location)?;
                     } else {
                         self.authorize_state(caller, &edit.location, "set")?;
