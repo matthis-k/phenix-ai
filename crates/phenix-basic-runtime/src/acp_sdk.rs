@@ -425,12 +425,9 @@ fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialId
     // OAuth credentials are provider-owned. A separately declared logout
     // root may grant only revoke, never user-supplied import/env binding.
     // API-key accounts retain the existing import+revoke management path.
-    let accepted_operations = (spec.entry.operation == "import"
-        && seen.contains("import")
-        && seen.contains("revoke"))
-        || (spec.entry.operation == "revoke"
-            && seen.len() == 1
-            && seen.contains("revoke"));
+    let accepted_operations =
+        (spec.entry.operation == "import" && seen.contains("import") && seen.contains("revoke"))
+            || (spec.entry.operation == "revoke" && seen.len() == 1 && seen.contains("revoke"));
     if spec.entry.interface != CONTRACT
         || !accepted_operations
         || spec.authority.operations != operations
