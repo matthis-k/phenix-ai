@@ -23,7 +23,7 @@ use phenix_provider_protocols::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -152,6 +152,7 @@ fn require_attempt_owner(
 }
 
 struct Pending {
+    created_at: Instant,
     identity: CredentialIdentity,
     listener: OAuthLoopbackListener,
     pkce: GeneratedPkce,
@@ -180,6 +181,17 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         attempts: BTreeMap<String, Pending>,
+    }
+
+    impl State {
+        // Browser attempts can outlive disconnected clients. Reclaim expired
+        // loopback listeners before enforcing the bounded attempt budget.
+        // Expiry is monotonic and never makes an attempt authenticated.
+        fn reap_expired_attempts(&mut self) {
+            self.attempts.retain(|_, pending| {
+                pending.created_at.elapsed() < Duration::from_secs(MAX_ATTEMPT_SECONDS)
+            });
+        }
     }
 
     fn checked(host: &Host<'_>, scope: &str) -> CallResult<CredentialIdentity, ProviderError> {
@@ -439,6 +451,37 @@ mod plugin {
         }))
     }
 
+    #[cfg(test)]
+    #[test]
+    fn abandoned_oauth_attempts_do_not_exhaust_login_capacity() {
+        let identity = CredentialIdentity::new(
+            PROVIDER.into(),
+            CONNECTION.into(),
+            "personal".into(),
+        )
+        .unwrap();
+        let pending = |age: Duration| Pending {
+            created_at: Instant::now() - age,
+            identity: identity.clone(),
+            listener: OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
+                .unwrap(),
+            pkce: GeneratedPkce::new(),
+            host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
+            issued_client_id: None,
+            expected_subject: None,
+        };
+        let mut state = State::default();
+        state.attempts.insert(
+            "expired".into(),
+            pending(Duration::from_secs(MAX_ATTEMPT_SECONDS + 1)),
+        );
+        state.attempts.insert("live".into(), pending(Duration::ZERO));
+        state.reap_expired_attempts();
+        assert_eq!(state.attempts.len(), 1);
+        assert!(state.attempts.contains_key("live"));
+        assert!(!state.attempts.contains_key("expired"));
+    }
+
     #[provide(ProviderCatalog::list)]
     fn list(
         _: &mut State,
@@ -622,6 +665,7 @@ mod plugin {
         {
             return Err(CallError::Domain(denied("OAuth method not authorized")));
         }
+        state.reap_expired_attempts();
         if state.attempts.len() >= MAX_ATTEMPTS {
             return Err(CallError::Domain(unavailable("too many OAuth attempts")));
         }
@@ -655,6 +699,7 @@ mod plugin {
         state.attempts.insert(
             id.clone(),
             Pending {
+                created_at: Instant::now(),
                 identity,
                 listener,
                 pkce,
