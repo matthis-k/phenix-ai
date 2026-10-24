@@ -7,7 +7,9 @@
 //! JWKS URLs. The provider plugin must fetch the fixed issuer's public JWKS,
 //! perform strict TLS/no-redirect token exchange and authorize secure storage.
 
-use crate::oauth_oidc::{verify_signed_oidc_identity, OidcError, VerifiedSubject};
+use crate::oauth_oidc::{
+    verify_refreshed_signed_oidc_identity, verify_signed_oidc_identity, OidcError, VerifiedSubject,
+};
 use crate::siwc::require_token_granted_plan_scope;
 use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
@@ -178,6 +180,48 @@ pub fn verify_chatgpt_identity(
     original_nonce: &str,
     expected_subject: Option<&str>,
 ) -> Result<VerifiedChatGptIdentity, VerificationError> {
+    verify_chatgpt_identity_with_mode(
+        envelope,
+        jwks_body,
+        issued_client_id,
+        original_nonce,
+        expected_subject,
+        false,
+    )
+}
+
+/// Validate a persisted login or a rotating refresh generation. Initial
+/// browser exchanges MUST contain the nonce; refresh ID tokens MAY omit it
+/// under OIDC Core 12.2. In either case, signature/issuer/audience/expiry,
+/// original nonce when present, saved subject and the plan grant must hold.
+pub fn verify_chatgpt_persisted_identity(
+    envelope: &TokenEnvelope,
+    jwks_body: &[u8],
+    issued_client_id: &str,
+    original_nonce: &str,
+    expected_subject: &str,
+) -> Result<VerifiedChatGptIdentity, VerificationError> {
+    if expected_subject.is_empty() {
+        return Err(VerificationError::IncorrectAccount);
+    }
+    verify_chatgpt_identity_with_mode(
+        envelope,
+        jwks_body,
+        issued_client_id,
+        original_nonce,
+        Some(expected_subject),
+        true,
+    )
+}
+
+fn verify_chatgpt_identity_with_mode(
+    envelope: &TokenEnvelope,
+    jwks_body: &[u8],
+    issued_client_id: &str,
+    original_nonce: &str,
+    expected_subject: Option<&str>,
+    persisted: bool,
+) -> Result<VerifiedChatGptIdentity, VerificationError> {
     if issued_client_id.is_empty()
         || issued_client_id == "dynamic_agent_client"
         || issued_client_id.len() > 256
@@ -191,14 +235,25 @@ pub fn verify_chatgpt_identity(
     if jwks_body.is_empty() || jwks_body.len() > MAX_JWKS_BODY {
         return Err(VerificationError::InvalidJwks);
     }
-    let subject = verify_signed_oidc_identity(
-        &envelope.id_token,
-        jwks_body,
-        ISSUER,
-        issued_client_id,
-        original_nonce,
-        expected_subject,
-    )
+    let subject = if persisted {
+        verify_refreshed_signed_oidc_identity(
+            &envelope.id_token,
+            jwks_body,
+            ISSUER,
+            issued_client_id,
+            original_nonce,
+            expected_subject.ok_or(VerificationError::IncorrectAccount)?,
+        )
+    } else {
+        verify_signed_oidc_identity(
+            &envelope.id_token,
+            jwks_body,
+            ISSUER,
+            issued_client_id,
+            original_nonce,
+            expected_subject,
+        )
+    }
     .map_err(|problem| match problem {
         OidcError::InvalidJwks => VerificationError::InvalidJwks,
         OidcError::IncorrectAccount => VerificationError::IncorrectAccount,

@@ -389,11 +389,14 @@ struct CredentialManagement {
     importer: Selection,
     resource: String,
     identity: CredentialIdentity,
+    // The launcher-validated root grants determine what ACP may advertise
+    // and dispatch. In particular, OAuth logout-only is never an API-key import.
+    allowed: std::collections::BTreeSet<String>,
 }
 
 /// The credential composition is a separate control-plane grant, never an
 /// operation from the ordinary Basic session or provider-list root.
-fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialIdentity), String> {
     const CONTRACT: &str = "phenix.provider.credentials@1";
     let resource = spec
         .resource
@@ -422,10 +425,14 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         .iter()
         .map(|operation| format!("{CONTRACT}/{operation}"))
         .collect::<std::collections::BTreeSet<_>>();
+    // OAuth credentials are provider-owned. A separately declared logout
+    // root may grant only revoke, never user-supplied import/env binding.
+    // API-key accounts retain the existing import+revoke management path.
+    let accepted_operations =
+        (spec.entry.operation == "import" && seen.contains("import") && seen.contains("revoke"))
+            || (spec.entry.operation == "revoke" && seen.len() == 1 && seen.contains("revoke"));
     if spec.entry.interface != CONTRACT
-        || spec.entry.operation != "import"
-        || !seen.contains("import")
-        || !seen.contains("revoke")
+        || !accepted_operations
         || spec.authority.operations != operations
         || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
         || !spec.slots.is_empty()
@@ -434,6 +441,11 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     {
         return Err("credential management composition has unexpected authority".into());
     }
+    Ok((resource.into(), identity))
+}
+
+fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, String> {
+    let (resource, identity) = validate_credentials_spec(spec)?;
     let kernel = Prepared::prepare(spec.clone())
         .map_err(|_| "invalid credential management composition".to_string())?
         .load()
@@ -441,8 +453,13 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     Ok(CredentialManagement {
         kernel,
         importer: spec.entry.clone(),
-        resource: resource.into(),
+        resource,
         identity,
+        allowed: spec
+            .grants
+            .iter()
+            .map(|grant| grant.operation.clone())
+            .collect(),
     })
 }
 
@@ -458,6 +475,7 @@ struct ModelCredentialResolver {
 fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity, String> {
     const CONTRACT: &str = "phenix.provider.credentials@1";
     const RESOLVE: &str = "phenix.provider.credentials@1/resolve";
+    const ROTATE: &str = "phenix.provider.credentials@1/compare_exchange";
     let resource = spec
         .resource
         .as_deref()
@@ -465,24 +483,71 @@ fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid model resolver credential resource")?;
     let allowed_resource = std::collections::BTreeSet::from([resource.to_string()]);
+    let rotate = spec.slots.len() == 1
+        && spec.grants.iter().any(|grant| {
+            grant.caller == spec.entry.provider
+                && grant.interface == CONTRACT
+                && grant.operation == "compare_exchange"
+                && grant.resources == allowed_resource
+        });
+    let expected_authority = if rotate {
+        std::collections::BTreeSet::from([RESOLVE.into(), ROTATE.into()])
+    } else {
+        std::collections::BTreeSet::from([RESOLVE.into()])
+    };
     if spec.entry.interface != CONTRACT
         || spec.entry.operation != "resolve"
-        || spec.authority.operations != std::collections::BTreeSet::from([RESOLVE.into()])
+        || spec.authority.operations != expected_authority
         || spec.authority.resources != allowed_resource
-        || spec.grants.len() != 1
-        || !spec.slots.is_empty()
+        || !(spec.grants.len() == 1 && spec.slots.is_empty()
+            || spec.grants.len() == 2 && spec.slots.len() == 1 && !rotate
+            || spec.grants.len() == 3 && spec.slots.len() == 1 && rotate)
         || !spec.excluded.is_empty()
         || !spec.substitutions.is_empty()
     {
-        return Err("model resolver requires exactly one resolve-only root authority".into());
+        return Err(
+            "model resolver requires one selected root with exact private credential grants".into(),
+        );
     }
-    let grant = &spec.grants[0];
-    if grant.caller != "root"
-        || grant.interface != CONTRACT
+    let grant = spec
+        .grants
+        .iter()
+        .find(|grant| grant.caller == "root")
+        .ok_or("missing selected resolver grant")?;
+    if grant.interface != CONTRACT
         || grant.operation != "resolve"
         || grant.resources != allowed_resource
     {
-        return Err("model resolver grant must match the selected credential resource".into());
+        return Err("model resolver grant must match selected credential resource".into());
+    }
+    if let Some(binding) = spec.slots.first() {
+        // Only the already-declared provider may resolve its own protected
+        // credential record. A refresh CAS grant is restricted to the same
+        // exact account backend; it cannot become a root ACP operation.
+        if binding.caller != spec.entry.provider
+            || binding.provider == spec.entry.provider
+            || binding.slot != "Credentials"
+            || binding.export != "Credentials"
+            || binding.index != 0
+            || !spec.grants.iter().any(|g| {
+                g.caller == binding.caller
+                    && g.interface == CONTRACT
+                    && g.operation == "resolve"
+                    && g.resources == allowed_resource
+            })
+        {
+            return Err("invalid nested model credential resolver grant".into());
+        }
+        if rotate
+            && !spec.grants.iter().any(|g| {
+                g.caller == binding.caller
+                    && g.interface == CONTRACT
+                    && g.operation == "compare_exchange"
+                    && g.resources == allowed_resource
+            })
+        {
+            return Err("invalid nested model credential rotation grant".into());
+        }
     }
     Ok(identity)
 }
@@ -983,8 +1048,8 @@ impl Controller {
                     "provider_id": item.identity.provider_id(),
                     "connection_id": item.identity.connection_id(),
                     "profile_id": item.identity.profile_id(),
-                    "import": true,
-                    "revoke": true,
+                    "import": item.allowed.contains("import"),
+                    "revoke": item.allowed.contains("revoke"),
                 })
             })
             .collect::<Vec<_>>();
@@ -1016,6 +1081,11 @@ impl Controller {
             .iter()
             .find(|item| item.resource == resource)
             .ok_or_else(|| invalid("credential identity is not authorized"))?;
+        // Check the same authorized method set used for capability discovery
+        // before entering the kernel. Kernel authority remains the final gate.
+        if !management.allowed.contains(operation) {
+            return Err(invalid("credential operation is not authorized"));
+        }
         let selected = Selection {
             operation: operation.into(),
             ..management.importer.clone()
@@ -2234,6 +2304,50 @@ mod tests {
     }
 
     #[test]
+    fn oauth_logout_management_exposes_only_revoke_for_one_account() {
+        let identity = CredentialIdentity::new("openai", "chatgpt", "personal").unwrap();
+        let resource = identity.resource().unwrap();
+        let contract = "phenix.provider.credentials@1";
+        let spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": contract, "operation": "revoke",
+                      "provider": "phenix.provider.credential-files"},
+            "artifacts": [], "definitions": [], "slots": [],
+            "grants": [{"caller": "root", "interface": contract,
+                        "operation": "revoke", "resources": [resource]}],
+            "excluded": [], "substitutions": [],
+            "authority": {
+                "operations": ["phenix.provider.credentials@1/revoke"],
+                "resources": [resource]
+            },
+            "resource": resource
+        }))
+        .unwrap();
+        assert_eq!(
+            validate_credentials_spec(&spec).unwrap(),
+            (resource.clone(), identity)
+        );
+        let mut forged_import = spec.clone();
+        forged_import.entry.operation = "import".into();
+        assert!(validate_credentials_spec(&forged_import).is_err());
+
+        let mut widened = spec.clone();
+        let mut extra_grant = widened.grants[0].clone();
+        extra_grant.operation = "import".into();
+        widened.grants.push(extra_grant);
+        assert!(validate_credentials_spec(&widened).is_err());
+
+        let mut foreign = spec.clone();
+        foreign.authority.resources.insert(
+            CredentialIdentity::new("openai", "api", "personal")
+                .unwrap()
+                .resource()
+                .unwrap(),
+        );
+        assert!(validate_credentials_spec(&foreign).is_err());
+    }
+
+    #[test]
     fn private_model_resolver_composition_has_one_exact_resolve_only_grant() {
         let identity = CredentialIdentity::new("openai", "api", "personal").unwrap();
         let resource = identity.resource().unwrap();
@@ -2278,6 +2392,70 @@ mod tests {
         let mut forged = spec.clone();
         forged.entry.operation = "revoke".into();
         assert!(validate_model_resolver_spec(&forged).is_err());
+    }
+
+    #[test]
+    fn oauth_model_resolver_cas_requires_private_same_account_provider_slot() {
+        let identity = CredentialIdentity::new("openai", "chatgpt", "personal").unwrap();
+        let resource = identity.resource().unwrap();
+        let contract = "phenix.provider.credentials@1";
+        let provider = "phenix.provider.chatgpt";
+        let spec: Composition = serde_json::from_value(serde_json::json!({
+            "format": "phenix.composition.v3",
+            "entry": {"interface": contract, "operation": "resolve",
+                      "provider": provider},
+            "artifacts": [], "definitions": [],
+            "slots": [{
+                "caller": provider, "slot": "Credentials",
+                "provider": "phenix.provider.credential-files",
+                "export": "Credentials", "index": 0
+            }],
+            "grants": [
+                {"caller": "root", "interface": contract,
+                 "operation": "resolve", "resources": [resource]},
+                {"caller": provider, "interface": contract,
+                 "operation": "resolve", "resources": [resource]},
+                {"caller": provider, "interface": contract,
+                 "operation": "compare_exchange", "resources": [resource]}
+            ],
+            "excluded": [], "substitutions": [],
+            "authority": {
+                "operations": ["phenix.provider.credentials@1/resolve",
+                               "phenix.provider.credentials@1/compare_exchange"],
+                "resources": [resource]
+            },
+            "resource": resource
+        }))
+        .unwrap();
+        assert_eq!(validate_model_resolver_spec(&spec).unwrap(), identity);
+
+        let mut wrong_caller = spec.clone();
+        wrong_caller.grants[2].caller = "root".into();
+        assert!(validate_model_resolver_spec(&wrong_caller).is_err());
+
+        let mut overbroad = spec.clone();
+        overbroad.grants[2].resources.insert(
+            CredentialIdentity::new("openai", "chatgpt", "work")
+                .unwrap()
+                .resource()
+                .unwrap(),
+        );
+        assert!(validate_model_resolver_spec(&overbroad).is_err());
+
+        let mut no_backend = spec.clone();
+        no_backend.slots.clear();
+        assert!(validate_model_resolver_spec(&no_backend).is_err());
+
+        let mut wrong_provider = spec.clone();
+        wrong_provider.slots[0].provider = provider.into();
+        assert!(validate_model_resolver_spec(&wrong_provider).is_err());
+
+        let mut extra_root = spec.clone();
+        extra_root
+            .authority
+            .operations
+            .insert("phenix.provider.credentials@1/revoke".into());
+        assert!(validate_model_resolver_spec(&extra_root).is_err());
     }
 
     #[test]

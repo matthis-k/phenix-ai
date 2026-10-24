@@ -52,6 +52,15 @@ impl Handler for BoundedBody {
 /// This is deliberately an implementation helper, not an arbitrary HTTP
 /// request exposed to provider credentials or client-side URLs.
 fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, TransportError> {
+    request_with_auth(url, post, limit, None)
+}
+
+fn request_with_auth(
+    url: &str,
+    post: Option<&str>,
+    limit: usize,
+    bearer: Option<&str>,
+) -> Result<Vec<u8>, TransportError> {
     let mut easy = Easy2::new(BoundedBody {
         bytes: Vec::new(),
         bound: limit,
@@ -64,6 +73,19 @@ fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, Trans
     if post.is_some() {
         headers
             .append("Content-Type: application/x-www-form-urlencoded")
+            .map_err(|_| TransportError::Unavailable)?;
+    }
+    if let Some(token) = bearer {
+        if token.is_empty()
+            || token.len() > 4096
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && byte != b':')
+        {
+            return Err(TransportError::InvalidForm);
+        }
+        headers
+            .append(&format!("Authorization: Bearer {token}"))
             .map_err(|_| TransportError::Unavailable)?;
     }
     easy.url(url).map_err(|_| TransportError::Unavailable)?;
@@ -129,6 +151,18 @@ pub fn exchange_token(form: &str) -> Result<TokenEnvelope, TransportError> {
     let parsed = TokenEnvelope::parse(&raw).map_err(|_| TransportError::InvalidTokenResponse);
     raw.zeroize();
     parsed
+}
+
+/// Fetch only the documented ChatGPT-plan catalog, scoped to the already
+/// verified provider-owned access token. Never follow redirects or accept an
+/// endpoint supplied by a model, callback or user-facing client.
+pub fn chatgpt_models(access_token: &str) -> Result<Vec<u8>, TransportError> {
+    request_with_auth(
+        "https://api.openai.com/v1/models",
+        None,
+        256 * 1024,
+        Some(access_token),
+    )
 }
 
 /// Fetch the issuer's fixed JWKS; caller then verifies a signed token with the
@@ -207,6 +241,13 @@ mod tests {
             3,
         );
         assert_eq!(too_large, Err(TransportError::TooLarge));
+    }
+
+    #[test]
+    fn bearer_catalog_rejects_control_characters_before_network() {
+        for token in ["", "bad\nheader", "bad:extra", "x\r", "a b"] {
+            assert_eq!(chatgpt_models(token), Err(TransportError::InvalidForm),);
+        }
     }
 
     #[test]

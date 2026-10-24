@@ -2068,6 +2068,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-chatgpt"
+version = "0.1.0"
+dependencies = [
+ "curl",
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-provider-protocols",
+ "phenix-sdk",
+ "serde",
+ "serde_json",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "phenix-plugin-provider-credential-files"
 version = "0.1.0"
 dependencies = [
