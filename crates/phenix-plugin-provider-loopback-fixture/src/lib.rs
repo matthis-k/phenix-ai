@@ -81,13 +81,15 @@ fn authorized_models() -> Result<ModelPage, ProviderError> {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
-    provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
+    provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
+    provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime")
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
-        ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
+        AuthenticationCommand, AuthenticationEvent, ModelQuery, ProviderAuth, ProviderCatalog,
+        ProviderCompletion, ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -112,6 +114,76 @@ mod plugin {
             )));
         }
         Ok(())
+    }
+
+    // Canonical provider interface, backed by the *same* internal handlers as
+    // the transitional catalog/auth ports. A protocol is not a second provider.
+    #[provide(ProviderRuntime::authenticate)]
+    fn runtime_authenticate(
+        state: &mut State,
+        host: &Host<'_>,
+        command: AuthenticationCommand,
+    ) -> CallResult<AuthenticationEvent, ProviderError> {
+        match command {
+            AuthenticationCommand::Status { query } => {
+                status(state, host, query).map(|value| AuthenticationEvent::Status { value })
+            }
+            AuthenticationCommand::Begin { request } => {
+                begin(state, host, request).map(|value| AuthenticationEvent::Challenge { value })
+            }
+            AuthenticationCommand::Poll { request } => {
+                poll(state, host, request).map(|value| AuthenticationEvent::Attempt { value })
+            }
+            AuthenticationCommand::Cancel { request } => {
+                cancel(state, host, request).map(|value| AuthenticationEvent::Attempt { value })
+            }
+        }
+    }
+
+    #[provide(ProviderRuntime::models)]
+    fn runtime_models(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ModelQuery,
+    ) -> CallResult<ModelPage, ProviderError> {
+        models(state, host, request)
+    }
+
+    // The loopback fixture advertises models for ACP selection, but it has no
+    // installed invocation adapter in its own private state. Never claim a
+    // successful model response by fabricating an inference transport.
+    #[provide(ProviderRuntime::complete)]
+    fn runtime_complete(
+        host: &Host<'_>,
+        request: ProviderCompletion,
+    ) -> CallResult<phenix_basic_contracts::ModelReply, ProviderError> {
+        check(host, &request.scope)?;
+        identity(&request.provider_id, &request.connection_id)?;
+        if request.profile_id.is_some()
+            || request.model_id.is_empty()
+            || request.request.session.is_empty()
+            || request.request.run.is_empty()
+        {
+            return Err(CallError::Domain(failed(
+                ProviderErrorCode::InvalidInput,
+                "invalid fixture model selection",
+            )));
+        }
+        let page = authorized_models().map_err(CallError::Domain)?;
+        if !page.models.iter().any(|model| {
+            model.id == request.model_id
+                && model.connection_id == request.connection_id
+                && model.selectable
+        }) {
+            return Err(CallError::Domain(failed(
+                ProviderErrorCode::NotFound,
+                "model is not selectable",
+            )));
+        }
+        Err(CallError::Domain(failed(
+            ProviderErrorCode::Unavailable,
+            "selected protocol execution adapter is not installed",
+        )))
     }
 
     #[provide(ProviderCatalog::list)]
@@ -214,5 +286,39 @@ mod plugin {
             ProviderErrorCode::NotFound,
             "fixture has no authentication attempt",
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phenix_provider_contracts::{AuthQuery, AuthenticationCommand, AuthenticationEvent};
+    use phenix_sdk::{ContractMetadata, Portable};
+
+    #[test]
+    fn canonical_interface_is_native_and_authentication_is_not_boolean() {
+        let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
+        assert_eq!(metadata.provides.len(), 3);
+        assert_eq!(metadata.requires.len(), 0);
+        let command = AuthenticationCommand::Status {
+            query: AuthQuery {
+                scope: "user".into(),
+                provider_id: "c9-test-loopback".into(),
+                connection_id: "local".into(),
+            },
+        };
+        let decoded = AuthenticationCommand::from_value(command.to_value()).unwrap();
+        assert_eq!(decoded, command);
+        let event = AuthenticationEvent::Status {
+            value: AuthenticationStatus {
+                provider_id: "c9-test-loopback".into(),
+                connection_id: "local".into(),
+                profiles: vec![],
+            },
+        };
+        assert_eq!(
+            AuthenticationEvent::from_value(event.to_value()).unwrap(),
+            event
+        );
     }
 }
