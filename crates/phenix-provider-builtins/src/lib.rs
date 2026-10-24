@@ -769,7 +769,11 @@ mod tests {
         assert_eq!(forward.len(), 1);
         assert_eq!(forward[0].id, "openai");
         assert_eq!(
-            forward[0].connections.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            forward[0]
+                .connections
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["api", "chatgpt"]
         );
         // Registration pages cannot take over a sibling connection or
