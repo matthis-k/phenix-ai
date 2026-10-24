@@ -2900,7 +2900,13 @@
               export PHENIX_CREDENTIAL_FILE_DIRECTORY="$state_home/phenix/p1-auth-credentials"
               # A new directory is private; an existing directory keeps its
               # permissions and must pass the backend's ownership/0700 check.
-              mkdir -p -m 700 -- "$PHENIX_CREDENTIAL_FILE_DIRECTORY"
+              mkdir -p -- "$state_home/phenix"
+              if [ ! -e "$PHENIX_CREDENTIAL_FILE_DIRECTORY" ] &&
+                 [ ! -L "$PHENIX_CREDENTIAL_FILE_DIRECTORY" ]; then
+                # Concurrent launchers can race on the initial mkdir.
+                mkdir -m 700 -- "$PHENIX_CREDENTIAL_FILE_DIRECTORY" ||
+                  [ -d "$PHENIX_CREDENTIAL_FILE_DIRECTORY" ]
+              fi
             fi
             case "$PHENIX_CREDENTIAL_FILE_DIRECTORY" in
               /*) ;;
