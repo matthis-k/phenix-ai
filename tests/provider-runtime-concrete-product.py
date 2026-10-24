@@ -176,7 +176,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
             resource=selected,
         )
         (root / "composition.json").write_text(json.dumps(imported))
-        (root / "request.bin").write_bytes(b"PV\\x02\\0"
+        (root / "request.bin").write_bytes(b"PV\x02\0"
                                            + encode(dict(identity=account, secret=secret)))
         imported_result = subprocess.run(
             [kernel, "invoke", str(root / "composition.json"), str(root / "request.bin")],
