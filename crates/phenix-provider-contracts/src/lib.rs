@@ -359,8 +359,10 @@ pub enum AuthenticationEvent {
 pub struct ProviderAuthDelegates<S> {
     pub status: fn(&mut S, &Host<'_>, AuthQuery) -> CallResult<AuthenticationStatus, ProviderError>,
     pub begin: fn(&mut S, &Host<'_>, AuthStart) -> CallResult<AuthChallenge, ProviderError>,
-    pub poll: fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
-    pub cancel: fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
+    pub poll:
+        fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
+    pub cancel:
+        fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
 }
 
 impl<S> ProviderAuthDelegates<S> {
@@ -374,17 +376,12 @@ impl<S> ProviderAuthDelegates<S> {
             AuthenticationCommand::Status { query } => {
                 (self.status)(state, host, query).map(|value| AuthenticationEvent::Status { value })
             }
-            AuthenticationCommand::Begin { request } => {
-                (self.begin)(state, host, request)
-                    .map(|value| AuthenticationEvent::Challenge { value })
-            }
-            AuthenticationCommand::Poll { request } => {
-                (self.poll)(state, host, request).map(|value| AuthenticationEvent::Attempt { value })
-            }
-            AuthenticationCommand::Cancel { request } => {
-                (self.cancel)(state, host, request)
-                    .map(|value| AuthenticationEvent::Attempt { value })
-            }
+            AuthenticationCommand::Begin { request } => (self.begin)(state, host, request)
+                .map(|value| AuthenticationEvent::Challenge { value }),
+            AuthenticationCommand::Poll { request } => (self.poll)(state, host, request)
+                .map(|value| AuthenticationEvent::Attempt { value }),
+            AuthenticationCommand::Cancel { request } => (self.cancel)(state, host, request)
+                .map(|value| AuthenticationEvent::Attempt { value }),
         }
     }
 }
@@ -420,7 +417,10 @@ pub fn validate_completion<'a>(
         || request.connection_id.is_empty()
         || request.model_id.is_empty()
     {
-        return Err(invalid(ProviderErrorCode::InvalidInput, "incomplete model request"));
+        return Err(invalid(
+            ProviderErrorCode::InvalidInput,
+            "incomplete model request",
+        ));
     }
     if request.profile_id != authorized.profile_id {
         return Err(invalid(
