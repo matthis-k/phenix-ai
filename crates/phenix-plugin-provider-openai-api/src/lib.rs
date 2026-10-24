@@ -300,6 +300,10 @@ fn revision(ids: &[String]) -> u64 {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
+    provide(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Registrations"
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
     require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials")
 )]
@@ -307,7 +311,7 @@ mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery,
+        ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -372,6 +376,16 @@ mod plugin {
             label: selected.profile_id().into(),
             method_id: "api-key".into(),
             status,
+        })
+    }
+
+    /// A concrete provider contributes only its declaration to the manager.
+    /// No credential or management authority is required to enumerate it.
+    #[provide(ProviderRegistrations::list)]
+    fn registrations_list(_: &mut State) -> CallResult<ProviderPage, ProviderError> {
+        Ok(ProviderPage {
+            providers: vec![descriptor().map_err(CallError::Domain)?],
+            revision: 1,
         })
     }
 
