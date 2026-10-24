@@ -50,7 +50,9 @@ fn unavailable(message: &str) -> ProviderError {
 }
 fn oauth_callback_error(error: RegistrationError) -> ProviderError {
     match error {
-        RegistrationError::AuthorizationDenied => denied("ChatGPT OAuth authorization was declined"),
+        RegistrationError::AuthorizationDenied => {
+            denied("ChatGPT OAuth authorization was declined")
+        }
         RegistrationError::InvalidState => denied("OAuth callback state did not match"),
         RegistrationError::ClientMismatch => denied("OAuth issued client ID did not match"),
         _ => denied("OAuth callback parameters were invalid"),
