@@ -50,6 +50,51 @@ pub fn decode<T: Portable>(value: &Blob) -> Result<T, Failure> {
     T::from_value(Value::decode(&value.0)?)
 }
 
+/// Verify a single-record storage acknowledgement against its exact CAS
+/// precondition and the bytes supplied by the owning plugin. A later revision,
+/// unrelated payload or additional record is not proof of this transaction.
+fn checked_single_commit_ack(
+    records: &[StoredRecord],
+    expected: u64,
+    data: &Blob,
+) -> Result<u64, Failure> {
+    if records.len() != 1 || !records[0].matches_commit(expected, data) {
+        return Err(Failure::new(
+            Code::PluginFailed,
+            "storage returned an invalid single-record CAS acknowledgement",
+        ));
+    }
+    Ok(records[0].revision)
+}
+
+/// Share the mechanical single-record Storage CAS boundary only. Domain plugins
+/// retain authoritative live state, validation, resource checks and recovery
+/// semantics. Storage never becomes an independently writable state mirror.
+pub fn transact_one(
+    host: &Host<'_>,
+    slot: &str,
+    session: &str,
+    key: &str,
+    expected: u64,
+    data: Blob,
+) -> CallResult<u64, BasicError> {
+    expected
+        .checked_add(1)
+        .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "revision overflow")))?;
+    let records = host.invoke::<Storage::transact>(
+        slot,
+        &StorageTransaction {
+            session: session.into(),
+            edits: vec![StorageEdit {
+                key: key.into(),
+                expected,
+                data: data.clone(),
+            }],
+        },
+    )?;
+    checked_single_commit_ack(&records, expected, &data).map_err(CallError::Kernel)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct Scope {
     pub session: String,
@@ -642,6 +687,33 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_record_cas_ack_rejects_spurious_or_ambiguous_results() {
+        let payload = Blob(vec![1, 2, 3]);
+        let acknowledged = StoredRecord {
+            revision: 8,
+            data: payload.clone(),
+        };
+        assert_eq!(
+            checked_single_commit_ack(&[acknowledged.clone()], 7, &payload).unwrap(),
+            8
+        );
+        assert!(checked_single_commit_ack(&[], 7, &payload).is_err());
+        assert!(checked_single_commit_ack(
+            &[acknowledged.clone(), acknowledged.clone()],
+            7,
+            &payload,
+        )
+        .is_err());
+        assert!(checked_single_commit_ack(&[acknowledged.clone()], 6, &payload).is_err());
+        assert!(checked_single_commit_ack(
+            &[acknowledged],
+            7,
+            &Blob(vec![4]),
+        )
+        .is_err());
+    }
 
     #[test]
     fn storage_ack_requires_exact_revision_and_payload() {
