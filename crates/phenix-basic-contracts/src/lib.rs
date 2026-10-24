@@ -707,12 +707,8 @@ mod tests {
         )
         .is_err());
         assert!(checked_single_commit_ack(&[acknowledged.clone()], 6, &payload).is_err());
-        assert!(checked_single_commit_ack(
-            &[acknowledged],
-            7,
-            &Blob(vec![4]),
-        )
-        .is_err());
+        let wrong_payload = Blob(vec![4]);
+        assert!(checked_single_commit_ack(&[acknowledged], 7, &wrong_payload).is_err());
     }
 
     #[test]
