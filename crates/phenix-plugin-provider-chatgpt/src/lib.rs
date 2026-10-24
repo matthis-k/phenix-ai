@@ -105,6 +105,18 @@ struct StoredOAuth {
 }
 
 impl StoredOAuth {
+    /// A correlated dynamic-client registration must be durable before the
+    /// authorization-code exchange. Retrying an expired/denied token grant
+    /// reuses the issued client ID instead of creating another registration.
+    /// Never manufacture an authenticated account from registration alone.
+    fn registered_client(&self, client_id: &str) -> Self {
+        Self {
+            host_id: self.host_id.clone(),
+            registration_client_id: Some(client_id.to_owned()),
+            account: None,
+        }
+    }
+
     fn returning_client_id(&self) -> Option<&str> {
         self.account
             .as_ref()
@@ -862,6 +874,25 @@ mod plugin {
                 .accept_callback(callback.uri())
                 .map_err(|error| CallError::Domain(oauth_callback_error(error)))?;
             let client_id = correlated.issued_client_id().to_owned();
+            // SIWC dynamic registration returns a new issued client ID before
+            // token exchange. Save that token-free registration under the
+            // exact account via CAS, even when exchange or OIDC later fails.
+            // Returning registrations are already durable and must not be
+            // replaced speculatively.
+            let registration_record = if pending.prior.returning_client_id().is_none() {
+                let registered = pending.prior.registered_client(&client_id);
+                if !rotate(host, &identity, &pending.prior, &registered).map_err(|_| {
+                    CallError::Domain(unavailable("OAuth registration persistence failed"))
+                })? {
+                    return Err(CallError::Domain(problem(
+                        ProviderErrorCode::Conflict,
+                        "ChatGPT registration was superseded; sign in again for this account",
+                    )));
+                }
+                Some(registered)
+            } else {
+                None
+            };
             // The typed SIWC exchange_form already returns Zeroizing<String>:
             // dropping it clears its allocation on both successful and failed
             // transport paths, without illegally moving from a Zeroizing guard.
@@ -905,7 +936,8 @@ mod plugin {
             };
             // Backend failures can contain private paths or implementation details.
             // Report the stage without forwarding an untrusted vault error.
-            if !rotate(host, &identity, &pending.prior, &record).map_err(|_| {
+            let expected = registration_record.as_ref().unwrap_or(&pending.prior);
+            if !rotate(host, &identity, expected, &record).map_err(|_| {
                 CallError::Domain(unavailable("OAuth credential persistence failed"))
             })? {
                 return Err(CallError::Domain(problem(
@@ -974,6 +1006,23 @@ mod tests {
         let record: StoredOAuth = serde_json::from_str(legacy).unwrap();
         assert!(record.registration_client_id.is_none());
         assert_eq!(serde_json::to_string(&record).unwrap(), legacy);
+    }
+
+    #[test]
+    fn first_registration_survives_failed_token_exchange_without_login() {
+        let previous = StoredOAuth {
+            host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
+            registration_client_id: None,
+            account: None,
+        };
+        let registered = previous.registered_client("oaiapp_issued");
+        assert_eq!(registered.host_id, previous.host_id);
+        assert_eq!(registered.returning_client_id(), Some("oaiapp_issued"));
+        assert!(registered.account.is_none());
+        let recovered: StoredOAuth =
+            serde_json::from_slice(&serde_json::to_vec(&registered).unwrap()).unwrap();
+        assert_eq!(recovered.returning_client_id(), Some("oaiapp_issued"));
+        assert!(recovered.account.is_none());
     }
 
     #[test]
