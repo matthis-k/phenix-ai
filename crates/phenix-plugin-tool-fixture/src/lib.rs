@@ -14,11 +14,8 @@ mod plugin {
     use super::*;
     use phenix_basic_contracts::ToolRegistrations;
 
-    #[derive(Default)]
-    pub struct State;
-
     #[provide(ToolRegistrations::list)]
-    fn list(_: &mut State) -> CallResult<Vec<ToolInfo>, BasicError> {
+    fn list() -> CallResult<Vec<ToolInfo>, BasicError> {
         Ok(vec![ToolInfo {
             id: ID.into(),
             description: "Reverse Unicode scalar values".into(),
@@ -28,11 +25,7 @@ mod plugin {
     }
 
     #[provide(ToolRegistrations::execute)]
-    fn execute(
-        _: &mut State,
-        host: &Host<'_>,
-        request: ToolRequest,
-    ) -> CallResult<ToolResult, BasicError> {
+    fn execute(host: &Host<'_>, request: ToolRequest) -> CallResult<ToolResult, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         if request.run.is_empty() || request.call.id.is_empty() {
             return Err(CallError::Domain(error(
