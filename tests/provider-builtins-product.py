@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-kernel, package, definitions, destination, openai_api = sys.argv[1:]
+kernel, package, definitions, destination, openai_api, credentials = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 provider = "phenix.provider.builtins"
@@ -42,7 +42,10 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         slots = []
         artifacts = [package]
         if selected_contributor:
-            artifacts.append(openai_api)
+            artifacts.extend([openai_api, credentials])
+            slots.append(dict(caller="phenix.provider.openai-api", slot="Credentials",
+                              index=0, provider="phenix.provider.credential-files",
+                              export="Credentials"))
             slots.append(dict(caller=provider, slot="Contributors", index=0,
                               provider="phenix.provider.openai-api", export="Registrations"))
             grants.append(dict(caller=provider, interface=registrations_contract,
