@@ -64,6 +64,7 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
+    provide(phenix_provider_contracts::ProviderRegistrations, slot = "Registrations"),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
@@ -71,6 +72,7 @@ mod plugin {
     use phenix_provider_contracts::{
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
         ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -97,6 +99,16 @@ mod plugin {
             )));
         }
         Ok(())
+    }
+
+    /// Startup-only immutable provider declarations. This is an ordinary
+    /// M1 operation, not a dynamic registration callback or authorization.
+    #[provide(ProviderRegistrations::list)]
+    fn registrations_list(_: &mut State) -> CallResult<ProviderPage, ProviderError> {
+        Ok(ProviderPage {
+            providers: catalog().map_err(CallError::Domain)?,
+            revision: 1,
+        })
     }
 
     #[provide(ProviderCatalog::list)]
@@ -255,9 +267,9 @@ mod tests {
     }
 
     #[test]
-    fn native_plugin_defines_two_typed_operations() {
+    fn native_plugin_exposes_typed_registration_contribution() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 2);
+        assert_eq!(metadata.provides.len(), 3);
     }
 }
