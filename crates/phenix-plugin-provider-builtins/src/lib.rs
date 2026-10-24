@@ -66,8 +66,15 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
-    provide(phenix_provider_contracts::ProviderRegistrations, slot = "Registrations"),
-    require(phenix_provider_contracts::ProviderRegistrations, slot = "Contributors", many(min = 0)),
+    provide(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Registrations"
+    ),
+    require(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Contributors",
+        many(min = 0)
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
@@ -126,9 +133,9 @@ mod plugin {
             } else {
                 let mut pages = Vec::with_capacity(count);
                 for index in 0..count {
-                    pages.push(imports::Contributors::invoke_at::<ProviderRegistrations::list>(
-                        host, index, &(),
-                    )?);
+                    pages.push(imports::Contributors::invoke_at::<
+                        ProviderRegistrations::list,
+                    >(host, index, &())?);
                 }
                 merge_registration_pages(pages).map_err(|_| {
                     CallError::Domain(error(
@@ -139,7 +146,10 @@ mod plugin {
             };
             state.selected = Some(selected);
         }
-        Ok(state.selected.as_deref().expect("initialized provider catalog"))
+        Ok(state
+            .selected
+            .as_deref()
+            .expect("initialized provider catalog"))
     }
 
     fn selected_provider(
@@ -152,7 +162,10 @@ mod plugin {
             .find(|item| item.id == id)
             .cloned()
             .ok_or_else(|| {
-                CallError::Domain(error(ProviderErrorCode::NotFound, "unknown installed provider"))
+                CallError::Domain(error(
+                    ProviderErrorCode::NotFound,
+                    "unknown installed provider",
+                ))
             })
     }
 
@@ -168,7 +181,10 @@ mod plugin {
             .find(|item| item.id == connection_id)
             .map(|item| !item.auth_methods.is_empty())
             .ok_or_else(|| {
-                CallError::Domain(error(ProviderErrorCode::NotFound, "unknown provider connection"))
+                CallError::Domain(error(
+                    ProviderErrorCode::NotFound,
+                    "unknown provider connection",
+                ))
             })
     }
 
