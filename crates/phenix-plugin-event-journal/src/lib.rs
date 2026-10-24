@@ -91,10 +91,9 @@ mod plugin {
     use super::{append_checked, page_from, storage_error, JOURNAL_KEY};
     use phenix_basic_contracts::{
         decode, encode, BasicError, ErrorCode, Event, EventJournal, EventPage, JournalAppend,
-        JournalQuery, ObserverCheckpoint, ObserverRequest, RecordKey, Storage, StorageEdit,
-        StorageTransaction,
+        JournalQuery, ObserverCheckpoint, ObserverRequest, RecordKey, Storage,
     };
-    use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
+    use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
     pub struct State;
@@ -198,23 +197,15 @@ mod plugin {
             ))
         })?;
         let data = encode(&saved)?;
-        let records = host.invoke::<Storage::transact>(
+        let key = observer_key(&saved.observer)?;
+        phenix_basic_contracts::transact_one(
+            host,
             "Storage",
-            &StorageTransaction {
-                session: saved.session.clone(),
-                edits: vec![StorageEdit {
-                    key: observer_key(&saved.observer)?,
-                    expected: current.revision,
-                    data: data.clone(),
-                }],
-            },
+            &saved.session,
+            &key,
+            current.revision,
+            data,
         )?;
-        if records.len() != 1 || !records[0].matches_commit(current.revision, &data) {
-            return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed,
-                "storage returned an invalid observer checkpoint",
-            )));
-        }
         Ok(saved)
     }
 
@@ -250,23 +241,14 @@ mod plugin {
             return Ok(count);
         }
         let data = encode(&updated)?;
-        let records = host.invoke::<Storage::transact>(
+        phenix_basic_contracts::transact_one(
+            host,
             "Storage",
-            &StorageTransaction {
-                session: request.session,
-                edits: vec![StorageEdit {
-                    key: JOURNAL_KEY.into(),
-                    expected: revision,
-                    data: data.clone(),
-                }],
-            },
+            &request.session,
+            JOURNAL_KEY,
+            revision,
+            data,
         )?;
-        if records.len() != 1 || !records[0].matches_commit(revision, &data) {
-            return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed,
-                "storage transaction returned an invalid journal commit",
-            )));
-        }
         Ok(count)
     }
 
