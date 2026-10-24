@@ -324,6 +324,15 @@ pub struct ModelPage {
     pub revision: u64,
 }
 
+/// Immutable registration data contributed by a selected plugin at startup.
+/// This contract does not authenticate an account, make models available,
+/// select an adapter, or grant authority to the registration's provider IDs.
+/// A manager must validate and merge all selected contributions before use.
+#[contract(id = "phenix.provider.registrations@1")]
+pub trait ProviderRegistrations {
+    fn list(&self) -> Result<ProviderPage, ProviderError>;
+}
+
 #[contract(id = "phenix.provider.catalog@1")]
 pub trait ProviderCatalog {
     fn list(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
@@ -344,6 +353,7 @@ pub trait ProviderAuth {
     version = "1.0.0",
     profile = "definitions",
     define(ProviderCatalog),
+    define(ProviderRegistrations),
     define(ProviderAuth),
     define(ProviderCredentials),
     define(HttpModelSession)
@@ -507,7 +517,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 4);
+        assert_eq!(metadata.definitions.len(), 5);
     }
 
     #[test]

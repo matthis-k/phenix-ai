@@ -5,7 +5,7 @@
 //! authentication or model entitlement until an authorized credentials and
 //! discovery implementation is installed. It is not a mock successful login.
 
-use phenix_provider_builtins::{registrations, validate_registrations};
+use phenix_provider_builtins::{merge_registration_pages, registrations, validate_registrations};
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
@@ -28,6 +28,7 @@ fn catalog() -> Result<Vec<ProviderDescriptor>, ProviderError> {
     Ok(providers)
 }
 
+#[cfg(test)]
 fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
     catalog()?
         .into_iter()
@@ -35,6 +36,7 @@ fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
         .ok_or_else(|| error(ProviderErrorCode::NotFound, "unknown installed provider"))
 }
 
+#[cfg(test)]
 fn connection(provider_id: &str, connection_id: &str) -> Result<bool, ProviderError> {
     let provider = provider(provider_id)?;
     provider
@@ -64,6 +66,15 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
+    provide(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Registrations"
+    ),
+    require(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Contributors",
+        many(min = 0)
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
@@ -71,11 +82,15 @@ mod plugin {
     use phenix_provider_contracts::{
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
         ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
     #[derive(Default)]
-    pub struct State;
+    pub struct State {
+        /// One immutable snapshot per plugin generation, not mutable Storage.
+        selected: Option<Vec<ProviderDescriptor>>,
+    }
 
     fn check(host: &Host<'_>, scope: &str) -> CallResult<(), ProviderError> {
         if scope.is_empty()
@@ -99,38 +114,122 @@ mod plugin {
         Ok(())
     }
 
-    #[provide(ProviderCatalog::list)]
-    fn list(
-        _: &mut State,
+    /// Read only the preselected, verified M1 contributions and pin their
+    /// validated snapshot to the plugin-owned state for this generation.
+    fn selected_catalog<'a>(
+        state: &'a mut State,
         host: &Host<'_>,
-        request: ProviderQuery,
-    ) -> CallResult<ProviderPage, ProviderError> {
-        check(host, &request.scope)?;
+    ) -> CallResult<&'a [ProviderDescriptor], ProviderError> {
+        if state.selected.is_none() {
+            let count = imports::Contributors::count(host)?;
+            if count > 256 {
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::InvalidInput,
+                    "too many selected provider contributors",
+                )));
+            }
+            let selected = if count == 0 {
+                catalog().map_err(CallError::Domain)?
+            } else {
+                let mut pages = Vec::with_capacity(count);
+                for index in 0..count {
+                    pages.push(imports::Contributors::invoke_at::<
+                        ProviderRegistrations::list,
+                    >(host, index, &())?);
+                }
+                merge_registration_pages(pages).map_err(|_| {
+                    CallError::Domain(error(
+                        ProviderErrorCode::InvalidInput,
+                        "invalid or conflicting selected provider registrations",
+                    ))
+                })?
+            };
+            state.selected = Some(selected);
+        }
+        Ok(state
+            .selected
+            .as_deref()
+            .expect("initialized provider catalog"))
+    }
+
+    fn selected_provider(
+        state: &mut State,
+        host: &Host<'_>,
+        id: &str,
+    ) -> CallResult<ProviderDescriptor, ProviderError> {
+        selected_catalog(state, host)?
+            .iter()
+            .find(|item| item.id == id)
+            .cloned()
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ProviderErrorCode::NotFound,
+                    "unknown installed provider",
+                ))
+            })
+    }
+
+    fn selected_connection(
+        state: &mut State,
+        host: &Host<'_>,
+        provider_id: &str,
+        connection_id: &str,
+    ) -> CallResult<bool, ProviderError> {
+        selected_provider(state, host, provider_id)?
+            .connections
+            .iter()
+            .find(|item| item.id == connection_id)
+            .map(|item| !item.auth_methods.is_empty())
+            .ok_or_else(|| {
+                CallError::Domain(error(
+                    ProviderErrorCode::NotFound,
+                    "unknown provider connection",
+                ))
+            })
+    }
+
+    /// Immutable builtin contributor. This operation does not need provider
+    /// management authorization and never returns credentials or models.
+    #[provide(ProviderRegistrations::list)]
+    fn registrations_list(_: &mut State) -> CallResult<ProviderPage, ProviderError> {
         Ok(ProviderPage {
             providers: catalog().map_err(CallError::Domain)?,
             revision: 1,
         })
     }
 
+    #[provide(ProviderCatalog::list)]
+    fn list(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderQuery,
+    ) -> CallResult<ProviderPage, ProviderError> {
+        check(host, &request.scope)?;
+        Ok(ProviderPage {
+            providers: selected_catalog(state, host)?.to_vec(),
+            revision: 1,
+        })
+    }
+
     #[provide(ProviderCatalog::describe)]
     fn describe(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: ProviderDetailsQuery,
     ) -> CallResult<ProviderDescriptor, ProviderError> {
         check(host, &request.scope)?;
-        provider(&request.provider_id).map_err(CallError::Domain)
+        selected_provider(state, host, &request.provider_id)
     }
 
     #[provide(ProviderCatalog::models)]
     fn models(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: ModelQuery,
     ) -> CallResult<ModelPage, ProviderError> {
         check(host, &request.scope)?;
         let requires_auth =
-            connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+            selected_connection(state, host, &request.provider_id, &request.connection_id)?;
         // Registration alone proves neither model entitlement nor a usable
         // inference transport. A credential-free connection must not be
         // misreported as requiring authentication when discovery is absent.
@@ -139,12 +238,12 @@ mod plugin {
 
     #[provide(ProviderAuth::status)]
     fn status(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: AuthQuery,
     ) -> CallResult<AuthenticationStatus, ProviderError> {
         check(host, &request.scope)?;
-        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
         Ok(AuthenticationStatus {
             provider_id: request.provider_id,
             connection_id: request.connection_id,
@@ -154,12 +253,12 @@ mod plugin {
 
     #[provide(ProviderAuth::begin)]
     fn begin(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: AuthStart,
     ) -> CallResult<AuthChallenge, ProviderError> {
         check(host, &request.scope)?;
-        let provider = provider(&request.provider_id).map_err(CallError::Domain)?;
+        let provider = selected_provider(state, host, &request.provider_id)?;
         let chosen = provider
             .connections
             .iter()
@@ -188,12 +287,12 @@ mod plugin {
 
     #[provide(ProviderAuth::poll)]
     fn poll(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: AuthAttemptQuery,
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &request.scope)?;
-        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
         Err(CallError::Domain(error(
             ProviderErrorCode::NotFound,
             "no authentication attempt registered",
@@ -202,12 +301,12 @@ mod plugin {
 
     #[provide(ProviderAuth::cancel)]
     fn cancel(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: AuthAttemptQuery,
     ) -> CallResult<AuthAttemptState, ProviderError> {
         check(host, &request.scope)?;
-        connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
         Err(CallError::Domain(error(
             ProviderErrorCode::NotFound,
             "no authentication attempt registered",
@@ -255,9 +354,9 @@ mod tests {
     }
 
     #[test]
-    fn native_plugin_defines_two_typed_operations() {
+    fn native_plugin_exposes_typed_registration_contribution() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 2);
+        assert_eq!(metadata.provides.len(), 3);
     }
 }
