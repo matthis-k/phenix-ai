@@ -641,27 +641,45 @@
       # not an implicit no-auth or API-key provider fallback.
       chatGptCredentialResource =
         "phenix.credentials.6f70656e6169.63686174677074.706572736f6e616c";
-      # Explicit local sign-out only. Never grant the editor root the
-      # private OAuth record import or refresh-token compare_exchange.
-      chatGptLogoutComposition = pkgs.writeText "phenix-chatgpt-local-logout.json"
+      # The public root can only request sign-out. The provider plugin
+      # privately resolves and CAS-clears the exact OAuth account before
+      # attempting remote revocation. The editor has no access to tokens.
+      chatGptLogoutComposition = pkgs.writeText "phenix-chatgpt-provider-logout.json"
         (builtins.toJSON {
           format = "phenix.composition.v3";
           entry = {
             interface = "phenix.provider.credentials@1";
             operation = "revoke";
-            provider = "phenix.provider.credential-files";
+            provider = "phenix.provider.chatgpt";
           };
           definitions = [ "${providerDefinitions}" ];
-          artifacts = [ "${providerCredentialStore}" ];
-          slots = [];
-          grants = [{
-            caller = "root";
-            interface = "phenix.provider.credentials@1";
-            operation = "revoke";
-            resources = [ chatGptCredentialResource ];
+          artifacts = [ "${providerChatGpt}" "${providerCredentialStore}" ];
+          slots = [{
+            caller = "phenix.provider.chatgpt";
+            slot = "Credentials";
+            provider = "phenix.provider.credential-files";
+            export = "Credentials";
+            index = 0;
           }];
+          grants = [
+            {
+              caller = "root";
+              interface = "phenix.provider.credentials@1";
+              operation = "revoke";
+              resources = [ chatGptCredentialResource ];
+            }
+          ] ++ (map (operation: {
+            caller = "phenix.provider.chatgpt";
+            interface = "phenix.provider.credentials@1";
+            inherit operation;
+            resources = [ chatGptCredentialResource ];
+          }) [ "resolve" "compare_exchange" ]);
           authority = {
-            operations = [ "phenix.provider.credentials@1/revoke" ];
+            operations = [
+              "phenix.provider.credentials@1/revoke"
+              "phenix.provider.credentials@1/resolve"
+              "phenix.provider.credentials@1/compare_exchange"
+            ];
             resources = [ chatGptCredentialResource ];
           };
           resource = chatGptCredentialResource;

@@ -34,6 +34,9 @@ pub enum ProviderErrorCode {
     Unavailable,
     Conflict,
     AuthenticationRequired,
+    // Local credential generation was revoked, but the remote refresh
+    // session could not be confirmed revoked (network/issuer unavailable).
+    RemoteRevocationUnconfirmed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
