@@ -66,16 +66,20 @@ fn tool(definition: &ToolDefinition) -> ToolInfo {
     }
 }
 
-/// Cursor semantics are independent of the native host. Only the caller's
-/// session-scoped catalog handler can reach this method.
-pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
+/// Page a pinned catalog: the cursor is bound to session, query and the
+/// immutable contributor snapshot revision.
+fn catalog_from(
+    request: &ToolQuery,
+    tools: &[ToolInfo],
+    revision: u64,
+) -> Result<ToolPage, BasicError> {
     if request.limit == 0 {
         return Err(error(ErrorCode::InvalidInput, "page size must be positive"));
     }
     let offset = if let Some(cursor) = &request.cursor {
         if cursor.session != request.session
             || cursor.query != request.query
-            || cursor.revision != REVISION
+            || cursor.revision != revision
         {
             return Err(error(
                 ErrorCode::InvalidCursor,
@@ -87,7 +91,7 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
     } else {
         0
     };
-    let matches = TOOLS
+    let matches = tools
         .iter()
         .filter(|definition| definition.id.contains(&request.query))
         .collect::<Vec<_>>();
@@ -97,18 +101,21 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
     let take = usize::try_from(request.limit).unwrap_or(usize::MAX);
     let end = offset.saturating_add(take).min(matches.len());
     Ok(ToolPage {
-        tools: matches[offset..end]
-            .iter()
-            .map(|definition| tool(definition))
-            .collect(),
-        revision: REVISION,
+        tools: matches[offset..end].iter().map(|tool| (*tool).clone()).collect(),
+        revision,
         next: (end < matches.len()).then(|| CatalogCursor {
             session: request.session.clone(),
             query: request.query.clone(),
-            revision: REVISION,
+            revision,
             offset: end as u64,
         }),
     })
+}
+
+/// The default composition remains usable without external contributors.
+pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
+    let tools = TOOLS.iter().map(tool).collect::<Vec<_>>();
+    catalog_from(request, &tools, REVISION)
 }
 
 /// Validate all arguments before effects. A deliberately failing fixture is
@@ -128,28 +135,127 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
     id = "phenix.basic.tools",
     version = "1.0.0",
     provide(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
-    provide(phenix_basic_contracts::ToolExecute, slot = "Tools")
+    provide(phenix_basic_contracts::ToolExecute, slot = "Tools"),
+    require(
+        phenix_basic_contracts::ToolRegistrations,
+        slot = "Contributors",
+        many(min = 0)
+    )
 )]
 mod plugin {
     use super::*;
     use phenix_basic_contracts::{
-        BasicError, Scope, ToolCatalog, ToolExecute, ToolPage, ToolQuery, ToolRequest, ToolResult,
+        BasicError, Scope, ToolCatalog, ToolExecute, ToolPage, ToolQuery, ToolRegistrations,
+        ToolRequest, ToolResult,
     };
     use phenix_sdk::{CallError, CallResult, Host};
+
+    /// Stable, preauthorized execution route, not a model-supplied provider ID.
+    struct ToolSnapshot {
+        tools: Vec<ToolInfo>,
+        routes: BTreeMap<String, Option<usize>>,
+        revision: u64,
+    }
 
     #[derive(Default)]
     pub struct State {
         counts: BTreeMap<String, u64>,
+        snapshot: Option<ToolSnapshot>,
+    }
+
+    fn selected_snapshot<'a>(
+        state: &'a mut State,
+        host: &Host<'_>,
+    ) -> CallResult<&'a ToolSnapshot, BasicError> {
+        if state.snapshot.is_none() {
+            let count = imports::Contributors::count(host)?;
+            if count > 64 {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidInput,
+                    "too many tool contributors",
+                )));
+            }
+            let mut routes = BTreeMap::new();
+            let mut tools = Vec::new();
+            for definition in TOOLS {
+                routes.insert(definition.id.to_owned(), None);
+                tools.push(tool(definition));
+            }
+            for index in 0..count {
+                let contributions = imports::Contributors::invoke_at::<ToolRegistrations::list>(
+                    host,
+                    index,
+                    &(),
+                )?;
+                if contributions.len() > 256 {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidInput,
+                        "too many registered tools",
+                    )));
+                }
+                for offered in contributions {
+                    if offered.id.is_empty()
+                        || offered.id.len() > 128
+                        || !offered.id.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric()
+                                || byte == b'.'
+                                || byte == b'-'
+                                || byte == b'_'
+                        })
+                        || offered.description.is_empty()
+                        || offered.description.len() > 4096
+                        || offered.arguments_schema.len() > 16384
+                        || !serde_json::from_str::<serde_json::Value>(&offered.arguments_schema)
+                            .is_ok_and(|schema| schema.is_object())
+                        || tools.len() >= 256
+                        || routes.insert(offered.id.clone(), Some(index)).is_some()
+                    {
+                        return Err(CallError::Domain(error(
+                            ErrorCode::InvalidInput,
+                            "invalid or conflicting tool registration",
+                        )));
+                    }
+                    tools.push(offered);
+                }
+            }
+            tools.sort_by(|a, b| a.id.cmp(&b.id));
+            let revision = if count == 0 {
+                REVISION
+            } else {
+                tools.iter().fold(14695981039346656037_u64, |mut hash, entry| {
+                    for byte in entry
+                        .id
+                        .bytes()
+                        .chain([0])
+                        .chain(entry.description.bytes())
+                        .chain([0])
+                        .chain(entry.arguments_schema.bytes())
+                        .chain([u8::from(entry.idempotent), 0])
+                    {
+                        hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+                    }
+                    hash
+                }).max(1)
+            };
+            state.snapshot = Some(ToolSnapshot {
+                tools,
+                routes,
+                revision,
+            });
+        }
+        Ok(state.snapshot.as_ref().expect("initialized tool snapshot"))
     }
 
     #[provide(ToolCatalog::list)]
     fn list(
-        _: &mut State,
+        state: &mut State,
         host: &Host<'_>,
         request: ToolQuery,
     ) -> CallResult<ToolPage, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        super::catalog(&request).map_err(CallError::Domain)
+        let snapshot = selected_snapshot(state, host)?;
+        super::catalog_from(&request, &snapshot.tools, snapshot.revision)
+            .map_err(CallError::Domain)
     }
 
     #[provide(ToolExecute::execute)]
@@ -165,28 +271,41 @@ mod plugin {
                 "missing run",
             )));
         }
-        // Unknown tools and invalid JSON fail without consuming a tool effect.
-        if selected(&request.call.tool).is_none() {
-            return Err(CallError::Domain(error(
-                ErrorCode::NotFound,
-                "tool not found",
-            )));
-        }
-        let _: String = serde_json::from_str(&request.call.arguments)
-            .map_err(|_| CallError::Domain(error(ErrorCode::InvalidInput, "invalid tool JSON")))?;
+        // Resolve only against the sealed, kernel-selected contributor table.
+        // Invalid names/JSON cannot increment counters or invoke effects.
+        let route = selected_snapshot(state, host)?
+            .routes
+            .get(&request.call.tool)
+            .copied()
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::NotFound, "tool not found")))?;
         if request.call.id.is_empty() {
             return Err(CallError::Domain(error(
                 ErrorCode::InvalidInput,
                 "missing call id",
             )));
         }
+        let parsed: serde_json::Value = serde_json::from_str(&request.call.arguments)
+            .map_err(|_| CallError::Domain(error(ErrorCode::InvalidInput, "invalid tool JSON")))?;
+        if route.is_none() && !parsed.is_string() {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "expected JSON string argument",
+            )));
+        }
         let counter = state.counts.entry(request.session.clone()).or_default();
         *counter = counter.checked_add(1).ok_or_else(|| {
             CallError::Domain(error(ErrorCode::ToolFailed, "call count overflow"))
         })?;
-        super::execute(&request.call)
-            .map(|text| ToolResult { text })
-            .map_err(CallError::Domain)
+        match route {
+            Some(index) => imports::Contributors::invoke_at::<ToolRegistrations::execute>(
+                host,
+                index,
+                &request,
+            ),
+            None => super::execute(&request.call)
+                .map(|text| ToolResult { text })
+                .map_err(CallError::Domain),
+        }
     }
 
     #[provide(ToolExecute::count)]
