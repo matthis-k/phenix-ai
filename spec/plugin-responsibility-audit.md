@@ -1,5 +1,7 @@
 # Plugin responsibility audit and provider registry target
 
+**Usage-first follow-up:** [Plugin author APIs and derived architecture](usage-first-plugin-architecture.md) — user workflows and usage sketches precede proposed contracts, ownership, routing and migration gates.
+
 Audit baseline: `main` tree `00598cedf0a345934098d950881a702110001f83` (2026-10-24).
 
 **Scope:** 52 workspace crates, 28 `phenix-plugin-*` crates. The extra libraries, contracts, tools, and test/product crates are not automatically runtime plugins. Classification is by implemented contract and shipped/test composition, not by crate name alone.
