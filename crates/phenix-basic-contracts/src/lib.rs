@@ -706,7 +706,9 @@ mod tests {
             &payload,
         )
         .is_err());
-        assert!(checked_single_commit_ack(std::slice::from_ref(&acknowledged), 6, &payload).is_err());
+        assert!(
+            checked_single_commit_ack(std::slice::from_ref(&acknowledged), 6, &payload).is_err()
+        );
         let wrong_payload = Blob(vec![4]);
         assert!(checked_single_commit_ack(&[acknowledged], 7, &wrong_payload).is_err());
     }
