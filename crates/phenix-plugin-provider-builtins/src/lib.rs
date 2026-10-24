@@ -28,6 +28,7 @@ fn catalog() -> Result<Vec<ProviderDescriptor>, ProviderError> {
     Ok(providers)
 }
 
+#[cfg(test)]
 fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
     catalog()?
         .into_iter()
@@ -35,6 +36,7 @@ fn provider(id: &str) -> Result<ProviderDescriptor, ProviderError> {
         .ok_or_else(|| error(ProviderErrorCode::NotFound, "unknown installed provider"))
 }
 
+#[cfg(test)]
 fn connection(provider_id: &str, connection_id: &str) -> Result<bool, ProviderError> {
     let provider = provider(provider_id)?;
     provider
@@ -113,6 +115,12 @@ mod plugin {
     ) -> CallResult<&'a [ProviderDescriptor], ProviderError> {
         if state.selected.is_none() {
             let count = imports::Contributors::count(host)?;
+            if count > 256 {
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::InvalidInput,
+                    "too many selected provider contributors",
+                )));
+            }
             let selected = if count == 0 {
                 catalog().map_err(CallError::Domain)?
             } else {
