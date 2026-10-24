@@ -254,9 +254,9 @@ struct Pending {
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderAuthDelegates, ProviderCompletion, ProviderQuery, ProviderRegistrations,
-        ProviderRuntime, AuthenticationCommand, AuthenticationEvent,
+        AuthenticationCommand, AuthenticationEvent, ProviderAuth, ProviderAuthDelegates,
+        ProviderCatalog, ProviderCompletion, ProviderCredentials, ProviderDetailsQuery,
+        ProviderPage, ProviderQuery, ProviderRegistrations, ProviderRuntime,
     };
     use phenix_sdk::{Authority, CallError, CallResult, Host, Operation, ScopedRequest};
 
