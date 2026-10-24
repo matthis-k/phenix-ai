@@ -6,20 +6,63 @@ use phenix_basic_contracts::{
 use std::collections::BTreeMap;
 
 const REVISION: u64 = 1;
-const NAMES: [&str; 3] = ["fail", "length", "uppercase"];
 
-fn tool(id: &str) -> ToolInfo {
-    ToolInfo {
-        id: id.into(),
-        description: match id {
-            "uppercase" => "Uppercase a string",
-            "length" => "Count Unicode characters",
-            "fail" => "Return a typed tool failure",
-            _ => unreachable!("only authored tools"),
-        }
-        .into(),
-        arguments_schema: r#"{"type":"string"}"#.into(),
+/// One source of truth for the shipped tool metadata and execution handler.
+/// Runtime routing and JSON admission use this table, not repeated name matches.
+struct ToolDefinition {
+    id: &'static str,
+    description: &'static str,
+    arguments_schema: &'static str,
+    idempotent: bool,
+    execute: fn(&str) -> Result<String, BasicError>,
+}
+
+fn uppercase(input: &str) -> Result<String, BasicError> {
+    Ok(input.to_uppercase())
+}
+
+fn length(input: &str) -> Result<String, BasicError> {
+    Ok(input.chars().count().to_string())
+}
+
+fn fail(_: &str) -> Result<String, BasicError> {
+    Err(error(ErrorCode::ToolFailed, "scripted failure"))
+}
+
+const TOOLS: &[ToolDefinition] = &[
+    ToolDefinition {
+        id: "fail",
+        description: "Return a typed tool failure",
+        arguments_schema: r#"{"type":"string"}"#,
         idempotent: true,
+        execute: fail,
+    },
+    ToolDefinition {
+        id: "length",
+        description: "Count Unicode characters",
+        arguments_schema: r#"{"type":"string"}"#,
+        idempotent: true,
+        execute: length,
+    },
+    ToolDefinition {
+        id: "uppercase",
+        description: "Uppercase a string",
+        arguments_schema: r#"{"type":"string"}"#,
+        idempotent: true,
+        execute: uppercase,
+    },
+];
+
+fn selected(id: &str) -> Option<&'static ToolDefinition> {
+    TOOLS.iter().find(|definition| definition.id == id)
+}
+
+fn tool(definition: &ToolDefinition) -> ToolInfo {
+    ToolInfo {
+        id: definition.id.into(),
+        description: definition.description.into(),
+        arguments_schema: definition.arguments_schema.into(),
+        idempotent: definition.idempotent,
     }
 }
 
@@ -44,10 +87,9 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
     } else {
         0
     };
-    let matches = NAMES
+    let matches = TOOLS
         .iter()
-        .filter(|id| id.contains(&request.query))
-        .copied()
+        .filter(|definition| definition.id.contains(&request.query))
         .collect::<Vec<_>>();
     if offset > matches.len() {
         return Err(error(ErrorCode::InvalidCursor, "cursor beyond result set"));
@@ -55,7 +97,10 @@ pub fn catalog(request: &ToolQuery) -> Result<ToolPage, BasicError> {
     let take = usize::try_from(request.limit).unwrap_or(usize::MAX);
     let end = offset.saturating_add(take).min(matches.len());
     Ok(ToolPage {
-        tools: matches[offset..end].iter().map(|id| tool(id)).collect(),
+        tools: matches[offset..end]
+            .iter()
+            .map(|definition| tool(definition))
+            .collect(),
         revision: REVISION,
         next: (end < matches.len()).then(|| CatalogCursor {
             session: request.session.clone(),
@@ -74,12 +119,9 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
     }
     let input: String = serde_json::from_str(&call.arguments)
         .map_err(|_| error(ErrorCode::InvalidInput, "expected JSON string argument"))?;
-    match call.tool.as_str() {
-        "uppercase" => Ok(input.to_uppercase()),
-        "length" => Ok(input.chars().count().to_string()),
-        "fail" => Err(error(ErrorCode::ToolFailed, "scripted failure")),
-        _ => Err(error(ErrorCode::NotFound, "tool not found")),
-    }
+    let definition =
+        selected(&call.tool).ok_or_else(|| error(ErrorCode::NotFound, "tool not found"))?;
+    (definition.execute)(&input)
 }
 
 #[phenix_sdk::plugin(
@@ -124,7 +166,7 @@ mod plugin {
             )));
         }
         // Unknown tools and invalid JSON fail without consuming a tool effect.
-        if !NAMES.contains(&request.call.tool.as_str()) {
+        if selected(&request.call.tool).is_none() {
             return Err(CallError::Domain(error(
                 ErrorCode::NotFound,
                 "tool not found",
@@ -202,6 +244,29 @@ mod tests {
             catalog(&page("", None, 0)).unwrap_err().code,
             ErrorCode::InvalidInput
         );
+    }
+
+    #[test]
+    fn declarations_and_dispatch_use_the_same_unique_ordered_registry() {
+        let catalog = catalog(&page("", None, 10)).unwrap();
+        assert_eq!(catalog.tools.len(), TOOLS.len());
+        assert!(TOOLS.windows(2).all(|pair| pair[0].id < pair[1].id));
+        for definition in TOOLS {
+            let entry = catalog
+                .tools
+                .iter()
+                .find(|item| item.id == definition.id)
+                .unwrap();
+            assert_eq!(entry.description, definition.description);
+            assert_eq!(entry.arguments_schema, definition.arguments_schema);
+            let call = ToolCall {
+                id: "registered".into(),
+                tool: definition.id.into(),
+                arguments: r#""example""#.into(),
+            };
+            let outcome = execute(&call);
+            assert!(outcome.is_ok() || outcome.unwrap_err().code == ErrorCode::ToolFailed);
+        }
     }
 
     #[test]
