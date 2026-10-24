@@ -268,7 +268,8 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 14
+        assert len(report["definitions"]) == 15
+        assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
         assert report["plugin"] == "phenix.basic-contracts"
@@ -1287,6 +1288,10 @@
         "phenix-plugin-basic-tools"
         "phenix_plugin_basic_tools"
         ./crates/phenix-plugin-basic-tools;
+      toolFixture = basicNativePlugin
+        "phenix-plugin-tool-fixture"
+        "phenix_plugin_tool_fixture"
+        ./crates/phenix-plugin-tool-fixture;
       eventJournal = basicNativePlugin
         "phenix-plugin-event-journal"
         "phenix_plugin_event_journal"
@@ -2304,6 +2309,14 @@
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b3-tools ${basicTools} ${basicDefinitions} $out
       '';
+      toolContributorsCheck = pkgs.runCommand "phenix-tool-contributors-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/tool-contributors-product.py} \
+          ${kernel}/bin/phenix-kernel ${basicTools} ${toolFixture} ${basicDefinitions} "$out"
+        test -s "$out/verified.json"
+      '';
       eventJournalCheck = pkgs.runCommand "phenix-b2-journal" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b2-journal ${eventJournal} ${storageFixture} ${basicDefinitions} $out
@@ -2989,6 +3002,7 @@
         b4-scripted = scriptedModelCheck;
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
+        tool-contributors = toolContributorsCheck;
         b2-journal = eventJournalCheck;
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
