@@ -13,7 +13,7 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
-    siwc::{AuthorizationAttempt, Registration},
+    siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
     siwc_transport::{
         chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
@@ -48,6 +48,15 @@ fn denied(message: &str) -> ProviderError {
 fn unavailable(message: &str) -> ProviderError {
     problem(ProviderErrorCode::Unavailable, message)
 }
+fn oauth_callback_error(error: RegistrationError) -> ProviderError {
+    match error {
+        RegistrationError::AuthorizationDenied => denied("ChatGPT OAuth authorization was declined"),
+        RegistrationError::InvalidState => denied("OAuth callback state did not match"),
+        RegistrationError::ClientMismatch => denied("OAuth issued client ID did not match"),
+        _ => denied("OAuth callback parameters were invalid"),
+    }
+}
+
 // Only fixed, provider-authored diagnostics cross the ACP boundary. Never
 // propagate token endpoints' response bodies, callback URLs or vault errors.
 fn token_exchange_error(error: TransportError) -> ProviderError {
@@ -849,7 +858,7 @@ mod plugin {
         let result = (|| -> CallResult<(VerifiedChatGptIdentity, StoredOAuth), ProviderError> {
             let correlated = attempt
                 .accept_callback(callback.uri())
-                .map_err(|_| CallError::Domain(denied("OAuth callback state was invalid")))?;
+                .map_err(|error| CallError::Domain(oauth_callback_error(error)))?;
             let client_id = correlated.issued_client_id().to_owned();
             // The typed SIWC exchange_form already returns Zeroizing<String>:
             // dropping it clears its allocation on both successful and failed
@@ -1040,6 +1049,9 @@ mod tests {
 
     #[test]
     fn oauth_completion_failures_report_the_stage_without_sensitive_data() {
+        let declined = oauth_callback_error(RegistrationError::AuthorizationDenied);
+        assert_eq!(declined.message, "ChatGPT OAuth authorization was declined");
+
         let exchange = token_exchange_error(TransportError::Rejected);
         assert_eq!(exchange.code, ProviderErrorCode::Denied);
         assert_eq!(
