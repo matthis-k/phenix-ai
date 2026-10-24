@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn auth_provider_requires_separate_credential_slot() {
         let meta = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
-        assert_eq!(meta.provides.len(), 2);
+        assert_eq!(meta.provides.len(), 3);
         assert_eq!(meta.requires.len(), 1);
         assert_eq!(meta.requires[0].slot, "Credentials");
     }
