@@ -696,7 +696,7 @@ mod tests {
             data: payload.clone(),
         };
         assert_eq!(
-            checked_single_commit_ack(&[acknowledged.clone()], 7, &payload).unwrap(),
+            checked_single_commit_ack(std::slice::from_ref(&acknowledged), 7, &payload).unwrap(),
             8
         );
         assert!(checked_single_commit_ack(&[], 7, &payload).is_err());
@@ -706,7 +706,7 @@ mod tests {
             &payload,
         )
         .is_err());
-        assert!(checked_single_commit_ack(&[acknowledged.clone()], 6, &payload).is_err());
+        assert!(checked_single_commit_ack(std::slice::from_ref(&acknowledged), 6, &payload).is_err());
         let wrong_payload = Blob(vec![4]);
         assert!(checked_single_commit_ack(&[acknowledged], 7, &wrong_payload).is_err());
     }
