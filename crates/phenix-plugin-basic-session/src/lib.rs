@@ -74,9 +74,9 @@ mod plugin {
     use super::{empty, reconcile_snapshot, well_formed_snapshot, RECORD};
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, ErrorCode, ReconcileTool, RecordKey, RunStatus, Scope,
-        Session, SessionSnapshot, Storage, StorageEdit, StorageTransaction,
+        Session, SessionSnapshot, Storage,
     };
-    use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
+    use phenix_sdk::{CallError, CallResult, Host};
     use std::collections::BTreeMap;
 
     /// Live sessions belong to the plugin instance. Storage holds recovery
@@ -148,23 +148,14 @@ mod plugin {
             CallError::Domain(error(ErrorCode::Conflict, "session revision overflow"))
         })?;
         let data = encode(&snapshot)?;
-        let records = host.invoke::<Storage::transact>(
+        phenix_basic_contracts::transact_one(
+            host,
             "Storage",
-            &StorageTransaction {
-                session: snapshot.session.clone(),
-                edits: vec![StorageEdit {
-                    key: RECORD.into(),
-                    expected,
-                    data: data.clone(),
-                }],
-            },
+            &snapshot.session,
+            RECORD,
+            expected,
+            data,
         )?;
-        if records.len() != 1 || !records[0].matches_commit(expected, &data) {
-            return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed,
-                "storage returned invalid session commit",
-            )));
-        }
         Ok(snapshot)
     }
 
