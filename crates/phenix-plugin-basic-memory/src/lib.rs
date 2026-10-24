@@ -52,9 +52,9 @@ mod plugin {
     };
     use phenix_basic_contracts::{
         decode, encode, error, BasicError, Context, ContextItem, ContextSet, ErrorCode, RecordKey,
-        Scope, Skill, SkillSet, Skills, Storage, StorageEdit, StorageTransaction,
+        Scope, Skill, SkillSet, Skills, Storage,
     };
-    use phenix_sdk::{CallError, CallResult, Code, Failure, Host, Portable};
+    use phenix_sdk::{CallError, CallResult, Host, Portable};
     use std::collections::BTreeMap;
 
     /// Per-instance authoritative values. Storage restores and durably saves
@@ -213,23 +213,7 @@ mod plugin {
             .checked_add(1)
             .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "revision overflow")))?;
         let data = encode(value)?;
-        let result = host.invoke::<Storage::transact>(
-            "Storage",
-            &StorageTransaction {
-                session: session.into(),
-                edits: vec![StorageEdit {
-                    key: key.into(),
-                    expected,
-                    data: data.clone(),
-                }],
-            },
-        )?;
-        if result.len() != 1 || !result[0].matches_commit(expected, &data) {
-            return Err(CallError::Kernel(Failure::new(
-                Code::PluginFailed,
-                "storage returned invalid memory commit",
-            )));
-        }
+        phenix_basic_contracts::transact_one(host, "Storage", session, key, expected, data)?;
         Ok(next)
     }
 
