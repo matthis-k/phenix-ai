@@ -513,6 +513,15 @@ pub struct RenderRequest {
 pub trait Model {
     fn complete(&self, request: ModelRequest) -> Result<ModelReply, BasicError>;
 }
+/// An immutable tool contribution accompanied by its own executable handler.
+/// Registering tool metadata never grants invocation authority. The selected
+/// M1 import slot itself pins both list and execute to the same implementation.
+#[contract(id = "phenix.basic.tool-registrations@1")]
+pub trait ToolRegistrations {
+    fn list(&self) -> Result<Vec<ToolInfo>, BasicError>;
+    fn execute(&self, request: ToolRequest) -> Result<ToolResult, BasicError>;
+}
+
 #[contract(id = "phenix.basic.catalog@1")]
 pub trait ToolCatalog {
     fn list(&self, request: ToolQuery) -> Result<ToolPage, BasicError>;
@@ -620,6 +629,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(Model),
     define(ToolCatalog),
     define(ToolExecute),
+    define(ToolRegistrations),
     define(Skills),
     define(Context),
     define(Session),
