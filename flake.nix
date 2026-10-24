@@ -1268,7 +1268,7 @@
         mkdir -p "$out"
         python ${./tests/provider-runtime-concrete-product.py} \
           ${kernel}/bin/phenix-kernel ${providerOpenAiApi} ${providerChatGpt} \
-          ${providerCredentialStore} ${providerDefinitions} "$out"
+          ${providerCredentialStore} ${providerDefinitions} "$out" ${providerOpenAiApiFixture}
         test -s "$out/verified.json"
       '';
       providerRuntimeProductCheck = pkgs.runCommand "phenix-provider-runtime-product" {
