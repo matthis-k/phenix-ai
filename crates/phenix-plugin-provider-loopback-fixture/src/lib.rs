@@ -87,8 +87,8 @@ fn authorized_models() -> Result<ModelPage, ProviderError> {
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
-        AuthenticationCommand, AuthenticationEvent, ProviderAuth, ProviderCatalog,
+        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
+        AuthenticationCommand, AuthenticationEvent, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderCompletion, ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
@@ -292,7 +292,7 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_provider_contracts::{AuthenticationCommand, AuthenticationEvent, AuthQuery};
+    use phenix_provider_contracts::{AuthQuery, AuthenticationCommand, AuthenticationEvent};
     use phenix_sdk::{ContractMetadata, Portable};
 
     #[test]
@@ -316,6 +316,9 @@ mod tests {
                 profiles: vec![],
             },
         };
-        assert_eq!(AuthenticationEvent::from_value(event.to_value()).unwrap(), event);
+        assert_eq!(
+            AuthenticationEvent::from_value(event.to_value()).unwrap(),
+            event
+        );
     }
 }
