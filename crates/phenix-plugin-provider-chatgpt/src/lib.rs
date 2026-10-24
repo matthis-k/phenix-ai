@@ -15,7 +15,9 @@ use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
     siwc::{AuthorizationAttempt, Registration},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
+    siwc_transport::{
+        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
+    },
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
         VerificationError, VerifiedChatGptIdentity,
@@ -63,7 +65,9 @@ fn identity_verification_error(error: VerificationError) -> ProviderError {
         VerificationError::InvalidTokenResponse => denied("OAuth token response was invalid"),
         VerificationError::InvalidJwks => unavailable("OAuth issuer signing keys were invalid"),
         VerificationError::InvalidIdToken => denied("OAuth identity token was invalid"),
-        VerificationError::MissingPlanPermission => denied("ChatGPT plan permission was not granted"),
+        VerificationError::MissingPlanPermission => {
+            denied("ChatGPT plan permission was not granted")
+        }
         VerificationError::IncorrectAccount => denied("OAuth account identity did not match"),
     }
 }
@@ -890,9 +894,9 @@ mod plugin {
             };
             // Backend failures can contain private paths or implementation details.
             // Report the stage without forwarding an untrusted vault error.
-            if !rotate(host, &identity, &pending.prior, &record)
-                .map_err(|_| CallError::Domain(unavailable("OAuth credential persistence failed")))?
-            {
+            if !rotate(host, &identity, &pending.prior, &record).map_err(|_| {
+                CallError::Domain(unavailable("OAuth credential persistence failed"))
+            })? {
                 return Err(CallError::Domain(problem(
                     ProviderErrorCode::Conflict,
                     "ChatGPT login was superseded; sign in again for this account",
@@ -1038,7 +1042,10 @@ mod tests {
     fn oauth_completion_failures_report_the_stage_without_sensitive_data() {
         let exchange = token_exchange_error(TransportError::Rejected);
         assert_eq!(exchange.code, ProviderErrorCode::Denied);
-        assert_eq!(exchange.message, "OAuth token endpoint rejected the authorization code");
+        assert_eq!(
+            exchange.message,
+            "OAuth token endpoint rejected the authorization code"
+        );
 
         let token = token_exchange_error(TransportError::InvalidTokenResponse);
         assert_eq!(token.message, "OAuth token response was invalid");
