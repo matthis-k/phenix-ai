@@ -26,6 +26,8 @@ def encode(v):
         return b"\x02" if v else b"\x01"
     if isinstance(v, int):
         return b"\x04" + v.to_bytes(8, "big")
+    if isinstance(v, bytes):
+        return b"\\x06" + len(v).to_bytes(4, "big") + v
     if isinstance(v, str):
         raw = v.encode()
         return b"\x05" + len(raw).to_bytes(4, "big") + raw
@@ -174,7 +176,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
             resource=selected,
         )
         (root / "composition.json").write_text(json.dumps(imported))
-        (root / "request.bin").write_bytes(b"PV\\x02\\0".decode("unicode_escape").encode("latin-1")
+        (root / "request.bin").write_bytes(b"PV\\x02\\0"
                                            + encode(dict(identity=account, secret=secret)))
         imported_result = subprocess.run(
             [kernel, "invoke", str(root / "composition.json"), str(root / "request.bin")],
