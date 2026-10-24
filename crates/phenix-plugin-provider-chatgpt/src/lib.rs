@@ -13,12 +13,14 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
-    siwc::{AuthorizationAttempt, Registration},
+    siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session},
+    siwc_transport::{
+        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
+    },
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
-        VerifiedChatGptIdentity,
+        VerificationError, VerifiedChatGptIdentity,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -46,6 +48,41 @@ fn denied(message: &str) -> ProviderError {
 fn unavailable(message: &str) -> ProviderError {
     problem(ProviderErrorCode::Unavailable, message)
 }
+fn oauth_callback_error(error: RegistrationError) -> ProviderError {
+    match error {
+        RegistrationError::AuthorizationDenied => {
+            denied("ChatGPT OAuth authorization was declined")
+        }
+        RegistrationError::InvalidState => denied("OAuth callback state did not match"),
+        RegistrationError::ClientMismatch => denied("OAuth issued client ID did not match"),
+        _ => denied("OAuth callback parameters were invalid"),
+    }
+}
+
+// Only fixed, provider-authored diagnostics cross the ACP boundary. Never
+// propagate token endpoints' response bodies, callback URLs or vault errors.
+fn token_exchange_error(error: TransportError) -> ProviderError {
+    match error {
+        TransportError::InvalidForm => denied("OAuth token exchange request was invalid"),
+        TransportError::Unavailable => unavailable("OAuth token endpoint unavailable"),
+        TransportError::Rejected => denied("OAuth token endpoint rejected the authorization code"),
+        TransportError::TooLarge => denied("OAuth token response exceeded the size limit"),
+        TransportError::InvalidTokenResponse => denied("OAuth token response was invalid"),
+    }
+}
+
+fn identity_verification_error(error: VerificationError) -> ProviderError {
+    match error {
+        VerificationError::InvalidTokenResponse => denied("OAuth token response was invalid"),
+        VerificationError::InvalidJwks => unavailable("OAuth issuer signing keys were invalid"),
+        VerificationError::InvalidIdToken => denied("OAuth identity token was invalid"),
+        VerificationError::MissingPlanPermission => {
+            denied("ChatGPT plan permission was not granted")
+        }
+        VerificationError::IncorrectAccount => denied("OAuth account identity did not match"),
+    }
+}
+
 fn now_epoch() -> Result<u64, ProviderError> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -823,7 +860,7 @@ mod plugin {
         let result = (|| -> CallResult<(VerifiedChatGptIdentity, StoredOAuth), ProviderError> {
             let correlated = attempt
                 .accept_callback(callback.uri())
-                .map_err(|_| CallError::Domain(denied("OAuth callback state was invalid")))?;
+                .map_err(|error| CallError::Domain(oauth_callback_error(error)))?;
             let client_id = correlated.issued_client_id().to_owned();
             // The typed SIWC exchange_form already returns Zeroizing<String>:
             // dropping it clears its allocation on both successful and failed
@@ -832,7 +869,7 @@ mod plugin {
                 .exchange_form(pending.pkce.verifier())
                 .map_err(|_| CallError::Domain(denied("invalid OAuth exchange")))?;
             let tokens = exchange_token(&form)
-                .map_err(|_| CallError::Domain(denied("OAuth code exchange rejected")))?;
+                .map_err(|error| CallError::Domain(token_exchange_error(error)))?;
             let jwks = issuer_jwks()
                 .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
             let verified = verify_chatgpt_identity(
@@ -846,7 +883,7 @@ mod plugin {
                     .as_ref()
                     .map(|account| account.subject.as_str()),
             )
-            .map_err(|_| CallError::Domain(denied("OAuth identity or plan grant not verified")))?;
+            .map_err(|error| CallError::Domain(identity_verification_error(error)))?;
             let expires_at = now_epoch()
                 .map_err(CallError::Domain)?
                 .checked_add(tokens.expires_in)
@@ -866,7 +903,11 @@ mod plugin {
                 registration_client_id: Some(client_id),
                 account: Some(account),
             };
-            if !rotate(host, &identity, &pending.prior, &record)? {
+            // Backend failures can contain private paths or implementation details.
+            // Report the stage without forwarding an untrusted vault error.
+            if !rotate(host, &identity, &pending.prior, &record).map_err(|_| {
+                CallError::Domain(unavailable("OAuth credential persistence failed"))
+            })? {
                 return Err(CallError::Domain(problem(
                     ProviderErrorCode::Conflict,
                     "ChatGPT login was superseded; sign in again for this account",
@@ -885,10 +926,14 @@ mod plugin {
                     },
                 })
             }
+            Err(CallError::Domain(reason)) => {
+                let _ = callback.reject();
+                Ok(AuthAttemptState::Failed { reason })
+            }
             Err(_) => {
                 let _ = callback.reject();
                 Ok(AuthAttemptState::Failed {
-                    reason: denied("OAuth verification or credential persistence failed"),
+                    reason: unavailable("OAuth completion failed"),
                 })
             }
         }
@@ -1002,6 +1047,29 @@ mod tests {
             require_attempt_owner(&owner, &other).unwrap_err().code,
             ProviderErrorCode::Denied,
         );
+    }
+
+    #[test]
+    fn oauth_completion_failures_report_the_stage_without_sensitive_data() {
+        let declined = oauth_callback_error(RegistrationError::AuthorizationDenied);
+        assert_eq!(declined.message, "ChatGPT OAuth authorization was declined");
+
+        let exchange = token_exchange_error(TransportError::Rejected);
+        assert_eq!(exchange.code, ProviderErrorCode::Denied);
+        assert_eq!(
+            exchange.message,
+            "OAuth token endpoint rejected the authorization code"
+        );
+
+        let token = token_exchange_error(TransportError::InvalidTokenResponse);
+        assert_eq!(token.message, "OAuth token response was invalid");
+
+        let scope = identity_verification_error(VerificationError::MissingPlanPermission);
+        assert_eq!(scope.code, ProviderErrorCode::Denied);
+        assert_eq!(scope.message, "ChatGPT plan permission was not granted");
+
+        let account = identity_verification_error(VerificationError::IncorrectAccount);
+        assert_eq!(account.message, "OAuth account identity did not match");
     }
 
     #[test]
