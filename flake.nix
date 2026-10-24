@@ -774,6 +774,14 @@
           excluded = [];
           substitutions = [];
         });
+      # Installed wrapper contract: no preconfigured credential variables are
+      # required, while explicit opt-out and unsafe paths are rejected.
+      p1AuthLauncherProductCheck = pkgs.runCommand "phenix-p1-auth-launcher-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        ${pkgs.python3}/bin/python ${./tests/p1-auth-launcher-product.py} \
+          ${self.packages.${system}.phenix-basic-p1-auth-acp}/bin/phenix-basic-p1-auth-acp "$out"
+      '';
       p1CombinedAuthProductCheck = pkgs.runCommand "phenix-p1-combined-auth-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2967,6 +2975,7 @@
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-openai-api = providerOpenAiApi;
         provider-chatgpt = providerChatGpt;
+        p1-auth-launcher-product = p1AuthLauncherProductCheck;
         p1-combined-auth-product = p1CombinedAuthProductCheck;
         provider-openai-api-product = providerOpenAiApiProductCheck;
         provider-openai-api-launcher = providerOpenAiApiLauncherCheck;
