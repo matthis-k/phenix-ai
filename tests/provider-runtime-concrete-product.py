@@ -185,6 +185,10 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
         assert imported_result.returncode == 0, (
             imported_result.returncode, "credential import denied",
         )
+        imported_outcome = json.loads(imported_result.stdout).get("outcome")
+        assert imported_outcome and imported_outcome["kind"] == "success", (
+            "credential import did not succeed",
+        )
         valid, code = invoke("api", "authenticate", {
             "Status": {"query": {
                 "scope": "user", "provider_id": "openai", "connection_id": "api",
