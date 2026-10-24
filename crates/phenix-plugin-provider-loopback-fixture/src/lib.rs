@@ -293,7 +293,7 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_provider_contracts::{AuthenticationCommand, AuthenticationEvent, AuthQuery};
-    use phenix_sdk::ContractMetadata;
+    use phenix_sdk::{ContractMetadata, Portable};
 
     #[test]
     fn canonical_interface_is_native_and_authentication_is_not_boolean() {
