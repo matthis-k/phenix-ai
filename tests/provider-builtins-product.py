@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-kernel, package, definitions, destination, openai_api, credentials = sys.argv[1:]
+kernel, package, definitions, destination, openai_api, credentials, chatgpt = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 provider = "phenix.provider.builtins"
@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     root = Path(temp)
 
     def invoke(contract, operation, request, *, grant="phenix.providers.user",
-               selected_contributor=False):
+               selected_contributor=False, both_openai_connections=False):
         resource = "phenix.providers.user"
         registrations_contract = "phenix.provider.registrations@1"
         operations = [contract + "/" + operation]
@@ -51,6 +51,15 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
             grants.append(dict(caller=provider, interface=registrations_contract,
                                operation="list", resources=[grant]))
             operations.append(registrations_contract + "/list")
+            if both_openai_connections:
+                artifacts.append(chatgpt)
+                slots.extend([
+                    dict(caller="phenix.provider.chatgpt", slot="Credentials",
+                         index=0, provider="phenix.provider.credential-files",
+                         export="Credentials"),
+                    dict(caller=provider, slot="Contributors", index=1,
+                         provider="phenix.provider.chatgpt", export="Registrations"),
+                ])
         composition = dict(
             format="phenix.composition.v3",
             entry=dict(interface=contract, operation=operation, provider=provider),
@@ -134,6 +143,27 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     assert len(contributed_providers) == 1, contributed_providers
     assert contributed_providers[0]["id"] == "openai"
     assert [c["id"] for c in contributed_providers[0]["connections"]] == ["api"]
+    # Independent native API-key and OAuth provider plugins share logical
+    # "openai" without a central hardcoded list or cross-account fallback.
+    combined, code = invoke(
+        catalog, "list", dict(scope="user"),
+        selected_contributor=True, both_openai_connections=True,
+    )
+    assert code == 0 and combined["kind"] == "success", combined
+    assert len(combined["value"]["providers"]) == 1, combined
+    openai_both = combined["value"]["providers"][0]
+    assert openai_both["id"] == "openai", openai_both
+    assert [entry["id"] for entry in openai_both["connections"]] == [
+        "api", "chatgpt"
+    ], openai_both
+    methods = {
+        c["id"]: [m["id"] for m in c["auth_methods"]]
+        for c in openai_both["connections"]
+    }
+    assert methods == {
+        "api": ["api-key"], "chatgpt": ["chatgpt-sign-in"]
+    }, methods
+
     absent, code = invoke(
         catalog, "describe", dict(scope="user", provider_id="anthropic"),
         selected_contributor=True,
@@ -268,7 +298,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         format="phenix.provider.builtins.product.v1",
         provider_ids=sorted(providers),
         provider_revision=page["revision"],
-        verified_operations=["registration_list", "selected_catalog", "list", "describe", "status", "models", "begin"],
+        verified_operations=["registration_list", "selected_catalog", "joined_api_oauth", "list", "describe", "status", "models", "begin"],
         denied_scope=True,
         denied_grant=True,
         authenticated_profiles=0,
