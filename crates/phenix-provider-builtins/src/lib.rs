@@ -563,26 +563,43 @@ pub fn merge_registration_pages(
 ) -> Result<Vec<ProviderDescriptor>, &'static str> {
     const MAX_PROVIDERS: usize = 256;
     const MAX_CONNECTIONS: usize = 1024;
-    let mut merged = Vec::new();
+    let mut merged: BTreeMap<String, ProviderDescriptor> = BTreeMap::new();
     let mut connections = 0usize;
     for page in pages {
         if page.revision == 0 {
             return Err("invalid provider registration revision");
         }
-        for provider in page.providers {
+        for mut provider in page.providers {
+            if provider.id.is_empty() {
+                return Err("duplicate or empty provider identity");
+            }
             connections = connections
                 .checked_add(provider.connections.len())
                 .ok_or("provider registration limit exceeded")?;
-            if merged.len() >= MAX_PROVIDERS || connections > MAX_CONNECTIONS {
+            if connections > MAX_CONNECTIONS {
                 return Err("provider registration limit exceeded");
             }
-            merged.push(provider);
+            if let Some(existing) = merged.get_mut(&provider.id) {
+                if existing.label != provider.label {
+                    return Err("conflicting provider display identity");
+                }
+                existing.connections.append(&mut provider.connections);
+            } else {
+                if merged.len() >= MAX_PROVIDERS {
+                    return Err("provider registration limit exceeded");
+                }
+                merged.insert(provider.id.clone(), provider);
+            }
         }
     }
-    validate_registrations(&merged)?;
-    // Selected import order must not leak into the observable provider order.
-    merged.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(merged)
+    let mut result = merged.into_values().collect::<Vec<_>>();
+    // Connection ordering is independent of startup slot order; metadata
+    // conflicts still fail closed in the existing validation boundary.
+    for provider in &mut result {
+        provider.connections.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    validate_registrations(&result)?;
+    Ok(result)
 }
 
 /// Defensive startup check for static registrations. Dynamic provider plugins
@@ -703,7 +720,7 @@ mod tests {
         };
         assert_eq!(
             merge_registration_pages([page.clone(), page]).unwrap_err(),
-            "duplicate or empty provider identity"
+            "invalid provider connection"
         );
         assert_eq!(
             merge_registration_pages([ProviderPage {
@@ -723,6 +740,51 @@ mod tests {
             }])
             .unwrap_err(),
             "cross-origin protocol endpoint"
+        );
+    }
+
+    #[test]
+    fn separate_api_key_and_oauth_contributors_join_one_provider_without_authority() {
+        let catalog = registrations();
+        let openai = &catalog[0];
+        let api = ProviderPage {
+            providers: vec![provider(
+                &openai.id,
+                &openai.label,
+                vec![openai.connections[0].clone()],
+            )],
+            revision: 1,
+        };
+        let oauth = ProviderPage {
+            providers: vec![provider(
+                &openai.id,
+                &openai.label,
+                vec![openai.connections[1].clone()],
+            )],
+            revision: 2,
+        };
+        let forward = merge_registration_pages([api.clone(), oauth.clone()]).unwrap();
+        let reverse = merge_registration_pages([oauth.clone(), api.clone()]).unwrap();
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.len(), 1);
+        assert_eq!(forward[0].id, "openai");
+        assert_eq!(
+            forward[0].connections.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec!["api", "chatgpt"]
+        );
+        // Registration pages cannot take over a sibling connection or
+        // silently rename an already selected provider identity.
+        let mut wrong_label = oauth.clone();
+        wrong_label.providers[0].label = "Different provider".into();
+        assert_eq!(
+            merge_registration_pages([api.clone(), wrong_label]).unwrap_err(),
+            "conflicting provider display identity"
+        );
+        let mut duplicate = oauth;
+        duplicate.providers[0].connections[0].id = "api".into();
+        assert_eq!(
+            merge_registration_pages([api, duplicate]).unwrap_err(),
+            "invalid provider connection"
         );
     }
 
