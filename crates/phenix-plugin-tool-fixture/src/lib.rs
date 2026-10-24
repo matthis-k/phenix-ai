@@ -1,8 +1,6 @@
 //! Opt-in external tool contributor proving that the stock Basic tool manager
 //! can offer and execute another plugin without editing its builtin table.
-use phenix_basic_contracts::{
-    error, BasicError, ErrorCode, ToolInfo, ToolRequest, ToolResult,
-};
+use phenix_basic_contracts::{error, BasicError, ErrorCode, ToolInfo, ToolRequest, ToolResult};
 use phenix_sdk::{CallError, CallResult, Host};
 
 const ID: &str = "fixture.reverse";
@@ -43,10 +41,14 @@ mod plugin {
             )));
         }
         if request.call.tool != ID {
-            return Err(CallError::Domain(error(ErrorCode::NotFound, "unknown tool")));
+            return Err(CallError::Domain(error(
+                ErrorCode::NotFound,
+                "unknown tool",
+            )));
         }
-        let input: String = serde_json::from_str(&request.call.arguments)
-            .map_err(|_| CallError::Domain(error(ErrorCode::InvalidInput, "expected JSON string")))?;
+        let input: String = serde_json::from_str(&request.call.arguments).map_err(|_| {
+            CallError::Domain(error(ErrorCode::InvalidInput, "expected JSON string"))
+        })?;
         Ok(ToolResult {
             text: input.chars().rev().collect(),
         })
