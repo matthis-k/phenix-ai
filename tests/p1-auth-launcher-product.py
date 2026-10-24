@@ -40,8 +40,9 @@ def launch(env, *, expected_start=True, exercise_key=False):
         for _ in range(30):
             raw = responses.get(timeout=35)
             if raw is None:
+                diagnostic = child.stderr.read()[-1500:].replace(secret, "[REDACTED]")
                 raise AssertionError(
-                    f"ACP exited ({child.poll()}) before {method}"
+                    f"ACP exited ({child.poll()}) before {method}: {diagnostic}"
                 )
             frame = json.loads(raw)
             if frame.get("method") == "session/update":
