@@ -790,7 +790,8 @@ mod plugin {
         request: ProviderCompletion,
     ) -> CallResult<phenix_basic_contracts::ModelReply, ProviderError> {
         if request.request.session.is_empty() || request.request.run.is_empty() {
-            return Err(CallError::Domain(invalid(
+            return Err(CallError::Domain(problem(
+                ProviderErrorCode::InvalidInput,
                 "missing canonical model session or run",
             )));
         }
@@ -805,8 +806,7 @@ mod plugin {
         let available = models(state, host, query)?;
         phenix_provider_contracts::validate_completion(&request, &available)
             .map_err(CallError::Domain)?;
-        Err(CallError::Domain(error(
-            ProviderErrorCode::Unavailable,
+        Err(CallError::Domain(unavailable(
             "selected session protocol adapter is not installed",
         )))
     }
