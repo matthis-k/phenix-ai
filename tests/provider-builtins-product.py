@@ -78,7 +78,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
 
     # The actual native contributor is invokable independently of the
     # catalog/auth facade. It returns only immutable provider metadata.
-    contributed, code = invoke(registrations, "list", None)
+    # Portable<()> uses the empty struct/map schema, not a null value.
+    contributed, code = invoke(registrations, "list", {})
     assert code == 0 and contributed["kind"] == "success", contributed
     assert contributed["value"]["revision"] == 1
     assert len(contributed["value"]["providers"]) == 6
