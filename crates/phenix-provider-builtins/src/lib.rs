@@ -10,7 +10,7 @@ use phenix_provider_contracts::{
     ProviderPage,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const OPENAI_CHAT: &str = "openai-chat";
 pub const OPENAI_RESPONSES: &str = "openai-responses";
