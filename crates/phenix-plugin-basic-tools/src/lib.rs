@@ -101,7 +101,10 @@ fn catalog_from(
     let take = usize::try_from(request.limit).unwrap_or(usize::MAX);
     let end = offset.saturating_add(take).min(matches.len());
     Ok(ToolPage {
-        tools: matches[offset..end].iter().map(|tool| (*tool).clone()).collect(),
+        tools: matches[offset..end]
+            .iter()
+            .map(|tool| (*tool).clone())
+            .collect(),
         revision,
         next: (end < matches.len()).then(|| CatalogCursor {
             session: request.session.clone(),
@@ -182,11 +185,8 @@ mod plugin {
                 tools.push(tool(definition));
             }
             for index in 0..count {
-                let contributions = imports::Contributors::invoke_at::<ToolRegistrations::list>(
-                    host,
-                    index,
-                    &(),
-                )?;
+                let contributions =
+                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?;
                 if contributions.len() > 256 {
                     return Err(CallError::Domain(error(
                         ErrorCode::InvalidInput,
@@ -222,20 +222,23 @@ mod plugin {
             let revision = if count == 0 {
                 REVISION
             } else {
-                tools.iter().fold(14695981039346656037_u64, |mut hash, entry| {
-                    for byte in entry
-                        .id
-                        .bytes()
-                        .chain([0])
-                        .chain(entry.description.bytes())
-                        .chain([0])
-                        .chain(entry.arguments_schema.bytes())
-                        .chain([u8::from(entry.idempotent), 0])
-                    {
-                        hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
-                    }
-                    hash
-                }).max(1)
+                tools
+                    .iter()
+                    .fold(14695981039346656037_u64, |mut hash, entry| {
+                        for byte in entry
+                            .id
+                            .bytes()
+                            .chain([0])
+                            .chain(entry.description.bytes())
+                            .chain([0])
+                            .chain(entry.arguments_schema.bytes())
+                            .chain([u8::from(entry.idempotent), 0])
+                        {
+                            hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+                        }
+                        hash
+                    })
+                    .max(1)
             };
             state.snapshot = Some(ToolSnapshot {
                 tools,
@@ -254,8 +257,7 @@ mod plugin {
     ) -> CallResult<ToolPage, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         let snapshot = selected_snapshot(state, host)?;
-        super::catalog_from(&request, &snapshot.tools, snapshot.revision)
-            .map_err(CallError::Domain)
+        super::catalog_from(&request, &snapshot.tools, snapshot.revision).map_err(CallError::Domain)
     }
 
     #[provide(ToolExecute::execute)]
@@ -298,9 +300,7 @@ mod plugin {
         })?;
         match route {
             Some(index) => imports::Contributors::invoke_at::<ToolRegistrations::execute>(
-                host,
-                index,
-                &request,
+                host, index, &request,
             ),
             None => super::execute(&request.call)
                 .map(|text| ToolResult { text })
