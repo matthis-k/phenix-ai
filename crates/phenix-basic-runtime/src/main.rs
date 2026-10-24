@@ -28,9 +28,15 @@ use std::{
 /// select the preset's file name; the Storage plugin owns its schema and I/O.
 /// An explicit absolute PHENIX_BASIC_SQLITE_PATH always overrides the preset.
 fn sqlite_default_name(name: Option<&str>) -> Result<&str, String> {
-    match name.unwrap_or("basic.sqlite") {
-        "basic.sqlite" => Ok("basic.sqlite"),
-        "basic-http.sqlite" => Ok("basic-http.sqlite"),
+    let selected = name.unwrap_or("basic.sqlite");
+    // All installed Basic ACP launchers select one fixed journal basename;
+    // reject paths and unknown names, but never reject our own auth presets.
+    match selected {
+        "basic.sqlite"
+        | "basic-http.sqlite"
+        | "basic-openai-api.sqlite"
+        | "basic-chatgpt.sqlite"
+        | "basic-p1-auth.sqlite" => Ok(selected),
         _ => Err("invalid Basic SQLite preset name".into()),
     }
 }
@@ -1273,6 +1279,35 @@ mod session_lock_tests {
         drop(resumed);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod sqlite_preset_tests {
+    use super::sqlite_default_name;
+
+    #[test]
+    fn all_installed_basic_launchers_have_admitted_journals() {
+        assert_eq!(sqlite_default_name(None).unwrap(), "basic.sqlite");
+        for basename in [
+            "basic.sqlite",
+            "basic-http.sqlite",
+            "basic-openai-api.sqlite",
+            "basic-chatgpt.sqlite",
+            "basic-p1-auth.sqlite",
+        ] {
+            assert_eq!(sqlite_default_name(Some(basename)).unwrap(), basename);
+        }
+        for invalid in [
+            "",
+            "../basic.sqlite",
+            "basic/credentials.sqlite",
+            "basic-p1-auth.sqlite/../foreign",
+            "unknown.sqlite",
+            "/tmp/basic.sqlite",
+        ] {
+            assert!(sqlite_default_name(Some(invalid)).is_err(), "{invalid}");
+        }
     }
 }
 

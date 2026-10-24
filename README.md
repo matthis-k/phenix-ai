@@ -83,6 +83,26 @@ as an alternative when its provider composition is available. A successful
 inference entitlement. ChatGPT subscription OAuth is not provided by this
 OpenAI API-key connection.
 
+## Combined P1 authentication (API key and ChatGPT OAuth)
+
+`phenix-basic-p1-auth-acp` is the explicit combined ACP authentication
+launcher used by the `phenix-nvim#nvim-nix-p1-auth` distribution. Unlike the
+older API-only preset above, it **requires no shell credential setup**:
+
+```sh
+nix run .#phenix-basic-p1-auth-acp
+```
+
+The launcher creates `$XDG_STATE_HOME/phenix/p1-auth-credentials` (default
+`~/.local/state/phenix/p1-auth-credentials`) with private 0700 permissions.
+The plugin verifies owner, mode, and credential-file permissions before use.
+Credentials are scoped by the kernel to the selected provider, connection,
+and profile; OAuth token refresh still uses atomic compare-and-replace.
+The file fallback is **not encrypted at rest**. Launching this opt-in
+authentication product authorizes its private file store; an explicit
+`PHENIX_CREDENTIAL_FILE_CONSENT=0` veto is always respected. No secrets
+or storage paths are written to a Nix derivation or session journal.
+
 ## Opt-in P1 HTTP model
 
 `phenix-basic-http-acp` runs the accepted Basic agent with the existing
