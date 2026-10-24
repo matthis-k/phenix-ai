@@ -599,11 +599,7 @@ mod tests {
                 tools: vec![],
                 skills: vec![],
                 context: vec![],
-                limits: phenix_basic_contracts::Limits {
-                    max_turns: 1,
-                    max_tool_calls: 0,
-                    max_output_tokens: 128,
-                },
+                limits: phenix_basic_contracts::Limits::default(),
             },
         };
         assert_eq!(ProviderCompletion::from_value(req.to_value()).unwrap(), req);
