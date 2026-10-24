@@ -5,7 +5,7 @@
 //! authentication or model entitlement until an authorized credentials and
 //! discovery implementation is installed. It is not a mock successful login.
 
-use phenix_provider_builtins::{registrations, validate_registrations};
+use phenix_provider_builtins::{merge_registration_pages, registrations, validate_registrations};
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
@@ -65,6 +65,7 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
     provide(phenix_provider_contracts::ProviderRegistrations, slot = "Registrations"),
+    require(phenix_provider_contracts::ProviderRegistrations, slot = "Contributors", many(min = 0)),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
@@ -103,10 +104,56 @@ mod plugin {
 
     /// Startup-only immutable provider declarations. This is an ordinary
     /// M1 operation, not a dynamic registration callback or authorization.
+    /// Read only the imports preselected by the verified M1 composition.
+    /// With no external contributors, preserve the existing shipped builtins.
+    /// A selected contributor replaces the builtin default rather than gaining
+    /// accidental authority to extend it.
+    fn selected_catalog(host: &Host<'_>) -> CallResult<Vec<ProviderDescriptor>, ProviderError> {
+        let count = imports::Contributors::count(host)?;
+        if count == 0 {
+            return catalog().map_err(CallError::Domain);
+        }
+        let mut pages = Vec::with_capacity(count);
+        for index in 0..count {
+            pages.push(imports::Contributors::invoke_at::<ProviderRegistrations::list>(
+                host, index, &(),
+            )?);
+        }
+        merge_registration_pages(pages).map_err(|_| {
+            CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid or conflicting selected provider registrations",
+            ))
+        })
+    }
+
+    fn selected_provider(
+        host: &Host<'_>,
+        id: &str,
+    ) -> CallResult<ProviderDescriptor, ProviderError> {
+        selected_catalog(host)?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| CallError::Domain(error(ProviderErrorCode::NotFound, "unknown installed provider")))
+    }
+
+    fn selected_connection(
+        host: &Host<'_>,
+        provider_id: &str,
+        connection_id: &str,
+    ) -> CallResult<bool, ProviderError> {
+        selected_provider(host, provider_id)?
+            .connections
+            .iter()
+            .find(|item| item.id == connection_id)
+            .map(|item| !item.auth_methods.is_empty())
+            .ok_or_else(|| CallError::Domain(error(ProviderErrorCode::NotFound, "unknown provider connection")))
+    }
+
     #[provide(ProviderRegistrations::list)]
     fn registrations_list(_: &mut State) -> CallResult<ProviderPage, ProviderError> {
         Ok(ProviderPage {
-            providers: catalog().map_err(CallError::Domain)?,
+            providers: selected_catalog(host)?,
             revision: 1,
         })
     }
@@ -131,7 +178,7 @@ mod plugin {
         request: ProviderDetailsQuery,
     ) -> CallResult<ProviderDescriptor, ProviderError> {
         check(host, &request.scope)?;
-        provider(&request.provider_id).map_err(CallError::Domain)
+        selected_provider(host, &request.provider_id)
     }
 
     #[provide(ProviderCatalog::models)]
@@ -142,7 +189,7 @@ mod plugin {
     ) -> CallResult<ModelPage, ProviderError> {
         check(host, &request.scope)?;
         let requires_auth =
-            connection(&request.provider_id, &request.connection_id).map_err(CallError::Domain)?;
+            selected_connection(host, &request.provider_id, &request.connection_id)?;
         // Registration alone proves neither model entitlement nor a usable
         // inference transport. A credential-free connection must not be
         // misreported as requiring authentication when discovery is absent.
@@ -171,7 +218,7 @@ mod plugin {
         request: AuthStart,
     ) -> CallResult<AuthChallenge, ProviderError> {
         check(host, &request.scope)?;
-        let provider = provider(&request.provider_id).map_err(CallError::Domain)?;
+        let provider = selected_provider(host, &request.provider_id)?;
         let chosen = provider
             .connections
             .iter()
