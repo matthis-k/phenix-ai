@@ -7,6 +7,7 @@
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
     ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
+    ProviderPage,
 };
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::BTreeSet;
@@ -553,6 +554,37 @@ mod declaration_tests {
     }
 }
 
+/// Build one immutable catalog snapshot from the explicitly selected
+/// registration contributors. Provider IDs must be globally unique, including
+/// across two independently valid contributors. No registration grants model,
+/// authentication, credential, or invocation authority.
+pub fn merge_registration_pages(
+    pages: impl IntoIterator<Item = ProviderPage>,
+) -> Result<Vec<ProviderDescriptor>, &'static str> {
+    const MAX_PROVIDERS: usize = 256;
+    const MAX_CONNECTIONS: usize = 1024;
+    let mut merged = Vec::new();
+    let mut connections = 0usize;
+    for page in pages {
+        if page.revision == 0 {
+            return Err("invalid provider registration revision");
+        }
+        for provider in page.providers {
+            connections = connections
+                .checked_add(provider.connections.len())
+                .ok_or("provider registration limit exceeded")?;
+            if merged.len() >= MAX_PROVIDERS || connections > MAX_CONNECTIONS {
+                return Err("provider registration limit exceeded");
+            }
+            merged.push(provider);
+        }
+    }
+    validate_registrations(&merged)?;
+    // Selected import order must not leak into the observable provider order.
+    merged.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(merged)
+}
+
 /// Defensive startup check for static registrations. Dynamic provider plugins
 /// must receive the same runtime validation before installation.
 pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'static str> {
@@ -641,6 +673,58 @@ pub fn validate_registrations(providers: &[ProviderDescriptor]) -> Result<(), &'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contributor_pages_merge_deterministically_without_granting_anything() {
+        let providers = registrations();
+        let first = ProviderPage {
+            providers: vec![providers[1].clone()],
+            revision: 7,
+        };
+        let second = ProviderPage {
+            providers: vec![providers[0].clone()],
+            revision: 3,
+        };
+        let merged = merge_registration_pages([first, second]).unwrap();
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id, "openai");
+        assert_eq!(merged[1].id, "openrouter");
+        assert!(merge_registration_pages(Vec::<ProviderPage>::new())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn contributor_pages_reject_collisions_invalid_revision_and_origins() {
+        let providers = registrations();
+        let page = ProviderPage {
+            providers: vec![providers[0].clone()],
+            revision: 1,
+        };
+        assert_eq!(
+            merge_registration_pages([page.clone(), page]).unwrap_err(),
+            "duplicate or empty provider identity"
+        );
+        assert_eq!(
+            merge_registration_pages([ProviderPage {
+                providers: vec![],
+                revision: 0,
+            }])
+            .unwrap_err(),
+            "invalid provider registration revision"
+        );
+        let mut invalid = providers[0].clone();
+        invalid.connections[0].protocols[0].endpoint =
+            Some("https://untrusted.example/v1/responses".into());
+        assert_eq!(
+            merge_registration_pages([ProviderPage {
+                providers: vec![invalid],
+                revision: 1,
+            }])
+            .unwrap_err(),
+            "cross-origin protocol endpoint"
+        );
+    }
 
     #[test]
     fn six_groups_and_distinct_api_and_chatgpt_accounts() {
