@@ -58,6 +58,15 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
 
     catalog = "phenix.provider.catalog@1"
     auth = "phenix.provider.auth@1"
+    registrations = "phenix.provider.registrations@1"
+
+    # The actual native contributor is invokable independently of the
+    # catalog/auth facade. It returns only immutable provider metadata.
+    contributed, code = invoke(registrations, "list", None)
+    assert code == 0 and contributed["kind"] == "success", contributed
+    assert contributed["value"]["revision"] == 1
+    assert len(contributed["value"]["providers"]) == 6
+    assert not any("credential" in key for key in contributed["value"]), contributed
 
     listed, status = invoke(catalog, "list", dict(scope="user"))
     assert status == 0 and listed["kind"] == "success", listed
@@ -225,7 +234,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         format="phenix.provider.builtins.product.v1",
         provider_ids=sorted(providers),
         provider_revision=page["revision"],
-        verified_operations=["list", "describe", "status", "models", "begin"],
+        verified_operations=["registration_list", "list", "describe", "status", "models", "begin"],
         denied_scope=True,
         denied_grant=True,
         authenticated_profiles=0,
