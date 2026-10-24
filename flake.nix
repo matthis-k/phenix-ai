@@ -395,7 +395,7 @@
         jq -e '.format == "phenix.native-package.v2" and .artifact == "lib/plugin.so"' \
           "${providerBuiltinsPlugin}/package.json"
         python ${./tests/provider-builtins-product.py} \
-          ${kernel}/bin/phenix-kernel ${providerBuiltinsPlugin} ${providerDefinitions} "$out" ${providerOpenAiApi}
+          ${kernel}/bin/phenix-kernel ${providerBuiltinsPlugin} ${providerDefinitions} "$out" ${providerOpenAiApi} ${providerCredentialStore}
         touch "$out/verified"
       '';
       providerBuiltinsSource = subset (publicPaths ++ [
