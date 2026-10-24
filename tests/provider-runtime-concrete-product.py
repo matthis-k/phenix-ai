@@ -9,8 +9,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import secrets
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-kernel, api, chatgpt, credentials, definitions, output = sys.argv[1:]
+kernel, api, chatgpt, credentials, definitions, output, api_fixture = sys.argv[1:]
 result_dir = Path(output)
 result_dir.mkdir(parents=True, exist_ok=True)
 contract = "phenix.provider.runtime@1"
@@ -53,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
     env["PHENIX_CREDENTIAL_FILE_DIRECTORY"] = str(vault)
     env["PHENIX_CREDENTIAL_FILE_CONSENT"] = "1"
     env.pop("PHENIX_CREDENTIAL_API_KEY_ENV_NAME", None)
-    def invoke(connection, operation, request, *, root_grant=True):
+    def invoke(connection, operation, request, *, root_grant=True, fixture=False):
         provider = "phenix.provider." + ("openai-api" if connection == "api" else "chatgpt")
         selected = resource(identity(connection))
         grants = [
@@ -62,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
             dict(caller=provider, interface=credential_contract, operation="resolve",
                  resources=[selected]),
         ]
-        package = api if connection == "api" else chatgpt
+        package = (api_fixture if fixture else api) if connection == "api" else chatgpt
         composition = dict(
             format="phenix.composition.v3",
             entry=dict(interface=contract, operation=operation, provider=provider),
@@ -126,11 +129,106 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
     assert code == 0 and challenge["kind"] == "success", challenge
     assert "ApiKeyInput" in challenge["value"]["Challenge"]["value"], challenge
 
+    # A real verified API key follows the same canonical methods. Only the
+    # transport URL is changed by the test-specific feature; production still
+    # pins HTTPS. No token is serialized into a report, log or Nix output.
+    secret = secrets.token_hex(24).encode()
+    class Catalog(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_GET(self):
+            if self.path != "/models" or self.headers.get("Authorization") != (
+                "Bearer " + secret.decode()
+            ):
+                self.send_response(403)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            raw = b'{"object":"list","data":[{"id":"gpt-5"}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Catalog)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        env["PHENIX_C11_TEST_BASE"] = "http://127.0.0.1:" + str(server.server_port)
+        account = identity("api")
+        selected = resource(account)
+        imported = dict(
+            format="phenix.composition.v3",
+            entry=dict(interface=credential_contract, operation="import",
+                       provider="phenix.provider.credential-files"),
+            artifacts=[credentials],
+            definitions=[definitions],
+            slots=[],
+            grants=[dict(caller="root", interface=credential_contract,
+                         operation="import", resources=[selected])],
+            excluded=[], substitutions=[],
+            authority=dict(
+                operations=[credential_contract + "/import"],
+                resources=[selected],
+            ),
+            resource=selected,
+        )
+        (root / "composition.json").write_text(json.dumps(imported))
+        (root / "request.bin").write_bytes(b"PV\\x02\\0".decode("unicode_escape").encode("latin-1")
+                                           + encode(dict(identity=account, secret=secret)))
+        imported_result = subprocess.run(
+            [kernel, "invoke", str(root / "composition.json"), str(root / "request.bin")],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert imported_result.returncode == 0, (
+            imported_result.returncode, "credential import denied",
+        )
+        valid, code = invoke("api", "authenticate", {
+            "Status": {"query": {
+                "scope": "user", "provider_id": "openai", "connection_id": "api",
+            }},
+        }, fixture=True)
+        assert code == 0 and valid["kind"] == "success", valid
+        profiles = valid["value"]["Status"]["value"]["profiles"]
+        assert any(p["status"] == "Authenticated" for p in profiles), profiles
+
+        allowed_query = dict(scope="user", provider_id="openai", connection_id="api",
+                             profile_id="personal", cursor=None, limit=10)
+        listed, code = invoke("api", "models", allowed_query, fixture=True)
+        assert code == 0 and listed["kind"] == "success", listed
+        assert [m["id"] for m in listed["value"]["models"]] == ["gpt-5"], listed
+        completion = dict(
+            scope="user", provider_id="openai", connection_id="api",
+            profile_id="personal", model_id="gpt-5",
+            request=dict(
+                session="session-1", run="run-1", history=[], tools=[], skills=[],
+                context=[], limits=dict(
+                    model_turns=None, tool_calls=None, model_tokens=None,
+                    http_timeout_ms=None,
+                ),
+            ),
+        )
+        selected_model, code = invoke("api", "complete", completion, fixture=True)
+        assert code == 0 and selected_model["kind"] == "domain_error", selected_model
+        assert selected_model["value"]["code"] == "Unavailable", selected_model
+        unknown_model, code = invoke("api", "complete", {
+            **completion, "model_id": "unlisted",
+        }, fixture=True)
+        assert code == 0 and unknown_model["kind"] == "domain_error", unknown_model
+        assert unknown_model["value"]["code"] == "NotFound", unknown_model
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
     (result_dir / "verified.json").write_text(json.dumps({
         "format": "phenix.provider.concrete-port.product.v1",
         "real_providers": ["openai/api", "openai/chatgpt"],
         "authenticated_profiles_not_inferred": True,
         "api_key_challenge_live": True,
+        "real_api_key_verification": True,
+        "selected_model_admitted": True,
+        "missing_protocol_explicit": True,
         "model_catalog_reuses_real_auth": True,
         "foreign_account_rejected": True,
         "kernel_scope_denial": True,
