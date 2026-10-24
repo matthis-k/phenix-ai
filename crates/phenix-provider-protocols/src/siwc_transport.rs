@@ -8,7 +8,10 @@ use crate::siwc::TOKEN_URL;
 use crate::siwc_verified::{TokenEnvelope, JWKS_URL, MAX_JWKS_BODY, MAX_TOKEN_BODY};
 use curl::easy::{Easy2, Handler, List, WriteError};
 use std::time::Duration;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+const ISSUER_CONFIGURATION_URL: &str = "https://auth.openai.com/.well-known/openid-configuration";
+const MAX_ISSUER_CONFIGURATION: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
@@ -52,7 +55,7 @@ impl Handler for BoundedBody {
 /// This is deliberately an implementation helper, not an arbitrary HTTP
 /// request exposed to provider credentials or client-side URLs.
 fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, TransportError> {
-    request_with_auth(url, post, limit, None)
+    request_with_auth(url, post, limit, None, false)
 }
 
 fn request_with_auth(
@@ -60,6 +63,7 @@ fn request_with_auth(
     post: Option<&str>,
     limit: usize,
     bearer: Option<&str>,
+    allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
     let mut easy = Easy2::new(BoundedBody {
         bytes: Vec::new(),
@@ -123,7 +127,7 @@ fn request_with_auth(
         _ => return Err(TransportError::Unavailable),
     }
     outcome.map_err(|_| TransportError::Unavailable)?;
-    if easy.get_ref().bytes.is_empty() {
+    if !allow_empty && easy.get_ref().bytes.is_empty() {
         return Err(TransportError::Unavailable);
     }
     Ok(std::mem::take(&mut easy.get_mut().bytes))
@@ -162,7 +166,80 @@ pub fn chatgpt_models(access_token: &str) -> Result<Vec<u8>, TransportError> {
         None,
         256 * 1024,
         Some(access_token),
+        false,
     )
+}
+
+/// Discover the revocation endpoint from OpenAI's pinned issuer metadata.
+/// Never use an OAuth callback, a model response or a client-supplied URL.
+/// The response must remain on the exact issuer origin with no URL credentials,
+/// nonstandard port, query parameters or fragments.
+fn parse_revocation_endpoint(body: &[u8]) -> Result<url::Url, TransportError> {
+    if body.is_empty() || body.len() > MAX_ISSUER_CONFIGURATION {
+        return Err(TransportError::Unavailable);
+    }
+    let config: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| TransportError::Unavailable)?;
+    if config.get("issuer").and_then(serde_json::Value::as_str) != Some("https://auth.openai.com") {
+        return Err(TransportError::Unavailable);
+    }
+    let endpoint = config
+        .get("revocation_endpoint")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= 1024)
+        .ok_or(TransportError::Unavailable)?;
+    let url = url::Url::parse(endpoint).map_err(|_| TransportError::Unavailable)?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("auth.openai.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() == "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(TransportError::Unavailable);
+    }
+    Ok(url)
+}
+
+/// Provider-only renewable-session revocation transport.
+///
+/// This performs no local credential mutation. The provider must first stop
+/// model requests and then decide whether to clear tokens even when remote
+/// revocation cannot be confirmed. An empty HTTP 200 is success per SIWC.
+/// The refresh token never appears in the URL, errors or the returned value.
+pub fn revoke_renewable_session(
+    refresh_token: &str,
+    issued_client_id: &str,
+) -> Result<(), TransportError> {
+    if refresh_token.is_empty()
+        || refresh_token.len() > 16 * 1024
+        || !refresh_token.bytes().all(|byte| byte.is_ascii_graphic())
+        || issued_client_id.is_empty()
+        || issued_client_id == "dynamic_agent_client"
+        || issued_client_id.len() > 256
+        || !issued_client_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err(TransportError::InvalidForm);
+    }
+
+    let discovery = request(ISSUER_CONFIGURATION_URL, None, MAX_ISSUER_CONFIGURATION)?;
+    let endpoint = parse_revocation_endpoint(&discovery)?;
+    let mut form = url::form_urlencoded::Serializer::new(String::new());
+    form.append_pair("token", refresh_token)
+        .append_pair("token_type_hint", "refresh_token")
+        .append_pair("client_id", issued_client_id);
+    let form = Zeroizing::new(form.finish());
+    let response = request_with_auth(endpoint.as_str(), Some(&form), 4096, None, true)?;
+    // SIWC defines an empty 200 for both a revoked and already-invalid token.
+    // A nonempty response is not a confirmed remote sign-out.
+    if !response.is_empty() {
+        return Err(TransportError::Unavailable);
+    }
+    Ok(())
 }
 
 /// Fetch the issuer's fixed JWKS; caller then verifies a signed token with the
@@ -184,6 +261,15 @@ mod tests {
         response: &'static str,
         post: Option<&str>,
         limit: usize,
+    ) -> (Result<Vec<u8>, TransportError>, String) {
+        local_with_allow_empty(response, post, limit, false)
+    }
+
+    fn local_with_allow_empty(
+        response: &'static str,
+        post: Option<&str>,
+        limit: usize,
+        allow_empty: bool,
     ) -> (Result<Vec<u8>, TransportError>, String) {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
         let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -216,7 +302,7 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
             String::from_utf8(bytes).unwrap()
         });
-        let outcome = request(&address, post, limit);
+        let outcome = request_with_auth(&address, post, limit, None, allow_empty);
         (outcome, server.join().unwrap())
     }
 
@@ -241,6 +327,58 @@ mod tests {
             3,
         );
         assert_eq!(too_large, Err(TransportError::TooLarge));
+    }
+
+    #[test]
+    fn issuer_discovery_accepts_only_exact_openai_revocation_origin() {
+        let ok = br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke"}"#;
+        assert_eq!(
+            parse_revocation_endpoint(ok).unwrap().as_str(),
+            "https://auth.openai.com/api/accounts/oauth/revoke"
+        );
+        for data in [
+            br#"{"issuer":"https://evil.invalid","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke"}"#.as_slice(),
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"http://auth.openai.com/revoke"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://evil.invalid/revoke"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com.evil.invalid/revoke"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://user@auth.openai.com/revoke"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com:1234/revoke"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com/revoke?token=leak"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com/revoke#token"}"#,
+            br#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com/"}"#,
+            br#"{"issuer":"https://auth.openai.com"}"#,
+            b"not json",
+        ] {
+            assert_eq!(parse_revocation_endpoint(data), Err(TransportError::Unavailable));
+        }
+        assert_eq!(
+            parse_revocation_endpoint(&vec![b'x'; MAX_ISSUER_CONFIGURATION + 1]),
+            Err(TransportError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn empty_success_is_only_accepted_for_revocation_and_invalid_forms_fail() {
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let (normal, _) = local(response, None, 4096);
+        assert_eq!(normal, Err(TransportError::Unavailable));
+        let revocation_form = "token=secret&token_type_hint=refresh_token&client_id=issued";
+        let (revoked, received) =
+            local_with_allow_empty(response, Some(revocation_form), 4096, true);
+        assert_eq!(revoked, Ok(Vec::new()));
+        assert!(received.starts_with("POST / HTTP/1.1"));
+        assert!(received.ends_with(revocation_form));
+        for (token, client) in [
+            ("", "issued-client"),
+            ("bad\nheader", "issued-client"),
+            ("valid-token", "dynamic_agent_client"),
+            ("valid-token", "bad client"),
+        ] {
+            assert_eq!(
+                revoke_renewable_session(token, client),
+                Err(TransportError::InvalidForm)
+            );
+        }
     }
 
     #[test]

@@ -405,37 +405,58 @@ fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialId
         .ok_or("credential management requires one explicit credential resource")?;
     let identity = CredentialIdentity::from_resource(resource)
         .map_err(|_| "invalid launcher credential resource")?;
-    // Validate the exact launcher-granted subset, not a fixed operation
-    // count. Existing import/revoke roots remain valid while newer backends
-    // may grant the independently typed variable-name source operation.
-    // The kernel checks that each granted method actually exists.
+    let resources = std::collections::BTreeSet::from([resource.to_string()]);
     let permitted = ["import", "bind_environment", "revoke"];
-    let mut seen = std::collections::BTreeSet::new();
+    let mut root_operations = std::collections::BTreeSet::new();
+    let mut nested_operations = std::collections::BTreeSet::new();
     for grant in &spec.grants {
-        if grant.caller != "root"
-            || grant.interface != CONTRACT
-            || !permitted.contains(&grant.operation.as_str())
-            || grant.resources != std::collections::BTreeSet::from([resource.to_string()])
-            || !seen.insert(grant.operation.as_str())
-        {
-            return Err("credential management requires exact root grants".into());
+        if grant.interface != CONTRACT || grant.resources != resources {
+            return Err("credential management requires exact resource grants".into());
+        }
+        if grant.caller == "root" {
+            if !permitted.contains(&grant.operation.as_str())
+                || !root_operations.insert(grant.operation.as_str())
+            {
+                return Err("invalid credential management root grant".into());
+            }
+        } else if spec.entry.operation == "revoke" && grant.caller == spec.entry.provider {
+            if !["resolve", "compare_exchange"].contains(&grant.operation.as_str())
+                || !nested_operations.insert(grant.operation.as_str())
+            {
+                return Err("invalid private credential revocation grant".into());
+            }
+        } else {
+            return Err("unrecognized credential management caller".into());
         }
     }
-    let operations = seen
+    let api_key = spec.entry.operation == "import"
+        && root_operations.contains("import")
+        && root_operations.contains("revoke")
+        && nested_operations.is_empty()
+        && spec.slots.is_empty();
+    let direct_revoke = spec.entry.operation == "revoke"
+        && root_operations == std::collections::BTreeSet::from(["revoke"]);
+    // A provider-owned revoke root may privately resolve the exact account
+    // and atomically replace its protected generation. Neither inner method
+    // is advertised as a frontend capability or admitted as an ACP root.
+    let nested_revoke = direct_revoke
+        && nested_operations == std::collections::BTreeSet::from(["resolve", "compare_exchange"])
+        && spec.slots.len() == 1
+        && spec.slots[0].caller == spec.entry.provider
+        && spec.slots[0].provider != spec.entry.provider
+        && spec.slots[0].slot == "Credentials"
+        && spec.slots[0].export == "Credentials"
+        && spec.slots[0].index == 0;
+    let simple_revoke = direct_revoke && nested_operations.is_empty() && spec.slots.is_empty();
+    let operations = root_operations
         .iter()
+        .chain(nested_operations.iter())
         .map(|operation| format!("{CONTRACT}/{operation}"))
         .collect::<std::collections::BTreeSet<_>>();
-    // OAuth credentials are provider-owned. A separately declared logout
-    // root may grant only revoke, never user-supplied import/env binding.
-    // API-key accounts retain the existing import+revoke management path.
-    let accepted_operations =
-        (spec.entry.operation == "import" && seen.contains("import") && seen.contains("revoke"))
-            || (spec.entry.operation == "revoke" && seen.len() == 1 && seen.contains("revoke"));
     if spec.entry.interface != CONTRACT
-        || !accepted_operations
+        || !(api_key || simple_revoke || nested_revoke)
         || spec.authority.operations != operations
-        || spec.authority.resources != std::collections::BTreeSet::from([resource.to_string()])
-        || !spec.slots.is_empty()
+        || spec.authority.resources != resources
         || !spec.excluded.is_empty()
         || !spec.substitutions.is_empty()
     {
@@ -458,6 +479,7 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
         allowed: spec
             .grants
             .iter()
+            .filter(|grant| grant.caller == "root")
             .map(|grant| grant.operation.clone())
             .collect(),
     })

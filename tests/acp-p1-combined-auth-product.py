@@ -89,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
         oauth_status = call(4, "_phenix/providers/auth/status", oauth)
         assert oauth_status["result"]["profiles"] == [], oauth_status
         # These are per-root *granted* operations, not generic credential
-        # method names. OAuth is provider-owned; only local revoke is exposed.
+        # method names. OAuth is provider-owned; only revoke is exposed.
         capabilities = call(39, "_phenix/credentials/capabilities", {})
         assert "result" in capabilities, capabilities
         profiles = {
@@ -119,8 +119,12 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
             **credential_account, "environment_variable": "OPENAI_API_KEY",
         })
         assert forged_env["error"]["code"] == -32602, forged_env
+        # No issued credentials yet: provider sign-out is idempotent and
+        # cannot trigger an outbound request or invent authentication.
         missing_logout = call(42, "_phenix/credentials/revoke", credential_account)
-        assert "error" in missing_logout, missing_logout
+        assert missing_logout.get("result", {}).get("ok") is True, missing_logout
+        signed_out = call(43, "_phenix/providers/auth/status", oauth)
+        assert signed_out["result"]["profiles"] == [], signed_out
         api_begin = call(5, "_phenix/providers/auth/begin", {**api, "method_id": "api-key"})
         api_attempt = api_begin["result"]["ApiKeyInput"]["attempt_id"]
         api_cancel = call(6, "_phenix/providers/auth/cancel", {
@@ -167,7 +171,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
     "api_key_challenge_cancelled": True,
     "oauth_browser_pkce_challenge_cancelled": True,
     "cross_connection_attempt_denied": True,
-    "oauth_only_local_logout_granted": True,
+    "oauth_only_provider_owned_logout_granted": True,
     "oauth_import_and_api_env_binding_denied": True,
     "unauthenticated_native_model_denied": True,
     "live_external_login_verified": False,

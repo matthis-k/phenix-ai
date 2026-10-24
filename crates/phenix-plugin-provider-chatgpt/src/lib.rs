@@ -15,7 +15,7 @@ use phenix_provider_protocols::{
     oauth_loopback::{CallbackError, OAuthLoopbackListener},
     siwc::{AuthorizationAttempt, Registration},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks},
+    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session},
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
         VerifiedChatGptIdentity,
@@ -59,7 +59,33 @@ fn now_epoch() -> Result<u64, ProviderError> {
 #[serde(deny_unknown_fields)]
 struct StoredOAuth {
     host_id: String,
+    // Preserve the issued registration after logout, without preserving
+    // bearer/refresh credentials. Omitting None keeps old JSON generations
+    // byte-for-byte CAS-compatible with the existing protected vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    registration_client_id: Option<String>,
     account: Option<OAuthAccount>,
+}
+
+impl StoredOAuth {
+    fn returning_client_id(&self) -> Option<&str> {
+        self.account
+            .as_ref()
+            .map(|account| account.issued_client_id.as_str())
+            .or(self.registration_client_id.as_deref())
+    }
+
+    /// Durable, token-free generation that can only replace the exact prior
+    /// protected record by CAS. Reuse the same transition in sign-out and
+    /// deterministic restart tests, so the test exercises production logic.
+    fn signed_out(&self) -> Option<Self> {
+        let client_id = self.returning_client_id()?;
+        Some(Self {
+            host_id: self.host_id.clone(),
+            registration_client_id: Some(client_id.to_owned()),
+            account: None,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -314,6 +340,7 @@ mod plugin {
         }
         let record = StoredOAuth {
             host_id: format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            registration_client_id: None,
             account: None,
         };
         // A durable host identity must exist BEFORE generating an OAuth
@@ -377,6 +404,7 @@ mod plugin {
                 .ok_or_else(|| CallError::Domain(denied("invalid refreshed expiry")))?;
             let next = StoredOAuth {
                 host_id: record.host_id.clone(),
+                registration_client_id: record.registration_client_id.clone(),
                 account: Some(OAuthAccount {
                     subject: verified.subject().to_owned(),
                     issued_client_id: verified.issued_client_id().to_owned(),
@@ -463,6 +491,7 @@ mod plugin {
             pkce: GeneratedPkce::new(),
             prior: StoredOAuth {
                 host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
+                registration_client_id: None,
                 account: None,
             },
         };
@@ -591,14 +620,41 @@ mod plugin {
     }
 
     #[provide(ProviderCredentials::revoke)]
-    fn reject_unscoped_revoke(
+    fn revoke_account(
         _: &mut State,
-        _: &Host<'_>,
-        _: CredentialIdentity,
+        host: &Host<'_>,
+        request: CredentialIdentity,
     ) -> CallResult<(), ProviderError> {
-        Err(CallError::Domain(denied(
-            "OAuth revocation requires the account lifecycle",
-        )))
+        let authorized = exact_identity(host.resource()?.as_deref()).map_err(CallError::Domain)?;
+        require_attempt_owner(&request, &authorized).map_err(CallError::Domain)?;
+        let Some(previous) = load(host, &authorized)? else {
+            return Ok(());
+        };
+        let Some(account) = previous.account.as_ref() else {
+            return Ok(());
+        };
+        let issued_client_id = account.issued_client_id.clone();
+        let token = Zeroizing::new(account.refresh_token.clone());
+        // First invalidate all *future* bearer resolutions. If the remote
+        // request times out we must never leave a locally usable refresh
+        // token, and a racing callback/refresh must fail the whole-record CAS.
+        let cleared = previous
+            .signed_out()
+            .ok_or_else(|| CallError::Domain(denied("ChatGPT account registration missing")))?;
+        if !rotate(host, &authorized, &previous, &cleared)? {
+            return Err(CallError::Domain(problem(
+                ProviderErrorCode::Conflict,
+                "ChatGPT account changed during sign-out; retry",
+            )));
+        }
+        // A successful empty 200 confirms the remote session was revoked.
+        // On transport failure, report local-only removal as unconfirmed.
+        revoke_renewable_session(&token, &issued_client_id).map_err(|_| {
+            CallError::Domain(problem(
+                ProviderErrorCode::RemoteRevocationUnconfirmed,
+                "ChatGPT credentials cleared locally; remote revocation unconfirmed",
+            ))
+        })
     }
 
     #[provide(ProviderCredentials::compare_exchange)]
@@ -672,9 +728,9 @@ mod plugin {
             .map_err(|_| CallError::Domain(unavailable("could not bind OAuth callback")))?;
         let pkce = GeneratedPkce::new();
         let redirect_uri = listener.redirect_uri();
-        let registration = match &record.account {
-            Some(account) => Registration::Returning {
-                issued_client_id: &account.issued_client_id,
+        let registration = match record.returning_client_id() {
+            Some(issued_client_id) => Registration::Returning {
+                issued_client_id,
                 id_token_hint: None, // never expose the saved ID token in client-visible URLs
                 login_hint: None,
             },
@@ -746,9 +802,9 @@ mod plugin {
             }
         };
         let redirect = pending.listener.redirect_uri();
-        let registration = match pending.prior.account.as_ref() {
-            Some(account) => Registration::Returning {
-                issued_client_id: &account.issued_client_id,
+        let registration = match pending.prior.returning_client_id() {
+            Some(issued_client_id) => Registration::Returning {
+                issued_client_id,
                 id_token_hint: None,
                 login_hint: None,
             },
@@ -807,6 +863,7 @@ mod plugin {
             };
             let record = StoredOAuth {
                 host_id: pending.prior.host_id.clone(),
+                registration_client_id: Some(client_id),
                 account: Some(account),
             };
             if !rotate(host, &identity, &pending.prior, &record)? {
@@ -864,6 +921,52 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_vault_record_remains_byte_exact_for_atomic_rotation() {
+        let legacy =
+            r#"{"host_id":"urn:uuid:123e4567-e89b-12d3-a456-426614174000","account":null}"#;
+        let record: StoredOAuth = serde_json::from_str(legacy).unwrap();
+        assert!(record.registration_client_id.is_none());
+        assert_eq!(serde_json::to_string(&record).unwrap(), legacy);
+    }
+
+    #[test]
+    fn logout_tombstone_retains_host_and_client_but_no_bearer_tokens() {
+        let host_id = "urn:uuid:123e4567-e89b-12d3-a456-426614174000";
+        let account = OAuthAccount {
+            subject: "user-fixture".into(),
+            issued_client_id: "issued-client".into(),
+            id_token_nonce: "nonce-fixture".into(),
+            access_token: "secret-access-fixture".into(),
+            refresh_token: "secret-refresh-fixture".into(),
+            id_token: "secret-id-fixture".into(),
+            granted_scope: "chatgpt.tokens.use.direct".into(),
+            expires_at: 100,
+        };
+        let record = StoredOAuth {
+            host_id: host_id.into(),
+            registration_client_id: None,
+            account: Some(account),
+        };
+        assert_eq!(record.returning_client_id(), Some("issued-client"));
+        let cleared = record.signed_out().expect("existing account");
+        assert!(record.signed_out().is_some());
+        assert_eq!(cleared.host_id, host_id);
+        assert_eq!(cleared.returning_client_id(), Some("issued-client"));
+        let serialized = serde_json::to_string(&cleared).unwrap();
+        for secret in [
+            "secret-access-fixture",
+            "secret-refresh-fixture",
+            "secret-id-fixture",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
+        let restarted: StoredOAuth = serde_json::from_str(&serialized).unwrap();
+        assert!(restarted.account.is_none());
+        assert_eq!(restarted.returning_client_id(), Some("issued-client"));
+        assert_eq!(restarted.host_id, host_id);
+    }
 
     #[test]
     fn pinned_root_and_registration_are_independent_of_browser_account() {
