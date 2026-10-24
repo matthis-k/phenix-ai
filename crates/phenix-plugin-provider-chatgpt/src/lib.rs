@@ -242,6 +242,10 @@ struct Pending {
     version = "1.0.0",
     profile = "state",
     provide(phenix_provider_contracts::ProviderCatalog, slot = "Catalog"),
+    provide(
+        phenix_provider_contracts::ProviderRegistrations,
+        slot = "Registrations"
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
     provide(phenix_provider_contracts::ProviderCredentials, slot = "Bearer"),
     require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials")
@@ -250,7 +254,7 @@ mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery,
+        ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{Authority, CallError, CallResult, Host, Operation, ScopedRequest};
 
@@ -556,6 +560,17 @@ mod plugin {
         assert_eq!(state.attempts.len(), 1);
         assert!(state.attempts.contains_key("live"));
         assert!(!state.attempts.contains_key("expired"));
+    }
+
+    /// Declarative registration is account-independent. Completing sign-in,
+    /// selecting a verified credential and dispatching a model remain separate
+    /// authorized operations; this metadata alone grants none of them.
+    #[provide(ProviderRegistrations::list)]
+    fn registrations_list(_: &mut State) -> CallResult<ProviderPage, ProviderError> {
+        Ok(ProviderPage {
+            providers: vec![descriptor().map_err(CallError::Domain)?],
+            revision: 1,
+        })
     }
 
     #[provide(ProviderCatalog::list)]
