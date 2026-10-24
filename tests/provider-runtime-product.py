@@ -114,7 +114,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-runtime-") as d:
     assert code == 0 and missing["kind"] == "domain_error", missing
     assert missing["value"]["code"] == "NotFound", missing
 
-    other, code = invoke("complete", {**selected, "profile_id": "other-account"})
+    other, code = invoke("complete", {**selected, "profile_id": ["other-account"]})
     assert code == 0 and other["kind"] == "domain_error", other
     assert other["value"]["code"] == "InvalidInput", other
 
