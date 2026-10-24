@@ -2868,11 +2868,43 @@
           name = "phenix-basic-p1-auth-acp";
           text = ''
             set -eu
-            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" != "1" ] ||
-               [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
-              echo "P1 authentication requires an opted-in protected credential backend." >&2
+            # Invoking the explicitly selected P1 authentication product
+            # opts in to its local, permission-protected credential backend.
+            # The user never needs to configure storage just to use :Phenix auth.
+            # This fallback is NOT encrypted at rest; never put it in the Nix store.
+            umask 077
+            if [ "''${PHENIX_CREDENTIAL_FILE_CONSENT:-}" = "0" ]; then
+              echo "Credential file storage explicitly disabled; P1 authentication cannot start." >&2
               exit 2
             fi
+            if [ -z "''${PHENIX_CREDENTIAL_FILE_DIRECTORY:-}" ]; then
+              if [ -n "''${XDG_STATE_HOME:-}" ]; then
+                case "$XDG_STATE_HOME" in
+                  /*) state_home="$XDG_STATE_HOME" ;;
+                  *) echo "XDG_STATE_HOME must be an absolute path." >&2; exit 2 ;;
+                esac
+              else
+                case "''${HOME:-}" in
+                  /*) state_home="$HOME/.local/state" ;;
+                  *) echo "HOME must be an absolute path when XDG_STATE_HOME is unset." >&2; exit 2 ;;
+                esac
+              fi
+              export PHENIX_CREDENTIAL_FILE_DIRECTORY="$state_home/phenix/p1-auth-credentials"
+              # A new directory is private; an existing directory keeps its
+              # permissions and must pass the backend's ownership/0700 check.
+              mkdir -p -m 700 -- "$PHENIX_CREDENTIAL_FILE_DIRECTORY"
+            fi
+            case "$PHENIX_CREDENTIAL_FILE_DIRECTORY" in
+              /*) ;;
+              *) echo "Credential directory must be an absolute path." >&2; exit 2 ;;
+            esac
+            if [ -L "$PHENIX_CREDENTIAL_FILE_DIRECTORY" ]; then
+              echo "Credential directory must not be a symbolic link." >&2
+              exit 2
+            fi
+            # The native plugin checks directory ownership and exact 0700
+            # permissions again, and checks each stored credential at use.
+            export PHENIX_CREDENTIAL_FILE_CONSENT=1
             unset PHENIX_CREDENTIAL_API_KEY_ENV_NAME
             # Keep operator-chosen key variables such as OPENAI_API_KEY intact.
             # The selected API credential source alone decides whether to read it.
