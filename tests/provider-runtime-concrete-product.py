@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
         assert not any(p["status"] == "Authenticated" for p in details["profiles"]), details
 
         query = dict(scope="user", provider_id="openai", connection_id=connection,
-                     profile_id="personal", cursor=None, limit=10)
+                     profile_id=["personal"], cursor=None, limit=10)
         models, code = invoke(connection, "models", query)
         assert code == 0 and models["kind"] == "domain_error", (connection, models)
 
@@ -199,13 +199,13 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
         assert any(p["status"] == "Authenticated" for p in profiles), profiles
 
         allowed_query = dict(scope="user", provider_id="openai", connection_id="api",
-                             profile_id="personal", cursor=None, limit=10)
+                             profile_id=["personal"], cursor=None, limit=10)
         listed, code = invoke("api", "models", allowed_query, fixture=True)
         assert code == 0 and listed["kind"] == "success", listed
         assert [m["id"] for m in listed["value"]["models"]] == ["gpt-5"], listed
         completion = dict(
             scope="user", provider_id="openai", connection_id="api",
-            profile_id="personal", model_id="gpt-5",
+            profile_id=["personal"], model_id="gpt-5",
             request=dict(
                 session="session-1", run="run-1", history=[], tools=[], skills=[],
                 context=[], limits=dict(
