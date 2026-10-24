@@ -1015,6 +1015,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn oauth_provider_contributes_plain_declaration_without_account_grant() {
+        use phenix_sdk::ContractMetadata;
+        let meta = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
+        assert_eq!(meta.provides.len(), 4);
+        assert_eq!(meta.requires.len(), 1);
+        assert_eq!(meta.requires[0].slot, "Credentials");
+        let page = descriptor().unwrap();
+        assert_eq!(page.id, "openai");
+        assert_eq!(page.connections.len(), 1);
+        assert_eq!(page.connections[0].id, "chatgpt");
+        assert_eq!(page.connections[0].auth_methods.len(), 1);
+        assert_eq!(page.connections[0].auth_methods[0].id, METHOD);
+    }
+
+    #[test]
     fn legacy_vault_record_remains_byte_exact_for_atomic_rotation() {
         let legacy =
             r#"{"host_id":"urn:uuid:123e4567-e89b-12d3-a456-426614174000","account":null}"#;
