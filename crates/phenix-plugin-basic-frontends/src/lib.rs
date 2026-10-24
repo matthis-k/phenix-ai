@@ -117,96 +117,6 @@ pub fn jsonl_render(request: RenderRequest) -> Result<Vec<String>, BasicError> {
     Ok(lines)
 }
 
-#[cfg(feature = "terminal")]
-#[phenix_sdk::plugin(
-    id = "phenix.basic.frontend-terminal",
-    version = "1.0.0",
-    provide(phenix_basic_contracts::Frontend, slot = "Frontend")
-)]
-mod terminal {
-    use phenix_basic_contracts::{
-        BasicError, ClientInput, Frontend, RenderRequest, Scope, Submission,
-    };
-    use phenix_sdk::{CallError, CallResult, Host};
-
-    #[derive(Default)]
-    pub struct State;
-
-    #[provide(Frontend::decode)]
-    fn decode(
-        _: &mut State,
-        host: &Host<'_>,
-        request: ClientInput,
-    ) -> CallResult<Submission, BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        super::terminal_decode(request).map_err(CallError::Domain)
-    }
-
-    #[provide(Frontend::render)]
-    fn render(
-        _: &mut State,
-        host: &Host<'_>,
-        request: RenderRequest,
-    ) -> CallResult<Vec<String>, BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        super::terminal_render(request).map_err(CallError::Domain)
-    }
-
-    #[provide(Frontend::cancel)]
-    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        Err(CallError::Domain(phenix_basic_contracts::error(
-            phenix_basic_contracts::ErrorCode::InvalidInput,
-            "host controller must cancel the active graph root",
-        )))
-    }
-}
-
-#[cfg(feature = "jsonl")]
-#[phenix_sdk::plugin(
-    id = "phenix.basic.frontend-jsonl",
-    version = "1.0.0",
-    provide(phenix_basic_contracts::Frontend, slot = "Frontend")
-)]
-mod jsonl {
-    use phenix_basic_contracts::{
-        BasicError, ClientInput, Frontend, RenderRequest, Scope, Submission,
-    };
-    use phenix_sdk::{CallError, CallResult, Host};
-
-    #[derive(Default)]
-    pub struct State;
-
-    #[provide(Frontend::decode)]
-    fn decode(
-        _: &mut State,
-        host: &Host<'_>,
-        request: ClientInput,
-    ) -> CallResult<Submission, BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        super::jsonl_decode(request).map_err(CallError::Domain)
-    }
-
-    #[provide(Frontend::render)]
-    fn render(
-        _: &mut State,
-        host: &Host<'_>,
-        request: RenderRequest,
-    ) -> CallResult<Vec<String>, BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        super::jsonl_render(request).map_err(CallError::Domain)
-    }
-
-    #[provide(Frontend::cancel)]
-    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
-        phenix_basic_contracts::check_session(host, &request.session)?;
-        Err(CallError::Domain(phenix_basic_contracts::error(
-            phenix_basic_contracts::ErrorCode::InvalidInput,
-            "host controller must cancel the active graph root",
-        )))
-    }
-}
-
 /// ACP v1 prompt and cancel frames. Initialize and session creation belong
 /// to the connection host; this provider only decodes authorized turn input.
 #[cfg(feature = "acp")]
@@ -417,47 +327,68 @@ pub fn acp_render_v2(request: RenderRequest) -> Result<Vec<String>, BasicError> 
     Ok(output)
 }
 
+// Each artifact selects only its codec and identity. Session admission and
+// the native Frontend contract handlers are shared across all adapters.
 #[cfg(feature = "acp")]
-#[phenix_sdk::plugin(
-    id = "phenix.basic.frontend-acp",
-    version = "1.0.0",
-    provide(phenix_basic_contracts::Frontend, slot = "Frontend")
+use {acp_decode as selected_decode, acp_render as selected_render};
+#[cfg(feature = "jsonl")]
+use {jsonl_decode as selected_decode, jsonl_render as selected_render};
+#[cfg(feature = "terminal")]
+use {terminal_decode as selected_decode, terminal_render as selected_render};
+
+#[cfg(any(feature = "terminal", feature = "jsonl", feature = "acp"))]
+#[cfg_attr(
+    feature = "terminal",
+    phenix_sdk::plugin(
+        id = "phenix.basic.frontend-terminal",
+        version = "1.0.0",
+        provide(phenix_basic_contracts::Frontend, slot = "Frontend")
+    )
 )]
-mod acp {
+#[cfg_attr(
+    feature = "jsonl",
+    phenix_sdk::plugin(
+        id = "phenix.basic.frontend-jsonl",
+        version = "1.0.0",
+        provide(phenix_basic_contracts::Frontend, slot = "Frontend")
+    )
+)]
+#[cfg_attr(
+    feature = "acp",
+    phenix_sdk::plugin(
+        id = "phenix.basic.frontend-acp",
+        version = "1.0.0",
+        provide(phenix_basic_contracts::Frontend, slot = "Frontend")
+    )
+)]
+mod plugin {
     use phenix_basic_contracts::{
         BasicError, ClientInput, Frontend, RenderRequest, Scope, Submission,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
-    #[derive(Default)]
-    pub struct State;
-
     #[provide(Frontend::decode)]
-    fn decode(
-        _: &mut State,
-        host: &Host<'_>,
-        request: ClientInput,
-    ) -> CallResult<Submission, BasicError> {
+    fn decode(host: &Host<'_>, request: ClientInput) -> CallResult<Submission, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        super::acp_decode(request).map_err(CallError::Domain)
+        super::selected_decode(request).map_err(CallError::Domain)
     }
 
     #[provide(Frontend::render)]
-    fn render(
-        _: &mut State,
-        host: &Host<'_>,
-        request: RenderRequest,
-    ) -> CallResult<Vec<String>, BasicError> {
+    fn render(host: &Host<'_>, request: RenderRequest) -> CallResult<Vec<String>, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
-        super::acp_render(request).map_err(CallError::Domain)
+        super::selected_render(request).map_err(CallError::Domain)
     }
 
     #[provide(Frontend::cancel)]
-    fn cancel(_: &mut State, host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
+    fn cancel(host: &Host<'_>, request: Scope) -> CallResult<(), BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
+        #[cfg(feature = "acp")]
+        let message = "ACP host must cancel the active graph root";
+        #[cfg(not(feature = "acp"))]
+        let message = "host controller must cancel the active graph root";
         Err(CallError::Domain(phenix_basic_contracts::error(
             phenix_basic_contracts::ErrorCode::InvalidInput,
-            "ACP host must cancel the active graph root",
+            message,
         )))
     }
 }

@@ -135,12 +135,8 @@ mod plugin {
     use phenix_basic_contracts::{EventJournal, JournalQuery};
     use phenix_sdk::{CallError, CallResult, Host};
 
-    #[derive(Default)]
-    pub struct State;
-
     #[provide(SourceEvidence::observe)]
     fn observe(
-        _: &mut State,
         host: &Host<'_>,
         reference: SourceRef,
     ) -> CallResult<SourceObservation, EvidenceError> {

@@ -190,9 +190,6 @@ mod plugin {
     };
     use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
 
-    #[derive(Default)]
-    pub struct State;
-
     fn authorize(host: &Host<'_>, scope: &EvidenceScope) -> CallResult<(), EvidenceError> {
         if !phenix_sdk::identifier(&scope.id) {
             return Err(CallError::Domain(issue(
@@ -368,11 +365,7 @@ mod plugin {
     }
 
     #[provide(EvidenceStore::put)]
-    fn put(
-        _: &mut State,
-        host: &Host<'_>,
-        record: EvidenceRecord,
-    ) -> CallResult<EvidenceRecord, EvidenceError> {
+    fn put(host: &Host<'_>, record: EvidenceRecord) -> CallResult<EvidenceRecord, EvidenceError> {
         authorize(host, &record.scope)?;
         // Reject invalid records before any imported effect.
         phenix_advanced_contracts::validate_record(&record)
@@ -443,11 +436,7 @@ mod plugin {
     }
 
     #[provide(EvidenceStore::get)]
-    fn get(
-        _: &mut State,
-        host: &Host<'_>,
-        key: EvidenceKey,
-    ) -> CallResult<EvidenceRecord, EvidenceError> {
+    fn get(host: &Host<'_>, key: EvidenceKey) -> CallResult<EvidenceRecord, EvidenceError> {
         authorize(host, &key.scope)?;
         if !phenix_sdk::identifier(&key.id) {
             return Err(CallError::Domain(issue(
@@ -470,11 +459,7 @@ mod plugin {
     }
 
     #[provide(EvidenceStore::search)]
-    fn search(
-        _: &mut State,
-        host: &Host<'_>,
-        request: EvidenceSearch,
-    ) -> CallResult<EvidencePage, EvidenceError> {
+    fn search(host: &Host<'_>, request: EvidenceSearch) -> CallResult<EvidencePage, EvidenceError> {
         if request.scopes.len() != 1 {
             return Err(CallError::Domain(issue(
                 EvidenceProblem::ScopeDenied,

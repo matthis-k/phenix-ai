@@ -1,6 +1,7 @@
 use crate::{request, stream::Stream};
 use phenix_basic_contracts::{
-    ContextItem, ErrorCode, Limits, Message, ModelRequest, Skill, ToolCall, ToolInfo,
+    error, BasicError, ContextItem, ErrorCode, Limits, Message, ModelRequest, Skill, ToolCall,
+    ToolInfo,
 };
 use serde_json::{json, Value};
 
@@ -511,12 +512,48 @@ fn bound_http_choice_with_kind_endpoint(
     bind_http_model(&provider, admitted).unwrap()
 }
 
+// Use the same checked native handoff as the runtime controller. Fixture
+// credentials are copied here because HttpModelInstall consumes its secret.
+fn selected_config(
+    binding: &phenix_provider_contracts::HttpModelBinding,
+    credential: Option<(
+        &phenix_provider_contracts::CredentialIdentity,
+        &phenix_provider_contracts::CredentialSecret,
+    )>,
+    provider_max_tokens: Option<u64>,
+) -> Result<request::Config, BasicError> {
+    use phenix_provider_contracts::{CredentialSecret, HttpModelInstall, ProviderErrorCode};
+    let credential = credential.map(|(identity, secret)| {
+        (
+            identity.clone(),
+            CredentialSecret::new(secret.expose_for_authorized_provider().to_vec()).unwrap(),
+        )
+    });
+    let install = HttpModelInstall::from_checked(
+        binding,
+        "selected-session".into(),
+        credential,
+        provider_max_tokens,
+    )
+    .map_err(|problem| {
+        error(
+            if problem.code == ProviderErrorCode::Denied {
+                ErrorCode::Denied
+            } else {
+                ErrorCode::InvalidInput
+            },
+            problem.message,
+        )
+    })?;
+    request::Config::from_install(install)
+}
+
 #[test]
 fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
     use phenix_provider_contracts::CredentialSecret;
     let choice = bound_http_choice(true);
     let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
-    let config = request::Config::from_checked_binding(
+    let config = selected_config(
         &choice,
         Some((choice.credential_identity().unwrap(), &key)),
         None,
@@ -544,30 +581,28 @@ fn selected_http_config_is_bound_to_catalog_and_exact_credential_presence() {
         phenix_provider_contracts::CredentialIdentity::new("fixture", "api", "other-account")
             .unwrap();
     assert_eq!(
-        request::Config::from_checked_binding(&choice, Some((&foreign, &key)), None)
+        selected_config(&choice, Some((&foreign, &key)), None)
             .unwrap_err()
             .code,
-        ErrorCode::InvalidInput
+        ErrorCode::Denied
     );
 
     assert_eq!(
-        request::Config::from_checked_binding(&choice, None, None)
-            .unwrap_err()
-            .code,
-        ErrorCode::InvalidInput
+        selected_config(&choice, None, None).unwrap_err().code,
+        ErrorCode::Denied
     );
     let no_auth = bound_http_choice(false);
-    let config = request::Config::from_checked_binding(&no_auth, None, None).unwrap();
+    let config = selected_config(&no_auth, None, None).unwrap();
     assert!(config.credential.is_none());
     assert_eq!(
-        request::Config::from_checked_binding(
+        selected_config(
             &no_auth,
             Some((choice.credential_identity().unwrap(), &key)),
             None,
         )
         .unwrap_err()
         .code,
-        ErrorCode::InvalidInput
+        ErrorCode::Denied
     );
 }
 
@@ -577,7 +612,7 @@ fn checked_transport_rejects_non_utf8_secret_without_environment_fallback() {
     let binding = bound_http_choice(true);
     let key = CredentialSecret::new(vec![0xff, 0xfe]).unwrap();
     assert_eq!(
-        request::Config::from_checked_binding(
+        selected_config(
             &binding,
             Some((binding.credential_identity().unwrap(), &key)),
             Some(512),
@@ -594,7 +629,7 @@ fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
     let choice = bound_http_choice(true);
     let key = CredentialSecret::new(b"selected-account-token".to_vec()).unwrap();
     assert_eq!(
-        request::Config::from_checked_binding(
+        selected_config(
             &choice,
             Some((choice.credential_identity().unwrap(), &key)),
             Some(0),
@@ -608,9 +643,7 @@ fn checked_model_configuration_rejects_zero_provider_budget_and_blank_model() {
     // identifier cannot name any concrete model, even if it claims selectable.
     let blank = bound_http_choice_with_model(false, "  ");
     assert_eq!(
-        request::Config::from_checked_binding(&blank, None, None)
-            .unwrap_err()
-            .code,
+        selected_config(&blank, None, None).unwrap_err().code,
         ErrorCode::InvalidInput
     );
 }
@@ -624,7 +657,7 @@ fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth
     ] {
         let choice = bound_http_choice_with_kind(true, "model-a", kind);
         let token = CredentialSecret::new(b"authorized-oauth-bearer".to_vec()).unwrap();
-        let config = request::Config::from_checked_binding(
+        let config = selected_config(
             &choice,
             Some((choice.credential_identity().unwrap(), &token)),
             None,
@@ -643,17 +676,17 @@ fn checked_http_adapter_accepts_verified_bearer_methods_but_rejects_unknown_auth
     let plugin = bound_http_choice_with_kind(true, "model-a", AuthenticationKind::Plugin);
     let token = CredentialSecret::new(b"unrecognized-plugin-secret".to_vec()).unwrap();
     assert_eq!(
-        request::Config::from_checked_binding(
+        selected_config(
             &plugin,
             Some((plugin.credential_identity().unwrap(), &token)),
             None,
         )
         .unwrap_err()
         .code,
-        ErrorCode::InvalidInput
+        ErrorCode::Denied
     );
     let local = bound_http_choice(false);
-    assert!(request::Config::from_checked_binding(&local, None, None).is_ok());
+    assert!(selected_config(&local, None, None).is_ok());
 }
 
 #[test]
@@ -817,7 +850,7 @@ fn checked_http_binding_executes_live_local_sse_without_env_model_or_key_fallbac
         );
         let key = CredentialSecret::new(b"selected-fixture-key".to_vec()).unwrap();
         let credential = authenticated.then(|| (binding.credential_identity().unwrap(), &key));
-        let config = request::Config::from_checked_binding(&binding, credential, None).unwrap();
+        let config = selected_config(&binding, credential, None).unwrap();
         let turn = request();
         let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &turn,
