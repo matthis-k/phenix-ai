@@ -119,8 +119,8 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
     }
     let input: String = serde_json::from_str(&call.arguments)
         .map_err(|_| error(ErrorCode::InvalidInput, "expected JSON string argument"))?;
-    let definition = selected(&call.tool)
-        .ok_or_else(|| error(ErrorCode::NotFound, "tool not found"))?;
+    let definition =
+        selected(&call.tool).ok_or_else(|| error(ErrorCode::NotFound, "tool not found"))?;
     (definition.execute)(&input)
 }
 
