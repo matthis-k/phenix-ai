@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-kernel, package, definitions, destination = sys.argv[1:]
+kernel, package, definitions, destination, openai_api = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 provider = "phenix.provider.builtins"
@@ -32,19 +32,32 @@ def encode(value):
 with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
     root = Path(temp)
 
-    def invoke(contract, operation, request, *, grant="phenix.providers.user"):
+    def invoke(contract, operation, request, *, grant="phenix.providers.user",
+               selected_contributor=False):
         resource = "phenix.providers.user"
+        registrations_contract = "phenix.provider.registrations@1"
+        operations = [contract + "/" + operation]
+        grants = [dict(caller="root", interface=contract, operation=operation,
+                       resources=[grant])]
+        slots = []
+        artifacts = [package]
+        if selected_contributor:
+            artifacts.append(openai_api)
+            slots.append(dict(caller=provider, slot="Contributors", index=0,
+                              provider="phenix.provider.openai-api", export="Registrations"))
+            grants.append(dict(caller=provider, interface=registrations_contract,
+                               operation="list", resources=[grant]))
+            operations.append(registrations_contract + "/list")
         composition = dict(
             format="phenix.composition.v3",
             entry=dict(interface=contract, operation=operation, provider=provider),
-            artifacts=[package],
+            artifacts=artifacts,
             definitions=[definitions],
-            slots=[],
-            grants=[dict(caller="root", interface=contract, operation=operation,
-                         resources=[grant])],
+            slots=slots,
+            grants=grants,
             excluded=[],
             substitutions=[],
-            authority=dict(operations=[contract + "/" + operation], resources=[grant]),
+            authority=dict(operations=operations, resources=[grant]),
             resource=resource,
         )
         (root / "composition.json").write_text(json.dumps(composition))
@@ -106,6 +119,23 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         protocol["endpoint"] is None
         for protocol in connections["chatgpt"]["protocols"]
     )
+
+    # Real selected M1 import: the OpenAI API plugin contributes its own
+    # registration while the existing manager retains ownership of the public
+    # catalog. It must not inherit the six builtin providers or authenticate.
+    external, code = invoke(catalog, "list", dict(scope="user"),
+                            selected_contributor=True)
+    assert code == 0 and external["kind"] == "success", external
+    contributed_providers = external["value"]["providers"]
+    assert len(contributed_providers) == 1, contributed_providers
+    assert contributed_providers[0]["id"] == "openai"
+    assert [c["id"] for c in contributed_providers[0]["connections"]] == ["api"]
+    absent, code = invoke(
+        catalog, "describe", dict(scope="user", provider_id="anthropic"),
+        selected_contributor=True,
+    )
+    assert code == 0 and absent["kind"] == "domain_error", absent
+    assert absent["value"]["code"] == "NotFound"
 
     described, status = invoke(
         catalog, "describe", dict(scope="user", provider_id="openai")
@@ -234,7 +264,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         format="phenix.provider.builtins.product.v1",
         provider_ids=sorted(providers),
         provider_revision=page["revision"],
-        verified_operations=["registration_list", "list", "describe", "status", "models", "begin"],
+        verified_operations=["registration_list", "selected_catalog", "list", "describe", "status", "models", "begin"],
         denied_scope=True,
         denied_grant=True,
         authenticated_profiles=0,
