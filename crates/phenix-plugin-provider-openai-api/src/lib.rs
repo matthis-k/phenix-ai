@@ -311,9 +311,9 @@ fn revision(ids: &[String]) -> u64 {
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderAuthDelegates, ProviderCompletion, ProviderQuery, ProviderRegistrations,
-        ProviderRuntime, AuthenticationCommand, AuthenticationEvent,
+        AuthenticationCommand, AuthenticationEvent, ProviderAuth, ProviderAuthDelegates,
+        ProviderCatalog, ProviderCompletion, ProviderCredentials, ProviderDetailsQuery,
+        ProviderPage, ProviderQuery, ProviderRegistrations, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
