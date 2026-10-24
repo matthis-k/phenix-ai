@@ -925,7 +925,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 14);
+        assert_eq!(metadata.definitions.len(), 15);
         assert!(metadata
             .definitions
             .iter()
