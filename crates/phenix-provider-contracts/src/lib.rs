@@ -376,9 +376,15 @@ pub struct ProviderCompletion {
 /// model. Existing ProviderAuth/ProviderCatalog stay as transition adapters.
 #[contract(id = "phenix.provider.runtime@1")]
 pub trait ProviderRuntime {
-    fn authenticate(&self, command: AuthenticationCommand) -> Result<AuthenticationEvent, ProviderError>;
+    fn authenticate(
+        &self,
+        command: AuthenticationCommand,
+    ) -> Result<AuthenticationEvent, ProviderError>;
     fn models(&self, query: ModelQuery) -> Result<ModelPage, ProviderError>;
-    fn complete(&self, request: ProviderCompletion) -> Result<phenix_basic_contracts::ModelReply, ProviderError>;
+    fn complete(
+        &self,
+        request: ProviderCompletion,
+    ) -> Result<phenix_basic_contracts::ModelReply, ProviderError>;
 }
 
 #[contract(id = "phenix.provider.catalog@1")]
@@ -573,7 +579,10 @@ mod tests {
             },
         };
         let encoded = command.to_value();
-        assert!(AuthenticationCommand::SCHEMA.owned().unwrap().accepts(&encoded));
+        assert!(AuthenticationCommand::SCHEMA
+            .owned()
+            .unwrap()
+            .accepts(&encoded));
         assert_eq!(AuthenticationCommand::from_value(encoded).unwrap(), command);
 
         let waiting = AuthenticationEvent::Challenge {
