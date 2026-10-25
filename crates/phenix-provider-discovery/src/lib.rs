@@ -158,14 +158,12 @@ pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, Cata
 /// This classification is *not* authorization, entitlement or execution proof.
 pub fn standard_openai_responses_model(model: &str) -> bool {
     const FAMILIES: &[&str] = &["gpt-4.1", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "o4"];
-    FAMILIES
-        .iter()
-        .any(|family| {
-            model == *family
-                || model
-                    .strip_prefix(*family)
-                    .is_some_and(|suffix| suffix.starts_with('-'))
-        })
+    FAMILIES.iter().any(|family| {
+        model == *family
+            || model
+                .strip_prefix(*family)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    })
 }
 
 #[cfg(test)]
@@ -175,8 +173,15 @@ mod tests {
     #[test]
     fn standard_openai_responses_eligibility_excludes_non_conversational_models() {
         for model in [
-            "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-5", "gpt-5.2", "gpt-6", "o1",
-            "o3-mini", "o4-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-5",
+            "gpt-5.2",
+            "gpt-6",
+            "o1",
+            "o3-mini",
+            "o4-mini",
         ] {
             assert!(standard_openai_responses_model(model), "{model}");
         }
