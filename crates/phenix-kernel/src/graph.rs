@@ -491,7 +491,10 @@ impl Kernel {
         self.prepared.graph.as_ref().is_some_and(|graph| {
             graph.events.contains_key(event)
                 && graph.nodes.values().any(|node| {
-                    node.definition.triggers.iter().any(|trigger| trigger == event)
+                    node.definition
+                        .triggers
+                        .iter()
+                        .any(|trigger| trigger == event)
                 })
         })
     }
