@@ -620,18 +620,14 @@ const fn next_graph_member(
     while candidate < count {
         let key = graph_member_name(graph, field, candidate);
         let follows = match previous {
-            Some(prev) => crate::static_schema::compare(
-                graph_member_name(graph, field, prev),
-                key,
-            ) < 0,
+            Some(prev) => {
+                crate::static_schema::compare(graph_member_name(graph, field, prev), key) < 0
+            },
             None => true,
         };
         if follows
             && (chosen == count
-                || crate::static_schema::compare(
-                    key,
-                    graph_member_name(graph, field, chosen),
-                ) < 0)
+                || crate::static_schema::compare(key, graph_member_name(graph, field, chosen)) < 0)
         {
             chosen = candidate;
         }
@@ -651,8 +647,7 @@ const fn next_graph_key(values: &[&str], previous: Option<usize>) -> usize {
             None => true,
         };
         if follows
-            && (chosen == values.len()
-                || crate::static_schema::compare(key, values[chosen]) < 0)
+            && (chosen == values.len() || crate::static_schema::compare(key, values[chosen]) < 0)
         {
             chosen = candidate;
         }
@@ -700,7 +695,10 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
         while j < action.requires.len() {
             let index = next_graph_key(action.requires, previous_requirement);
             let key = action.requires[index];
-            assert!(operation_key_str(key), "invalid action authority requirement");
+            assert!(
+                operation_key_str(key),
+                "invalid action authority requirement"
+            );
             output.text(key);
             previous_requirement = Some(index);
             j += 1;
