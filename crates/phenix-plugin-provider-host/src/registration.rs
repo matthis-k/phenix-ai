@@ -11,19 +11,19 @@ fn issue(code: ProviderErrorCode, message: &str) -> ProviderError {
 #[derive(Default)]
 pub(crate) struct Registry {
     pending: Vec<ProviderDescriptor>,
-    published: Option<Vec<ProviderDescriptor>>,
+    sealed: bool,
 }
 
 impl Registry {
     pub(crate) fn is_populating(&self) -> bool {
-        !self.pending.is_empty() && self.published.is_none()
+        !self.pending.is_empty() && !self.sealed
     }
 
     /// Check the entire candidate snapshot before mutating owner state.
     /// Multiple selected contributors may supply distinct connections under
     /// the same provider identity; collisions are rejected, not overwritten.
     pub(crate) fn register(&mut self, provider: ProviderDescriptor) -> Result<(), ProviderError> {
-        if self.published.is_some() {
+        if self.sealed {
             return Err(issue(ProviderErrorCode::Conflict, "provider catalog is already published"));
         }
         let mut candidate = self.pending.clone();
@@ -40,7 +40,7 @@ impl Registry {
     /// Called only after the population graph has completed successfully.
     /// Until then no partially registered provider can be selected.
     pub(crate) fn publish(&mut self) -> Result<ProviderPage, ProviderError> {
-        if self.published.is_some() {
+        if self.sealed {
             return Err(issue(ProviderErrorCode::Conflict, "provider catalog is already published"));
         }
         if self.pending.is_empty() {
@@ -51,7 +51,7 @@ impl Registry {
             revision: 1,
         }])
         .map_err(|_| issue(ProviderErrorCode::InvalidInput, "invalid provider catalog"))?;
-        self.published = Some(providers.clone());
+        self.sealed = true;
         self.pending.clear();
         Ok(ProviderPage { providers, revision: 1 })
     }
