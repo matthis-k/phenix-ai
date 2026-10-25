@@ -369,9 +369,9 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
             let Some(Value::String(id)) = request.remove("event") else {
                 return Err(Failure::new(Code::SchemaRejected, "graph event ID missing"));
             };
-            let payload = request.remove("payload").ok_or_else(|| {
-                Failure::new(Code::SchemaRejected, "graph event payload missing")
-            })?;
+            let payload = request
+                .remove("payload")
+                .ok_or_else(|| Failure::new(Code::SchemaRejected, "graph event payload missing"))?;
             if !request.is_empty() {
                 return Err(Failure::new(
                     Code::SchemaRejected,
