@@ -2072,6 +2072,7 @@ name = "phenix-plugin-provider-host"
 version = "0.1.0"
 dependencies = [
  "phenix-provider-builtins",
+ "phenix-provider-discovery",
  "phenix-provider-contracts",
  "phenix-sdk",
 ]
