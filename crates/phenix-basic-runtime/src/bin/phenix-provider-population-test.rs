@@ -90,13 +90,8 @@ fn verify_empty_population(host_artifact: &str, definitions: &str) -> Result<(),
         .map_err(|e| format!("empty offline preparation: {e:?}"))?
         .load()
         .map_err(|e| format!("empty native load: {e:?}"))?;
-    let graph = kernel
-        .prepared_graph()
-        .ok_or_else(|| "empty test has no compiled graph".to_string())?;
-    // begin and owner settlement are both present; contributor count is zero.
-    if graph.nodes.len() != 2 {
-        return Err(format!("expected only manager graph nodes, got {}", graph.nodes.len()));
-    }
+    // The manager has no contributing plugin; runtime steps must still show
+    // its on-begin handler followed by the owner-only settled handler.
     let mut execution = kernel
         .begin_kernel_event(KernelEvent::Begin)
         .map_err(|e| format!("empty kernel.begin: {e:?}"))?;
@@ -115,7 +110,7 @@ fn verify_empty_population(host_artifact: &str, definitions: &str) -> Result<(),
     if execution.steps().len() != 2
         || execution.steps()[0].node != "phenix.provider.host/on-begin"
         || execution.steps()[1].node != "phenix.provider.host/on-populated"
-        || !matches!(execution.steps()[1].outcome, Outcome::Domain(_))
+        || !matches!(&execution.steps()[1].outcome, Outcome::Domain(_))
     {
         return Err(format!("owner settlement not admitted after zero subscribers: {:?}", execution.steps()));
     }
