@@ -54,7 +54,11 @@ fn candidate_admission_rejects_every_modification_without_durable_proof() {
 fn staged_graph_has_no_extra_public_action() {
     let graph = GRAPH.owned().unwrap();
     assert!(graph.actions.is_empty());
-    assert!(graph.events.is_empty());
+    assert_eq!(graph.events.len(), 1);
+    assert_eq!(graph.events[0].id, "phenix.agent.run-finished");
+    assert!(graph.events[0].payload.fields.iter().all(|field| {
+        field.name != "answer" && field.name != "text" && field.name != "credentials"
+    }));
 }
 
 #[test]
