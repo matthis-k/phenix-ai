@@ -3,7 +3,7 @@
 use crate::{
     dag,
     resolve::Selection,
-    runtime::{Kernel, Outcome, Root},
+    runtime::{Kernel, Outcome, QueuedEvent, Root},
     Call, Poll, Ticket,
 };
 use phenix_contract::{
@@ -468,6 +468,62 @@ pub enum GraphCompletion<'a> {
 const MAX_SYNC_GRAPH_PUMPS: usize = 1_024;
 
 impl Kernel {
+    /// Stage only an event authored by the currently executing plugin. The
+    /// current GraphExecution will handle it as a subsequent same-root wave.
+    /// No user action, provider registration, credential, or authority is
+    /// inferred from the event identity or payload.
+    pub(super) fn queue_graph_event(
+        &self,
+        root: u64,
+        caller: &str,
+        event: &str,
+        payload: Value,
+    ) -> Result<(), Failure> {
+        self.check_thread()?;
+        let graph = self
+            .prepared
+            .graph
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "no prepared graph"))?;
+        if graph.event_owners.get(event).map(String::as_str) != Some(caller) {
+            return Err(Failure::new(
+                Code::Denied,
+                "custom event is not declared by the executing plugin",
+            ));
+        }
+        if !graph.events[event].payload.accepts(&payload) {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "custom event payload does not match declared schema",
+            ));
+        }
+        if payload.encode()?.len() > 65_536 {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "custom event payload exceeds bounded queue size",
+            ));
+        }
+        let mut state = self.state.borrow_mut();
+        if state.active_root != Some(root) || state.graph_root != Some(root) {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "custom events require a live graph execution root",
+            ));
+        }
+        if state.graph_events.len() >= 128 || state.graph_emission_count >= 1_024 {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "custom graph event queue or wave budget exhausted",
+            ));
+        }
+        state.graph_emission_count += 1;
+        state.graph_events.push_back(QueuedEvent {
+            id: event.into(),
+            payload,
+        });
+        Ok(())
+    }
+
     /// Trusted control-plane action admission. Frontends submit the discovered
     /// action rather than invoking a graph handler directly. Synchronous nodes
     /// execute in active topological order. Pending and state triggers are G4.
@@ -713,6 +769,12 @@ impl Kernel {
         let active = graph.activation_order(&BTreeSet::from([event.into()]))?;
         let epoch_cursor = self.cells.borrow().epoch().0;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
+        {
+            let mut state = self.state.borrow_mut();
+            state.graph_root = Some(root.id);
+            state.graph_events.clear();
+            state.graph_emission_count = 0;
+        }
         Ok(GraphExecution {
             root,
             action: action_id.into(),
