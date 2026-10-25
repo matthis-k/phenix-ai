@@ -11,7 +11,7 @@ use url::Url;
 pub mod oauth_pkce;
 #[cfg(feature = "oauth-loopback")]
 pub mod oauth_loopback;
-#[cfg(feature = "siwc-verified")]
+#[cfg(feature = "oauth-loopback")]
 pub mod oauth_oidc;
 /// OpenAI's explicit OSS Sign in with ChatGPT URL/callback boundary.
 /// This is protocol data handling, not a ProviderAuth implementation.
