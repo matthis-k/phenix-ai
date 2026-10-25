@@ -65,7 +65,10 @@ mod tests {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_eq!(metadata.provides.len(), 1);
         assert_eq!(metadata.requires.len(), 0);
-        assert_eq!(metadata.provides[0].contract, "phenix.basic.tool-registrations@1");
+        assert_eq!(
+            metadata.provides[0].contract,
+            "phenix.basic.tool-registrations@1"
+        );
         assert_eq!(definition().id, ID);
     }
 }
