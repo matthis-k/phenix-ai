@@ -165,6 +165,79 @@ impl ProviderDeclaration<'_> {
     }
 }
 
+/// Shared endpoint and discovery conventions for provider declarations.
+///
+/// This references installed standard protocol implementations; it does not
+/// introduce provider-specific Rust, perform discovery, or grant credentials.
+/// The declaration chooses supported wire protocols and the actual catalog
+/// response adapter. Non-standard providers can still supply exact endpoints.
+pub trait StandardConventions {
+    /// Populate endpoints for selected established protocol wire formats.
+    /// An omitted protocol is never inferred to be supported.
+    fn with_standard_protocols(self, additional: &[&str]) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+
+    /// Select a documented /models endpoint and existing catalog adapter.
+    /// The caller opts in explicitly; not all OpenAI-compatible APIs provide
+    /// discovery, and some use a different response schema.
+    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+}
+
+fn standard_endpoint(base: &str, path: &str) -> Result<String, &'static str> {
+    if base.contains('?') || base.ends_with('/') {
+        return Err("standard convention requires a plain endpoint base");
+    }
+    let authorized = validate_endpoint(base, EndpointMode::LocalLoopback)
+        .map_err(|_| "unsafe standard provider base")?;
+    let target = format!("{base}/{path}");
+    let candidate = validate_endpoint(&target, EndpointMode::LocalLoopback)
+        .map_err(|_| "unsafe standard protocol endpoint")?;
+    if !same_credential_origin(&authorized, &candidate) {
+        return Err("cross-origin standard protocol endpoint");
+    }
+    Ok(target)
+}
+
+impl StandardConventions for ConnectionDescriptor {
+    fn with_standard_protocols(mut self, additional: &[&str]) -> Result<Self, &'static str> {
+        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
+        let mut ids = self
+            .protocols
+            .iter()
+            .map(|binding| binding.id.as_str())
+            .collect::<Vec<_>>();
+        ids.extend_from_slice(additional);
+        let mut seen = BTreeSet::new();
+        let mut protocols = Vec::new();
+        for id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let path = match id {
+                OPENAI_CHAT => "chat/completions",
+                OPENAI_RESPONSES => "responses",
+                ANTHROPIC_MESSAGES => "messages",
+                _ => return Err("protocol has no registered standard endpoint"),
+            };
+            protocols.push(ProtocolBinding {
+                id: id.to_owned(),
+                endpoint: Some(standard_endpoint(base, path)?),
+            });
+        }
+        self.protocols = protocols;
+        Ok(self)
+    }
+
+    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str> {
+        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
+        let endpoint = standard_endpoint(base, "models")?;
+        self.with_catalog(Some(&endpoint), adapter, DiscoveryKind::Dynamic)
+    }
+}
+
 /// Named adapters are registry-level implementations. The builder merely
 /// references them; it does not implement OAuth or model streaming.
 pub trait ConnectionExtensions {
