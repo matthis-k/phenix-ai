@@ -415,6 +415,15 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
+      providerHostApiKeyProductCheck = pkgs.runCommand "phenix-provider-host-api-key-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/provider-host-api-key-product.py} \\
+          ${kernel}/bin/phenix-kernel ${providerHostPlugin} \\
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out"
+        test -s "$out/verified.json"
+      '';
       providerBuiltinsPluginCheck = pkgs.runCommand "phenix-provider-builtins-plugin-check" {
         nativeBuildInputs = [ pkgs.jq pkgs.python3 ];
       } ''
@@ -3060,6 +3069,7 @@
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-host-plugin = providerHostPlugin;
+        provider-host-api-key-product = providerHostApiKeyProductCheck;
         provider-openai-api = providerOpenAiApi;
         provider-chatgpt = providerChatGpt;
         p1-auth-launcher-product = p1AuthLauncherProductCheck;
