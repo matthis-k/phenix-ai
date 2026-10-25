@@ -18,6 +18,7 @@ enum Phase {
     Idle,
     Collecting(Vec<ProviderDescriptor>),
     Published,
+    Aborted,
 }
 
 /// Owner-private state. No Storage mirror, kernel registry or partial catalog.
@@ -27,8 +28,8 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
-    pub(crate) fn is_populating(&self) -> bool {
-        matches!(&self.phase, Phase::Collecting(_))
+    pub(crate) fn blocks_pull_catalog(&self) -> bool {
+        !matches!(&self.phase, Phase::Idle)
     }
 
     /// Called by the authorized controller *before* triggering graph nodes.
@@ -102,7 +103,9 @@ impl Registry {
                 "provider population is not active",
             ));
         }
-        self.phase = Phase::Idle;
+        // A failed wave cannot silently fall back to the old pull model or
+        // restart within the same plugin generation with stale graph work.
+        self.phase = Phase::Aborted;
         Ok(())
     }
 }
@@ -121,7 +124,7 @@ mod tests {
             ProviderErrorCode::Conflict
         );
         registry.begin().unwrap();
-        assert!(registry.is_populating());
+        assert!(registry.blocks_pull_catalog());
         assert_eq!(
             registry.begin().unwrap_err().code,
             ProviderErrorCode::Conflict
@@ -129,7 +132,7 @@ mod tests {
         registry.register(providers[1].clone()).unwrap();
         registry.register(providers[0].clone()).unwrap();
         let catalog = registry.publish().unwrap();
-        assert!(!registry.is_populating());
+        assert!(registry.blocks_pull_catalog());
         assert_eq!(catalog.providers.len(), 2);
         assert_eq!(catalog.providers[0].id, "openai");
         assert_eq!(catalog.providers[1].id, "openrouter");
@@ -197,11 +200,11 @@ mod tests {
         registry.register(providers[0].clone()).unwrap();
         registry.abort().unwrap();
         assert!(!registry.is_populating());
-        registry.begin().unwrap();
-        registry.register(providers[1].clone()).unwrap();
+        assert_eq!(registry.begin().unwrap_err().code, ProviderErrorCode::Conflict);
         assert_eq!(
-            registry.publish().unwrap().providers,
-            vec![providers[1].clone()]
+            registry.register(providers[1].clone()).unwrap_err().code,
+            ProviderErrorCode::Conflict
         );
+        assert_eq!(registry.publish().unwrap_err().code, ProviderErrorCode::Conflict);
     }
 }
