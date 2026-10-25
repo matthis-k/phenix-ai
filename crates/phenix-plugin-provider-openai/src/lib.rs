@@ -5,9 +5,7 @@ use phenix_provider_builtins::declaration::{
     Auth, AuthPreset, Connection, Discovery, KeyPresentation, Protocol, Provider,
 };
 use phenix_provider_contracts::{ProviderError, ProviderPopulate, Providers, ProvidersPopulate};
-use phenix_sdk::{
-    CallResult, FailurePolicy, Host, JoinPolicy, StaticGraphContribution, StaticGraphNode,
-};
+use phenix_sdk::{CallResult, Host, StaticGraphContribution, StaticGraphNode};
 
 /// Both methods share one logical OpenAI provider without sharing accounts.
 /// Strategies, request codecs, key storage and discovery are owned by the
@@ -44,16 +42,11 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.provider.openai",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "populate",
-        triggers: &["phenix.providers.populate"],
-        after: &[],
-        selector: "",
-        operation: "phenix.provider.populate@1/register",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[StaticGraphNode::on(
+        "populate",
+        &["phenix.providers.populate"],
+        "phenix.provider.populate@1/register",
+    )],
 };
 
 #[phenix_sdk::plugin(
