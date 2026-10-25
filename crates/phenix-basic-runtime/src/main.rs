@@ -772,6 +772,9 @@ fn run_console(
             }
         }
     }
+    // Explicitly end the GraphExecution borrow before moving the kernel into
+    // native teardown. The loop only exits on EOF with no active root.
+    drop(active);
     shutdown_kernel(kernel)
 }
 
