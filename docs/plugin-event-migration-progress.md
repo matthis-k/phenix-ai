@@ -19,7 +19,7 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 | G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / two-contributor product pending | #1146–#1149 shared manager/owner settlement; #1150 second plain-data registration hook (five standards), typed register_all, six-provider native catalog check | Rustfmt passed earlier after corrections; full native product pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
 | G2 – Tool discovery and execution | basic-tools, tool-fixture | IMPLEMENTED / native acceptance pending | #1151: typed tools.populate/ready, owner onBegin→settled, attested private registry, reverse-tool hook; legacy catalog and execute contracts preserved | Rustfmt/ACP frontend passed on recent heads; native tool-population product pending | Exact-head native graph test and production compatibility, then remove redundant list boilerplate |
 | G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | PARTIAL / both terminal paths implemented | #1152 agent-owned run-finished notice after pending submit graph node, with session/run IDs and nonsecret counters; staged advance emits only after terminal checkpoint (not on Reprepare); Session CAS unchanged | Rustfmt, generated workflow and ACP-v2 passed on recent heads; native Basic/ACP acceptance pending | Verify graph post-submit notification and native graph composition; verify native staged async completion and generic post-commit session notices (ERG-21) |
-| G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | NOT STARTED | Candidate events and authoritative owners inventoried | Not applicable yet | Validate subscriber need; publish only on committed state |
+| G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | REVIEWED / conditional only | Audited existing selected contracts; no concrete independent default subscriber yet establishes a need for new broadcasts; do not add per-CAS or per-token events | Source-level audit only; no new code or native gate | Implement owner-scoped, post-commit notices only when a concrete consumer is identified and ERG-21 is solved |
 | G5 – Keep contract-oriented | storage, credentials, model transport, model fixtures, evidence-journal, environment, project-storage | REVIEWED / NO FORCED CONVERSION | Explicit 'no event' exclusions recorded in matrix | Existing contract conformance remains gate | Avoid new events for reads, CAS, tokens, or secrets |
 
 ### Segment log
@@ -136,6 +136,14 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 - **S18 (shared graph ergonomics)**: added const `StaticGraphNode::after()`
   builder and reused it for the Basic completion successor node. Added
   contract unit coverage; no new scheduler, wire ABI or authority surface.
+
+- **S19 (G4 source/consumer review)**: `Workspace::set`, `Context::set`,
+  `CompactionStore::put`, `EvidenceStore::put` and `EventJournal::append`
+  are directed, authorized operations with their own persistence/CAS or
+  stream semantics. The searched default consumers did not establish an
+  independent multicast notification requirement. No speculative events
+  added. Session-scoped semantic notices remain gated by generic post-commit
+  graph delivery (ERG-21); per-token journal append is expressly excluded.
 
 ## Ergonomics register
 
