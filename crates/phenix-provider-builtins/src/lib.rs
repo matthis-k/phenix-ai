@@ -787,7 +787,7 @@ mod tests {
             openai.connections[1].protocols,
             vec![ProtocolBinding {
                 id: OPENAI_RESPONSES.into(),
-                endpoint: None,
+                endpoint: Some("https://api.openai.com/v1/responses".into()),
             }]
         );
     }
@@ -1280,13 +1280,14 @@ mod tests {
             assert_eq!(configured.endpoint.as_deref(), Some(endpoint));
         }
 
-        // The subscription OAuth flow has no installed authorized transport.
+        // A standard route is public metadata, not proof of account
+        // authorization or an installed executable transport.
         let chatgpt = &providers[0].connections[1];
         assert_eq!(chatgpt.id, "chatgpt");
-        assert!(chatgpt
-            .protocols
-            .iter()
-            .all(|protocol| protocol.endpoint.is_none()));
+        assert_eq!(
+            chatgpt.protocols[0].endpoint.as_deref(),
+            Some("https://api.openai.com/v1/responses")
+        );
 
         // Anthropic wire shape does not imply this gateway accepts x-api-key
         // instead of the gateway's account-bound bearer authentication.
