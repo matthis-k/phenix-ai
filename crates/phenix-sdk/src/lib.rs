@@ -10,6 +10,28 @@ pub trait GraphEventPayload: live::Portable {
     const ID: &'static str;
 }
 
+/// Declare a typed graph event subscription with no repeated event ID.
+///
+/// The event type supplies its stable ID via #[event]. This expands to the
+/// existing StaticGraphNode; the kernel still verifies declarations, ownership,
+/// grants and dependency edges during offline preparation. An event handler is
+/// an event-to-node edge, never a separately scheduled callback system.
+///
+/// Example:
+/// ```ignore
+/// phenix_sdk::on_event!("populate", ProvidersPopulate, "provider@1/register")
+/// ```
+#[macro_export]
+macro_rules! on_event {
+    ($id:expr, $event:ty, $operation:expr $(,)?) => {
+        $crate::StaticGraphNode::on(
+            $id,
+            &[<$event as $crate::GraphEventPayload>::ID],
+            $operation,
+        )
+    };
+}
+
 #[doc(hidden)]
 pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
@@ -122,6 +144,24 @@ mod graph_declaration_tests {
             ["alpha", "finish", "zeta"]
         );
         assert_eq!(canonical.nodes[1].after, ["example/alpha", "example/zeta"]);
+    }
+
+    #[test]
+    fn typed_subscription_uses_event_contract_not_repeated_string() {
+        const HOOK: StaticGraphNode =
+            on_event!("receive", Prompt, "example.input@1/submit");
+        assert_eq!(HOOK.id, "receive");
+        assert_eq!(HOOK.triggers, ["example.prompt"]);
+        assert_eq!(HOOK.operation, "example.input@1/submit");
+        assert_eq!(HOOK.failure, FailurePolicy::FailRoot);
+        const GRAPH: StaticGraphContribution = StaticGraphContribution {
+            plugin: "example",
+            events: &[Prompt::EVENT],
+            actions: &[],
+            nodes: &[HOOK],
+        };
+        const META: MetadataBytes = descriptor::static_metadata::graph(GRAPH);
+        assert_eq!(META.bytes(), GRAPH.owned().unwrap().encode().unwrap());
     }
 
     #[test]
