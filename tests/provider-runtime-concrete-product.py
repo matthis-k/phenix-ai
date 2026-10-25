@@ -106,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
         details = status["value"]["Status"]["value"]
         assert details["provider_id"] == "openai", details
         assert details["connection_id"] == connection, details
-        assert not any(p["status"] == "Authenticated" for p in details["profiles"]), details
+        assert not any("Authenticated" in p["status"] for p in details["profiles"]), details
 
         query = dict(scope="user", provider_id="openai", connection_id=connection,
                      profile_id=["personal"], cursor=None, limit=10)
@@ -196,7 +196,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-concrete-provider-") as temp:
         }, fixture=True)
         assert code == 0 and valid["kind"] == "success", valid
         profiles = valid["value"]["Status"]["value"]["profiles"]
-        assert any(p["status"] == "Authenticated" for p in profiles), profiles
+        assert any("Authenticated" in p["status"] for p in profiles), profiles
 
         allowed_query = dict(scope="user", provider_id="openai", connection_id="api",
                              profile_id=["personal"], cursor=None, limit=10)
