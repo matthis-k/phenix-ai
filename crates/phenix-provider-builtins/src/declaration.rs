@@ -263,6 +263,19 @@ mod tests {
     }
 
     #[test]
+    fn plain_provider_implements_typed_registration_conversion() {
+        let provider = THIRD_PARTY[0];
+        let descriptor = phenix_provider_contracts::ProviderDefinition::into_descriptor(provider)
+            .unwrap();
+        assert_eq!(descriptor.id, "third-party");
+        assert_eq!(descriptor.connections[0].protocols[0].id, "openai-responses");
+        assert_eq!(
+            descriptor,
+            compile(THIRD_PARTY, &BuiltinAuthenticationAdapters).unwrap()[0]
+        );
+    }
+
+    #[test]
     fn explicit_conventions_and_absent_discovery_are_not_inferred() {
         let definitions = [Provider {
             id: "custom",
