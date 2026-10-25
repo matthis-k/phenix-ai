@@ -199,6 +199,23 @@ pub fn compile(
     Ok(result)
 }
 
+/// Provider declarations register through the same typed interface as any
+/// externally compiled provider: only the conventions are shared.
+impl phenix_provider_contracts::ProviderDefinition for Provider<'_> {
+    fn into_descriptor(self) -> Result<ProviderDescriptor, phenix_provider_contracts::ProviderError> {
+        let providers = compile(&[self], &crate::BuiltinAuthenticationAdapters).map_err(|_| {
+            phenix_provider_contracts::ProviderError {
+                code: phenix_provider_contracts::ProviderErrorCode::InvalidInput,
+                message: "invalid provider declaration".into(),
+            }
+        })?;
+        providers.into_iter().next().ok_or_else(|| phenix_provider_contracts::ProviderError {
+            code: phenix_provider_contracts::ProviderErrorCode::InvalidInput,
+            message: "empty provider declaration".into(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
