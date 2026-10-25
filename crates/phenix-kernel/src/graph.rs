@@ -1415,12 +1415,7 @@ mod tests {
                 payload: ValueSchema::String,
             }],
             actions: vec![],
-            nodes: vec![node(
-                "commit",
-                &["settled:publisher.populate"],
-                &[],
-                &[],
-            )],
+            nodes: vec![node("commit", &["settled:publisher.populate"], &[], &[])],
         };
         let subscriber = contribution(
             "subscriber",
