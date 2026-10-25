@@ -20,6 +20,17 @@ pub fn account(
     provider: &str,
     connection: &str,
 ) -> Result<Option<CredentialIdentity>, ProviderError> {
+    if scope.is_empty()
+        || scope.len() > 128
+        || !scope
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_')
+    {
+        return Err(ProviderError {
+            code: ProviderErrorCode::InvalidInput,
+            message: "invalid provider management scope".into(),
+        });
+    }
     let Some(resource) = resource else {
         return Err(denied());
     };
@@ -99,6 +110,14 @@ mod tests {
             account(None, "user", "openai", "api").unwrap_err().code,
             ProviderErrorCode::Denied
         );
+        for scope in ["", "../user", "too much / scope"] {
+            assert_eq!(
+                account(Some(&resource), scope, "openai", "api")
+                    .unwrap_err()
+                    .code,
+                ProviderErrorCode::InvalidInput
+            );
+        }
     }
 
     #[test]
