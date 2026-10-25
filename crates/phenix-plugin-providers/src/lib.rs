@@ -19,15 +19,15 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     actions: &[PopulateProviders::ACTION],
     nodes: &[
         StaticGraphNode {
-        id: "on-begin",
-        triggers: &[phenix_sdk::KERNEL_BEGIN],
-        after: &[],
-        selector: "",
-        operation: "phenix.provider.startup@1/begin",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    },
+            id: "on-begin",
+            triggers: &[phenix_sdk::KERNEL_BEGIN],
+            after: &[],
+            selector: "",
+            operation: "phenix.provider.startup@1/begin",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
         StaticGraphNode {
             id: "on-populated",
             triggers: &["settled:phenix.providers.populate"],
@@ -97,7 +97,7 @@ mod plugin {
         CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderKernelBegin,
         ProviderPage, ProviderQuery, ProviderRegistration, ProviderRegistrations, ProviderRegistry,
-        ProviderRuntime, ProviderSettlement, ProvidersPopulated, ProviderStartup,
+        ProviderRuntime, ProviderSettlement, ProviderStartup, ProvidersPopulated,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
