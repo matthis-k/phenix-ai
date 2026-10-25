@@ -362,7 +362,7 @@ mod plugin {
         }
         state.registry.begin().map_err(CallError::Domain)?;
         if let Err(failure) = host.emit_event(&ProvidersPopulate {
-            scope: scope.into(),
+            scope,
         }) {
             // No partially initialized catalog if admission of the event
             // itself fails. A graph failure after emission is handled by the
@@ -394,7 +394,7 @@ mod plugin {
         // Enqueue before committing so a full queue cannot expose a partial
         // initialization as successful.
         host.emit_event(&ProvidersReady {
-            scope: scope.into(),
+            scope,
             revision: 1,
         })?;
         let published = state.registry.publish().map_err(CallError::Domain)?;
