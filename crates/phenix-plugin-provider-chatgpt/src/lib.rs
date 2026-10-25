@@ -64,7 +64,9 @@ fn oauth_callback_error(error: RegistrationError) -> ProviderError {
 fn token_exchange_error(error: TransportError) -> ProviderError {
     match error {
         TransportError::InvalidForm => denied("OAuth token exchange request was invalid"),
-        TransportError::Unavailable => unavailable("OAuth token transport returned no usable response"),
+        TransportError::Unavailable => {
+            unavailable("OAuth token transport returned no usable response")
+        }
         TransportError::Rejected => denied("OAuth token endpoint rejected the authorization code"),
         TransportError::TooLarge => denied("OAuth token response exceeded the size limit"),
         TransportError::InvalidTokenResponse => denied("OAuth token response was invalid"),
