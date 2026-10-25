@@ -1671,6 +1671,29 @@
         test -s $out/verified.json
       '';
 
+      # Native tool event population drives the *existing* graph executor,
+      # then proves selected executor routing after manager-owned settlement.
+      toolPopulationTestBinary = rust.buildRustPackage {
+        pname = "phenix-tool-population-test";
+        version = "0.1.0";
+        src = basicRuntimeSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--bin" "phenix-tool-population-test" ];
+        doCheck = false;
+        installPhase = ''
+          mkdir -p $out/bin
+          cp target/*/release/phenix-tool-population-test $out/bin/
+        '';
+      };
+      toolPopulationProductCheck = pkgs.runCommand "phenix-tool-population-product" { } ''
+        mkdir -p $out
+        ${toolPopulationTestBinary}/bin/phenix-tool-population-test \
+          ${basicTools} \
+          ${toolFixture} \
+          ${basicDefinitions} > $out/verified.json
+        test -s $out/verified.json
+      '';
+
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
@@ -3168,6 +3191,7 @@
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
         tool-contributors = toolContributorsCheck;
+        tool-population-product = toolPopulationProductCheck;
         b2-journal = eventJournalCheck;
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
