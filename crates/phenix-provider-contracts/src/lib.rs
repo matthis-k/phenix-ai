@@ -369,6 +369,16 @@ pub trait ProviderStartup {
     fn begin(&self, event: ProviderKernelBegin) -> Result<(), ProviderError>;
 }
 
+/// Called by the graph after all providers.populate subscribers settle.
+/// This is an owner-only graph trigger, not an additional public event.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProvidersPopulated {}
+
+#[contract(id = "phenix.provider.settlement@1")]
+pub trait ProviderSettlement {
+    fn complete(&self, event: ProvidersPopulated) -> Result<(), ProviderError>;
+}
+
 /// One provider declaration contributed during a graph population wave.
 /// The caller's *actual* plugin identity and grant are verified by the kernel;
 /// neither identity nor authority comes from this untrusted payload.
@@ -509,6 +519,7 @@ pub trait ProviderAuth {
     define(ProviderRegistrations),
     define(ProviderRegistry),
     define(ProviderStartup),
+    define(ProviderSettlement),
     define(ProviderPopulate),
     define(ProviderAuth),
     define(ProviderRuntime),
@@ -717,6 +728,15 @@ mod tests {
     }
 
     #[test]
+    fn settlement_payload_is_a_typed_empty_graph_hook() {
+        assert_eq!(
+            ProvidersPopulated::SCHEMA.owned().unwrap(),
+            phenix_sdk::settled_event_schema()
+        );
+        assert_eq!(ProvidersPopulated {}.to_value(), Value::map([]));
+    }
+
+    #[test]
     fn startup_handler_schema_matches_intrinsic_kernel_begin_event() {
         let begin = phenix_sdk::standard_kernel_events()
             .into_iter()
@@ -730,7 +750,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 9);
+        assert_eq!(metadata.definitions.len(), 10);
     }
 
     #[test]
