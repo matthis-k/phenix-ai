@@ -179,47 +179,34 @@ mod plugin {
                     "too many tool contributors",
                 )));
             }
-            let mut routes = BTreeMap::new();
-            let mut tools = Vec::new();
-            for definition in TOOLS {
-                routes.insert(definition.id.to_owned(), None);
-                tools.push(tool(definition));
-            }
+            // Reuse the same generation-private validation path for both the
+            // existing pull adapter and future event-triggered contributors.
+            // The route is derived ONLY from the selected contributor import,
+            // never from the event payload or a plugin-supplied index.
+            let mut registry = super::event_registry::Registry::default();
+            registry
+                .begin(TOOLS.iter().map(super::tool))
+                .map_err(CallError::Domain)?;
+            let mut selected_catalogs = Vec::with_capacity(count);
             for index in 0..count {
-                let contributions =
-                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?;
-                if contributions.len() > 256 {
-                    return Err(CallError::Domain(error(
-                        ErrorCode::InvalidInput,
-                        "too many registered tools",
-                    )));
-                }
-                for offered in contributions {
-                    if offered.id.is_empty()
-                        || offered.id.len() > 128
-                        || !offered.id.bytes().all(|byte| {
-                            byte.is_ascii_alphanumeric()
-                                || byte == b'.'
-                                || byte == b'-'
-                                || byte == b'_'
-                        })
-                        || offered.description.is_empty()
-                        || offered.description.len() > 4096
-                        || offered.arguments_schema.len() > 16384
-                        || !serde_json::from_str::<serde_json::Value>(&offered.arguments_schema)
-                            .is_ok_and(|schema| schema.is_object())
-                        || tools.len() >= 256
-                        || routes.insert(offered.id.clone(), Some(index)).is_some()
-                    {
-                        return Err(CallError::Domain(error(
-                            ErrorCode::InvalidInput,
-                            "invalid or conflicting tool registration",
-                        )));
-                    }
-                    tools.push(offered);
+                selected_catalogs.push(
+                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?,
+                );
+            }
+            for catalog in &selected_catalogs {
+                for offered in catalog {
+                    registry
+                        .register(offered.clone(), &selected_catalogs)
+                        .map_err(CallError::Domain)?;
                 }
             }
-            tools.sort_by(|a, b| a.id.cmp(&b.id));
+            let selected = registry.publish().map_err(CallError::Domain)?;
+            let routes = selected
+                .iter()
+                .map(|entry| (entry.info.id.clone(), entry.route))
+                .collect::<BTreeMap<_, _>>();
+            let tools = selected.into_iter().map(|entry| entry.info).collect::<Vec<_>>();
+
             let revision = if count == 0 {
                 REVISION
             } else {
