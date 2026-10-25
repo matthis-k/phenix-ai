@@ -268,10 +268,7 @@ mod plugin {
     /// Verify every contribution against a preselected M1 import. The actual
     /// imported executor index comes from the resolver, never untrusted data.
     #[provide(ToolRegistry::register)]
-    fn register(
-        state: &mut State,
-        offered: ToolInfo,
-    ) -> CallResult<(), BasicError> {
+    fn register(state: &mut State, offered: ToolInfo) -> CallResult<(), BasicError> {
         if state.snapshot.is_some() {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,
@@ -284,7 +281,10 @@ mod plugin {
                 "tool registration requires an attested population wave",
             ))
         })?;
-        state.registry.register(offered, catalogs).map_err(CallError::Domain)
+        state
+            .registry
+            .register(offered, catalogs)
+            .map_err(CallError::Domain)
     }
 
     /// Finalize only after the entire tools.populate wave has settled.
