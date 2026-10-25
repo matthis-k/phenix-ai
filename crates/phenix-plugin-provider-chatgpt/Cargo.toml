@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 phenix-provider-builtins = { path = "../phenix-provider-builtins" }
+phenix-provider-auth-strategies = { path = "../phenix-provider-auth-strategies", features = ["oauth-browser"] }
 phenix-provider-discovery = { path = "../phenix-provider-discovery" }
 phenix-provider-protocols = { path = "../phenix-provider-protocols", features = ["siwc-verified", "model-codecs"] }
 serde.workspace = true
