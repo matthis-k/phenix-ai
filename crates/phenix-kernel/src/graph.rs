@@ -544,8 +544,7 @@ impl Kernel {
     pub fn begin_kernel_event(&self, event: KernelEvent) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
         match &event {
-            KernelEvent::PluginLoaded { plugin }
-            | KernelEvent::PluginReloaded { plugin, .. } => {
+            KernelEvent::PluginLoaded { plugin } | KernelEvent::PluginReloaded { plugin, .. } => {
                 if !self.images.borrow().contains_key(plugin) {
                     return Err(Failure::new(
                         Code::MissingBinding,
@@ -589,9 +588,7 @@ impl Kernel {
             let already_emitted = match &event {
                 KernelEvent::Begin => state.kernel_begin,
                 KernelEvent::PluginLoaded { plugin } => state.kernel_loaded.contains(plugin),
-                KernelEvent::PluginUnloaded { plugin } => {
-                    state.kernel_unloaded.contains(plugin)
-                }
+                KernelEvent::PluginUnloaded { plugin } => state.kernel_unloaded.contains(plugin),
                 KernelEvent::PluginReloaded { plugin, .. } => {
                     state.kernel_reloaded.contains(plugin)
                 }
