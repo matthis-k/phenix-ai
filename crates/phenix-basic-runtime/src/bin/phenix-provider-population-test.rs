@@ -1,15 +1,16 @@
 //! Native product test: existing graph event dispatch registers provider data.
 //! This is a test binary, not an alternative kernel scheduler or plugin API.
-use phenix_contract::Portable;
+use phenix_contract::{KernelEvent, Portable};
 use phenix_kernel::{
     resolve::{Composition, Prepared, Selection},
-    Kernel, Outcome,
+    GraphCompletion, GraphStatus, Kernel, Outcome,
 };
-use phenix_provider_contracts::{ProviderPage, ProviderQuery, ProvidersPopulate};
+use phenix_provider_contracts::{ProviderPage, ProviderQuery};
 use serde_json::json;
 
 const REGISTRY: &str = "phenix.provider.registry@1";
 const POPULATE: &str = "phenix.provider.populate@1";
+const STARTUP: &str = "phenix.provider.startup@1";
 const CATALOG: &str = "phenix.provider.catalog@1";
 const RESOURCE: &str = "phenix.providers.user";
 const HOST: &str = "phenix.provider.host";
@@ -76,6 +77,7 @@ fn run() -> Result<(), String> {
             grant("root", POPULATE, "register"),
             grant("root", CATALOG, "list"),
             grant(CONTRIBUTOR, POPULATE, "register"),
+            grant(HOST, STARTUP, "begin"),
             grant(CONTRIBUTOR, REGISTRY, "register"),
         ],
         "excluded": [],
@@ -87,6 +89,7 @@ fn run() -> Result<(), String> {
                 format!("{REGISTRY}/publish"),
                 format!("{REGISTRY}/abort"),
                 format!("{POPULATE}/register"),
+                format!("{STARTUP}/begin"),
                 format!("{CATALOG}/list"),
             ],
             "resources": [RESOURCE],
@@ -101,7 +104,26 @@ fn run() -> Result<(), String> {
     let scope = ProviderQuery {
         scope: "user".into(),
     };
-    invoke::<()>(&kernel, selection(REGISTRY, "begin", HOST), scope.clone())?;
+    // One trusted kernel begin event invokes the manager's onBegin handler.
+    // The manager emits the custom populate event, and this same graph root
+    // processes OpenAI's onPopulate subscriber in a following wave.
+    let mut execution = kernel
+        .begin_kernel_event(KernelEvent::Begin)
+        .map_err(|e| format!("kernel.begin: {e:?}"))?;
+    let mut finished = false;
+    for _ in 0..32 {
+        if execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
+            == GraphStatus::Finished
+        {
+            finished = true;
+            break;
+        }
+    }
+    if !finished || !matches!(execution.completion(), Some(GraphCompletion::Success)) {
+        return Err("provider population graph failed to complete successfully".into());
+    }
+    let steps = execution.steps().len();
+    drop(execution);
 
     // Staged state is not an independently selectable catalog.
     let catalog = selection(CATALOG, "list", HOST);
@@ -123,20 +145,8 @@ fn run() -> Result<(), String> {
     }
     drop(root);
 
-    let steps = kernel
-        .submit_action(
-            "phenix.providers.populate-action",
-            &ProvidersPopulate {
-                scope: "user".into(),
-            }
-            .to_value(),
-        )
-        .map_err(|e| format!("graph population: {e:?}"))?;
-    if steps.len() != 1 {
-        return Err(format!(
-            "expected one event subscriber, got {}",
-            steps.len()
-        ));
+    if steps != 2 {
+        return Err(format!("expected begin + populate graph nodes, got {steps}"));
     }
 
     let published: ProviderPage =
@@ -158,7 +168,7 @@ fn run() -> Result<(), String> {
         "{}",
         json!({
             "format": "phenix.provider-population-product.v1",
-            "graph_steps": steps.len(),
+            "graph_steps": steps,
             "providers": published.providers.len(),
             "revision": published.revision,
         })
