@@ -9,7 +9,7 @@ use phenix_basic_contracts::{
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
     Submission,
 };
-use phenix_contract::{Portable, ScopedRequest, Value};
+use phenix_contract::{KernelEvent, Portable, ScopedRequest, Value, KERNEL_BEGIN};
 use phenix_kernel::{
     graph::{GraphCompletion, GraphExecution, GraphStatus},
     resolve::{Composition, Prepared, Selection},
@@ -985,14 +985,46 @@ fn scoped_composition(composition: &Composition, resource: &str) -> Composition 
     spec
 }
 
+/// Admit the kernel-owned begin source after the composition is fully loaded.
+/// Event fan-out is handled by the ordinary graph executor. This fast path
+/// supports finite startup hooks; a future asynchronous controller must keep
+/// and pump the same GraphExecution when a startup handler remains pending.
+fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
+    if !kernel.has_event_subscribers(KERNEL_BEGIN) {
+        return Ok(());
+    }
+    let mut execution = kernel
+        .begin_kernel_event(KernelEvent::Begin)
+        .map_err(|failure| format!("kernel.begin admission: {failure:?}"))?;
+    let mut completed = false;
+    for _ in 0..1024 {
+        if execution.pump(|_| {}).map_err(|failure| format!("kernel.begin: {failure:?}"))?
+            == GraphStatus::Finished
+        {
+            completed = true;
+            break;
+        }
+    }
+    if !completed {
+        execution.cancel().map_err(|failure| format!("kernel.begin cancellation: {failure:?}"))?;
+        return Err("startup event remained pending; asynchronous lifecycle pumping required".into());
+    }
+    if !matches!(execution.completion(), Some(GraphCompletion::Success)) {
+        return Err("startup event graph failed; plugin state must not be published".into());
+    }
+    Ok(())
+}
+
 fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
     let resource = phenix_basic_contracts::session_resource(session)
         .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
     let spec = scoped_composition(composition, &resource);
-    Prepared::prepare(spec)
+    let kernel = Prepared::prepare(spec)
         .map_err(|e| format!("{e:?}"))?
         .load()
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{e:?}"))?;
+    activate_kernel_begin(&kernel)?;
+    Ok(kernel)
 }
 
 fn run() -> Result<(), String> {
