@@ -998,7 +998,9 @@ fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
         .map_err(|failure| format!("kernel.begin admission: {failure:?}"))?;
     let mut completed = false;
     for _ in 0..1024 {
-        if execution.pump(|_| {}).map_err(|failure| format!("kernel.begin: {failure:?}"))?
+        if execution
+            .pump(|_| {})
+            .map_err(|failure| format!("kernel.begin: {failure:?}"))?
             == GraphStatus::Finished
         {
             completed = true;
@@ -1006,8 +1008,12 @@ fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
         }
     }
     if !completed {
-        execution.cancel().map_err(|failure| format!("kernel.begin cancellation: {failure:?}"))?;
-        return Err("startup event remained pending; asynchronous lifecycle pumping required".into());
+        execution
+            .cancel()
+            .map_err(|failure| format!("kernel.begin cancellation: {failure:?}"))?;
+        return Err(
+            "startup event remained pending; asynchronous lifecycle pumping required".into(),
+        );
     }
     if !matches!(execution.completion(), Some(GraphCompletion::Success)) {
         return Err("startup event graph failed; plugin state must not be published".into());
