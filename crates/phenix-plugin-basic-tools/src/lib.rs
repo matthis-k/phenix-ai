@@ -322,7 +322,7 @@ mod plugin {
                 }
                 state
                     .registry
-                    .register(offered.clone(), &catalogs)
+                    .register(offered.clone(), catalogs)
                     .map_err(CallError::Domain)?;
             }
         }
