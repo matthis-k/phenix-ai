@@ -1,6 +1,8 @@
 //! Generation-local staging for existing M1 provider-population graph events.
 //! A declaration is data, not authorization or an executable provider.
-use phenix_provider_builtins::merge_registration_pages;
+use phenix_provider_builtins::{
+    merge_registration_pages, MAX_REGISTERED_CONNECTIONS, MAX_REGISTERED_PROVIDERS,
+};
 use phenix_provider_contracts::{
     ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderPage,
 };
@@ -88,8 +90,6 @@ impl Registry {
         // incoming provider (and the prior fragment with the same identity)
         // can introduce a new connection conflict. Do not clone or
         // revalidate every unrelated provider for every registration.
-        const MAX_PROVIDERS: usize = 256;
-        const MAX_CONNECTIONS: usize = 1024;
         let previous = pending.iter().position(|item| item.id == provider.id);
         let connection_count = pending
             .iter()
@@ -97,8 +97,8 @@ impl Registry {
                 total.checked_add(item.connections.len())
             })
             .and_then(|total| total.checked_add(provider.connections.len()));
-        if connection_count.is_none_or(|count| count > MAX_CONNECTIONS)
-            || (previous.is_none() && pending.len() >= MAX_PROVIDERS)
+        if connection_count.is_none_or(|count| count > MAX_REGISTERED_CONNECTIONS)
+            || (previous.is_none() && pending.len() >= MAX_REGISTERED_PROVIDERS)
         {
             return Err(issue(
                 ProviderErrorCode::InvalidInput,
