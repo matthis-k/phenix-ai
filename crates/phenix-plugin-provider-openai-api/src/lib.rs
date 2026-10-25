@@ -15,7 +15,7 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_discovery::{
     http::{fetch_bearer_catalog, CatalogFetchError},
-    parse, CatalogFormat,
+    parse_standard_openai_model_ids,
 };
 
 const PROVIDER: &str = "openai";
@@ -50,8 +50,6 @@ fn models_url() -> Result<String, ProviderError> {
     }
 }
 
-const MAX_MODELS: usize = 256;
-const MAX_BODY: usize = 256 * 1024;
 
 fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
@@ -176,55 +174,12 @@ fn fetch_models(
 }
 
 fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
-    if body.len() > MAX_BODY {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI model catalog too large",
-        ));
-    }
-    // The documented list envelope is mandatory. Entry parsing and duplicate
-    // detection are shared with other provider discovery implementations.
-    let document: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+    parse_standard_openai_model_ids(body).map_err(|_| {
         error(
             ProviderErrorCode::Unavailable,
             "invalid OpenAI model response",
         )
-    })?;
-    if document.get("object").and_then(serde_json::Value::as_str) != Some("list") {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "unexpected OpenAI catalog shape",
-        ));
-    }
-    let page = parse(CatalogFormat::OpenAi, body).map_err(|_| {
-        error(
-            ProviderErrorCode::Unavailable,
-            "invalid OpenAI model response",
-        )
-    })?;
-    if page.models.len() > MAX_MODELS {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "too many OpenAI models",
-        ));
-    }
-    let mut ids = Vec::with_capacity(page.models.len());
-    for model in page.models {
-        let id = model.id;
-        if id.len() > 128
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
-        {
-            return Err(error(
-                ProviderErrorCode::Unavailable,
-                "invalid OpenAI model identity",
-            ));
-        }
-        ids.push(id);
-    }
-    ids.sort_unstable();
-    Ok(ids)
+    })
 }
 
 /// Supported Responses families, rather than treating image, embedding,
