@@ -52,8 +52,8 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
-        CredentialIdentity, ProviderAuth, ProviderCatalog, ProviderCredentials,
+        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
+        CredentialIdentity, ModelQuery, ProviderAuth, ProviderCatalog, ProviderCredentials,
         ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
@@ -167,9 +167,11 @@ mod plugin {
         provider_id: &str,
         connection_id: &str,
     ) -> CallResult<bool, ProviderError> {
-        Ok(!connection_descriptor(state, host, provider_id, connection_id)?
-            .auth_methods
-            .is_empty())
+        Ok(
+            !connection_descriptor(state, host, provider_id, connection_id)?
+                .auth_methods
+                .is_empty(),
+        )
     }
 
     #[provide(ProviderCatalog::list)]
@@ -224,12 +226,9 @@ mod plugin {
                 "selected model discovery strategy is not installed",
             )));
         }
-        let identity = CredentialIdentity::new(
-            &request.provider_id,
-            &request.connection_id,
-            profile,
-        )
-        .map_err(CallError::Domain)?;
+        let identity =
+            CredentialIdentity::new(&request.provider_id, &request.connection_id, profile)
+                .map_err(CallError::Domain)?;
         let count = imports::Credentials::count(host)?;
         if count == 0 {
             return Err(CallError::Domain(error(
@@ -247,11 +246,8 @@ mod plugin {
         // An import slot selected with many(min=0) uses the explicit #0
         // identity. Scoped admission checks resource AND operation at the
         // kernel boundary, not merely the profile ID in request metadata.
-        let credential = host.invoke_scoped::<ProviderCredentials::resolve>(
-            "Credentials#0",
-            &scope,
-            &identity,
-        )?;
+        let credential =
+            host.invoke_scoped::<ProviderCredentials::resolve>("Credentials#0", &scope, &identity)?;
         super::models::discover(&connection, profile, &credential, request.limit)
             .map_err(CallError::Domain)
     }
