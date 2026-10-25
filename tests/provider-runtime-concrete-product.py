@@ -27,7 +27,7 @@ def encode(v):
     if isinstance(v, int):
         return b"\x04" + v.to_bytes(8, "big")
     if isinstance(v, bytes):
-        return b"\\x06" + len(v).to_bytes(4, "big") + v
+        return b"\x06" + len(v).to_bytes(4, "big") + v
     if isinstance(v, str):
         raw = v.encode()
         return b"\x05" + len(raw).to_bytes(4, "big") + raw
