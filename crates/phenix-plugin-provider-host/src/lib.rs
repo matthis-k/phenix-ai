@@ -118,7 +118,7 @@ mod plugin {
         if state.selected.is_none() {
             // Registration events may still be executing. Do not publish a
             // partial catalog or silently select the pull-based compatibility path.
-            if state.registry.is_populating() {
+            if state.registry.blocks_pull_catalog() {
                 return Err(CallError::Domain(error(
                     ProviderErrorCode::Unavailable,
                     "provider population has not been published",
