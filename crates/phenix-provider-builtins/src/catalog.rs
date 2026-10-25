@@ -81,19 +81,29 @@ pub fn discovered_model_page(
 mod tests {
     use super::*;
 
-    #[test]
-    fn standard_catalog_is_bound_to_the_supplied_account_and_protocol() {
-        let page = discovered_model_page(
-            "personal",
+    fn page(
+        limit: u64,
+        models: &[(&str, &str)],
+        eligible: impl Fn(&str) -> bool,
+    ) -> Result<ModelPage, ProviderError> {
+        discovered_model_page(
+            "work",
             "api",
             "openai-responses",
             "responses",
-            3,
-            [("gpt-5".into(), "GPT 5".into()), ("gpt-4o".into(), "GPT 4o".into())],
-            |_| true,
+            limit,
+            models
+                .iter()
+                .map(|(id, label)| ((*id).to_owned(), (*label).to_owned())),
+            eligible,
         )
-        .unwrap();
-        assert_eq!(page.profile_id.as_deref(), Some("personal"));
+    }
+
+    #[test]
+    fn standard_catalog_is_bound_to_the_supplied_account_and_protocol() {
+        let page = page(3, &[("gpt-5", "GPT 5"), ("gpt-4o", "GPT 4o")], |_| true)
+            .unwrap();
+        assert_eq!(page.profile_id.as_deref(), Some("work"));
         assert_eq!(page.models.len(), 2);
         assert!(page.models.iter().all(|model| {
             model.connection_id == "api"
@@ -101,21 +111,15 @@ mod tests {
                 && model.endpoint_id == "responses"
                 && model.selectable
         }));
-        assert!(page.revision != 0);
+        assert_ne!(page.revision, 0);
     }
 
     #[test]
     fn policy_filters_models_without_hiding_revision_changes() {
         let catalog = |second: &str| {
-            discovered_model_page(
-                "work",
-                "api",
-                "openai-responses",
-                "responses",
-                4,
-                [("gpt-5".into(), "GPT 5".into()), (second.into(), second.into())],
-                |id| id.starts_with("gpt-"),
-            )
+            page(4, &[("gpt-5", "GPT 5"), (second, second)], |id| {
+                id.starts_with("gpt-")
+            })
             .unwrap()
         };
         let one = catalog("embedding-1");
@@ -126,37 +130,26 @@ mod tests {
 
     #[test]
     fn fails_closed_for_duplicates_over_budget_and_untrusted_labels() {
-        let sample = || vec![("gpt-5".to_owned(), "GPT 5".to_owned())];
         assert_eq!(
-            discovered_model_page("work", "api", "openai-responses", "responses", 0, sample(), |_| true)
+            page(0, &[("gpt-5", "GPT 5")], |_| true).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
+        assert_eq!(
+            page(1, &[("gpt-5", "one"), ("gpt-5", "two")], |_| false)
                 .unwrap_err()
                 .code,
             ProviderErrorCode::InvalidInput
         );
         assert_eq!(
-            discovered_model_page("work", "api", "openai-responses", "responses", 1, [
-                ("gpt-5".into(), "one".into()),
-                ("gpt-5".into(), "two".into()),
-            ], |_| false)
-            .unwrap_err()
-            .code,
-            ProviderErrorCode::InvalidInput
-        );
-        assert_eq!(
-            discovered_model_page("work", "api", "openai-responses", "responses", 1, [
-                ("gpt-5".into(), "one".into()),
-                ("gpt-4o".into(), "two".into()),
-            ], |_| true)
-            .unwrap_err()
-            .code,
+            page(1, &[("gpt-5", "one"), ("gpt-4o", "two")], |_| true)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Unavailable
         );
         assert_eq!(
-            discovered_model_page("work", "api", "openai-responses", "responses", 2, [
-                ("gpt-5".into(), "bad\\nlabel".into()),
-            ], |_| true)
-            .unwrap_err()
-            .code,
+            page(2, &[("gpt-5", "bad\nlabel")], |_| true)
+                .unwrap_err()
+                .code,
             ProviderErrorCode::InvalidInput
         );
     }
