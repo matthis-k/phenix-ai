@@ -133,7 +133,10 @@ pub const PROVIDERS: &[Provider<'static>] = &[
 /// This partition is a transitional fixture until legacy pull registration is
 /// removed; new third-party plugins should declare their own provider values.
 pub fn standard_provider_definitions() -> impl Iterator<Item = Provider<'static>> {
-    PROVIDERS.iter().copied().filter(|provider| provider.id != "openai")
+    PROVIDERS
+        .iter()
+        .copied()
+        .filter(|provider| provider.id != "openai")
 }
 
 #[cfg(test)]
