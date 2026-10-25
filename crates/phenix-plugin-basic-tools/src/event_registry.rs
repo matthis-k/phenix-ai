@@ -125,6 +125,15 @@ impl Registry {
         Ok(())
     }
 
+    /// A previously accepted event contribution must be verified to match
+    /// the same resolver-selected executor when the owner seals the wave.
+    pub(crate) fn find(&self, id: &str) -> Option<&Entry> {
+        match &self.phase {
+            Phase::Collecting(entries) => entries.get(id),
+            _ => None,
+        }
+    }
+
     pub(crate) fn publish(&mut self) -> Result<Vec<Entry>, BasicError> {
         let Phase::Collecting(entries) = &self.phase else {
             return Err(error(ErrorCode::Conflict, "tool population cannot publish"));
