@@ -87,7 +87,10 @@ mod tests {
         assert_eq!(metadata.provides.len(), 2);
         assert_eq!(metadata.requires.len(), 1);
         assert_eq!(metadata.requires[0].contract, "phenix.tools.registry@1");
-        assert_eq!(metadata.requires[0].cardinality, phenix_sdk::Cardinality::Optional);
+        assert_eq!(
+            metadata.requires[0].cardinality,
+            phenix_sdk::Cardinality::Optional
+        );
         assert_eq!(GRAPH.nodes[0].triggers, ["phenix.tools.populate"]);
         assert!(GRAPH.events.is_empty());
         assert!(GRAPH.actions.is_empty());
