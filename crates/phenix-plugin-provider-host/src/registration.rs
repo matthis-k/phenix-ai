@@ -199,12 +199,18 @@ mod tests {
         );
         registry.register(providers[0].clone()).unwrap();
         registry.abort().unwrap();
-        assert!(!registry.is_populating());
-        assert_eq!(registry.begin().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert!(registry.blocks_pull_catalog());
+        assert_eq!(
+            registry.begin().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
         assert_eq!(
             registry.register(providers[1].clone()).unwrap_err().code,
             ProviderErrorCode::Conflict
         );
-        assert_eq!(registry.publish().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.publish().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
     }
 }
