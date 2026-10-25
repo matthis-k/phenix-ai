@@ -711,6 +711,7 @@ impl Kernel {
         Ok(GraphExecution {
             root,
             action: action_id.into(),
+            event: event.into(),
             payload: payload.clone(),
             node_requests: BTreeMap::new(),
             state_cursor: epoch_cursor,
@@ -778,6 +779,7 @@ fn state_hook_requests(
 pub struct GraphExecution<'a> {
     root: Root<'a>,
     action: String,
+    event: String,
     payload: Value,
     /// Event nodes use the action payload; state hooks get scoped epoch data.
     node_requests: BTreeMap<String, Value>,
@@ -965,11 +967,13 @@ impl GraphExecution<'_> {
         self.root.kernel.check_thread()?;
         if !self.admitted {
             let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
-            let action = &graph.actions[&self.action];
+            // Intrinsic kernel sources are deliberately NOT public actions.
+            // The execution records both identities at admission, rather
+            // than indexing the user-action map for an intrinsic event.
             self.emit(
                 GraphEvent::Admitted {
-                    action: &action.id,
-                    event: &action.event,
+                    action: &self.action,
+                    event: &self.event,
                     graph: &graph.identity,
                     resource: self.root.scope.resource.as_deref(),
                 },
