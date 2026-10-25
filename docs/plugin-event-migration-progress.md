@@ -53,6 +53,21 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   shared `standard_provider_definitions()` centralizes the transitional
   non-OpenAI partition. No second registry or new ABI added. Native CI pending.
 
+- **S07 (A25 / G5 model-http review)**: inspected `phenix-plugin-model-http`
+  and its transport, pending hooks and configuration state. `#[pending]`,
+  `#[poll]` and `#[cancel]` already represent asynchronous model work;
+  token chunks append through the authorized EventJournal contract. **No
+  model-token graph events** or new parallel event system. Session-scoped
+  `HttpModelSession::install` remains a directed contract; selected
+  configuration consumes once and cannot fall back to environment defaults.
+  Current kernel shutdown refuses nonquiescent native work and retains its
+  dependency closure, so worker teardown must remain coordinated through
+  pending cancellation rather than post-unload callbacks.
+- **S08 (G1 CI)**: PR #1150 at `fe79be9` passed Rustfmt, generated workflow,
+  ACP v2, cache isolation, deterministic session history and official ACP
+  interoperability checks. Full Nix candidate remained in progress; no native
+  product acceptance or merge claim.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -77,6 +92,8 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-14 | High | OpenAI remains defined in both old `defaults::PROVIDERS` and new `phenix-plugin-provider-openai`; registration bundle must explicitly exclude its identity | Complete cutover: one definition owner per provider; remove OpenAI from old legacy defaults and delete retired pull contributor once ACP consumers migrate | Open; G1 de-duplication |
 | ERG-15 | Medium | Standard declaration hook still requires manual `graph(super::GRAPH)`, empty plugin State and `#[provide(...)]` for a one-operation registration | Generate a generic typed event subscriber from the Rust handler; keep graph/ABI metadata as the compiled target | Open; SDK after #1149 |
 | ERG-16 | Medium | Product assertions assumed provider index zero was OpenAI, while the registry correctly sorts canonical provider IDs | Author-facing provider lookup by stable ID, never by position; product test verifies exact deterministic ID set | **Fixed in #1150**; native test pending |
+
+| ERG-17 | Medium | Long-lived model transport work currently relies on separate pending cancel/poll and the host's physical-lease shutdown gating; generic lifecycle pumping cannot safely force early unload (`phenix-plugin-model-http/src/lib.rs`, `phenix-kernel/src/runtime.rs`) | A shared async lifecycle controller that drains or cancels outstanding tickets *before* kernel.shutdown, preserving worker ownership; no token-level graph events | Open; generic G0, not model-http event conversion |
 
 ### New finding policy
 
