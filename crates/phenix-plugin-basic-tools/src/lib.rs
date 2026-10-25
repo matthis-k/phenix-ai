@@ -218,6 +218,9 @@ mod plugin {
         counts: BTreeMap<String, u64>,
         snapshot: Option<ToolSnapshot>,
         registry: super::event_registry::Registry,
+        /// Attested selected contributor catalogs captured BEFORE event
+        /// fan-out, so event handlers cannot recursively enter themselves.
+        attested_catalogs: Option<Vec<Vec<ToolInfo>>>,
     }
 
     /// Kernel.begin stages the manager-owned intrinsic tools and emits the
@@ -235,31 +238,6 @@ mod plugin {
                 "tool catalog already selected",
             )));
         }
-        state
-            .registry
-            .begin(TOOLS.iter().map(super::tool))
-            .map_err(CallError::Domain)?;
-        if let Err(failure) = host.emit_event(&ToolsPopulate {}) {
-            let _ = state.registry.abort();
-            return Err(CallError::Kernel(failure));
-        }
-        Ok(())
-    }
-
-    /// Verify every contribution against a preselected M1 import. The actual
-    /// imported executor index comes from the resolver, never untrusted data.
-    #[provide(ToolRegistry::register)]
-    fn register(
-        state: &mut State,
-        host: &Host<'_>,
-        offered: ToolInfo,
-    ) -> CallResult<(), BasicError> {
-        if state.snapshot.is_some() {
-            return Err(CallError::Domain(error(
-                ErrorCode::Conflict,
-                "tool catalog is already published",
-            )));
-        }
         let count = imports::Contributors::count(host)?;
         if count > 64 {
             return Err(CallError::Domain(error(
@@ -277,8 +255,36 @@ mod plugin {
         }
         state
             .registry
-            .register(offered, &catalogs)
-            .map_err(CallError::Domain)
+            .begin(TOOLS.iter().map(super::tool))
+            .map_err(CallError::Domain)?;
+        state.attested_catalogs = Some(catalogs);
+        if let Err(failure) = host.emit_event(&ToolsPopulate {}) {
+            let _ = state.registry.abort();
+            return Err(CallError::Kernel(failure));
+        }
+        Ok(())
+    }
+
+    /// Verify every contribution against a preselected M1 import. The actual
+    /// imported executor index comes from the resolver, never untrusted data.
+    #[provide(ToolRegistry::register)]
+    fn register(
+        state: &mut State,
+        offered: ToolInfo,
+    ) -> CallResult<(), BasicError> {
+        if state.snapshot.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool catalog is already published",
+            )));
+        }
+        let catalogs = state.attested_catalogs.as_deref().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool registration requires an attested population wave",
+            ))
+        })?;
+        state.registry.register(offered, catalogs).map_err(CallError::Domain)
     }
 
     /// Finalize only after the entire tools.populate wave has settled.
@@ -296,21 +302,13 @@ mod plugin {
                 "tool catalog is already published",
             )));
         }
-        let count = imports::Contributors::count(host)?;
-        if count > 64 {
-            return Err(CallError::Domain(error(
-                ErrorCode::InvalidInput,
-                "too many tool contributors",
-            )));
-        }
-        let mut catalogs = Vec::with_capacity(count);
-        for index in 0..count {
-            catalogs.push(imports::Contributors::invoke_at::<ToolRegistrations::list>(
-                host,
-                index,
-                &(),
-            )?);
-        }
+        let catalogs = state.attested_catalogs.as_deref().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool settlement requires an attested population wave",
+            ))
+        })?;
+        let count = catalogs.len();
         for (index, catalog) in catalogs.iter().enumerate() {
             for offered in catalog {
                 if let Some(existing) = state.registry.find(&offered.id) {
