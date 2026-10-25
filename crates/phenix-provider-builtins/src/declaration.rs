@@ -202,17 +202,22 @@ pub fn compile(
 /// Provider declarations register through the same typed interface as any
 /// externally compiled provider: only the conventions are shared.
 impl phenix_provider_contracts::ProviderDefinition for Provider<'_> {
-    fn into_descriptor(self) -> Result<ProviderDescriptor, phenix_provider_contracts::ProviderError> {
+    fn into_descriptor(
+        self,
+    ) -> Result<ProviderDescriptor, phenix_provider_contracts::ProviderError> {
         let providers = compile(&[self], &crate::BuiltinAuthenticationAdapters).map_err(|_| {
             phenix_provider_contracts::ProviderError {
                 code: phenix_provider_contracts::ProviderErrorCode::InvalidInput,
                 message: "invalid provider declaration".into(),
             }
         })?;
-        providers.into_iter().next().ok_or_else(|| phenix_provider_contracts::ProviderError {
-            code: phenix_provider_contracts::ProviderErrorCode::InvalidInput,
-            message: "empty provider declaration".into(),
-        })
+        providers
+            .into_iter()
+            .next()
+            .ok_or_else(|| phenix_provider_contracts::ProviderError {
+                code: phenix_provider_contracts::ProviderErrorCode::InvalidInput,
+                message: "empty provider declaration".into(),
+            })
     }
 }
 
@@ -265,10 +270,13 @@ mod tests {
     #[test]
     fn plain_provider_implements_typed_registration_conversion() {
         let provider = THIRD_PARTY[0];
-        let descriptor = phenix_provider_contracts::ProviderDefinition::into_descriptor(provider)
-            .unwrap();
+        let descriptor =
+            phenix_provider_contracts::ProviderDefinition::into_descriptor(provider).unwrap();
         assert_eq!(descriptor.id, "third-party");
-        assert_eq!(descriptor.connections[0].protocols[0].id, "openai-responses");
+        assert_eq!(
+            descriptor.connections[0].protocols[0].id,
+            "openai-responses"
+        );
         assert_eq!(
             descriptor,
             compile(THIRD_PARTY, &BuiltinAuthenticationAdapters).unwrap()[0]
