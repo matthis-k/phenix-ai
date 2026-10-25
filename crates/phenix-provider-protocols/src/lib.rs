@@ -7,12 +7,12 @@
 use std::net::IpAddr;
 use url::Url;
 
-#[cfg(feature = "oauth2-pkce")]
-pub mod oauth_pkce;
 #[cfg(feature = "oauth-loopback")]
 pub mod oauth_loopback;
 #[cfg(feature = "oauth-loopback")]
 pub mod oauth_oidc;
+#[cfg(feature = "oauth2-pkce")]
+pub mod oauth_pkce;
 /// OpenAI's explicit OSS Sign in with ChatGPT URL/callback boundary.
 /// This is protocol data handling, not a ProviderAuth implementation.
 pub mod siwc;
