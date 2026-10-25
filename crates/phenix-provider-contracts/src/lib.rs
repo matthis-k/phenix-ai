@@ -333,6 +333,34 @@ pub trait ProviderRegistrations {
     fn list(&self) -> Result<ProviderPage, ProviderError>;
 }
 
+/// Payload for the ordinary M1 graph event that collects provider declarations.
+/// A launcher must submit this event through the existing graph executor; the
+/// event itself does not confer a registry or credential grant.
+#[event(id = "phenix.providers.populate")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProvidersPopulate {
+    pub scope: String,
+}
+
+/// One provider declaration contributed during a graph population wave.
+/// The caller's *actual* plugin identity and grant are verified by the kernel;
+/// neither identity nor authority comes from this untrusted payload.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderRegistration {
+    pub scope: String,
+    pub provider: ProviderDescriptor,
+}
+
+/// Stages provider declarations, then publishes one verified generation snapshot.
+/// Registration is available only to explicitly authorized graph contributors;
+/// publication belongs to a separately authorized population controller.
+/// Neither operation grants model execution, credentials or entitlement.
+#[contract(id = "phenix.provider.registry@1")]
+pub trait ProviderRegistry {
+    fn register(&self, request: ProviderRegistration) -> Result<(), ProviderError>;
+    fn publish(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
+}
+
 /// A provider-facing authentication operation. Interactive flows return a
 /// challenge/attempt state; a successful profile is never inferred from a
 /// bool, a stored token, or the existence of a registration.
@@ -408,6 +436,7 @@ pub trait ProviderAuth {
     profile = "definitions",
     define(ProviderCatalog),
     define(ProviderRegistrations),
+    define(ProviderRegistry),
     define(ProviderAuth),
     define(ProviderRuntime),
     define(ProviderCredentials),
@@ -618,7 +647,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 6);
+        assert_eq!(metadata.definitions.len(), 7);
     }
 
     #[test]
