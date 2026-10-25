@@ -354,12 +354,9 @@ mod plugin {
             )));
         }
         state.registry.begin().map_err(CallError::Domain)?;
-        if let Err(failure) = host.emit(
-            ProvidersPopulate::EVENT.id,
-            &ProvidersPopulate {
-                scope: scope.into(),
-            },
-        ) {
+        if let Err(failure) = host.emit_event(&ProvidersPopulate {
+            scope: scope.into(),
+        }) {
             // No partially initialized catalog if admission of the event
             // itself fails. A graph failure after emission is handled by the
             // controller's abort path and never becomes a selected snapshot.
