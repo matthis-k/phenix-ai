@@ -8,6 +8,18 @@ mod auth;
 mod models;
 mod registration;
 
+use phenix_provider_contracts::{PopulateProviders, ProvidersPopulate};
+use phenix_sdk::StaticGraphContribution;
+
+/// Declare the shared event once. Contributors add their own nodes without
+/// duplicating the event or any scheduling mechanism.
+pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
+    plugin: "phenix.provider.host",
+    events: &[ProvidersPopulate::EVENT],
+    actions: &[PopulateProviders::ACTION],
+    nodes: &[],
+};
+
 use phenix_provider_builtins::merge_registration_pages;
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
@@ -51,7 +63,8 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
     provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime"),
-    provide(phenix_provider_contracts::ProviderRegistry, slot = "Registry")
+    provide(phenix_provider_contracts::ProviderRegistry, slot = "Registry"),
+    graph(super::GRAPH)
 )]
 mod plugin {
     use super::*;
