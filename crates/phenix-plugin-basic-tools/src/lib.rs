@@ -4,9 +4,9 @@ mod event_registry;
 use phenix_basic_contracts::{
     error, BasicError, CatalogCursor, ErrorCode, ToolCall, ToolInfo, ToolPage, ToolQuery,
 };
-use std::collections::BTreeMap;
 use phenix_basic_contracts::{ToolsPopulate, ToolsReady};
 use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
+use std::collections::BTreeMap;
 
 /// Tools owns the extension phase; other plugins may subscribe but cannot
 /// emit tools.populate on its behalf. No alternative graph scheduler.
@@ -202,7 +202,7 @@ mod plugin {
     use phenix_basic_contracts::{
         BasicError, Scope, ToolCatalog, ToolExecute, ToolInfo, ToolKernelBegin, ToolPage,
         ToolQuery, ToolRegistrations, ToolRegistry, ToolRequest, ToolResult, ToolSettlement,
-        ToolStartup, ToolsPopulated, ToolsPopulate, ToolsReady,
+        ToolStartup, ToolsPopulate, ToolsPopulated, ToolsReady,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -269,9 +269,11 @@ mod plugin {
         }
         let mut catalogs = Vec::with_capacity(count);
         for index in 0..count {
-            catalogs.push(
-                imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?,
-            );
+            catalogs.push(imports::Contributors::invoke_at::<ToolRegistrations::list>(
+                host,
+                index,
+                &(),
+            )?);
         }
         state
             .registry
@@ -303,9 +305,11 @@ mod plugin {
         }
         let mut catalogs = Vec::with_capacity(count);
         for index in 0..count {
-            catalogs.push(
-                imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?,
-            );
+            catalogs.push(imports::Contributors::invoke_at::<ToolRegistrations::list>(
+                host,
+                index,
+                &(),
+            )?);
         }
         for (index, catalog) in catalogs.iter().enumerate() {
             for offered in catalog {
@@ -327,7 +331,10 @@ mod plugin {
         // A full queue must not commit a catalog without delivering ready.
         // The ready notification itself executes only in a later graph wave.
         let preview = state.registry.preview().map_err(CallError::Domain)?;
-        let tools = preview.iter().map(|entry| entry.info.clone()).collect::<Vec<_>>();
+        let tools = preview
+            .iter()
+            .map(|entry| entry.info.clone())
+            .collect::<Vec<_>>();
         let revision = super::revision(&tools, count);
         host.emit_event(&ToolsReady { revision })
             .map_err(CallError::Kernel)?;
