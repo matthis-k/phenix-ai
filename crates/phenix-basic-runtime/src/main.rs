@@ -9,7 +9,7 @@ use phenix_basic_contracts::{
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
     Submission,
 };
-use phenix_contract::{KernelEvent, Portable, ScopedRequest, Value, KERNEL_BEGIN};
+use phenix_contract::{KernelEvent, Portable, ScopedRequest, Value};
 use phenix_kernel::{
     graph::{GraphCompletion, GraphExecution, GraphStatus},
     resolve::{Composition, Prepared, Selection},
@@ -772,6 +772,7 @@ fn run_console(
             }
         }
     }
+    activate_kernel_shutdown(&kernel)?;
     kernel.shutdown().map_err(|e| format!("{e:?}"))
 }
 
@@ -954,6 +955,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         }
     }
     for (_, kernel) in sessions {
+        activate_kernel_shutdown(&kernel)?;
         kernel.shutdown().map_err(|e| format!("{e:?}"))?;
     }
     Ok(())
@@ -989,18 +991,19 @@ fn scoped_composition(composition: &Composition, resource: &str) -> Composition 
 /// Event fan-out is handled by the ordinary graph executor. This fast path
 /// supports finite startup hooks; a future asynchronous controller must keep
 /// and pump the same GraphExecution when a startup handler remains pending.
-fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
-    if !kernel.has_event_subscribers(KERNEL_BEGIN) {
+fn activate_kernel_lifecycle(kernel: &Kernel, event: KernelEvent) -> Result<(), String> {
+    let event_id = event.id();
+    if !kernel.has_event_subscribers(event_id) {
         return Ok(());
     }
     let mut execution = kernel
-        .begin_kernel_event(KernelEvent::Begin)
-        .map_err(|failure| format!("kernel.begin admission: {failure:?}"))?;
+        .begin_kernel_event(event)
+        .map_err(|failure| format!("{event_id} admission: {failure:?}"))?;
     let mut completed = false;
     for _ in 0..1024 {
         if execution
             .pump(|_| {})
-            .map_err(|failure| format!("kernel.begin: {failure:?}"))?
+            .map_err(|failure| format!("{event_id} execution: {failure:?}"))?
             == GraphStatus::Finished
         {
             completed = true;
@@ -1010,15 +1013,23 @@ fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
     if !completed {
         execution
             .cancel()
-            .map_err(|failure| format!("kernel.begin cancellation: {failure:?}"))?;
+            .map_err(|failure| format!("{event_id} cancellation: {failure:?}"))?;
         return Err(
             "startup event remained pending; asynchronous lifecycle pumping required".into(),
         );
     }
     if !matches!(execution.completion(), Some(GraphCompletion::Success)) {
-        return Err("startup event graph failed; plugin state must not be published".into());
+        return Err(format!("{event_id} graph failed; lifecycle state not committed"));
     }
     Ok(())
+}
+
+fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
+    activate_kernel_lifecycle(kernel, KernelEvent::Begin)
+}
+
+fn activate_kernel_shutdown(kernel: &Kernel) -> Result<(), String> {
+    activate_kernel_lifecycle(kernel, KernelEvent::Shutdown)
 }
 
 fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
