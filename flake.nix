@@ -963,7 +963,8 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 5
+        assert len(report["definitions"]) == 6
+        assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
         assert "phenix.provider.http-model-session@1" in report["definitions"]
@@ -1262,6 +1263,14 @@
             ./crates/phenix-plugin-provider-loopback-fixture
           ]);
         });
+      providerRuntimeProductCheck = pkgs.runCommand "phenix-provider-runtime-product" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/provider-runtime-product.py} \
+          ${kernel}/bin/phenix-kernel ${c9LoopbackProvider} ${providerDefinitions} "$out"
+        test -s "$out/verified.json"
+      '';
       # Provider-specific real native install product: separate from generic
       # phenix-conformance so provider edits do not rebuild kernel fixtures.
       selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
@@ -2986,6 +2995,7 @@
         environment-product = environmentProductCheck;
         workspace-product = workspaceProductCheck;
         provider-contracts = providerContractsCheck;
+        provider-runtime-product = providerRuntimeProductCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
