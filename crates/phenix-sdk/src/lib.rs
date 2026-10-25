@@ -148,8 +148,7 @@ mod graph_declaration_tests {
 
     #[test]
     fn typed_subscription_uses_event_contract_not_repeated_string() {
-        const HOOK: StaticGraphNode =
-            on_event!("receive", Prompt, "example.input@1/submit");
+        const HOOK: StaticGraphNode = on_event!("receive", Prompt, "example.input@1/submit");
         assert_eq!(HOOK.id, "receive");
         assert_eq!(HOOK.triggers, ["example.prompt"]);
         assert_eq!(HOOK.operation, "example.input@1/submit");
