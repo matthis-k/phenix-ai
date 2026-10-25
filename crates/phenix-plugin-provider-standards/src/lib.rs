@@ -4,9 +4,7 @@
 
 use phenix_provider_builtins::defaults::standard_provider_definitions;
 use phenix_provider_contracts::{ProviderError, ProviderPopulate, Providers, ProvidersPopulate};
-use phenix_sdk::{
-    CallResult, FailurePolicy, Host, JoinPolicy, StaticGraphContribution, StaticGraphNode,
-};
+use phenix_sdk::{CallResult, Host, StaticGraphContribution, StaticGraphNode};
 
 /// The providers manager declares and emits this event. Each independently
 /// selected definition plugin contributes its data through the same contract.
@@ -14,16 +12,11 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.provider.standards",
     events: &[],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "populate",
-        triggers: &["phenix.providers.populate"],
-        after: &[],
-        selector: "",
-        operation: "phenix.provider.populate@1/register",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[StaticGraphNode::on(
+        "populate",
+        &["phenix.providers.populate"],
+        "phenix.provider.populate@1/register",
+    )],
 };
 
 #[phenix_sdk::plugin(
