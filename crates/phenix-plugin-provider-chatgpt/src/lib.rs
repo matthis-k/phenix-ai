@@ -5,12 +5,12 @@
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
 use phenix_provider_auth_strategies::BrowserAttempt;
-use phenix_provider_builtins::registrations;
+use phenix_provider_builtins::{discovered_model_page, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
-    CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelOrigin,
-    ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
+    CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelPage,
+    ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
 use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_protocols::{
@@ -624,36 +624,16 @@ mod plugin {
                 .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
         let discovered = parse_chatgpt_models(&response)
             .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
-        if discovered.len() > query.limit as usize {
-            return Err(CallError::Domain(unavailable(
-                "ChatGPT catalog exceeds requested page limit",
-            )));
-        }
-        let revision = discovered
-            .iter()
-            .flat_map(|item| item.slug.bytes().chain([0]))
-            .fold(14695981039346656037u64, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(1099511628211)
-            })
-            .max(1);
-        Ok(ModelPage {
-            profile_id: Some(identity.profile_id().into()),
-            models: discovered
-                .into_iter()
-                .map(|item| ProviderModel {
-                    id: item.slug,
-                    label: item.display_name,
-                    connection_id: CONNECTION.into(),
-                    protocol_id: "openai-responses".into(),
-                    endpoint_id: "responses".into(),
-                    capabilities: Vec::new(),
-                    origin: ModelOrigin::Discovered,
-                    selectable: true,
-                })
-                .collect(),
-            next_cursor: None,
-            revision,
-        })
+        discovered_model_page(
+            identity.profile_id(),
+            CONNECTION,
+            "openai-responses",
+            "responses",
+            query.limit,
+            discovered.into_iter().map(|item| (item.slug, item.display_name)),
+            |_| true,
+        )
+        .map_err(CallError::Domain)
     }
 
     // This provider also implements the complete credentials contract because
