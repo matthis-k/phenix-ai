@@ -245,6 +245,35 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     assert "duplicate credential root" in duplicate.stderr
     assert secret not in duplicate.stdout + duplicate.stderr
 
+    # A launcher can independently grant only name binding. A manager with no
+    # import grant must neither advertise nor accept direct secret entry.
+    environment_only = json.loads(json.dumps(configuration))
+    environment_only["entry"]["operation"] = "bind_environment"
+    environment_only["grants"] = [
+        dict(caller="root", interface=contract, operation="bind_environment",
+             resources=[selected_resource]),
+    ]
+    environment_only["authority"]["operations"] = [contract + "/bind_environment"]
+    environment_file = root / "environment-only.json"
+    environment_file.write_text(json.dumps(environment_only))
+    child = initialized(environment_file)
+    only = call(child, 13, "_phenix/credentials/capabilities", {})
+    assert only["result"] == dict(**account, **{
+        "import": False, "bind_environment": True, "revoke": False,
+    }), only
+    denied_import = call(child, 14, "_phenix/credentials/import",
+                         dict(**account, secret=secret))
+    assert denied_import["error"]["code"] == -32602, denied_import
+    source_name = "PHENIX_P1_OFFLINE_UNSET_CREDENTIAL"
+    env.pop(source_name, None)
+    bound = call(child, 15, "_phenix/credentials/env-bind",
+                 dict(**account, environment_variable=source_name))
+    assert bound["result"] == {"ok": True}, bound
+    status = call(child, 16, "_phenix/providers/auth/status", dict(
+        scope="user", provider_id="openai", connection_id="api"))
+    assert status["result"]["profiles"] == [], status
+    close(child)
+
 (out / "acp-credential-management.json").write_text(json.dumps({
     "format": "phenix.acp.credentials.product.v1",
     "authorized_import": True,
@@ -264,5 +293,6 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     "independent_named_accounts": True,
     "cross_account_revoke_isolation": True,
     "duplicate_account_roots_denied": True,
+    "environment_only_root_grants_only_name_binding": True,
 }, sort_keys=True, indent=2))
 print("ACP credential import/revoke with exact launcher grants verified")
