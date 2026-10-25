@@ -1717,7 +1717,13 @@ pub(super) fn run(
                     .map_err(|e| format!("{e:?}"))?;
                 // Legacy pull-only compositions have no begin subscriber;
                 // event-driven managers stage, register and publish themselves.
-                activate_kernel_begin(&kernel)?;
+                if let Err(startup) = activate_kernel_begin(&kernel) {
+                    let cleanup = shutdown_kernel(kernel);
+                    return Err(match cleanup {
+                        Ok(()) => startup,
+                        Err(stop) => format!("{startup}; cleanup: {stop}"),
+                    });
+                }
                 Ok(ProviderManagement { kernel, selected })
             })
             .collect::<Result<Vec<_>, _>>()?;
