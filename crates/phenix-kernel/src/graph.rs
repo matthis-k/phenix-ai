@@ -7,8 +7,8 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, standard_lifecycle_events, state_change_property, state_change_schema,
-    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, LifecycleEvent,
+    graph_node_key, standard_kernel_events, state_change_property, state_change_schema,
+    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, KernelEvent,
     ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -85,7 +85,7 @@ impl CompiledGraph {
         }
         // Intrinsic source vertices are present in every graph. Plugins may
         // subscribe but cannot redefine their identity or request schema.
-        let mut events: BTreeMap<String, EventDefinition> = standard_lifecycle_events()
+        let mut events: BTreeMap<String, EventDefinition> = standard_kernel_events()
             .into_iter()
             .map(|event| (event.id.clone(), event))
             .collect();
@@ -541,11 +541,11 @@ impl Kernel {
     /// state; with one serial root it must finish or be cancelled before other
     /// actions (including shutdown) can be admitted. The trusted host owns
     /// pumping and orderly lifecycle sequencing.
-    pub fn begin_lifecycle(&self, event: LifecycleEvent) -> Result<GraphExecution<'_>, Failure> {
+    pub fn begin_kernel_event(&self, event: KernelEvent) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
         match &event {
-            LifecycleEvent::PluginLoaded { plugin }
-            | LifecycleEvent::PluginReloaded { plugin, .. } => {
+            KernelEvent::PluginLoaded { plugin }
+            | KernelEvent::PluginReloaded { plugin, .. } => {
                 if !self.images.borrow().contains_key(plugin) {
                     return Err(Failure::new(
                         Code::MissingBinding,
@@ -553,12 +553,12 @@ impl Kernel {
                     ));
                 }
             }
-            LifecycleEvent::PluginUnloaded { plugin } => {
+            KernelEvent::PluginUnloaded { plugin } => {
                 // A genuine unloaded notification is only valid after a
                 // corresponding loaded notification and native removal.
                 let state = self.state.borrow();
                 if self.images.borrow().contains_key(plugin)
-                    || !state.lifecycle_loaded.contains(plugin)
+                    || !state.kernel_loaded.contains(plugin)
                 {
                     return Err(Failure::new(
                         Code::ScopeRejected,
@@ -566,9 +566,9 @@ impl Kernel {
                     ));
                 }
             }
-            LifecycleEvent::Begin | LifecycleEvent::Shutdown => {}
+            KernelEvent::Begin | KernelEvent::Shutdown => {}
         }
-        if let LifecycleEvent::PluginReloaded {
+        if let KernelEvent::PluginReloaded {
             previous_generation,
             generation,
             ..
@@ -587,15 +587,15 @@ impl Kernel {
         {
             let state = self.state.borrow();
             let already_emitted = match &event {
-                LifecycleEvent::Begin => state.lifecycle_begin,
-                LifecycleEvent::PluginLoaded { plugin } => state.lifecycle_loaded.contains(plugin),
-                LifecycleEvent::PluginUnloaded { plugin } => {
-                    state.lifecycle_unloaded.contains(plugin)
+                KernelEvent::Begin => state.kernel_begin,
+                KernelEvent::PluginLoaded { plugin } => state.kernel_loaded.contains(plugin),
+                KernelEvent::PluginUnloaded { plugin } => {
+                    state.kernel_unloaded.contains(plugin)
                 }
-                LifecycleEvent::PluginReloaded { plugin, .. } => {
-                    state.lifecycle_reloaded.contains(plugin)
+                KernelEvent::PluginReloaded { plugin, .. } => {
+                    state.kernel_reloaded.contains(plugin)
                 }
-                LifecycleEvent::Shutdown => state.lifecycle_shutdown,
+                KernelEvent::Shutdown => state.kernel_shutdown,
             };
             if already_emitted {
                 return Err(Failure::new(
@@ -614,17 +614,17 @@ impl Kernel {
         // must remain retryable with a correct scope after its root is dropped.
         let mut state = self.state.borrow_mut();
         match event {
-            LifecycleEvent::Begin => state.lifecycle_begin = true,
-            LifecycleEvent::PluginLoaded { plugin } => {
-                state.lifecycle_loaded.insert(plugin);
+            KernelEvent::Begin => state.kernel_begin = true,
+            KernelEvent::PluginLoaded { plugin } => {
+                state.kernel_loaded.insert(plugin);
             }
-            LifecycleEvent::PluginUnloaded { plugin } => {
-                state.lifecycle_unloaded.insert(plugin);
+            KernelEvent::PluginUnloaded { plugin } => {
+                state.kernel_unloaded.insert(plugin);
             }
-            LifecycleEvent::PluginReloaded { plugin, .. } => {
-                state.lifecycle_reloaded.insert(plugin);
+            KernelEvent::PluginReloaded { plugin, .. } => {
+                state.kernel_reloaded.insert(plugin);
             }
-            LifecycleEvent::Shutdown => state.lifecycle_shutdown = true,
+            KernelEvent::Shutdown => state.kernel_shutdown = true,
         }
         Ok(execution)
     }
@@ -1161,12 +1161,12 @@ mod tests {
         let graph = compile(&[contribution(
             "alpha",
             false,
-            vec![node("a", &[phenix_contract::LIFECYCLE_BEGIN], &[], &[])],
+            vec![node("a", &[phenix_contract::KERNEL_BEGIN], &[], &[])],
         )])
         .unwrap();
         assert_eq!(
             graph
-                .activation_order(&BTreeSet::from([phenix_contract::LIFECYCLE_BEGIN.into(),]))
+                .activation_order(&BTreeSet::from([phenix_contract::KERNEL_BEGIN.into(),]))
                 .unwrap(),
             ["alpha/a"]
         );
@@ -1180,14 +1180,14 @@ mod tests {
             contribution(
                 "alpha",
                 false,
-                vec![node("a", &[phenix_contract::LIFECYCLE_BEGIN], &[], &[])],
+                vec![node("a", &[phenix_contract::KERNEL_BEGIN], &[], &[])],
             ),
             contribution(
                 "beta",
                 false,
                 vec![node(
                     "b",
-                    &[phenix_contract::LIFECYCLE_PLUGIN_LOADED],
+                    &[phenix_contract::KERNEL_PLUGIN_LOADED],
                     &[],
                     &[],
                 )],
@@ -1195,14 +1195,14 @@ mod tests {
             contribution(
                 "gamma",
                 false,
-                vec![node("c", &[phenix_contract::LIFECYCLE_SHUTDOWN], &[], &[])],
+                vec![node("c", &[phenix_contract::KERNEL_SHUTDOWN], &[], &[])],
             ),
             contribution(
                 "delta",
                 false,
                 vec![node(
                     "d",
-                    &[phenix_contract::LIFECYCLE_PLUGIN_UNLOADED],
+                    &[phenix_contract::KERNEL_PLUGIN_UNLOADED],
                     &[],
                     &[],
                 )],
@@ -1212,7 +1212,7 @@ mod tests {
                 false,
                 vec![node(
                     "e",
-                    &[phenix_contract::LIFECYCLE_PLUGIN_RELOADED],
+                    &[phenix_contract::KERNEL_PLUGIN_RELOADED],
                     &[],
                     &[],
                 )],
@@ -1222,11 +1222,11 @@ mod tests {
         assert_eq!(graph.events.len(), 5);
         assert!(graph.actions.is_empty());
         for (event, expected) in [
-            (phenix_contract::LIFECYCLE_BEGIN, "alpha/a"),
-            (phenix_contract::LIFECYCLE_PLUGIN_LOADED, "beta/b"),
-            (phenix_contract::LIFECYCLE_SHUTDOWN, "gamma/c"),
-            (phenix_contract::LIFECYCLE_PLUGIN_UNLOADED, "delta/d"),
-            (phenix_contract::LIFECYCLE_PLUGIN_RELOADED, "epsilon/e"),
+            (phenix_contract::KERNEL_BEGIN, "alpha/a"),
+            (phenix_contract::KERNEL_PLUGIN_LOADED, "beta/b"),
+            (phenix_contract::KERNEL_SHUTDOWN, "gamma/c"),
+            (phenix_contract::KERNEL_PLUGIN_UNLOADED, "delta/d"),
+            (phenix_contract::KERNEL_PLUGIN_RELOADED, "epsilon/e"),
         ] {
             assert_eq!(
                 graph
@@ -1237,7 +1237,7 @@ mod tests {
         }
         let mut invalid = declarations.to_vec();
         invalid[0].events.push(EventDefinition {
-            id: phenix_contract::LIFECYCLE_BEGIN.into(),
+            id: phenix_contract::KERNEL_BEGIN.into(),
             payload: ValueSchema::String,
         });
         assert!(compile(&invalid)
@@ -1273,7 +1273,7 @@ mod tests {
         );
         assert!(graph.actions.is_empty());
         let mut bad = declarations;
-        bad[0].events[0].id = "phenix.lifecycle.fabricated".into();
+        bad[0].events[0].id = "phenix.kernel.fabricated".into();
         assert!(compile(&bad).is_err());
     }
 
