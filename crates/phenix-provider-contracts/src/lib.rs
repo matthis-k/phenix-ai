@@ -739,8 +739,14 @@ mod tests {
     #[test]
     fn ready_event_has_typed_scope_and_revision_only() {
         assert_eq!(ProvidersReady::EVENT.id, "phenix.providers.ready");
-        let notice = ProvidersReady { scope: "user".into(), revision: 1 };
-        assert_eq!(ProvidersReady::from_value(notice.to_value()).unwrap(), notice);
+        let notice = ProvidersReady {
+            scope: "user".into(),
+            revision: 1,
+        };
+        assert_eq!(
+            ProvidersReady::from_value(notice.to_value()).unwrap(),
+            notice
+        );
     }
 
     #[test]
