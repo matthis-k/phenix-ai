@@ -44,7 +44,9 @@ fn invoke<T: Portable>(
 fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.len() != 5 {
-        return Err("usage: phenix-provider-population-test HOST OPENAI CREDENTIALS DEFINITIONS".into());
+        return Err(
+            "usage: phenix-provider-population-test HOST OPENAI CREDENTIALS DEFINITIONS".into(),
+        );
     }
     let grant = |caller: &str, interface: &str, operation: &str| {
         json!({
