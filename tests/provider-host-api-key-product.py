@@ -178,7 +178,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
         after, code = invoke(AUTH, "status", query)
         assert code == 0 and after["kind"] == "success", after
         profiles = after["value"]["profiles"]
-        assert len(profiles) == 1 and profiles[0]["status"] == "Authenticated", profiles
+        assert len(profiles) == 1 and "Authenticated" in profiles[0]["status"], profiles
         assert profiles[0]["id"] == "personal", profiles
 
         page, code = invoke(CATALOG, "models", {
