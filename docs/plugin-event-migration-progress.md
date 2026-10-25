@@ -1,6 +1,6 @@
 # Phenix event-driven plugin migration — execution log
 
-Updated: 2026-10-25. Working stack: #1144 → #1146 → #1147 → #1148 → #1149 → #1150.
+Updated: 2026-10-25. Working stack: #1144 → #1146 → #1147 → #1148 → #1149 → #1150 → #1151 → #1152.
 Detailed all-plugin inventory: [plugin-event-restructure-matrix.md](plugin-event-restructure-matrix.md).
 
 ## Operating rules
@@ -18,7 +18,7 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 | G0 – Kernel / event SDK | kernel graph, contract graph, SDK, macros, Basic/ACP host | IMPLEMENTED, verification pending | #1147 intrinsic kernel events; #1148 in-root emission; #1149 owner settlement, typed emit, Basic/ACP begin/shutdown and dependency-ordered plugin-loaded notifications | Formatting and generated workflow passed on recent heads; Nix native shards remain gate | Exact-head native product green; cancellation/failure/pending tests; reconcile parents |
 | G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / two-contributor product pending | #1146–#1149 shared manager/owner settlement; #1150 second plain-data registration hook (five standards), typed register_all, six-provider native catalog check | Rustfmt passed earlier after corrections; full native product pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
 | G2 – Tool discovery and execution | basic-tools, tool-fixture | IMPLEMENTED / native acceptance pending | #1151: typed tools.populate/ready, owner onBegin→settled, attested private registry, reverse-tool hook; legacy catalog and execute contracts preserved | Rustfmt/ACP frontend passed on recent heads; native tool-population product pending | Exact-head native graph test and production compatibility, then remove redundant list boilerplate |
-| G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | PARTIAL / Basic success notice implemented | #1152 agent-owned run-finished notice after pending submit graph node, with session/run IDs and nonsecret counters; staged graph and Session CAS unchanged | Rustfmt, generated workflow and ACP-v2 passed on recent heads; native Basic/ACP acceptance pending | Verify graph post-submit notification and native graph composition; design staged successful terminal event and post-commit session notices |
+| G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | PARTIAL / both terminal paths implemented | #1152 agent-owned run-finished notice after pending submit graph node, with session/run IDs and nonsecret counters; staged advance emits only after terminal checkpoint (not on Reprepare); Session CAS unchanged | Rustfmt, generated workflow and ACP-v2 passed on recent heads; native Basic/ACP acceptance pending | Verify graph post-submit notification and native graph composition; verify native staged async completion and generic post-commit session notices (ERG-21) |
 | G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | NOT STARTED | Candidate events and authoritative owners inventoried | Not applicable yet | Validate subscriber need; publish only on committed state |
 | G5 – Keep contract-oriented | storage, credentials, model transport, model fixtures, evidence-journal, environment, project-storage | REVIEWED / NO FORCED CONVERSION | Explicit 'no event' exclusions recorded in matrix | Existing contract conformance remains gate | Avoid new events for reads, CAS, tokens, or secrets |
 
@@ -127,6 +127,16 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   its latest checked head. Exact-head full Nix and official ACP interop
   remain acceptance gates. All PRs draft/unmerged.
 
+- **S17 (G3 staged completion)**: #1152 now emits the same redacted
+  `phenix.agent.run-finished` event from pending `BasicTurnAdvance::advance`
+  only on its terminal `Complete` branch, after Session checkpoint.
+  Reprepare, pending, failure and cancellation never emit. Emission failure
+  surfaces explicitly; native asynchronous graph-root acceptance is pending.
+  The obsolete staged no-events unit assertion was corrected.
+- **S18 (shared graph ergonomics)**: added const `StaticGraphNode::after()`
+  builder and reused it for the Basic completion successor node. Added
+  contract unit coverage; no new scheduler, wire ABI or authority surface.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -162,7 +172,7 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-22 | Medium | Several manager/startup plugins repeat manual graph declarations even with the common `StaticGraphNode::on` constructor | Optional typed `#[phenix::on(Event)]`/on-settled sugar generated over existing M1 contracts and graph descriptors | Open; shared SDK |
 
 | ERG-23 | Medium | A graph successor receives its triggering event payload, not the finished predecessor's typed result, so Basic Agent currently retains an ephemeral completed RunResult for its ordered notification node | Add type-checked predecessor-result binding to the existing graph SDK (not a general event bus), or generated `#[on_completed(BasicInput::submit)]` lowering; preserve authority and cancellation | Open; G3 SDK ergonomics |
-| ERG-24 | Medium | Agent's non-staged submit and staged-model continuation have different terminal steps; blindly emitting run-finished on each reprepare wave would fabricate completion | Introduce a terminal-only semantic completion continuation for staged graph based on `TurnAdvanceOutcome::Complete`, never `Reprepare` | Open; G3 staged migration |
+| ERG-24 | Medium | Agent's non-staged submit and staged-model continuation have different terminal steps; blindly emitting run-finished on each reprepare wave would fabricate completion | Introduce a terminal-only semantic completion continuation for staged graph based on `TurnAdvanceOutcome::Complete`, never `Reprepare` | **Implemented in #1152**, native acceptance pending |
 
 ### New finding policy
 
