@@ -415,6 +415,32 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
+      # Minimal OpenAI declaration-only plugin: one graph on-populate hook.
+      providerOpenAiDeclarationSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-openai
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerOpenAiDeclarationPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-openai";
+        version = "0.1.0";
+        src = providerOpenAiDeclarationSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-openai" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-openai" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_openai.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       providerHostApiKeyProductCheck = pkgs.runCommand "phenix-provider-host-api-key-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1612,8 +1638,7 @@
         mkdir -p $out
         ${providerPopulationTestBinary}/bin/phenix-provider-population-test \
           ${providerHostPlugin} \
-          ${providerOpenAiApi} \
-          ${providerCredentialStore} \
+          ${providerOpenAiDeclarationPlugin} \
           ${providerDefinitions} > $out/verified.json
         test -s $out/verified.json
       '';
@@ -2848,6 +2873,7 @@
         phenix-plugin-providers = providerHostPlugin;
         # Temporary packaging alias; same executable, not a second plugin.
         phenix-plugin-provider-host = providerHostPlugin;
+        phenix-plugin-provider-openai = providerOpenAiDeclarationPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
         phenix-plugin-provider-credential-files = providerCredentialStore;
@@ -3095,6 +3121,7 @@
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-population-product = providerPopulationProductCheck;
+        provider-openai-declaration = providerOpenAiDeclarationPlugin;
         provider-host-plugin = providerHostPlugin;
         provider-host-api-key-product = providerHostApiKeyProductCheck;
         provider-openai-api = providerOpenAiApi;
