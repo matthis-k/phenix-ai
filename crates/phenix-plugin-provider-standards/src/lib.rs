@@ -45,8 +45,7 @@ mod plugin {
         host: &Host<'_>,
         event: ProvidersPopulate,
     ) -> CallResult<(), ProviderError> {
-        Providers::new(host, "Registry", &event.scope)
-            .register_all(standard_provider_definitions())
+        Providers::new(host, "Registry", &event.scope).register_all(standard_provider_definitions())
     }
 }
 
