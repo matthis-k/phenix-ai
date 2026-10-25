@@ -999,6 +999,28 @@ impl GraphExecution<'_> {
         }
         Ok(())
     }
+    /// The emitter's plugin frame has returned before this wave begins, so
+    /// callers can safely invoke the emitter plugin again via typed imports.
+    /// Queued events are FIFO; each selects one canonical active DAG.
+    fn admit_custom_event_wave(&mut self) -> Result<bool, Failure> {
+        loop {
+            let next = self.root.kernel.state.borrow_mut().graph_events.pop_front();
+            let Some(event) = next else { return Ok(false) };
+            let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+            let active = graph.activation_order(&BTreeSet::from([event.id.clone()]))?;
+            if active.is_empty() {
+                continue;
+            }
+            self.event = event.id;
+            self.payload = event.payload;
+            self.node_requests.clear();
+            self.active = active;
+            self.waiting = self.active.iter().cloned().collect();
+            self.unsuccessful.clear();
+            return Ok(true);
+        }
+    }
+
     /// Admit one committed epoch through the prepared state-trigger DAG.
     /// This uses the existing root, provider selection and ticket lifecycle.
     /// The caller pumps the new wave just like the original event wave.
@@ -1136,7 +1158,11 @@ impl GraphExecution<'_> {
         // hooks before declaring the admitted root terminal. Hooks can publish
         // further epochs; each is observed after its own wave settles.
         if !self.terminal && !self.stopped && self.waiting.is_empty() && self.pending.is_empty() {
-            self.admit_state_wave()?;
+            // Custom emitted events run before state watches in FIFO order.
+            // Both use this root, scheduler, cancellation and grant checks.
+            if !self.admit_custom_event_wave()? {
+                self.admit_state_wave()?;
+            }
         }
         if !self.terminal && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
         {
@@ -1155,6 +1181,19 @@ impl GraphExecution<'_> {
         } else {
             GraphStatus::Pending
         })
+    }
+}
+
+impl Drop for GraphExecution<'_> {
+    fn drop(&mut self) {
+        // An abandoned or cancelled graph must never leak emitted work into
+        // the next serial root. The root itself is released by its own Drop.
+        let mut state = self.root.kernel.state.borrow_mut();
+        if state.graph_root == Some(self.root.id) {
+            state.graph_root = None;
+            state.graph_events.clear();
+            state.graph_emission_count = 0;
+        }
     }
 }
 
