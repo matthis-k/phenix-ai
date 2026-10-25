@@ -205,7 +205,10 @@ mod plugin {
                 .iter()
                 .map(|entry| (entry.info.id.clone(), entry.route))
                 .collect::<BTreeMap<_, _>>();
-            let tools = selected.into_iter().map(|entry| entry.info).collect::<Vec<_>>();
+            let tools = selected
+                .into_iter()
+                .map(|entry| entry.info)
+                .collect::<Vec<_>>();
 
             let revision = if count == 0 {
                 REVISION
