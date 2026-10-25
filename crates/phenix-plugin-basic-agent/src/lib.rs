@@ -358,10 +358,10 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
-        /// The successful result is observed by the graph's explicit
-        /// post-submit notification node; authoritative session state stays
-        /// in the Session plugin and journal, not here.
-        completed: Option<RunResult>,
+        /// Only a redacted successful completion notice is retained for
+        /// the post-submit graph hook. Transcripts and answer text remain
+        /// exclusively in the Session/Journal owner, not this cache.
+        completed: Option<AgentRunFinished>,
         // The staged request is authoritative in this plugin. The graph
         // consumes a read-only, watched Phenix view of this Rust field.
         #[expose]
@@ -916,7 +916,12 @@ mod plugin {
                 "default Basic cannot publish a staged continuation",
             )),
             Ok(Advance::Done(reply)) => {
-                state.completed = Some(reply.clone());
+                state.completed = Some(AgentRunFinished {
+                    session: reply.session.clone(),
+                    run: reply.run.clone(),
+                    model_turns: reply.model_turns,
+                    tool_calls: reply.tool_calls,
+                });
                 PendingResult::Ready(Ok(reply))
             }
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
@@ -1107,13 +1112,7 @@ mod plugin {
                 "completed run belongs to a different session",
             )));
         }
-        host.emit_event(&AgentRunFinished {
-            session: result.session.clone(),
-            run: result.run.clone(),
-            model_turns: result.model_turns,
-            tool_calls: result.tool_calls,
-        })
-        .map_err(CallError::Kernel)?;
+        host.emit_event(result).map_err(CallError::Kernel)?;
         state.completed = None;
         Ok(())
     }
