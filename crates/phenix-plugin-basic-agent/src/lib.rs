@@ -248,16 +248,12 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
             &["phenix.basic.prompt"],
             "phenix.basic.input@1/submit",
         ),
-        StaticGraphNode {
-            id: "run-finished",
-            triggers: &["phenix.basic.prompt"],
-            after: &["phenix.basic.agent/submit"],
-            selector: "",
-            operation: "phenix.agent.lifecycle@1/finished",
-            writes: &[],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
+        StaticGraphNode::on(
+            "run-finished",
+            &["phenix.basic.prompt"],
+            "phenix.agent.lifecycle@1/finished",
+        )
+        .after(&["phenix.basic.agent/submit"]),
     ],
 };
 
