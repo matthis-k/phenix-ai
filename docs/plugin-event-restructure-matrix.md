@@ -6,7 +6,7 @@
 
 | Plugin | src/lib.rs LOC | Role | Benefit | Current | Event/hook target |
 | --- | --- | --- | --- | --- | --- |
-| [providers](https://github.com/matthis-k/phenix-ai/blob/feat/graph-wave-settlement-20261025/crates/phenix-plugin-providers/src/lib.rs) | 775 | Provider manager | High | Draft G1: graph + legacy staging share registry (#1150/#1152) | Kernel.begin → populate → settled → ready |
+| [providers](https://github.com/matthis-k/phenix-ai/blob/feat/graph-wave-settlement-20261025/crates/phenix-plugin-providers/src/lib.rs) | 775 | Provider manager | High | Draft G1: one published registry; incremental atomic validation (#1150/#1155) | Kernel.begin → populate → settled → ready |
 | [provider-openai](https://github.com/matthis-k/phenix-ai/blob/feat/graph-wave-settlement-20261025/crates/phenix-plugin-provider-openai/src/lib.rs) | 114 | Provider declarations | High | Draft G1: immutable data + event hook (#1146) | on(ProvidersPopulate) → register(OPENAI) |
 | [provider-builtins](https://github.com/matthis-k/phenix-ai/blob/feat/graph-wave-settlement-20261025/crates/phenix-plugin-provider-builtins/src/lib.rs) | 50 | Legacy builtin contributor | High | Draft transition: pulled metadata staged in event graph (#1150) | on(ProvidersPopulate) → register standard provider data |
 | [provider-openai-api](https://github.com/matthis-k/phenix-ai/blob/feat/graph-wave-settlement-20261025/crates/phenix-plugin-provider-openai-api/src/lib.rs) | 541 | Legacy concrete API-key provider | High | Legacy duplicate runtime; cutover pending | Declaration-only OpenAI API data; shared auth/protocol preset |
@@ -43,7 +43,7 @@
 | Group | Code committed | Outstanding |
 | --- | --- | --- |
 | G0 kernel/SDK | Intrinsic events, graph waves and canonical unordered static declarations (#1147–#1152) | Native cancellation, pending/settlement and descriptor tests |
-| G1 providers | Provider population, event/legacy bridge and single registry-owned published snapshot (#1150/#1152); explicit ACP lifecycle grants | Native catalog/ACP startup tests after rebase; remove legacy OAuth/API-key managers and pull fallback |
+| G1 providers | Provider population, event/legacy bridge and single published snapshot (#1150/#1152); incremental per-identity validation and shared limits (#1155) | Native auth/API-key and graph-population acceptance; cut over ACP consumers, then remove legacy runtime and pull fallback |
 | G2 tools | Typed populate/ready, attested executor, reverse fixture (#1151); one registry-owned published catalog (follow-up draft) | Native tool population/B3 and negative routing; remove duplicate contributor list metadata (ERG-20) |
 | G3 agent/session | Redacted terminal run notification and staged terminal-only emission (#1152) | Async cancellation/terminal tests; post-commit Session path (ERG-21) |
 | G4 optional events | Workspace, memory, compaction, journal, evidence reviewed without speculative broadcasts | Named consumer plus post-commit guarantee before implementation |
