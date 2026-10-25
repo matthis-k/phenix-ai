@@ -62,16 +62,15 @@ fn approved_endpoint(endpoint: &str) -> bool {
 /// Fetch a catalog from the already selected provider URL, without forwarding
 /// redirects or interpreting its format. TLS peer/host checks are mandatory.
 /// The provider retains responsibility for credential grants and URL origin.
-pub fn fetch_bearer_catalog(
-    endpoint: &str,
-    bearer: &str,
-) -> Result<Vec<u8>, CatalogFetchError> {
+pub fn fetch_bearer_catalog(endpoint: &str, bearer: &str) -> Result<Vec<u8>, CatalogFetchError> {
     if !approved_endpoint(endpoint) {
         return Err(CatalogFetchError::UnsafeEndpoint);
     }
     if bearer.is_empty()
         || bearer.len() > 4096
-        || !bearer.bytes().all(|byte| byte.is_ascii_graphic() && byte != b':')
+        || !bearer
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b':')
     {
         return Err(CatalogFetchError::InvalidBearer);
     }
@@ -133,7 +132,9 @@ mod tests {
         let owned = response.to_owned();
         let reader = thread::spawn(move || {
             let (mut client, _) = server.accept().unwrap();
-            client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut request = [0u8; 4096];
             let read = client.read(&mut request).unwrap();
             client.write_all(owned.as_bytes()).unwrap();
@@ -155,9 +156,8 @@ mod tests {
         assert_eq!(ok.unwrap(), body.as_bytes());
         assert!(request.starts_with("GET /models HTTP/1.1"));
         assert!(request.contains("Authorization: Bearer fake-test-key"));
-        let (denied, _) = local(
-            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        );
+        let (denied, _) =
+            local("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         assert_eq!(denied, Err(CatalogFetchError::Unauthorized));
         let (limited, _) = local(
             "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
