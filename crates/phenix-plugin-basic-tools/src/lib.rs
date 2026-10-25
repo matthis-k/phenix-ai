@@ -206,17 +206,11 @@ mod plugin {
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
-    /// Stable, preauthorized execution route, not a model-supplied provider ID.
-    struct ToolSnapshot {
-        tools: Vec<ToolInfo>,
-        routes: BTreeMap<String, Option<usize>>,
-        revision: u64,
-    }
-
     #[derive(Default)]
     pub struct State {
         counts: BTreeMap<String, u64>,
-        snapshot: Option<ToolSnapshot>,
+        /// The manager-owned registry is the sole authoritative catalog.
+        /// Execution routes are resolver-selected; publication is immutable.
         registry: super::event_registry::Registry,
         /// Attested selected contributor catalogs captured BEFORE event
         /// fan-out, so event handlers cannot recursively enter themselves.
@@ -232,7 +226,7 @@ mod plugin {
         host: &Host<'_>,
         _: ToolKernelBegin,
     ) -> CallResult<(), BasicError> {
-        if state.snapshot.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,
                 "tool catalog already selected",
@@ -269,7 +263,7 @@ mod plugin {
     /// imported executor index comes from the resolver, never untrusted data.
     #[provide(ToolRegistry::register)]
     fn register(state: &mut State, offered: ToolInfo) -> CallResult<(), BasicError> {
-        if state.snapshot.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,
                 "tool catalog is already published",
@@ -296,7 +290,7 @@ mod plugin {
         host: &Host<'_>,
         _: ToolsPopulated,
     ) -> CallResult<(), BasicError> {
-        if state.snapshot.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,
                 "tool catalog is already published",
@@ -336,24 +330,19 @@ mod plugin {
         let revision = super::revision(&tools, count);
         host.emit_event(&ToolsReady { revision })
             .map_err(CallError::Kernel)?;
-        let entries = state.registry.publish().map_err(CallError::Domain)?;
-        let routes = entries
-            .iter()
-            .map(|entry| (entry.info.id.clone(), entry.route))
-            .collect::<BTreeMap<_, _>>();
-        state.snapshot = Some(ToolSnapshot {
-            tools,
-            routes,
-            revision,
-        });
+        state.registry.publish(revision).map_err(CallError::Domain)?;
+        // Once the selected execution routes are sealed in the registry,
+        // attestation pages are no longer needed. The snapshot is the single
+        // authority for both catalog queries and routing.
+        state.attested_catalogs = None;
         Ok(())
     }
 
     fn selected_snapshot<'a>(
         state: &'a mut State,
         host: &Host<'_>,
-    ) -> CallResult<&'a ToolSnapshot, BasicError> {
-        if state.snapshot.is_none() {
+    ) -> CallResult<&'a super::event_registry::Catalog, BasicError> {
+        if state.registry.selected().is_none() {
             if state.registry.blocks_pull_catalog() {
                 return Err(CallError::Domain(error(
                     ErrorCode::Conflict,
@@ -367,12 +356,11 @@ mod plugin {
                     "too many tool contributors",
                 )));
             }
-            // Reuse the same generation-private validation path for both the
-            // existing pull adapter and future event-triggered contributors.
-            // The route is derived ONLY from the selected contributor import,
-            // never from the event payload or a plugin-supplied index.
-            let mut registry = super::event_registry::Registry::default();
-            registry
+            // This temporary direct compatibility adapter uses the same
+            // authoritative Registry as the graph path, never a second
+            // snapshot or a caller-provided execution route.
+            state
+                .registry
                 .begin(TOOLS.iter().map(super::tool))
                 .map_err(CallError::Domain)?;
             let mut selected_catalogs = Vec::with_capacity(count);
@@ -383,29 +371,31 @@ mod plugin {
             }
             for catalog in &selected_catalogs {
                 for offered in catalog {
-                    registry
+                    state
+                        .registry
                         .register(offered.clone(), &selected_catalogs)
                         .map_err(CallError::Domain)?;
                 }
             }
-            let selected = registry.publish().map_err(CallError::Domain)?;
-            let routes = selected
-                .iter()
-                .map(|entry| (entry.info.id.clone(), entry.route))
-                .collect::<BTreeMap<_, _>>();
-            let tools = selected
+            let tools = state
+                .registry
+                .preview()
+                .map_err(CallError::Domain)?
                 .into_iter()
                 .map(|entry| entry.info)
                 .collect::<Vec<_>>();
-
             let revision = super::revision(&tools, count);
-            state.snapshot = Some(ToolSnapshot {
-                tools,
-                routes,
-                revision,
-            });
+            state
+                .registry
+                .publish(revision)
+                .map_err(CallError::Domain)?;
         }
-        Ok(state.snapshot.as_ref().expect("initialized tool snapshot"))
+        state.registry.selected().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Unavailable,
+                "published tool catalog is unavailable",
+            ))
+        })
     }
 
     #[provide(ToolCatalog::list)]
