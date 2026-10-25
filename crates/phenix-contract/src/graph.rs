@@ -192,6 +192,28 @@ pub struct StaticGraphNode {
     pub join: JoinPolicy,
     pub failure: FailurePolicy,
 }
+impl StaticGraphNode {
+    /// The common declarative event subscription: one typed graph operation,
+    /// no extra ordering edges or state writes. This is only declaration sugar;
+    /// all scheduling, authority and cancellation remain in the M1 kernel.
+    pub const fn on(
+        id: &'static str,
+        triggers: &'static [&'static str],
+        operation: &'static str,
+    ) -> Self {
+        Self {
+            id,
+            triggers,
+            after: &[],
+            selector: "",
+            operation,
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StaticGraphContribution {
     pub plugin: &'static str,
@@ -621,6 +643,21 @@ mod tests {
         assert!(custom.normalized().is_ok());
         custom.events[0].id = "phenix.kernel.impostor".into();
         assert!(custom.normalized().is_err());
+    }
+
+    #[test]
+    fn simple_event_subscription_has_safe_graph_defaults() {
+        const NODE: StaticGraphNode = StaticGraphNode::on(
+            "populate",
+            &["phenix.providers.populate"],
+            "phenix.provider.populate@1/register",
+        );
+        assert_eq!(NODE.triggers, ["phenix.providers.populate"]);
+        assert!(NODE.after.is_empty());
+        assert!(NODE.selector.is_empty());
+        assert!(NODE.writes.is_empty());
+        assert_eq!(NODE.join, JoinPolicy::AllActive);
+        assert_eq!(NODE.failure, FailurePolicy::FailRoot);
     }
 
     #[test]
