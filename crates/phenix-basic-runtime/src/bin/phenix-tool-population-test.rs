@@ -106,7 +106,9 @@ fn test() -> Result<(), String> {
         .map_err(|failure| format!("kernel.begin: {failure:?}"))?;
     let mut finished = false;
     for _ in 0..32 {
-        if graph.pump(|_| {}).map_err(|failure| format!("graph wave: {failure:?}"))?
+        if graph
+            .pump(|_| {})
+            .map_err(|failure| format!("graph wave: {failure:?}"))?
             == GraphStatus::Finished
         {
             finished = true;
@@ -119,7 +121,9 @@ fn test() -> Result<(), String> {
     let steps = graph.steps().len();
     drop(graph);
     if steps != 3 {
-        return Err(format!("expected manager begin, contributor, settlement; got {steps}"));
+        return Err(format!(
+            "expected manager begin, contributor, settlement; got {steps}"
+        ));
     }
 
     let catalog: ToolPage = invoke(
@@ -138,7 +142,9 @@ fn test() -> Result<(), String> {
         .map(|tool| tool.id.as_str())
         .collect::<Vec<_>>();
     if ids != ["fail", "fixture.reverse", "length", "uppercase"] || catalog.revision == 0 {
-        return Err(format!("incorrect atomically published tool catalog: {catalog:?}"));
+        return Err(format!(
+            "incorrect atomically published tool catalog: {catalog:?}"
+        ));
     }
     let result: ToolResult = invoke(
         &kernel,
@@ -156,7 +162,9 @@ fn test() -> Result<(), String> {
     if result.text != "ßba" {
         return Err(format!("wrong authenticated selected executor: {result:?}"));
     }
-    kernel.shutdown().map_err(|failure| format!("shutdown: {failure:?}"))?;
+    kernel
+        .shutdown()
+        .map_err(|failure| format!("shutdown: {failure:?}"))?;
     println!(
         "{}",
         json!({
