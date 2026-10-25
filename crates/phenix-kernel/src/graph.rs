@@ -8,9 +8,8 @@ use crate::{
 };
 use phenix_contract::{
     graph_node_key, settled_event, settled_event_schema, standard_kernel_events,
-    state_change_property, state_change_schema,
-    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, KernelEvent,
-    ScopedRequest, Value, ValueSchema,
+    state_change_property, state_change_schema, ActionDefinition, Code, EventDefinition, Failure,
+    GraphContribution, GraphNode, KernelEvent, ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -160,7 +159,8 @@ impl CompiledGraph {
                             "event settlement {trigger} may only be handled by declaring owner"
                         )));
                     }
-                } else if state_change_property(trigger).is_none() && !events.contains_key(trigger) {
+                } else if state_change_property(trigger).is_none() && !events.contains_key(trigger)
+                {
                     return Err(invalid(format!("node {id} has absent trigger {trigger}")));
                 }
             }
