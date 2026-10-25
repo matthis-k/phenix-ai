@@ -22,9 +22,9 @@ pub fn account(
 ) -> Result<Option<CredentialIdentity>, ProviderError> {
     if scope.is_empty()
         || scope.len() > 128
-        || !scope
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_')
+        || !scope.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_'
+        })
     {
         return Err(ProviderError {
             code: ProviderErrorCode::InvalidInput,
