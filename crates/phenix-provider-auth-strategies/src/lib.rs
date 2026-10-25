@@ -4,6 +4,10 @@
 //! store. This strategy tracks attempts without holding or serializing secrets.
 pub mod oauth;
 pub use oauth::OAuthAttempts;
+#[cfg(feature = "oauth-browser")]
+pub mod browser;
+#[cfg(feature = "oauth-browser")]
+pub use browser::BrowserAttempt;
 
 use phenix_provider_contracts::{
     AuthAttemptState, AuthChallenge, AuthenticatedProfile, CredentialIdentity, ProviderError,
