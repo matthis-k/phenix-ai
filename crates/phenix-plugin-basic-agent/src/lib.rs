@@ -2,9 +2,9 @@
 //! The kernel owns action admission, authority, scheduling and cancellation.
 use phenix_basic_contracts::AgentRunFinished;
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
-use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
 #[cfg(feature = "staged-graph")]
 use phenix_sdk::{FailurePolicy, JoinPolicy};
+use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
 ///
