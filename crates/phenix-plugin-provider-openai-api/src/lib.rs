@@ -50,7 +50,6 @@ fn models_url() -> Result<String, ProviderError> {
     }
 }
 
-
 fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
         code,
