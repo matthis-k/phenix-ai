@@ -167,8 +167,7 @@ mod graph_declaration_tests {
     #[test]
     fn typed_subscription_derives_both_ids_and_matches_literal_encoding() {
         const TYPED: StaticGraphNode = on_event!("receive", Prompt, ExampleSubmit);
-        const LITERAL: StaticGraphNode =
-            on_event!("receive", Prompt, "example.input@1/submit");
+        const LITERAL: StaticGraphNode = on_event!("receive", Prompt, "example.input@1/submit");
         assert_eq!(TYPED.id, LITERAL.id);
         assert_eq!(TYPED.triggers, LITERAL.triggers);
         assert_eq!(TYPED.operation, LITERAL.operation);
