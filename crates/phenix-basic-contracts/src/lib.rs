@@ -1113,7 +1113,10 @@ mod tests {
             model_turns: 3,
             tool_calls: 2,
         };
-        assert_eq!(AgentRunFinished::from_value(notice.to_value()).unwrap(), notice);
+        assert_eq!(
+            AgentRunFinished::from_value(notice.to_value()).unwrap(),
+            notice
+        );
     }
 
     #[test]
