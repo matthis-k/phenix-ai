@@ -302,7 +302,10 @@ mod tests {
         );
         let published = registry.publish().unwrap();
         assert_eq!(published.providers.len(), MAX_REGISTERED_PROVIDERS);
-        assert!(published.providers.iter().all(|provider| provider.id.starts_with("test-")));
+        assert!(published
+            .providers
+            .iter()
+            .all(|provider| provider.id.starts_with("test-")));
     }
 
     #[test]
