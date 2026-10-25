@@ -485,6 +485,17 @@ pub enum GraphCompletion<'a> {
 const MAX_SYNC_GRAPH_PUMPS: usize = 1_024;
 
 impl Kernel {
+    /// Generic host query: only activate lifecycle events with subscribers.
+    /// This is introspection, not an event grant or a new dispatch path.
+    pub fn has_event_subscribers(&self, event: &str) -> bool {
+        self.prepared.graph.as_ref().is_some_and(|graph| {
+            graph.events.contains_key(event)
+                && graph.nodes.values().any(|node| {
+                    node.definition.triggers.iter().any(|trigger| trigger == event)
+                })
+        })
+    }
+
     /// Stage only an event authored by the currently executing plugin. The
     /// current GraphExecution will handle it as a subsequent same-root wave.
     /// No user action, provider registration, credential, or authority is
