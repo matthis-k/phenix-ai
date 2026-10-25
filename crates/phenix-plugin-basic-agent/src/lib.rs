@@ -244,20 +244,20 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[AgentRunFinished::EVENT],
     actions: &[],
-    // Descriptor node IDs are lexicographically sorted. Execution ordering
-    // is declared independently by the dependency on the submit node.
+    // Author in workflow order, not key order. The descriptor canonicalizes
+    // declarations; the explicit edge is what orders these two operations.
     nodes: &[
+        StaticGraphNode::on(
+            "submit",
+            &["phenix.basic.prompt"],
+            "phenix.basic.input@1/submit",
+        ),
         StaticGraphNode::on(
             "run-finished",
             &["phenix.basic.prompt"],
             "phenix.agent.lifecycle@1/finished",
         )
         .after(&["phenix.basic.agent/submit"]),
-        StaticGraphNode::on(
-            "submit",
-            &["phenix.basic.prompt"],
-            "phenix.basic.input@1/submit",
-        ),
     ],
 };
 
@@ -287,6 +287,8 @@ mod run_event_graph_tests {
         let graph = GRAPH.owned().unwrap();
         assert_eq!(graph.events.len(), 1);
         assert_eq!(graph.events[0].id, "phenix.agent.run-finished");
+        assert_eq!(GRAPH.nodes[0].id, "submit");
+        assert_eq!(GRAPH.nodes[1].id, "run-finished");
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.nodes[0].id, "run-finished");
         assert_eq!(graph.nodes[1].id, "submit");
