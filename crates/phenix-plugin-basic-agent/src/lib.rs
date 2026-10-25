@@ -280,6 +280,24 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     }],
 };
 
+#[cfg(all(test, not(feature = "staged-graph")))]
+mod run_event_graph_tests {
+    use super::*;
+
+    #[test]
+    fn completion_event_is_owned_and_ordered_after_submit() {
+        let graph = GRAPH.owned().unwrap();
+        assert_eq!(graph.events.len(), 1);
+        assert_eq!(graph.events[0].id, "phenix.agent.run-finished");
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[0].id, "submit");
+        assert_eq!(graph.nodes[1].id, "run-finished");
+        assert_eq!(graph.nodes[1].triggers, vec!["phenix.basic.prompt"]);
+        assert_eq!(graph.nodes[1].after, vec!["phenix.basic.agent/submit"]);
+        assert_eq!(graph.nodes[1].operation, "phenix.agent.lifecycle@1/finished");
+    }
+}
+
 #[cfg(all(test, feature = "staged-graph"))]
 #[path = "staged_graph_tests.rs"]
 mod staged_graph_tests;
