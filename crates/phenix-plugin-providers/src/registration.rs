@@ -285,6 +285,27 @@ mod tests {
     }
 
     #[test]
+    fn incremental_staging_enforces_shared_provider_limit_before_mutation() {
+        let source = registrations().into_iter().next().unwrap();
+        let mut registry = Registry::default();
+        registry.begin().unwrap();
+        for index in 0..MAX_REGISTERED_PROVIDERS {
+            let mut declaration = source.clone();
+            declaration.id = format!("test-{index:03}");
+            registry.register(declaration).unwrap();
+        }
+        let mut extra = source.clone();
+        extra.id = "over-limit".into();
+        assert_eq!(
+            registry.register(extra).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
+        let published = registry.publish().unwrap();
+        assert_eq!(published.providers.len(), MAX_REGISTERED_PROVIDERS);
+        assert!(published.providers.iter().all(|provider| provider.id.starts_with("test-")));
+    }
+
+    #[test]
     fn incremental_rejection_retains_entire_previous_catalog() {
         let input = registrations();
         let mut registry = Registry::default();
