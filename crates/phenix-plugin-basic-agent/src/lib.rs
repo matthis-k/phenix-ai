@@ -900,6 +900,17 @@ mod plugin {
         }
     }
 
+    // One canonical, redacted semantic notice for both execution modes.
+    // The answer, journal entries, history and credentials stay with their owners.
+    fn completion_notice(reply: &RunResult) -> AgentRunFinished {
+        AgentRunFinished {
+            session: reply.session.clone(),
+            run: reply.run.clone(),
+            model_turns: reply.model_turns,
+            tool_calls: reply.tool_calls,
+        }
+    }
+
     fn finish(
         state: &mut State,
         host: &Host<'_>,
@@ -916,12 +927,7 @@ mod plugin {
                 "default Basic cannot publish a staged continuation",
             )),
             Ok(Advance::Done(reply)) => {
-                state.completed = Some(AgentRunFinished {
-                    session: reply.session.clone(),
-                    run: reply.run.clone(),
-                    model_turns: reply.model_turns,
-                    tool_calls: reply.tool_calls,
-                });
+                state.completed = Some(completion_notice(&reply));
                 PendingResult::Ready(Ok(reply))
             }
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
@@ -947,6 +953,14 @@ mod plugin {
                 PendingResult::Ready(Ok(TurnAdvanceOutcome::Reprepare))
             }
             Ok(Advance::Done(reply)) => {
+                // Staged advance is admitted by the existing watched-state
+                // graph node. A terminal reply has already been checkpointed;
+                // queue its semantic notice in that same root before returning
+                // Complete. Reprepare/Pending/failed/cancelled paths never emit.
+                // A failed emission must not be silently reported as success.
+                if let Err(failure) = host.emit_event(&completion_notice(&reply)) {
+                    return PendingResult::QuiescentFailure(failure);
+                }
                 PendingResult::Ready(Ok(TurnAdvanceOutcome::Complete { result: reply }))
             }
             Err(CallError::Domain(problem)) => {
