@@ -44,6 +44,95 @@ fn invoke<T: Portable>(
     }
 }
 
+/// A graph event with zero contributors still admits the declaring owner's
+/// settled hook. The provider domain then rejects an empty catalog, and
+/// neither a ready event nor a selected catalog may escape that failed wave.
+fn verify_empty_population(host_artifact: &str, definitions: &str) -> Result<(), String> {
+    let resource_grant = |caller: &str, interface: &str, operation: &str| {
+        json!({
+            "caller": caller,
+            "interface": interface,
+            "operation": operation,
+            "resources": [RESOURCE],
+        })
+    };
+    let composition: Composition = serde_json::from_value(json!({
+        "format": "phenix.composition.v3",
+        "entry": {
+            "provider": HOST,
+            "interface": REGISTRY,
+            "operation": "begin",
+        },
+        "artifacts": [host_artifact],
+        "definitions": [definitions],
+        "slots": [],
+        "grants": [
+            resource_grant("root", REGISTRY, "begin"),
+            resource_grant("root", CATALOG, "list"),
+            resource_grant(HOST, STARTUP, "begin"),
+            resource_grant(HOST, SETTLEMENT, "complete"),
+        ],
+        "excluded": [],
+        "substitutions": [],
+        "authority": {
+            "operations": [
+                format!("{REGISTRY}/begin"),
+                format!("{STARTUP}/begin"),
+                format!("{SETTLEMENT}/complete"),
+                format!("{CATALOG}/list"),
+            ],
+            "resources": [RESOURCE],
+        },
+        "resource": RESOURCE,
+    }))
+    .map_err(|e| format!("empty-composition JSON: {e}"))?;
+    let kernel = Prepared::prepare(composition)
+        .map_err(|e| format!("empty offline preparation: {e:?}"))?
+        .load()
+        .map_err(|e| format!("empty native load: {e:?}"))?;
+    let graph = kernel
+        .prepared_graph()
+        .ok_or_else(|| "empty test has no compiled graph".to_string())?;
+    // begin and owner settlement are both present; contributor count is zero.
+    if graph.nodes.len() != 2 {
+        return Err(format!("expected only manager graph nodes, got {}", graph.nodes.len()));
+    }
+    let mut execution = kernel
+        .begin_kernel_event(KernelEvent::Begin)
+        .map_err(|e| format!("empty kernel.begin: {e:?}"))?;
+    let mut done = false;
+    for _ in 0..32 {
+        if execution.pump(|_| {}).map_err(|e| format!("empty pump: {e:?}"))?
+            == GraphStatus::Finished
+        {
+            done = true;
+            break;
+        }
+    }
+    if !done || execution.completion() != Some(GraphCompletion::Domain) {
+        return Err(format!("empty settlement should reject an empty catalog: {:?}", execution.completion()));
+    }
+    if execution.steps().len() != 2
+        || execution.steps()[0].node != "phenix.provider.host/on-begin"
+        || execution.steps()[1].node != "phenix.provider.host/on-populated"
+        || !matches!(execution.steps()[1].outcome, Outcome::Domain(_))
+    {
+        return Err(format!("owner settlement not admitted after zero subscribers: {:?}", execution.steps()));
+    }
+    drop(execution);
+    let selected = selection(CATALOG, "list", HOST);
+    let root = kernel.admit_root(selected.clone()).map_err(|e| format!("{e:?}"))?;
+    let listed = root
+        .invoke_selected(&selected, &ProviderQuery { scope: "user".into() }.to_value())
+        .map_err(|e| format!("{e:?}"))?;
+    if !matches!(listed, Outcome::Domain(_)) {
+        return Err("failed empty population leaked a selected catalog".into());
+    }
+    drop(root);
+    kernel.shutdown().map_err(|e| format!("empty shutdown: {e:?}"))?;
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.len() != 5 {
@@ -187,6 +276,7 @@ fn run() -> Result<(), String> {
         return Err(format!("incorrect published provider snapshot: {listed:?}"));
     }
     kernel.shutdown().map_err(|e| format!("shutdown: {e:?}"))?;
+    verify_empty_population(&args[1], &args[4])?;
     println!(
         "{}",
         json!({
