@@ -622,7 +622,7 @@ const fn next_graph_member(
         let follows = match previous {
             Some(prev) => {
                 crate::static_schema::compare(graph_member_name(graph, field, prev), key) < 0
-            },
+            }
             None => true,
         };
         if follows
