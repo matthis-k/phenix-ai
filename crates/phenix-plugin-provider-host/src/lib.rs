@@ -6,6 +6,7 @@
 
 mod auth;
 mod models;
+mod registration;
 
 use phenix_provider_builtins::merge_registration_pages;
 use phenix_provider_contracts::{
@@ -49,7 +50,8 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
         many(min = 0)
     ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
-    provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime")
+    provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime"),
+    provide(phenix_provider_contracts::ProviderRegistry, slot = "Registry")
 )]
 mod plugin {
     use super::*;
@@ -58,7 +60,7 @@ mod plugin {
         AuthenticatedProfile, AuthenticationCommand, AuthenticationEvent, CredentialIdentity,
         CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderPage, ProviderQuery,
-        ProviderRegistrations, ProviderRuntime,
+        ProviderRegistration, ProviderRegistrations, ProviderRegistry, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -66,6 +68,8 @@ mod plugin {
     pub struct State {
         /// One immutable snapshot per plugin generation, not mutable Storage.
         selected: Option<Vec<ProviderDescriptor>>,
+        /// Only an explicitly authorized population event can stage declarations.
+        registry: registration::Registry,
         /// Shared, account-isolated attempt lifecycle owned by this host.
         attempts: phenix_provider_auth_strategies::ApiKeyAttempts,
     }
@@ -99,6 +103,14 @@ mod plugin {
         host: &Host<'_>,
     ) -> CallResult<&'a [ProviderDescriptor], ProviderError> {
         if state.selected.is_none() {
+            // Registration events may still be executing. Do not publish a
+            // partial catalog or silently select the pull-based compatibility path.
+            if state.registry.is_populating() {
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::Unavailable,
+                    "provider population has not been published",
+                )));
+            }
             let count = imports::Contributors::count(host)?;
             if count > 256 {
                 return Err(CallError::Domain(error(
@@ -287,6 +299,44 @@ mod plugin {
             ProviderErrorCode::Unavailable,
             "selected session protocol adapter is not installed",
         )))
+    }
+
+    /// Existing graph handlers call this ordinary typed contract operation.
+    /// The kernel checks the selected import, scope and caller grant.
+    #[provide(ProviderRegistry::register)]
+    fn register(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderRegistration,
+    ) -> CallResult<(), ProviderError> {
+        check(host, &request.scope)?;
+        if state.selected.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Conflict,
+                "provider catalog is already selected",
+            )));
+        }
+        state.registry.register(request.provider).map_err(CallError::Domain)
+    }
+
+    /// The population controller invokes publish *after* the graph completes.
+    /// This operation needs its own explicit grant, separate from register.
+    #[provide(ProviderRegistry::publish)]
+    fn publish(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderQuery,
+    ) -> CallResult<ProviderPage, ProviderError> {
+        check(host, &request.scope)?;
+        if state.selected.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Conflict,
+                "provider catalog is already selected",
+            )));
+        }
+        let page = state.registry.publish().map_err(CallError::Domain)?;
+        state.selected = Some(page.providers.clone());
+        Ok(page)
     }
 
     #[provide(ProviderCatalog::list)]
@@ -570,7 +620,7 @@ mod tests {
     fn metadata_exposes_shared_host_without_provider_registrations() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 3);
+        assert_eq!(metadata.provides.len(), 4);
     }
 
     #[test]
