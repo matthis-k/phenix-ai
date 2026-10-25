@@ -362,8 +362,13 @@ mod plugin {
             // This temporary direct compatibility adapter uses the same
             // authoritative Registry as the graph path, never a second
             // snapshot or a caller-provided execution route.
-            state
-                .registry
+            // Construct a candidate with the SAME Registry type and its
+            // validation rules, but commit it to plugin state only after all
+            // selected imports and registrations succeed. A transient
+            // unavailable contributor must not strand a direct caller in
+            // Collecting or silently publish a partial catalog.
+            let mut candidate = super::event_registry::Registry::default();
+            candidate
                 .begin(TOOLS.iter().map(super::tool))
                 .map_err(CallError::Domain)?;
             let mut selected_catalogs = Vec::with_capacity(count);
@@ -374,24 +379,20 @@ mod plugin {
             }
             for catalog in &selected_catalogs {
                 for offered in catalog {
-                    state
-                        .registry
+                    candidate
                         .register(offered.clone(), &selected_catalogs)
                         .map_err(CallError::Domain)?;
                 }
             }
-            let tools = state
-                .registry
+            let tools = candidate
                 .preview()
                 .map_err(CallError::Domain)?
                 .into_iter()
                 .map(|entry| entry.info)
                 .collect::<Vec<_>>();
             let revision = super::revision(&tools, count);
-            state
-                .registry
-                .publish(revision)
-                .map_err(CallError::Domain)?;
+            candidate.publish(revision).map_err(CallError::Domain)?;
+            state.registry = candidate;
         }
         state.registry.selected().ok_or_else(|| {
             CallError::Domain(error(
