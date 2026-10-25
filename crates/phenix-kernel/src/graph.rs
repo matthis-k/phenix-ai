@@ -541,11 +541,44 @@ impl Kernel {
     /// loop; its caller must pump/cancel its GraphExecution normally.
     pub fn begin_lifecycle(&self, event: LifecycleEvent) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
-        if let LifecycleEvent::PluginLoaded { plugin } = &event {
-            if !self.images.borrow().contains_key(plugin) {
+        match &event {
+            LifecycleEvent::PluginLoaded { plugin }
+            | LifecycleEvent::PluginReloaded { plugin, .. } => {
+                if !self.images.borrow().contains_key(plugin) {
+                    return Err(Failure::new(
+                        Code::MissingBinding,
+                        "plugin lifecycle event references an unloaded plugin",
+                    ));
+                }
+            }
+            LifecycleEvent::PluginUnloaded { plugin } => {
+                // A genuine unloaded notification is only valid after a
+                // corresponding loaded notification and native removal.
+                let state = self.state.borrow();
+                if self.images.borrow().contains_key(plugin)
+                    || !state.lifecycle_loaded.contains(plugin)
+                {
+                    return Err(Failure::new(
+                        Code::ScopeRejected,
+                        "plugin-unloaded requires completed native unload",
+                    ));
+                }
+            }
+            LifecycleEvent::Begin | LifecycleEvent::Shutdown => {}
+        }
+        if let LifecycleEvent::PluginReloaded {
+            previous_generation,
+            generation,
+            ..
+        } = &event
+        {
+            if previous_generation.is_empty()
+                || generation.is_empty()
+                || previous_generation == generation
+            {
                 return Err(Failure::new(
-                    Code::MissingBinding,
-                    "plugin-loaded source references an unloaded plugin",
+                    Code::SchemaRejected,
+                    "plugin-reloaded requires distinct generation identities",
                 ));
             }
         }
@@ -554,6 +587,12 @@ impl Kernel {
             let already_emitted = match &event {
                 LifecycleEvent::Begin => state.lifecycle_begin,
                 LifecycleEvent::PluginLoaded { plugin } => state.lifecycle_loaded.contains(plugin),
+                LifecycleEvent::PluginUnloaded { plugin } => {
+                    state.lifecycle_unloaded.contains(plugin)
+                }
+                LifecycleEvent::PluginReloaded { plugin, .. } => {
+                    state.lifecycle_reloaded.contains(plugin)
+                }
                 LifecycleEvent::Shutdown => state.lifecycle_shutdown,
             };
             if already_emitted {
@@ -576,6 +615,12 @@ impl Kernel {
             LifecycleEvent::Begin => state.lifecycle_begin = true,
             LifecycleEvent::PluginLoaded { plugin } => {
                 state.lifecycle_loaded.insert(plugin);
+            }
+            LifecycleEvent::PluginUnloaded { plugin } => {
+                state.lifecycle_unloaded.insert(plugin);
+            }
+            LifecycleEvent::PluginReloaded { plugin, .. } => {
+                state.lifecycle_reloaded.insert(plugin);
             }
             LifecycleEvent::Shutdown => state.lifecycle_shutdown = true,
         }
@@ -1150,14 +1195,36 @@ mod tests {
                 false,
                 vec![node("c", &[phenix_contract::LIFECYCLE_SHUTDOWN], &[], &[])],
             ),
+            contribution(
+                "delta",
+                false,
+                vec![node(
+                    "d",
+                    &[phenix_contract::LIFECYCLE_PLUGIN_UNLOADED],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "epsilon",
+                false,
+                vec![node(
+                    "e",
+                    &[phenix_contract::LIFECYCLE_PLUGIN_RELOADED],
+                    &[],
+                    &[],
+                )],
+            ),
         ];
         let graph = compile(&declarations).unwrap();
-        assert_eq!(graph.events.len(), 3);
+        assert_eq!(graph.events.len(), 5);
         assert!(graph.actions.is_empty());
         for (event, expected) in [
             (phenix_contract::LIFECYCLE_BEGIN, "alpha/a"),
             (phenix_contract::LIFECYCLE_PLUGIN_LOADED, "beta/b"),
             (phenix_contract::LIFECYCLE_SHUTDOWN, "gamma/c"),
+            (phenix_contract::LIFECYCLE_PLUGIN_UNLOADED, "delta/d"),
+            (phenix_contract::LIFECYCLE_PLUGIN_RELOADED, "epsilon/e"),
         ] {
             assert_eq!(
                 graph
@@ -1175,6 +1242,37 @@ mod tests {
             .unwrap_err()
             .message
             .contains("duplicate event"));
+    }
+
+    #[test]
+    fn arbitrary_plugin_events_preserve_existing_graph_contracts() {
+        let declarations = vec![
+            GraphContribution {
+                plugin: "phenix.providers".into(),
+                events: vec![EventDefinition {
+                    id: "phenix.providers.populate".into(),
+                    payload: ValueSchema::String,
+                }],
+                actions: vec![],
+                nodes: vec![],
+            },
+            contribution(
+                "openai",
+                false,
+                vec![node("register", &["phenix.providers.populate"], &[], &[])],
+            ),
+        ];
+        let graph = compile(&declarations).unwrap();
+        assert_eq!(
+            graph.activation_order(&BTreeSet::from([
+                "phenix.providers.populate".into(),
+            ])).unwrap(),
+            ["openai/register"]
+        );
+        assert!(graph.actions.is_empty());
+        let mut bad = declarations;
+        bad[0].events[0].id = "phenix.lifecycle.fabricated".into();
+        assert!(compile(&bad).is_err());
     }
 
     #[test]
