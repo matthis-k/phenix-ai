@@ -182,6 +182,7 @@ impl ProviderManagementGroup {
 
     pub(super) fn shutdown(self) -> Result<(), String> {
         for root in self.roots {
+            activate_kernel_shutdown(&root.kernel)?;
             root.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
         }
         Ok(())
