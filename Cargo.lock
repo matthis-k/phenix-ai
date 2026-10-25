@@ -2072,6 +2072,7 @@ name = "phenix-plugin-provider-chatgpt"
 version = "0.1.0"
 dependencies = [
  "curl",
+ "phenix-basic-contracts",
  "phenix-provider-builtins",
  "phenix-provider-contracts",
  "phenix-provider-protocols",
@@ -2105,6 +2106,7 @@ name = "phenix-plugin-provider-openai-api"
 version = "0.1.0"
 dependencies = [
  "curl",
+ "phenix-basic-contracts",
  "phenix-provider-builtins",
  "phenix-provider-auth-strategies",
  "phenix-provider-discovery",
