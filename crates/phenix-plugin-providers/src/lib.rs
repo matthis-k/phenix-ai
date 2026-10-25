@@ -361,6 +361,47 @@ mod plugin {
             )));
         }
         state.registry.begin().map_err(CallError::Domain)?;
+        // Transitional compatibility: old selected declaration plugins only
+        // expose a pull catalog, not a populate subscriber. Bring their
+        // attested data into the SAME staging registry before the event wave.
+        // After the legacy plugins are retired this import block disappears;
+        // the graph and snapshot publication path remain unchanged.
+        let count = imports::Contributors::count(host)?;
+        if count > 256 {
+            let _ = state.registry.abort();
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "too many selected provider contributors",
+            )));
+        }
+        let mut pages = Vec::with_capacity(count);
+        for index in 0..count {
+            match imports::Contributors::invoke_at::<ProviderRegistrations::list>(
+                host, index, &(),
+            ) {
+                Ok(page) => pages.push(page),
+                Err(failure) => {
+                    let _ = state.registry.abort();
+                    return Err(failure);
+                }
+            }
+        }
+        let legacy = match merge_registration_pages(pages) {
+            Ok(providers) => providers,
+            Err(_) => {
+                let _ = state.registry.abort();
+                return Err(CallError::Domain(error(
+                    ProviderErrorCode::InvalidInput,
+                    "invalid or conflicting selected provider registrations",
+                )));
+            }
+        };
+        for provider in legacy {
+            if let Err(failure) = state.registry.register(provider) {
+                let _ = state.registry.abort();
+                return Err(CallError::Domain(failure));
+            }
+        }
         if let Err(failure) = host.emit_event(&ProvidersPopulate { scope }) {
             // No partially initialized catalog if admission of the event
             // itself fails. A graph failure after emission is handled by the
