@@ -7,8 +7,9 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, state_change_property, state_change_schema, ActionDefinition, Code,
-    EventDefinition, Failure, GraphContribution, GraphNode, ScopedRequest, Value, ValueSchema,
+    graph_node_key, standard_lifecycle_events, state_change_property, state_change_schema,
+    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
+    ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,7 +83,12 @@ impl CompiledGraph {
         {
             return Err(invalid("duplicate contributing plugin"));
         }
-        let mut events = BTreeMap::new();
+        // Intrinsic source vertices are present in every graph. Plugins may
+        // subscribe but cannot redefine their identity or request schema.
+        let mut events: BTreeMap<String, EventDefinition> = standard_lifecycle_events()
+            .into_iter()
+            .map(|event| (event.id.clone(), event))
+            .collect();
         let mut action_defs = BTreeMap::<String, ActionDefinition>::new();
         let mut nodes = BTreeMap::new();
         let mut predecessors = BTreeMap::new();
@@ -1030,6 +1036,61 @@ mod tests {
             contribution("delta", false, vec![node("d", &[], &["beta/b"], &[])]),
         ]
     }
+    #[test]
+    fn intrinsic_lifecycle_sources_activate_without_plugin_event_definitions() {
+        let declarations = [
+            contribution(
+                "alpha",
+                false,
+                vec![node(
+                    "a",
+                    &[phenix_contract::LIFECYCLE_BEGIN],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "beta",
+                false,
+                vec![node(
+                    "b",
+                    &[phenix_contract::LIFECYCLE_PLUGIN_LOADED],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "gamma",
+                false,
+                vec![node(
+                    "c",
+                    &[phenix_contract::LIFECYCLE_SHUTDOWN],
+                    &[],
+                    &[],
+                )],
+            ),
+        ];
+        let graph = compile(&declarations).unwrap();
+        assert_eq!(graph.events.len(), 3);
+        assert!(graph.actions.is_empty());
+        for (event, expected) in [
+            (phenix_contract::LIFECYCLE_BEGIN, "alpha/a"),
+            (phenix_contract::LIFECYCLE_PLUGIN_LOADED, "beta/b"),
+            (phenix_contract::LIFECYCLE_SHUTDOWN, "gamma/c"),
+        ] {
+            assert_eq!(
+                graph.activation_order(&BTreeSet::from([event.into()])).unwrap(),
+                [expected]
+            );
+        }
+        let mut invalid = declarations.to_vec();
+        invalid[0].events.push(EventDefinition {
+            id: phenix_contract::LIFECYCLE_BEGIN.into(),
+            payload: ValueSchema::String,
+        });
+        assert!(compile(&invalid).unwrap_err().message.contains("duplicate event"));
+    }
+
     #[test]
     fn independently_contributed_multi_root_graph_is_permutation_invariant() {
         let nodes = fixtures();
