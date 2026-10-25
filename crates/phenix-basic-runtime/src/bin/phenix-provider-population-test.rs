@@ -13,8 +13,7 @@ const POPULATE: &str = "phenix.provider.populate@1";
 const CATALOG: &str = "phenix.provider.catalog@1";
 const RESOURCE: &str = "phenix.providers.user";
 const HOST: &str = "phenix.provider.host";
-const CONTRIBUTOR: &str = "phenix.provider.openai-api";
-const CREDENTIALS: &str = "phenix.provider.credential-files";
+const CONTRIBUTOR: &str = "phenix.provider.openai";
 
 fn selection(contract: &str, operation: &str, provider: &str) -> Selection {
     Selection {
@@ -43,10 +42,8 @@ fn invoke<T: Portable>(
 
 fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
-    if args.len() != 5 {
-        return Err(
-            "usage: phenix-provider-population-test HOST OPENAI CREDENTIALS DEFINITIONS".into(),
-        );
+    if args.len() != 4 {
+        return Err("usage: phenix-provider-population-test PROVIDERS OPENAI DEFINITIONS".into());
     }
     let grant = |caller: &str, interface: &str, operation: &str| {
         json!({
@@ -63,19 +60,13 @@ fn run() -> Result<(), String> {
             "interface": REGISTRY,
             "operation": "begin",
         },
-        "artifacts": [&args[1], &args[2], &args[3]],
-        "definitions": [&args[4]],
+        "artifacts": [&args[1], &args[2]],
+        "definitions": [&args[3]],
         "slots": [{
             "caller": CONTRIBUTOR,
             "slot": "Registry",
             "provider": HOST,
             "export": "Registry",
-            "index": 0,
-        }, {
-            "caller": CONTRIBUTOR,
-            "slot": "Credentials",
-            "provider": CREDENTIALS,
-            "export": "Credentials",
             "index": 0,
         }],
         "grants": [
@@ -150,7 +141,10 @@ fn run() -> Result<(), String> {
 
     let published: ProviderPage =
         invoke(&kernel, selection(REGISTRY, "publish", HOST), scope.clone())?;
-    if published.revision != 1 || published.providers.len() != 1 {
+    if published.revision != 1
+        || published.providers.len() != 1
+        || published.providers[0].connections.len() != 2
+    {
         return Err(format!(
             "incorrect published provider snapshot: {published:?}"
         ));
