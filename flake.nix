@@ -268,7 +268,7 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 19
+        assert len(report["definitions"]) == 20
         assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
@@ -1709,6 +1709,9 @@
         { caller = "root"; key = "phenix.basic.session@1/open"; }
         { caller = "root"; key = "phenix.basic.session@1/checkpoint"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.input@1/submit"; }
+        # After a successful pending submit, the Basic Agent may emit
+        # a semantic run-finished notification in the same graph root.
+        { caller = "phenix.basic.agent"; key = "phenix.agent.lifecycle@1/finished"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/append"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/read"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.journal@1/observer"; }
