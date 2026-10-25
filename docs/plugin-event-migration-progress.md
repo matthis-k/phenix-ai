@@ -1,6 +1,6 @@
 # Phenix event-driven plugin migration — execution log
 
-Updated: 2026-10-25. Working stack: #1144 → #1146 → #1147 → #1148 → #1149.
+Updated: 2026-10-25. Working stack: #1144 → #1146 → #1147 → #1148 → #1149 → #1150.
 Detailed all-plugin inventory: [plugin-event-restructure-matrix.md](plugin-event-restructure-matrix.md).
 
 ## Operating rules
@@ -15,8 +15,8 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 
 | Group | Source/plugin scope | State | Executed implementation | Validation | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| G0 – Kernel / event SDK | kernel graph, contract graph, SDK, macros, Basic/ACP host | IMPLEMENTED, verification pending | #1147 intrinsic kernel events; #1148 generic in-root emission; #1149 owner-only settlement, typed emit, Basic/ACP begin/shutdown wiring | Formatting, generated workflow, ACP-v2 and cache isolation passing on 09db59f; Nix shards and official ACP SDK still running | Exact-head native product green; cancellation/failure/pending tests; reconcile parents |
-| G1 – Provider manager and declarations | providers, provider-openai, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / legacy cutover blocked | #1146/#1148/#1149: one shared manager, staged registry, OpenAI declaration hook, onBegin→populate→settled→ready | Unit tests added; native provider population check not yet confirmed green | Migrate other declarations; remove duplicated OAuth/key/catalog implementations after consumers switch |
+| G0 – Kernel / event SDK | kernel graph, contract graph, SDK, macros, Basic/ACP host | IMPLEMENTED, verification pending | #1147 intrinsic kernel events; #1148 in-root emission; #1149 owner settlement, typed emit, Basic/ACP begin/shutdown and dependency-ordered plugin-loaded notifications | Formatting and generated workflow passed on recent heads; Nix native shards remain gate | Exact-head native product green; cancellation/failure/pending tests; reconcile parents |
+| G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / two-contributor product pending | #1146–#1149 shared manager/owner settlement; #1150 second plain-data registration hook (five standards), typed register_all, six-provider native catalog check | Rustfmt passed earlier after corrections; full native product pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
 | G2 – Tool discovery and execution | basic-tools, tool-fixture | NOT STARTED | Current typed pull-based ToolRegistrations and ToolExecute audited | Existing baseline tests only | Declare tools.populate/ready, preserve ToolExecute contract, prove external native contribution |
 | G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | NOT STARTED | Existing graph prompt and property watches inventoried (already event/reactive) | Existing baseline tests only | Add semantic turn/session events only with clear independent consumers |
 | G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | NOT STARTED | Candidate events and authoritative owners inventoried | Not applicable yet | Validate subscriber need; publish only on committed state |
@@ -37,6 +37,22 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   official ACP interoperability remained in progress. Do **not** treat as
   native provider product acceptance.
 
+- **S04 (G0 load events)**: #1149 now delivers intrinsic `plugin-loaded`
+  notifications in actual dependency-resolved startup order, before
+  `phenix.kernel.begin`, only when subscribed
+  (`phenix-kernel/src/runtime.rs`, Basic/ACP host, commits `0b4d9fa` and
+  `1ab720c`). Existing kernel begin/shutdown event dispatch remains unchanged.
+- **S05 (G1 declarations)**: draft #1150 adds `phenix-plugin-provider-standards`
+  as an ordinary five-provider data/hook bundle separate from
+  `phenix-plugin-provider-openai`; both import the same registry. Native
+  product test selects both, asserts four graph nodes and exact six canonical
+  provider IDs, with OpenAI API and ChatGPT connections. Legacy pull registrar
+  is retained pending consumer cutover.
+- **S06 (G1 ergonomic refinement)**: typed
+  `Providers::register_all(iter)` reduces declarative bundle boilerplate;
+  shared `standard_provider_definitions()` centralizes the transitional
+  non-OpenAI partition. No second registry or new ABI added. Native CI pending.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -56,6 +72,11 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-10 | Medium | Domain/error boilerplate and `CallResult` wrappers repeated in small contributor plugins | SDK typed handler signature/error adapter where portable errors are inferred, without weakening domain/Kernal separation | Open; G1/G2 |
 | ERG-11 | High | Full startup events can end with a domain failure and pending manager staging; host must guarantee teardown and no catalog fallback | Standard graph-lifecycle transaction/abort ownership and explicit failure outcome; ensure next generation remains isolated | Open; G0/G1 |
 | ERG-12 | Medium | Graph static event IDs are strings and namespace ownership is verified at runtime emission | Infer typed event ownership and handler identity at compile-time where possible; still validate dynamic/native metadata offline | Open; G0 |
+
+| ERG-13 | Medium | Provider declaration bundles need a manual registration loop with repetitive per-item error propagation (`phenix-plugin-provider-standards`) | Shared `Providers::register_all(iter)` invokes the same typed contract; does not bypass validation or grant authority | **Implemented in #1150**; native test pending |
+| ERG-14 | High | OpenAI remains defined in both old `defaults::PROVIDERS` and new `phenix-plugin-provider-openai`; registration bundle must explicitly exclude its identity | Complete cutover: one definition owner per provider; remove OpenAI from old legacy defaults and delete retired pull contributor once ACP consumers migrate | Open; G1 de-duplication |
+| ERG-15 | Medium | Standard declaration hook still requires manual `graph(super::GRAPH)`, empty plugin State and `#[provide(...)]` for a one-operation registration | Generate a generic typed event subscriber from the Rust handler; keep graph/ABI metadata as the compiled target | Open; SDK after #1149 |
+| ERG-16 | Medium | Product assertions assumed provider index zero was OpenAI, while the registry correctly sorts canonical provider IDs | Author-facing provider lookup by stable ID, never by position; product test verifies exact deterministic ID set | **Fixed in #1150**; native test pending |
 
 ### New finding policy
 
