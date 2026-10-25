@@ -352,14 +352,11 @@ impl GraphContribution {
                 || !sorted(node.after.iter().map(String::as_str))
                 || !sorted(node.triggers.iter().map(String::as_str))
                 || !sorted(node.writes.iter().map(String::as_str))
-                || node
-                    .triggers
-                    .iter()
-                    .any(|id| {
-                        !identifier(id)
-                            && state_change_property(id).is_none()
-                            && settled_event(id).is_none()
-                    })
+                || node.triggers.iter().any(|id| {
+                    !identifier(id)
+                        && state_change_property(id).is_none()
+                        && settled_event(id).is_none()
+                })
                 || node.after.iter().any(|id| !valid_node_key(id))
                 || node.writes.iter().any(|id| !valid_node_key(id))
             {
@@ -628,14 +625,20 @@ mod tests {
 
     #[test]
     fn settled_triggers_are_owner_completion_hooks_not_normal_events() {
-        assert_eq!(settled_event("settled:phenix.providers.populate"), Some("phenix.providers.populate"));
+        assert_eq!(
+            settled_event("settled:phenix.providers.populate"),
+            Some("phenix.providers.populate")
+        );
         assert!(settled_event("settled:phenix.kernel.begin").is_none());
         assert!(settled_event("settled:").is_none());
         assert!(settled_event("phenix.providers.populate").is_none());
         let mut graph = sample();
         graph.nodes[0].triggers = vec!["settled:prompt.submitted".into()];
         assert!(graph.normalized().is_ok());
-        assert_eq!(settled_event_schema(), ValueSchema::Struct(std::collections::BTreeMap::new()));
+        assert_eq!(
+            settled_event_schema(),
+            ValueSchema::Struct(std::collections::BTreeMap::new())
+        );
     }
 
     #[test]
