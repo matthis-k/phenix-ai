@@ -1053,7 +1053,13 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
         .map_err(|e| format!("{e:?}"))?
         .load()
         .map_err(|e| format!("{e:?}"))?;
-    activate_kernel_begin(&kernel)?;
+    if let Err(startup) = activate_kernel_begin(&kernel) {
+        let cleanup = shutdown_kernel(kernel);
+        return Err(match cleanup {
+            Ok(()) => startup,
+            Err(stop) => format!("{startup}; cleanup: {stop}"),
+        });
+    }
     Ok(kernel)
 }
 
