@@ -20,6 +20,9 @@ pub fn event(
     }
     Ok(quote! {
         #item
+        impl ::phenix_sdk::GraphEventPayload for #name {
+            const ID: &'static str = #id;
+        }
         impl #name {
             pub const EVENT: ::phenix_sdk::StaticEventDefinition =
                 ::phenix_sdk::StaticEventDefinition {
