@@ -1027,7 +1027,15 @@ fn activate_kernel_lifecycle(kernel: &Kernel, event: KernelEvent) -> Result<(), 
     Ok(())
 }
 
-fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
+/// Load notifications are a kernel concern, not a provider/session event.
+/// Native constructors and graph preparation have already completed; deliver
+/// the notifications in dependency order before the global begin trigger.
+fn activate_kernel_startup(kernel: &Kernel) -> Result<(), String> {
+    if kernel.has_event_subscribers(phenix_contract::KERNEL_PLUGIN_LOADED) {
+        for plugin in kernel.loaded_plugin_ids() {
+            activate_kernel_lifecycle(kernel, KernelEvent::PluginLoaded { plugin })?;
+        }
+    }
     activate_kernel_lifecycle(kernel, KernelEvent::Begin)
 }
 
@@ -1056,7 +1064,7 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
         .map_err(|e| format!("{e:?}"))?
         .load()
         .map_err(|e| format!("{e:?}"))?;
-    if let Err(startup) = activate_kernel_begin(&kernel) {
+    if let Err(startup) = activate_kernel_startup(&kernel) {
         let cleanup = shutdown_kernel(kernel);
         return Err(match cleanup {
             Ok(()) => startup,
