@@ -415,33 +415,6 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
-      # Graph-triggered provider data plugin using the existing M1 graph.
-      # The pull-based contributor stays available for legacy compositions.
-      providerPopulateBuiltinsSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-populate-builtins
-        ./crates/phenix-provider-builtins
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
-      providerPopulateBuiltinsPlugin = rust.buildRustPackage {
-        pname = "phenix-plugin-provider-populate-builtins";
-        version = "0.1.0";
-        src = providerPopulateBuiltinsSource;
-        cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-plugin-provider-populate-builtins" ];
-        cargoTestFlags = [ "-p" "phenix-plugin-provider-populate-builtins" ];
-        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-        doCheck = true;
-        installPhase = ''
-          mkdir -p $out/lib
-          cp target/*/release/libphenix_plugin_provider_populate_builtins.so $out/lib/plugin.so
-        '';
-        postFixup = ''
-          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
-          ${pkgs.python3}/bin/python ${recordWriter} "$out"
-        '';
-      };
       providerHostApiKeyProductCheck = pkgs.runCommand "phenix-provider-host-api-key-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1639,7 +1612,8 @@
         mkdir -p $out
         ${providerPopulationTestBinary}/bin/phenix-provider-population-test \
           ${providerHostPlugin} \
-          ${providerPopulateBuiltinsPlugin} \
+          ${providerOpenAiApi} \
+          ${providerCredentialStore} \
           ${providerDefinitions} > $out/verified.json
         test -s $out/verified.json
       '';
@@ -2871,7 +2845,6 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
-        phenix-plugin-provider-populate-builtins = providerPopulateBuiltinsPlugin;
         phenix-plugin-provider-host = providerHostPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
@@ -3119,7 +3092,6 @@
         provider-secret-service = providerSecretServiceCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
-        provider-populate-builtins-plugin = providerPopulateBuiltinsPlugin;
         provider-population-product = providerPopulationProductCheck;
         provider-host-plugin = providerHostPlugin;
         provider-host-api-key-product = providerHostApiKeyProductCheck;
