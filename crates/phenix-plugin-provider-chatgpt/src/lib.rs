@@ -630,7 +630,9 @@ mod plugin {
             "openai-responses",
             "responses",
             query.limit,
-            discovered.into_iter().map(|item| (item.slug, item.display_name)),
+            discovered
+                .into_iter()
+                .map(|item| (item.slug, item.display_name)),
             |_| true,
         )
         .map_err(CallError::Domain)
