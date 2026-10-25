@@ -567,6 +567,70 @@ pub trait ToolRegistrations {
     fn execute(&self, request: ToolRequest) -> Result<ToolResult, BasicError>;
 }
 
+/// The tool manager owns these events, not the kernel. Contributing plugins
+/// only subscribe and call the typed registry contract; registration is not
+/// permission to execute a tool.
+#[event(id = "phenix.tools.populate")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ToolsPopulate {}
+
+#[event(id = "phenix.tools.ready")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ToolsReady {
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ToolKernelBegin {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ToolsPopulated {}
+
+#[contract(id = "phenix.tools.startup@1")]
+pub trait ToolStartup {
+    fn begin(&self, event: ToolKernelBegin) -> Result<(), BasicError>;
+}
+
+#[contract(id = "phenix.tools.populate@1")]
+pub trait ToolPopulate {
+    fn register(&self, event: ToolsPopulate) -> Result<(), BasicError>;
+}
+
+#[contract(id = "phenix.tools.settlement@1")]
+pub trait ToolSettlement {
+    fn complete(&self, event: ToolsPopulated) -> Result<(), BasicError>;
+}
+
+/// Staged metadata. Execution routing is *never* supplied by the contributor;
+/// the manager verifies metadata against the resolver-selected
+/// ToolRegistrations slot before pinning its invocation route.
+#[contract(id = "phenix.tools.registry@1")]
+pub trait ToolRegistry {
+    fn register(&self, tool: ToolInfo) -> Result<(), BasicError>;
+}
+
+/// Thin author-facing facade around a normal, authority-checked M1 import.
+pub struct Tools<'a, 'b> {
+    host: &'a Host<'b>,
+    slot: &'a str,
+}
+impl<'a, 'b> Tools<'a, 'b> {
+    pub fn new(host: &'a Host<'b>, slot: &'a str) -> Self {
+        Self { host, slot }
+    }
+
+    pub fn register(&self, tool: ToolInfo) -> CallResult<(), BasicError> {
+        self.host.invoke::<ToolRegistry::register>(self.slot, &tool)
+    }
+
+    pub fn register_all(&self, tools: impl IntoIterator<Item = ToolInfo>) -> CallResult<(), BasicError> {
+        for tool in tools {
+            self.register(tool)?;
+        }
+        Ok(())
+    }
+}
+
 #[contract(id = "phenix.basic.catalog@1")]
 pub trait ToolCatalog {
     fn list(&self, request: ToolQuery) -> Result<ToolPage, BasicError>;
