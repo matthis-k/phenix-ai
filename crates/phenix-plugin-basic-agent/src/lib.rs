@@ -2,7 +2,9 @@
 //! The kernel owns action admission, authority, scheduling and cancellation.
 use phenix_basic_contracts::AgentRunFinished;
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
-use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
+use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
+#[cfg(feature = "staged-graph")]
+use phenix_sdk::{FailurePolicy, JoinPolicy};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
 ///
@@ -242,18 +244,20 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[AgentRunFinished::EVENT],
     actions: &[],
+    // Descriptor node IDs are lexicographically sorted. Execution ordering
+    // is declared independently by the dependency on the submit node.
     nodes: &[
-        StaticGraphNode::on(
-            "submit",
-            &["phenix.basic.prompt"],
-            "phenix.basic.input@1/submit",
-        ),
         StaticGraphNode::on(
             "run-finished",
             &["phenix.basic.prompt"],
             "phenix.agent.lifecycle@1/finished",
         )
         .after(&["phenix.basic.agent/submit"]),
+        StaticGraphNode::on(
+            "submit",
+            &["phenix.basic.prompt"],
+            "phenix.basic.input@1/submit",
+        ),
     ],
 };
 
@@ -284,12 +288,12 @@ mod run_event_graph_tests {
         assert_eq!(graph.events.len(), 1);
         assert_eq!(graph.events[0].id, "phenix.agent.run-finished");
         assert_eq!(graph.nodes.len(), 2);
-        assert_eq!(graph.nodes[0].id, "submit");
-        assert_eq!(graph.nodes[1].id, "run-finished");
-        assert_eq!(graph.nodes[1].triggers, vec!["phenix.basic.prompt"]);
-        assert_eq!(graph.nodes[1].after, vec!["phenix.basic.agent/submit"]);
+        assert_eq!(graph.nodes[0].id, "run-finished");
+        assert_eq!(graph.nodes[1].id, "submit");
+        assert_eq!(graph.nodes[0].triggers, vec!["phenix.basic.prompt"]);
+        assert_eq!(graph.nodes[0].after, vec!["phenix.basic.agent/submit"]);
         assert_eq!(
-            graph.nodes[1].operation,
+            graph.nodes[0].operation,
             "phenix.agent.lifecycle@1/finished"
         );
     }
