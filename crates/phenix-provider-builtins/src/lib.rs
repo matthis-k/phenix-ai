@@ -345,11 +345,14 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         .connection(id, label)
         .expect("valid built-in provider declaration")
     };
-    let model = |connection: ConnectionDescriptor, endpoint, adapter| {
+    let model = |connection: ConnectionDescriptor, adapter| {
         connection
-            .with_catalog(endpoint, adapter, DiscoveryKind::Dynamic)
-            .expect("valid built-in dynamic catalog")
+            .with_standard_models(adapter)
+            .expect("valid standard catalog convention")
     };
+    // Each entry describes which standards are supported. Shared conventions
+    // own standard routes and catalog GET; these definitions contribute no
+    // provider-specific transport or authentication implementation.
     let api = make(
         "https://api.openai.com/v1",
         OPENAI_RESPONSES,
@@ -357,14 +360,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenAI API",
     )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://api.openai.com/v1/responses"),
-    )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://api.openai.com/v1/chat/completions"),
-    )
+    .with_standard_protocols(&[OPENAI_CHAT])
+    .expect("valid OpenAI API protocols")
     .with_key_environment("OPENAI_API_KEY")
     .expect("valid OpenAI key setting");
     let chatgpt = make(
@@ -381,14 +378,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenRouter API",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://openrouter.ai/api/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://openrouter.ai/api/v1/responses"),
-    );
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenRouter protocols");
     let anthropic = make(
         "https://api.anthropic.com/v1",
         ANTHROPIC_MESSAGES,
@@ -396,10 +387,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "Anthropic API",
     )
-    .with_protocol(
-        ANTHROPIC_MESSAGES,
-        Some("https://api.anthropic.com/v1/messages"),
-    )
+    .with_standard_protocols(&[])
+    .expect("valid Anthropic Messages protocol")
     .with_key_presentation(ApiKeyPresentation::Header {
         name: "x-api-key".into(),
         prefix: String::new(),
@@ -412,14 +401,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenCode Zen",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://opencode.ai/zen/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://opencode.ai/zen/v1/responses"),
-    )
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenCode Zen protocols")
     .with_protocol(ANTHROPIC_MESSAGES, None);
     let go = make(
         "https://opencode.ai/zen/go/v1",
@@ -428,14 +411,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenCode Go",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://opencode.ai/zen/go/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://opencode.ai/zen/go/v1/responses"),
-    )
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenCode Go protocols")
     .with_protocol(ANTHROPIC_MESSAGES, None);
     let zai = make(
         "https://api.z.ai/api/paas/v4",
@@ -444,10 +421,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "standard",
         "Z.ai API",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://api.z.ai/api/paas/v4/chat/completions"),
-    )
+    .with_standard_protocols(&[])
+    .expect("valid Z.ai Chat protocol")
     .with_catalog(None, "zai.declared", DiscoveryKind::Declared)
     .expect("valid Z.ai catalog");
     let declared = vec![
@@ -455,53 +430,29 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
             id: "openai".into(),
             label: "OpenAI".into(),
             connections: vec![
-                model(
-                    api,
-                    Some("https://api.openai.com/v1/models"),
-                    "openai.models",
-                ),
-                model(
-                    chatgpt,
-                    Some("https://api.openai.com/v1/models"),
-                    "chatgpt.models",
-                ),
+                model(api, "openai.models"),
+                model(chatgpt, "chatgpt.models"),
             ],
         },
         ProviderDescriptor {
             id: "openrouter".into(),
             label: "OpenRouter".into(),
-            connections: vec![model(
-                openrouter,
-                Some("https://openrouter.ai/api/v1/models"),
-                "openrouter.models",
-            )],
+            connections: vec![model(openrouter, "openrouter.models")],
         },
         ProviderDescriptor {
             id: "anthropic".into(),
             label: "Anthropic".into(),
-            connections: vec![model(
-                anthropic,
-                Some("https://api.anthropic.com/v1/models"),
-                "anthropic.models",
-            )],
+            connections: vec![model(anthropic, "anthropic.models")],
         },
         ProviderDescriptor {
             id: "opencode-zen".into(),
             label: "OpenCode Zen".into(),
-            connections: vec![model(
-                zen,
-                Some("https://opencode.ai/zen/v1/models"),
-                "opencode.models",
-            )],
+            connections: vec![model(zen, "opencode.models")],
         },
         ProviderDescriptor {
             id: "opencode-go".into(),
             label: "OpenCode Go".into(),
-            connections: vec![model(
-                go,
-                Some("https://opencode.ai/zen/go/v1/models"),
-                "opencode.models",
-            )],
+            connections: vec![model(go, "opencode.models")],
         },
         ProviderDescriptor {
             id: "zai".into(),
