@@ -30,6 +30,31 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
 
 const REVISION: u64 = 1;
 
+/// Content-address the validated catalog for cursor invalidation. A legacy
+/// built-in-only catalog preserves the existing revision for compatibility.
+fn revision(tools: &[ToolInfo], contributors: usize) -> u64 {
+    if contributors == 0 {
+        return REVISION;
+    }
+    tools
+        .iter()
+        .fold(14695981039346656037_u64, |mut hash, entry| {
+            for byte in entry
+                .id
+                .bytes()
+                .chain([0])
+                .chain(entry.description.bytes())
+                .chain([0])
+                .chain(entry.arguments_schema.bytes())
+                .chain([u8::from(entry.idempotent), 0])
+            {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+            }
+            hash
+        })
+        .max(1)
+}
+
 /// One source of truth for the shipped tool metadata and execution handler.
 /// Runtime routing and JSON admission use this table, not repeated name matches.
 struct ToolDefinition {
@@ -301,7 +326,8 @@ mod plugin {
         }
         // A full queue must not commit a catalog without delivering ready.
         // The ready notification itself executes only in a later graph wave.
-        host.emit_event(&ToolsReady { revision: 1 })?;
+        host.emit_event(&ToolsReady { revision: 1 })
+            .map_err(CallError::Kernel)?;
         let entries = state.registry.publish().map_err(CallError::Domain)?;
         let tools = entries.iter().map(|entry| entry.info.clone()).collect::<Vec<_>>();
         let routes = entries
@@ -366,27 +392,7 @@ mod plugin {
                 .map(|entry| entry.info)
                 .collect::<Vec<_>>();
 
-            let revision = if count == 0 {
-                REVISION
-            } else {
-                tools
-                    .iter()
-                    .fold(14695981039346656037_u64, |mut hash, entry| {
-                        for byte in entry
-                            .id
-                            .bytes()
-                            .chain([0])
-                            .chain(entry.description.bytes())
-                            .chain([0])
-                            .chain(entry.arguments_schema.bytes())
-                            .chain([u8::from(entry.idempotent), 0])
-                        {
-                            hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
-                        }
-                        hash
-                    })
-                    .max(1)
-            };
+            let revision = super::revision(&tools, count);
             state.snapshot = Some(ToolSnapshot {
                 tools,
                 routes,
