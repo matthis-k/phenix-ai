@@ -1,6 +1,6 @@
 //! Native product test: existing graph event dispatch registers provider data.
 //! This is a test binary, not an alternative kernel scheduler or plugin API.
-use phenix_contract::{Portable, Value};
+use phenix_contract::Portable;
 use phenix_kernel::{
     resolve::{Composition, Prepared, Selection},
     Kernel, Outcome,
