@@ -276,6 +276,25 @@ pub struct ModelReply {
     pub calls: Vec<ToolCall>,
     pub usage: Usage,
 }
+/// Semantic completion notice owned by the Basic Agent, not the kernel.
+/// Exposes only routing identity and nonsecret counters, never transcript
+/// content, API credentials or model payloads.
+#[event(id = "phenix.agent.run-finished")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct AgentRunFinished {
+    pub session: String,
+    pub run: String,
+    pub model_turns: u64,
+    pub tool_calls: u64,
+}
+
+/// A graph continuation after successful BasicInput::submit. It receives
+/// the original prompt payload, not an arbitrary model-supplied operation.
+#[contract(id = "phenix.agent.lifecycle@1")]
+pub trait AgentLifecycle {
+    fn finished(&self, request: PromptSubmitted) -> Result<(), BasicError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct RunResult {
     pub session: String,
@@ -746,6 +765,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(ToolPopulate),
     define(ToolSettlement),
     define(ToolRegistry),
+    define(AgentLifecycle),
     define(Skills),
     define(Context),
     define(Session),
@@ -1066,7 +1086,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 19);
+        assert_eq!(metadata.definitions.len(), 20);
         assert!(metadata
             .definitions
             .iter()
@@ -1082,6 +1102,18 @@ mod tests {
             PromptSubmitted::SCHEMA.owned().unwrap()
         );
         assert!(Blob::from_value(Value::List(vec![])).is_err());
+    }
+
+    #[test]
+    fn agent_completion_notice_contains_no_transcript_or_credentials() {
+        assert_eq!(AgentRunFinished::EVENT.id, "phenix.agent.run-finished");
+        let notice = AgentRunFinished {
+            session: "s1".into(),
+            run: "r1".into(),
+            model_turns: 3,
+            tool_calls: 2,
+        };
+        assert_eq!(AgentRunFinished::from_value(notice.to_value()).unwrap(), notice);
     }
 
     #[test]
