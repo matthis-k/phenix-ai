@@ -252,6 +252,17 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   inference was added. All five PRs remain draft pending native Nix
   acceptance on the exact revised heads.
 
+- **S34 (G1 incremental, fail-closed provider staging, follow-up draft)**:
+  Shared provider Registry now validates only a new provider and any prior
+  fragment with the same logical identity. It no longer clones the entire
+  staged catalog on every registration. Existing merge rules still govern
+  label equality, duplicate connection IDs, credential origins, adapters
+  and canonical publication. Shared provider/connection limits come from
+  one builtins definition. A rejected contribution never mutates staging.
+  Permuted-contributor equivalence and rejected-fragment rollback are
+  covered by unit tests. No change to descriptors, graph grants or runtime
+  dispatch; native product and CI acceptance remain pending.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
