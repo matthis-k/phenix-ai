@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn real_loopback_callback_remains_unverified_until_provider_oidc() {
         use crate::siwc::{AuthorizationAttempt, Registration};
-        use crate::siwc_verified::GeneratedPkce;
+        use crate::oauth_pkce::GeneratedPkce;
 
         let generated = GeneratedPkce::new();
         let mut listener = OAuthLoopbackListener::bind(Duration::from_secs(30)).unwrap();
