@@ -10,8 +10,8 @@ use crate::{
     OPENAI_CHAT, OPENAI_RESPONSES,
 };
 use phenix_provider_contracts::{
-    AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationMethod,
-    ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
+    AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationMethod, ConnectionDescriptor,
+    DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -47,10 +47,7 @@ pub enum Protocol<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum KeyPresentation<'a> {
     Bearer,
-    Header {
-        name: &'a str,
-        prefix: &'a str,
-    },
+    Header { name: &'a str, prefix: &'a str },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -147,10 +144,7 @@ fn methods(
     }
 }
 
-fn sources(
-    discovery: Discovery<'_>,
-    base: &str,
-) -> Result<Vec<DiscoverySource>, &'static str> {
+fn sources(discovery: Discovery<'_>, base: &str) -> Result<Vec<DiscoverySource>, &'static str> {
     let (adapter, kind, endpoint) = match discovery {
         Discovery::StandardModels(adapter) => (
             adapter,
@@ -158,11 +152,9 @@ fn sources(
             Some(standard_endpoint(base, "models")?),
         ),
         Discovery::Declared(adapter) => (adapter, DiscoveryKind::Declared, None),
-        Discovery::Custom { adapter, endpoint } => (
-            adapter,
-            DiscoveryKind::Dynamic,
-            endpoint.map(str::to_owned),
-        ),
+        Discovery::Custom { adapter, endpoint } => {
+            (adapter, DiscoveryKind::Dynamic, endpoint.map(str::to_owned))
+        }
         Discovery::None => return Ok(Vec::new()),
     };
     Ok(vec![DiscoverySource {
