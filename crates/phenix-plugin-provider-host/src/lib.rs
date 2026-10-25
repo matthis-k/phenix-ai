@@ -4,6 +4,8 @@
 //! Until an executable strategy is selected, this host deliberately refuses
 //! authentication and model discovery. It never grants authority from metadata.
 
+mod models;
+
 use phenix_provider_builtins::merge_registration_pages;
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
@@ -40,14 +42,19 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
         slot = "Contributors",
         many(min = 0)
     ),
+    require(
+        phenix_provider_contracts::ProviderCredentials,
+        slot = "Credentials",
+        many(min = 0)
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
-        ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
-        ProviderRegistrations,
+        CredentialIdentity, ProviderAuth, ProviderCatalog, ProviderCredentials,
+        ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -136,23 +143,33 @@ mod plugin {
             })
     }
 
-    fn selected_connection(
+    fn connection_descriptor(
         state: &mut State,
         host: &Host<'_>,
         provider_id: &str,
         connection_id: &str,
-    ) -> CallResult<bool, ProviderError> {
+    ) -> CallResult<phenix_provider_contracts::ConnectionDescriptor, ProviderError> {
         selected_provider(state, host, provider_id)?
             .connections
-            .iter()
+            .into_iter()
             .find(|item| item.id == connection_id)
-            .map(|item| !item.auth_methods.is_empty())
             .ok_or_else(|| {
                 CallError::Domain(error(
                     ProviderErrorCode::NotFound,
                     "unknown provider connection",
                 ))
             })
+    }
+
+    fn selected_connection(
+        state: &mut State,
+        host: &Host<'_>,
+        provider_id: &str,
+        connection_id: &str,
+    ) -> CallResult<bool, ProviderError> {
+        Ok(!connection_descriptor(state, host, provider_id, connection_id)?
+            .auth_methods
+            .is_empty())
     }
 
     #[provide(ProviderCatalog::list)]
@@ -185,12 +202,58 @@ mod plugin {
         request: ModelQuery,
     ) -> CallResult<ModelPage, ProviderError> {
         check(host, &request.scope)?;
-        let requires_auth =
-            selected_connection(state, host, &request.provider_id, &request.connection_id)?;
-        // Registration alone proves neither model entitlement nor a usable
-        // inference transport. A credential-free connection must not be
-        // misreported as requiring authentication when discovery is absent.
-        Err(CallError::Domain(missing_model_catalog(requires_auth)))
+        let connection =
+            connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
+        if request.cursor.is_some() || !(1..=256).contains(&request.limit) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid authorized model page request",
+            )));
+        }
+        // Catalog registration alone neither selects an authenticated account
+        // nor grants a credential import. Even a user-supplied profile ID is
+        // only a selector; the kernel must authorize a second exact resource.
+        let Some(profile) = request.profile_id.as_deref() else {
+            return Err(CallError::Domain(missing_model_catalog(
+                !connection.auth_methods.is_empty(),
+            )));
+        };
+        if !super::models::can_discover(&connection) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Unavailable,
+                "selected model discovery strategy is not installed",
+            )));
+        }
+        let identity = CredentialIdentity::new(
+            &request.provider_id,
+            &request.connection_id,
+            profile,
+        )
+        .map_err(CallError::Domain)?;
+        let count = imports::Credentials::count(host)?;
+        if count == 0 {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::AuthenticationRequired,
+                "credential strategy is not installed",
+            )));
+        }
+        if count != 1 {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Unavailable,
+                "ambiguous credential strategies",
+            )));
+        }
+        let scope = identity.resolve_scope().map_err(CallError::Domain)?;
+        // An import slot selected with many(min=0) uses the explicit #0
+        // identity. Scoped admission checks resource AND operation at the
+        // kernel boundary, not merely the profile ID in request metadata.
+        let credential = host.invoke_scoped::<ProviderCredentials::resolve>(
+            "Credentials#0",
+            &scope,
+            &identity,
+        )?;
+        super::models::discover(&connection, profile, &credential, request.limit)
+            .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]
