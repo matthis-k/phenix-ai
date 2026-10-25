@@ -6,6 +6,7 @@
 //! on its own; providers still check exact account authority and parse the
 //! selected catalog schema before publishing models.
 use curl::easy::{Easy2, Handler, List, WriteError};
+use phenix_provider_protocols::{validate_endpoint, EndpointMode};
 use std::time::Duration;
 use url::Url;
 
@@ -46,15 +47,17 @@ impl Handler for Body {
 }
 
 fn approved_endpoint(endpoint: &str) -> bool {
-    let Ok(url) = Url::parse(endpoint) else {
+    // Reuse the same strict userinfo/origin/scheme validator as provider
+    // declarations. In particular, https://@host is not an acceptable
+    // credential target even though URL parsing normalizes its username.
+    let Ok(checked) = validate_endpoint(endpoint, EndpointMode::LocalLoopback) else {
         return false;
     };
-    let https = url.scheme() == "https" && url.host_str().is_some();
-    let loopback = url.scheme() == "http" && url.host_str() == Some("127.0.0.1");
-    (https || loopback)
+    let Ok(url) = Url::parse(&checked.url) else {
+        return false;
+    };
+    (!checked.is_loopback_http || url.host_str() == Some("127.0.0.1"))
         && url.path() != "/"
-        && url.username().is_empty()
-        && url.password().is_none()
         && url.query().is_none()
         && url.fragment().is_none()
 }
@@ -183,6 +186,7 @@ mod tests {
             "http://example.org/models",
             "http://localhost:4567/models",
             "https://user:pass@example.com/models",
+            "https://@example.com/models",
             "https://example.com/models?key=x",
             "https://example.com/models#fragment",
         ] {
