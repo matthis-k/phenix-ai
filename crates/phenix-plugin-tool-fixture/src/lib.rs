@@ -1,9 +1,7 @@
 //! Opt-in external tool contributor proving that the stock Basic tool manager
 //! can offer and execute another plugin without editing its builtin table.
 use phenix_basic_contracts::{error, BasicError, ErrorCode, ToolInfo, ToolRequest, ToolResult};
-use phenix_sdk::{
-    CallError, CallResult, Host, StaticGraphContribution, StaticGraphNode,
-};
+use phenix_sdk::{CallError, CallResult, Host, StaticGraphContribution, StaticGraphNode};
 
 /// Event registration is only a hook: the tool manager declares the event
 /// and owns the catalog; this plugin owns only the reverse tool's execution.
