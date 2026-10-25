@@ -453,6 +453,7 @@
       # named-account credential grants and provider auth routes.
       providerChatGptSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-chatgpt
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
