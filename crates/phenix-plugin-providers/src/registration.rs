@@ -17,7 +17,7 @@ enum Phase {
     #[default]
     Idle,
     Collecting(Vec<ProviderDescriptor>),
-    Published,
+    Published(Vec<ProviderDescriptor>),
     Aborted,
 }
 
@@ -30,6 +30,37 @@ pub(crate) struct Registry {
 impl Registry {
     pub(crate) fn blocks_pull_catalog(&self) -> bool {
         !matches!(&self.phase, Phase::Idle)
+    }
+
+    /// The published snapshot is the sole authoritative catalog for this
+    /// native plugin generation. No second selected vector may diverge.
+    pub(crate) fn selected(&self) -> Option<&[ProviderDescriptor]> {
+        match &self.phase {
+            Phase::Published(providers) => Some(providers),
+            _ => None,
+        }
+    }
+
+    /// Transitional pull adapter: select validated imported declarations only
+    /// before event population starts. Never fall back during failed waves.
+    pub(crate) fn select_legacy(
+        &mut self,
+        providers: Vec<ProviderDescriptor>,
+    ) -> Result<(), ProviderError> {
+        if !matches!(&self.phase, Phase::Idle) {
+            return Err(issue(
+                ProviderErrorCode::Conflict,
+                "provider catalog already selected or population started",
+            ));
+        }
+        if providers.is_empty() {
+            return Err(issue(
+                ProviderErrorCode::Unavailable,
+                "no provider declarations registered",
+            ));
+        }
+        self.phase = Phase::Published(providers);
+        Ok(())
     }
 
     /// Called by the authorized controller *before* triggering graph nodes.
@@ -89,7 +120,7 @@ impl Registry {
             revision: 1,
         }])
         .map_err(|_| issue(ProviderErrorCode::InvalidInput, "invalid provider catalog"))?;
-        self.phase = Phase::Published;
+        self.phase = Phase::Published(providers.clone());
         Ok(ProviderPage {
             providers,
             revision: 1,
@@ -133,6 +164,7 @@ mod tests {
         registry.register(providers[0].clone()).unwrap();
         let catalog = registry.publish().unwrap();
         assert!(registry.blocks_pull_catalog());
+        assert_eq!(registry.selected(), Some(catalog.providers.as_slice()));
         assert_eq!(catalog.providers.len(), 2);
         assert_eq!(catalog.providers[0].id, "openai");
         assert_eq!(catalog.providers[1].id, "openrouter");
@@ -147,6 +179,52 @@ mod tests {
         );
         assert_eq!(
             registry.abort().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
+    }
+
+    #[test]
+    fn pull_adapter_and_graph_population_use_one_generation_snapshot() {
+        let providers = registrations();
+        let mut pull = Registry::default();
+        assert!(pull.selected().is_none());
+        pull.select_legacy(vec![providers[0].clone()]).unwrap();
+        assert_eq!(pull.selected(), Some(&providers[..1]));
+        assert_eq!(pull.begin().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            pull.select_legacy(vec![providers[1].clone()])
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
+
+        let mut graph = Registry::default();
+        graph.begin().unwrap();
+        assert_eq!(
+            graph.select_legacy(vec![providers[0].clone()])
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
+        graph.register(providers[0].clone()).unwrap();
+        assert!(graph.selected().is_none());
+        let page = graph.publish().unwrap();
+        assert_eq!(graph.selected(), Some(page.providers.as_slice()));
+        assert_eq!(
+            graph.select_legacy(vec![providers[1].clone()])
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::Conflict
+        );
+
+        let mut failed = Registry::default();
+        failed.begin().unwrap();
+        failed.abort().unwrap();
+        assert!(failed.selected().is_none());
+        assert_eq!(
+            failed.select_legacy(vec![providers[0].clone()])
+                .unwrap_err()
+                .code,
             ProviderErrorCode::Conflict
         );
     }
