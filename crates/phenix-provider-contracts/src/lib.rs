@@ -357,8 +357,14 @@ pub struct ProviderRegistration {
 /// Neither operation grants model execution, credentials or entitlement.
 #[contract(id = "phenix.provider.registry@1")]
 pub trait ProviderRegistry {
+    /// Controller-only: deny catalog reads before any contributor runs.
+    fn begin(&self, request: ProviderQuery) -> Result<(), ProviderError>;
+    /// Contributor-only: stage a validated declaration during the event wave.
     fn register(&self, request: ProviderRegistration) -> Result<(), ProviderError>;
+    /// Controller-only: commit after the entire graph completes successfully.
     fn publish(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
+    /// Controller-only: discard a failed event wave before it can be observed.
+    fn abort(&self, request: ProviderQuery) -> Result<(), ProviderError>;
 }
 
 /// A provider-facing authentication operation. Interactive flows return a
