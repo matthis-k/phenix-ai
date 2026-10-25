@@ -17,6 +17,7 @@ const CATALOG: &str = "phenix.provider.catalog@1";
 const RESOURCE: &str = "phenix.providers.user";
 const HOST: &str = "phenix.provider.host";
 const CONTRIBUTOR: &str = "phenix.provider.openai";
+const STANDARDS: &str = "phenix.provider.standards";
 
 fn selection(contract: &str, operation: &str, provider: &str) -> Selection {
     Selection {
@@ -45,8 +46,11 @@ fn invoke<T: Portable>(
 
 fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
-    if args.len() != 4 {
-        return Err("usage: phenix-provider-population-test PROVIDERS OPENAI DEFINITIONS".into());
+    if args.len() != 5 {
+        return Err(
+            "usage: phenix-provider-population-test PROVIDERS OPENAI STANDARDS DEFINITIONS"
+                .into(),
+        );
     }
     let grant = |caller: &str, interface: &str, operation: &str| {
         json!({
@@ -63,10 +67,16 @@ fn run() -> Result<(), String> {
             "interface": REGISTRY,
             "operation": "begin",
         },
-        "artifacts": [&args[1], &args[2]],
-        "definitions": [&args[3]],
+        "artifacts": [&args[1], &args[2], &args[3]],
+        "definitions": [&args[4]],
         "slots": [{
             "caller": CONTRIBUTOR,
+            "slot": "Registry",
+            "provider": HOST,
+            "export": "Registry",
+            "index": 0,
+        }, {
+            "caller": STANDARDS,
             "slot": "Registry",
             "provider": HOST,
             "export": "Registry",
@@ -79,9 +89,11 @@ fn run() -> Result<(), String> {
             grant("root", POPULATE, "register"),
             grant("root", CATALOG, "list"),
             grant(CONTRIBUTOR, POPULATE, "register"),
+            grant(STANDARDS, POPULATE, "register"),
             grant(HOST, STARTUP, "begin"),
             grant(HOST, SETTLEMENT, "complete"),
             grant(CONTRIBUTOR, REGISTRY, "register"),
+            grant(STANDARDS, REGISTRY, "register"),
         ],
         "excluded": [],
         "substitutions": [],
@@ -110,7 +122,7 @@ fn run() -> Result<(), String> {
     };
     // One trusted kernel begin event invokes the manager's onBegin handler.
     // The manager emits the custom populate event, and this same graph root
-    // processes OpenAI's onPopulate subscriber in a following wave.
+    // processes OpenAI and the five other standard declarations in one wave.
     let mut execution = kernel
         .begin_kernel_event(KernelEvent::Begin)
         .map_err(|e| format!("kernel.begin: {e:?}"))?;
@@ -144,16 +156,17 @@ fn run() -> Result<(), String> {
     let steps = execution.steps().len();
     drop(execution);
 
-    if steps != 3 {
+    if steps != 4 {
         return Err(format!(
-            "expected begin, populate, and settlement graph nodes, got {steps}"
+            "expected begin, two independent contributors, and settlement, got {steps}"
         ));
     }
     // The provider manager, not an external controller, publishes the
     // immutable catalog on the generic settlement trigger.
     let listed: ProviderPage = invoke(&kernel, catalog, scope)?;
     if listed.revision != 1
-        || listed.providers.len() != 1
+        || listed.providers.len() != 6
+        || listed.providers[0].id != "openai"
         || listed.providers[0].connections.len() != 2
     {
         return Err(format!("incorrect published provider snapshot: {listed:?}"));
