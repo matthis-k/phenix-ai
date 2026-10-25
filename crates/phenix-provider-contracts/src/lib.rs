@@ -717,6 +717,16 @@ mod tests {
     }
 
     #[test]
+    fn startup_handler_schema_matches_intrinsic_kernel_begin_event() {
+        let begin = phenix_sdk::standard_kernel_events()
+            .into_iter()
+            .find(|event| event.id == phenix_sdk::KERNEL_BEGIN)
+            .unwrap();
+        assert_eq!(begin.payload, ProviderKernelBegin::SCHEMA.owned().unwrap());
+        assert_eq!(ProviderKernelBegin {}.to_value(), Value::map([]));
+    }
+
+    #[test]
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
