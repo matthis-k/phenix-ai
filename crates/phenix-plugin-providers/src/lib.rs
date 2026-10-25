@@ -17,7 +17,8 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.provider.host",
     events: &[ProvidersPopulate::EVENT],
     actions: &[PopulateProviders::ACTION],
-    nodes: &[StaticGraphNode {
+    nodes: &[
+        StaticGraphNode {
         id: "on-begin",
         triggers: &[phenix_sdk::KERNEL_BEGIN],
         after: &[],
@@ -26,7 +27,18 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
         writes: &[],
         join: JoinPolicy::AllActive,
         failure: FailurePolicy::FailRoot,
-    }],
+    },
+        StaticGraphNode {
+            id: "on-populated",
+            triggers: &["settled:phenix.providers.populate"],
+            after: &[],
+            selector: "",
+            operation: "phenix.provider.settlement@1/complete",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 use phenix_provider_builtins::merge_registration_pages;
@@ -74,6 +86,7 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime"),
     provide(phenix_provider_contracts::ProviderRegistry, slot = "Registry"),
     provide(phenix_provider_contracts::ProviderStartup, slot = "Startup"),
+    provide(phenix_provider_contracts::ProviderSettlement, slot = "Settlement"),
     graph(super::GRAPH)
 )]
 mod plugin {
@@ -84,7 +97,7 @@ mod plugin {
         CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderKernelBegin,
         ProviderPage, ProviderQuery, ProviderRegistration, ProviderRegistrations, ProviderRegistry,
-        ProviderRuntime, ProviderStartup,
+        ProviderRuntime, ProviderSettlement, ProvidersPopulated, ProviderStartup,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -353,6 +366,39 @@ mod plugin {
             let _ = state.registry.abort();
             return Err(CallError::Kernel(failure));
         }
+        Ok(())
+    }
+
+    /// Owner-only completion trigger. Runs after EVERY providers.populate
+    /// subscriber (including pending work) has finished successfully.
+    /// No host-side provider-specific publish coordination is needed.
+    #[provide(ProviderSettlement::complete)]
+    fn on_populated(
+        state: &mut State,
+        host: &Host<'_>,
+        _: ProvidersPopulated,
+    ) -> CallResult<(), ProviderError> {
+        let resource = host.resource()?.ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider population settlement requires a resource",
+            ))
+        })?;
+        let scope = resource.strip_prefix("phenix.providers.").ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider population settlement has wrong resource",
+            ))
+        })?;
+        check(host, scope)?;
+        if state.selected.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Conflict,
+                "provider catalog is already selected",
+            )));
+        }
+        let published = state.registry.publish().map_err(CallError::Domain)?;
+        state.selected = Some(published.providers);
         Ok(())
     }
 
@@ -706,7 +752,7 @@ mod tests {
     fn metadata_exposes_shared_host_without_provider_registrations() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 5);
+        assert_eq!(metadata.provides.len(), 6);
     }
 
     #[test]
