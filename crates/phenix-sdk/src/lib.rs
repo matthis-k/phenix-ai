@@ -10,24 +10,34 @@ pub trait GraphEventPayload: live::Portable {
     const ID: &'static str;
 }
 
-/// Declare a typed graph event subscription with no repeated event ID.
+/// Declare a graph subscription using the event and operation types.
 ///
-/// The event type supplies its stable ID via #[event]. This expands to the
-/// existing StaticGraphNode; the kernel still verifies declarations, ownership,
-/// grants and dependency edges during offline preparation. An event handler is
-/// an event-to-node edge, never a separately scheduled callback system.
+/// Both identities are taken from existing #[event] and #[contract] metadata;
+/// no manually synchronized event ID or operation string is necessary.
+/// The result remains an ordinary M1 graph node and edge: declaration order
+/// has no effect on scheduling, and the kernel checks authorization offline.
 ///
 /// Example:
 /// ```ignore
-/// phenix_sdk::on_event!("populate", ProvidersPopulate, "provider@1/register")
+/// phenix_sdk::on_event!("populate", ProvidersPopulate, ProviderPopulate::register)
 /// ```
+///
+/// A literal operation string is still supported for compatibility with
+/// dynamically selected operations, but typed markers should be preferred.
 #[macro_export]
 macro_rules! on_event {
-    ($id:expr, $event:ty, $operation:expr $(,)?) => {
+    ($id:expr, $event:ty, $operation:literal $(,)?) => {
         $crate::StaticGraphNode::on(
             $id,
             &[<$event as $crate::GraphEventPayload>::ID],
             $operation,
+        )
+    };
+    ($id:expr, $event:ty, $operation:ty $(,)?) => {
+        $crate::StaticGraphNode::on(
+            $id,
+            &[<$event as $crate::GraphEventPayload>::ID],
+            <$operation as $crate::Operation>::KEY,
         )
     };
 }
@@ -144,6 +154,39 @@ mod graph_declaration_tests {
             ["alpha", "finish", "zeta"]
         );
         assert_eq!(canonical.nodes[1].after, ["example/alpha", "example/zeta"]);
+    }
+
+    struct ExampleSubmit;
+    impl Operation for ExampleSubmit {
+        type Request = String;
+        type Response = String;
+        type Error = String;
+        const KEY: &'static str = "example.input@1/submit";
+    }
+
+    #[test]
+    fn typed_subscription_derives_both_ids_and_matches_literal_encoding() {
+        const TYPED: StaticGraphNode = on_event!("receive", Prompt, ExampleSubmit);
+        const LITERAL: StaticGraphNode =
+            on_event!("receive", Prompt, "example.input@1/submit");
+        assert_eq!(TYPED.id, LITERAL.id);
+        assert_eq!(TYPED.triggers, LITERAL.triggers);
+        assert_eq!(TYPED.operation, LITERAL.operation);
+        const TYPED_GRAPH: StaticGraphContribution = StaticGraphContribution {
+            plugin: "example",
+            events: &[Prompt::EVENT],
+            actions: &[],
+            nodes: &[TYPED],
+        };
+        const LITERAL_GRAPH: StaticGraphContribution = StaticGraphContribution {
+            plugin: "example",
+            events: &[Prompt::EVENT],
+            actions: &[],
+            nodes: &[LITERAL],
+        };
+        const TYPED_BYTES: MetadataBytes = descriptor::static_metadata::graph(TYPED_GRAPH);
+        const LITERAL_BYTES: MetadataBytes = descriptor::static_metadata::graph(LITERAL_GRAPH);
+        assert_eq!(TYPED_BYTES.bytes(), LITERAL_BYTES.bytes());
     }
 
     #[test]
