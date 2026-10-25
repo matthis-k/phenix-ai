@@ -43,8 +43,15 @@ with tempfile.TemporaryDirectory(prefix="phenix-tool-registrations-") as temp:
         slots = []
         grants = [
             dict(caller="root", interface=contract, operation=operation,
-                 resources=[resource if granted else "phenix.session.foreign"])
+                 resources=[resource if granted else "phenix.session.foreign"]),
+            # Kernel lifecycle graph handlers are explicitly granted even
+            # for the legacy pull-only invoke test; no event is emitted here.
+            dict(caller=service, interface="phenix.tools.startup@1",
+                 operation="begin", resources=[resource]),
+            dict(caller=service, interface="phenix.tools.settlement@1",
+                 operation="complete", resources=[resource]),
         ]
+        ops += ["phenix.tools.startup@1/begin", "phenix.tools.settlement@1/complete"]
         if selected:
             slots = [dict(caller=service, slot="Contributors", index=0,
                           provider="phenix.tool.fixture-reverse",
