@@ -32,7 +32,10 @@ const ID: &str = "fixture.reverse";
     version = "1.0.0",
     provide(phenix_basic_contracts::ToolRegistrations, slot = "Registrations"),
     provide(phenix_basic_contracts::ToolPopulate, slot = "Populate"),
-    require(phenix_basic_contracts::ToolRegistry, slot = "Registry"),
+    // The registry import is used by a post-start graph event callback.
+    // It is not a startup dependency: manager -> executor remains required,
+    // while the selected reverse registration call is checked at invocation.
+    require(phenix_basic_contracts::ToolRegistry, slot = "Registry", optional),
     graph(super::GRAPH)
 )]
 mod plugin {
@@ -84,6 +87,10 @@ mod tests {
         assert_eq!(metadata.provides.len(), 2);
         assert_eq!(metadata.requires.len(), 1);
         assert_eq!(metadata.requires[0].contract, "phenix.tools.registry@1");
+        assert_eq!(
+            metadata.requires[0].cardinality,
+            phenix_sdk::Cardinality::Optional
+        );
         assert_eq!(GRAPH.nodes[0].triggers, ["phenix.tools.populate"]);
         assert!(GRAPH.events.is_empty());
         assert!(GRAPH.actions.is_empty());
