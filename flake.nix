@@ -1059,7 +1059,19 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 6
+        expected = {
+            "phenix.provider.catalog@1",
+            "phenix.provider.registrations@1",
+            "phenix.provider.registry@1",
+            "phenix.provider.startup@1",
+            "phenix.provider.settlement@1",
+            "phenix.provider.populate@1",
+            "phenix.provider.auth@1",
+            "phenix.provider.runtime@1",
+            "phenix.provider.credentials@1",
+            "phenix.provider.http-model-session@1",
+        }
+        assert set(report["definitions"]) == expected, report["definitions"]
         assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
