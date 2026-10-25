@@ -453,6 +453,8 @@
       # named-account credential grants and provider auth routes.
       providerChatGptSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-chatgpt
+        ./crates/phenix-provider-auth-strategies
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
@@ -926,7 +928,7 @@
           touch $out/verified
         '';
       };
-      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ]);
+      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ./crates/phenix-provider-protocols ./crates/phenix-basic-contracts ]);
       providerDiscoveryCheck = rust.buildRustPackage {
         pname = "phenix-provider-discovery";
         version = "0.1.0";

@@ -4,6 +4,9 @@
 //! connection, or supply a different provider entirely. The runtime must
 //! revalidate and authorize every selected account and model.
 
+pub mod catalog;
+pub use catalog::discovered_model_page;
+
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
     ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
@@ -165,6 +168,79 @@ impl ProviderDeclaration<'_> {
     }
 }
 
+/// Shared endpoint and discovery conventions for provider declarations.
+///
+/// This references installed standard protocol implementations; it does not
+/// introduce provider-specific Rust, perform discovery, or grant credentials.
+/// The declaration chooses supported wire protocols and the actual catalog
+/// response adapter. Non-standard providers can still supply exact endpoints.
+pub trait StandardConventions {
+    /// Populate endpoints for selected established protocol wire formats.
+    /// An omitted protocol is never inferred to be supported.
+    fn with_standard_protocols(self, additional: &[&str]) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+
+    /// Select a documented /models endpoint and existing catalog adapter.
+    /// The caller opts in explicitly; not all OpenAI-compatible APIs provide
+    /// discovery, and some use a different response schema.
+    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+}
+
+fn standard_endpoint(base: &str, path: &str) -> Result<String, &'static str> {
+    if base.contains('?') || base.ends_with('/') {
+        return Err("standard convention requires a plain endpoint base");
+    }
+    let authorized = validate_endpoint(base, EndpointMode::LocalLoopback)
+        .map_err(|_| "unsafe standard provider base")?;
+    let target = format!("{base}/{path}");
+    let candidate = validate_endpoint(&target, EndpointMode::LocalLoopback)
+        .map_err(|_| "unsafe standard protocol endpoint")?;
+    if !same_credential_origin(&authorized, &candidate) {
+        return Err("cross-origin standard protocol endpoint");
+    }
+    Ok(target)
+}
+
+impl StandardConventions for ConnectionDescriptor {
+    fn with_standard_protocols(mut self, additional: &[&str]) -> Result<Self, &'static str> {
+        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
+        let mut ids = self
+            .protocols
+            .iter()
+            .map(|binding| binding.id.as_str())
+            .collect::<Vec<_>>();
+        ids.extend_from_slice(additional);
+        let mut seen = BTreeSet::new();
+        let mut protocols = Vec::new();
+        for id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let path = match id {
+                OPENAI_CHAT => "chat/completions",
+                OPENAI_RESPONSES => "responses",
+                ANTHROPIC_MESSAGES => "messages",
+                _ => return Err("protocol has no registered standard endpoint"),
+            };
+            protocols.push(ProtocolBinding {
+                id: id.to_owned(),
+                endpoint: Some(standard_endpoint(base, path)?),
+            });
+        }
+        self.protocols = protocols;
+        Ok(self)
+    }
+
+    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str> {
+        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
+        let endpoint = standard_endpoint(base, "models")?;
+        self.with_catalog(Some(&endpoint), adapter, DiscoveryKind::Dynamic)
+    }
+}
+
 /// Named adapters are registry-level implementations. The builder merely
 /// references them; it does not implement OAuth or model streaming.
 pub trait ConnectionExtensions {
@@ -272,11 +348,14 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         .connection(id, label)
         .expect("valid built-in provider declaration")
     };
-    let model = |connection: ConnectionDescriptor, endpoint, adapter| {
+    let model = |connection: ConnectionDescriptor, adapter| {
         connection
-            .with_catalog(endpoint, adapter, DiscoveryKind::Dynamic)
-            .expect("valid built-in dynamic catalog")
+            .with_standard_models(adapter)
+            .expect("valid standard catalog convention")
     };
+    // Each entry describes which standards are supported. Shared conventions
+    // own standard routes and catalog GET; these definitions contribute no
+    // provider-specific transport or authentication implementation.
     let api = make(
         "https://api.openai.com/v1",
         OPENAI_RESPONSES,
@@ -284,14 +363,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenAI API",
     )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://api.openai.com/v1/responses"),
-    )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://api.openai.com/v1/chat/completions"),
-    )
+    .with_standard_protocols(&[OPENAI_CHAT])
+    .expect("valid OpenAI API protocols")
     .with_key_environment("OPENAI_API_KEY")
     .expect("valid OpenAI key setting");
     let chatgpt = make(
@@ -308,14 +381,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenRouter API",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://openrouter.ai/api/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://openrouter.ai/api/v1/responses"),
-    );
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenRouter protocols");
     let anthropic = make(
         "https://api.anthropic.com/v1",
         ANTHROPIC_MESSAGES,
@@ -323,10 +390,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "Anthropic API",
     )
-    .with_protocol(
-        ANTHROPIC_MESSAGES,
-        Some("https://api.anthropic.com/v1/messages"),
-    )
+    .with_standard_protocols(&[])
+    .expect("valid Anthropic Messages protocol")
     .with_key_presentation(ApiKeyPresentation::Header {
         name: "x-api-key".into(),
         prefix: String::new(),
@@ -339,14 +404,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenCode Zen",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://opencode.ai/zen/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://opencode.ai/zen/v1/responses"),
-    )
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenCode Zen protocols")
     .with_protocol(ANTHROPIC_MESSAGES, None);
     let go = make(
         "https://opencode.ai/zen/go/v1",
@@ -355,14 +414,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "api",
         "OpenCode Go",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://opencode.ai/zen/go/v1/chat/completions"),
-    )
-    .with_protocol(
-        OPENAI_RESPONSES,
-        Some("https://opencode.ai/zen/go/v1/responses"),
-    )
+    .with_standard_protocols(&[OPENAI_RESPONSES])
+    .expect("valid OpenCode Go protocols")
     .with_protocol(ANTHROPIC_MESSAGES, None);
     let zai = make(
         "https://api.z.ai/api/paas/v4",
@@ -371,10 +424,8 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
         "standard",
         "Z.ai API",
     )
-    .with_protocol(
-        OPENAI_CHAT,
-        Some("https://api.z.ai/api/paas/v4/chat/completions"),
-    )
+    .with_standard_protocols(&[])
+    .expect("valid Z.ai Chat protocol")
     .with_catalog(None, "zai.declared", DiscoveryKind::Declared)
     .expect("valid Z.ai catalog");
     let declared = vec![
@@ -382,53 +433,29 @@ pub fn registrations() -> Vec<ProviderDescriptor> {
             id: "openai".into(),
             label: "OpenAI".into(),
             connections: vec![
-                model(
-                    api,
-                    Some("https://api.openai.com/v1/models"),
-                    "openai.models",
-                ),
-                model(
-                    chatgpt,
-                    Some("https://api.openai.com/v1/models"),
-                    "chatgpt.models",
-                ),
+                model(api, "openai.models"),
+                model(chatgpt, "chatgpt.models"),
             ],
         },
         ProviderDescriptor {
             id: "openrouter".into(),
             label: "OpenRouter".into(),
-            connections: vec![model(
-                openrouter,
-                Some("https://openrouter.ai/api/v1/models"),
-                "openrouter.models",
-            )],
+            connections: vec![model(openrouter, "openrouter.models")],
         },
         ProviderDescriptor {
             id: "anthropic".into(),
             label: "Anthropic".into(),
-            connections: vec![model(
-                anthropic,
-                Some("https://api.anthropic.com/v1/models"),
-                "anthropic.models",
-            )],
+            connections: vec![model(anthropic, "anthropic.models")],
         },
         ProviderDescriptor {
             id: "opencode-zen".into(),
             label: "OpenCode Zen".into(),
-            connections: vec![model(
-                zen,
-                Some("https://opencode.ai/zen/v1/models"),
-                "opencode.models",
-            )],
+            connections: vec![model(zen, "opencode.models")],
         },
         ProviderDescriptor {
             id: "opencode-go".into(),
             label: "OpenCode Go".into(),
-            connections: vec![model(
-                go,
-                Some("https://opencode.ai/zen/go/v1/models"),
-                "opencode.models",
-            )],
+            connections: vec![model(go, "opencode.models")],
         },
         ProviderDescriptor {
             id: "zai".into(),
@@ -457,6 +484,75 @@ mod declaration_tests {
         assert_eq!(connection.auth_methods[0].id, declaration.auth);
         assert!(connection.model_sources.is_empty());
         assert_eq!(connection.id, "api");
+    }
+
+    #[test]
+    fn standard_conventions_are_provider_neutral_and_opt_in() {
+        let connection = ProviderDeclaration {
+            endpoint: "https://inference.example.test/api/v1",
+            protocol: OPENAI_CHAT,
+            auth: "api-key",
+        }
+        .connection("standard", "Standard provider")
+        .unwrap()
+        .with_standard_protocols(&[OPENAI_RESPONSES])
+        .unwrap()
+        .with_standard_models("openai.models")
+        .unwrap();
+        assert_eq!(connection.protocols[0].id, OPENAI_CHAT);
+        assert_eq!(
+            connection.protocols[0].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/chat/completions")
+        );
+        assert_eq!(
+            connection.protocols[1].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/responses")
+        );
+        assert_eq!(
+            connection.model_sources[0].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/models")
+        );
+        assert_eq!(connection.model_sources[0].adapter.id, "openai.models");
+        validate_registrations(&[ProviderDescriptor {
+            id: "vendor-neutral".into(),
+            label: "Generic HTTP models".into(),
+            connections: vec![connection],
+        }])
+        .unwrap();
+
+        let unsupported = ProviderDeclaration {
+            endpoint: "https://inference.example.test/api/v1",
+            protocol: "custom-binary",
+            auth: "api-key",
+        }
+        .connection("custom", "Unconventional")
+        .unwrap();
+        assert_eq!(
+            unsupported.with_standard_protocols(&[]).unwrap_err(),
+            "protocol has no registered standard endpoint"
+        );
+        assert_eq!(
+            standard_endpoint("https://example.test/v1?token=unsafe", "models"),
+            Err("standard convention requires a plain endpoint base")
+        );
+    }
+
+    #[test]
+    fn standard_conventions_do_not_install_catalogs_implicitly() {
+        let connection = ProviderDeclaration {
+            endpoint: "https://example.test/v1",
+            protocol: ANTHROPIC_MESSAGES,
+            auth: "api-key",
+        }
+        .connection("api", "Example")
+        .unwrap()
+        .with_standard_protocols(&[])
+        .unwrap();
+        assert_eq!(
+            connection.protocols[0].endpoint.as_deref(),
+            Some("https://example.test/v1/messages")
+        );
+        assert!(connection.model_sources.is_empty());
     }
 
     #[test]

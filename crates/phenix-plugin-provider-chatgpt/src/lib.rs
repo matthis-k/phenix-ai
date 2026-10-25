@@ -4,22 +4,22 @@
 //! after an exact loopback callback, issued-client token exchange, signed OIDC
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
-use phenix_provider_builtins::registrations;
+use phenix_provider_auth_strategies::BrowserAttempt;
+use phenix_provider_builtins::{discovered_model_page, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
-    CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelOrigin,
-    ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderModel,
+    CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelPage,
+    ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
+use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_protocols::{
-    oauth_loopback::{CallbackError, OAuthLoopbackListener},
+    oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{
-        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
-    },
+    siwc_transport::{exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
     siwc_verified::{
-        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
+        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
         VerificationError, VerifiedChatGptIdentity,
     },
 };
@@ -64,10 +64,31 @@ fn oauth_callback_error(error: RegistrationError) -> ProviderError {
 fn token_exchange_error(error: TransportError) -> ProviderError {
     match error {
         TransportError::InvalidForm => denied("OAuth token exchange request was invalid"),
-        TransportError::Unavailable => unavailable("OAuth token endpoint unavailable"),
+        TransportError::Unavailable => {
+            unavailable("OAuth token transport returned no usable response")
+        }
         TransportError::Rejected => denied("OAuth token endpoint rejected the authorization code"),
         TransportError::TooLarge => denied("OAuth token response exceeded the size limit"),
         TransportError::InvalidTokenResponse => denied("OAuth token response was invalid"),
+        TransportError::Network => unavailable(
+            "OAuth token request could not connect; check DNS, proxy, or VPN and retry sign-in",
+        ),
+        TransportError::Timeout => unavailable("OAuth token request timed out; retry sign-in"),
+        TransportError::Tls => unavailable(
+            "OAuth token TLS handshake or certificate verification failed; check system trust",
+        ),
+        TransportError::HttpStatus(429) => unavailable(
+            "OAuth token endpoint rate limited the request (HTTP 429); retry sign-in later",
+        ),
+        TransportError::HttpStatus(300..=399) => unavailable(
+            "OAuth token endpoint redirected unexpectedly; check proxy or captive portal",
+        ),
+        TransportError::HttpStatus(500..=599) => unavailable(
+            "OAuth token endpoint returned a server error (HTTP 5xx); retry sign-in later",
+        ),
+        TransportError::HttpStatus(status) => unavailable(&format!(
+            "OAuth token endpoint returned unexpected HTTP status {status}",
+        )),
     }
 }
 
@@ -230,8 +251,7 @@ fn require_attempt_owner(
 struct Pending {
     expires_at: Instant,
     identity: CredentialIdentity,
-    listener: OAuthLoopbackListener,
-    pkce: GeneratedPkce,
+    browser: BrowserAttempt,
     /// Credential generation captured at browser begin. The callback
     /// cannot replace any newer login, refresh, or revocation of this account.
     prior: StoredOAuth,
@@ -541,9 +561,7 @@ mod plugin {
         let pending = |expires_at: Instant| Pending {
             expires_at,
             identity: identity.clone(),
-            listener: OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
-                .unwrap(),
-            pkce: GeneratedPkce::new(),
+            browser: BrowserAttempt::new(Duration::from_secs(MAX_ATTEMPT_SECONDS)).unwrap(),
             prior: StoredOAuth {
                 host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
                 registration_client_id: None,
@@ -622,40 +640,25 @@ mod plugin {
             )));
         }
         let account = authorized_account(host, &identity)?;
-        let response = chatgpt_models(&account.access_token)
-            .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+        // The subscription catalog uses a different wire schema, but its
+        // authenticated, bounded GET is the same strategy as other providers.
+        let response =
+            fetch_bearer_catalog("https://api.openai.com/v1/models", &account.access_token)
+                .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
         let discovered = parse_chatgpt_models(&response)
             .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
-        if discovered.len() > query.limit as usize {
-            return Err(CallError::Domain(unavailable(
-                "ChatGPT catalog exceeds requested page limit",
-            )));
-        }
-        let revision = discovered
-            .iter()
-            .flat_map(|item| item.slug.bytes().chain([0]))
-            .fold(14695981039346656037u64, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(1099511628211)
-            })
-            .max(1);
-        Ok(ModelPage {
-            profile_id: Some(identity.profile_id().into()),
-            models: discovered
+        discovered_model_page(
+            identity.profile_id(),
+            CONNECTION,
+            "openai-responses",
+            "responses",
+            query.limit,
+            discovered
                 .into_iter()
-                .map(|item| ProviderModel {
-                    id: item.slug,
-                    label: item.display_name,
-                    connection_id: CONNECTION.into(),
-                    protocol_id: "openai-responses".into(),
-                    endpoint_id: "responses".into(),
-                    capabilities: Vec::new(),
-                    origin: ModelOrigin::Discovered,
-                    selectable: true,
-                })
-                .collect(),
-            next_cursor: None,
-            revision,
-        })
+                .map(|item| (item.slug, item.display_name)),
+            |_| true,
+        )
+        .map_err(CallError::Domain)
     }
 
     // This provider also implements the complete credentials contract because
@@ -849,10 +852,9 @@ mod plugin {
             return Err(CallError::Domain(unavailable("too many OAuth attempts")));
         }
         let record = stored_or_new(host, &identity)?;
-        let listener = OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
+        let browser = BrowserAttempt::new(Duration::from_secs(MAX_ATTEMPT_SECONDS))
             .map_err(|_| CallError::Domain(unavailable("could not bind OAuth callback")))?;
-        let pkce = GeneratedPkce::new();
-        let redirect_uri = listener.redirect_uri();
+        let redirect_uri = browser.redirect_uri();
         let registration = match record.returning_client_id() {
             Some(issued_client_id) => Registration::Returning {
                 issued_client_id,
@@ -867,9 +869,9 @@ mod plugin {
             registration,
             host_id: &record.host_id,
             redirect_uri: &redirect_uri,
-            state: pkce.state(),
-            nonce: pkce.nonce(),
-            pkce_challenge: pkce.challenge(),
+            state: browser.state(),
+            nonce: browser.nonce(),
+            pkce_challenge: browser.challenge(),
         };
         let url = attempt
             .authorization_url()
@@ -880,8 +882,7 @@ mod plugin {
             Pending {
                 expires_at: Instant::now() + Duration::from_secs(MAX_ATTEMPT_SECONDS),
                 identity,
-                listener,
-                pkce,
+                browser,
                 prior: record,
             },
         );
@@ -913,7 +914,7 @@ mod plugin {
         let Some(mut pending) = state.attempts.remove(&query.attempt_id) else {
             return Err(CallError::Domain(unavailable("OAuth attempt disappeared")));
         };
-        let callback = match pending.listener.poll() {
+        let callback = match pending.browser.poll() {
             Ok(None) => {
                 state.attempts.insert(query.attempt_id, pending);
                 return Ok(AuthAttemptState::Pending);
@@ -926,7 +927,7 @@ mod plugin {
                 })
             }
         };
-        let redirect = pending.listener.redirect_uri();
+        let redirect = pending.browser.redirect_uri();
         let registration = match pending.prior.returning_client_id() {
             Some(issued_client_id) => Registration::Returning {
                 issued_client_id,
@@ -941,9 +942,9 @@ mod plugin {
             registration,
             host_id: &pending.prior.host_id,
             redirect_uri: &redirect,
-            state: pending.pkce.state(),
-            nonce: pending.pkce.nonce(),
-            pkce_challenge: pending.pkce.challenge(),
+            state: pending.browser.state(),
+            nonce: pending.browser.nonce(),
+            pkce_challenge: pending.browser.challenge(),
         };
         let result = (|| -> CallResult<(VerifiedChatGptIdentity, StoredOAuth), ProviderError> {
             let correlated = attempt
@@ -973,7 +974,7 @@ mod plugin {
             // dropping it clears its allocation on both successful and failed
             // transport paths, without illegally moving from a Zeroizing guard.
             let form = correlated
-                .exchange_form(pending.pkce.verifier())
+                .exchange_form(pending.browser.verifier())
                 .map_err(|_| CallError::Domain(denied("invalid OAuth exchange")))?;
             let tokens = exchange_token(&form)
                 .map_err(|error| CallError::Domain(token_exchange_error(error)))?;
@@ -983,7 +984,7 @@ mod plugin {
                 &tokens,
                 &jwks,
                 &client_id,
-                pending.pkce.nonce(),
+                pending.browser.nonce(),
                 pending
                     .prior
                     .account
@@ -998,7 +999,7 @@ mod plugin {
             let account = OAuthAccount {
                 subject: verified.subject().to_owned(),
                 issued_client_id: verified.issued_client_id().to_owned(),
-                id_token_nonce: pending.pkce.nonce().to_owned(),
+                id_token_nonce: pending.browser.nonce().to_owned(),
                 access_token: tokens.access_token.clone(),
                 refresh_token: tokens.refresh_token.clone(),
                 id_token: tokens.id_token.clone(),
@@ -1203,6 +1204,21 @@ mod tests {
 
         let token = token_exchange_error(TransportError::InvalidTokenResponse);
         assert_eq!(token.message, "OAuth token response was invalid");
+
+        for (failure, expected) in [
+            (TransportError::Network, "could not connect"),
+            (TransportError::Timeout, "timed out"),
+            (TransportError::Tls, "TLS handshake"),
+            (TransportError::HttpStatus(429), "HTTP 429"),
+            (TransportError::HttpStatus(302), "redirected unexpectedly"),
+            (TransportError::HttpStatus(503), "HTTP 5xx"),
+            (TransportError::HttpStatus(404), "HTTP status 404"),
+        ] {
+            let error = token_exchange_error(failure);
+            assert_eq!(error.code, ProviderErrorCode::Unavailable);
+            assert!(error.message.contains(expected), "{error:?}");
+            assert!(!error.message.contains("private"));
+        }
 
         let scope = identity_verification_error(VerificationError::MissingPlanPermission);
         assert_eq!(scope.code, ProviderErrorCode::Denied);

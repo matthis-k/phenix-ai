@@ -3,6 +3,7 @@
 //! A provider plugin chooses the format and maps returned IDs to a known
 //! protocol/endpoint. Discovery alone never grants model execution authority.
 pub mod cache;
+pub mod http;
 
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -118,9 +119,60 @@ pub fn parse(format: CatalogFormat, bytes: &[u8]) -> Result<CatalogPage, Catalog
     })
 }
 
+/// Strict OpenAI-compatible `GET /models` convention for the API-key
+/// connection: published list envelope, bounded canonical model identities,
+/// deterministic revision ordering. Selection of executable model families is
+/// a separate provider capability policy, not a discovery transport concern.
+pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, CatalogError> {
+    let document: Value =
+        serde_json::from_slice(bytes).map_err(|_| CatalogError::InvalidResponse)?;
+    if document.get("object").and_then(Value::as_str) != Some("list") {
+        return Err(CatalogError::InvalidResponse);
+    }
+    let parsed = parse(CatalogFormat::OpenAi, bytes)?;
+    if parsed.models.len() > 256 {
+        return Err(CatalogError::TooLarge);
+    }
+    let mut ids = Vec::with_capacity(parsed.models.len());
+    for model in parsed.models {
+        if model.id.len() > 128
+            || !model
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
+        {
+            return Err(CatalogError::InvalidResponse);
+        }
+        ids.push(model.id);
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_openai_ids_validate_envelope_and_deterministic_order() {
+        let ids = parse_standard_openai_model_ids(
+            br#"{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-4.1"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(ids, vec!["gpt-4.1", "gpt-5"]);
+        assert_eq!(
+            parse_standard_openai_model_ids(br#"{"data":[{"id":"gpt-5"}]}"#),
+            Err(CatalogError::InvalidResponse)
+        );
+        assert_eq!(
+            parse_standard_openai_model_ids(br#"{"object":"list","data":[{"id":"bad\\nid"}]}"#),
+            Err(CatalogError::InvalidResponse)
+        );
+        assert_eq!(
+            parse_standard_openai_model_ids(br#"{"object":"list","data":[{"id":"x"},{"id":"x"}]}"#),
+            Err(CatalogError::DuplicateModel)
+        );
+    }
 
     #[test]
     fn openai_list_preserves_ids_and_order() {
