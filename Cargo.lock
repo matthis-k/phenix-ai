@@ -2068,7 +2068,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-provider-host"
+name = "phenix-plugin-providers"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",

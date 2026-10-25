@@ -364,7 +364,7 @@
       # Generic provider host; data-only contributors never implement catalog
       # or authentication contracts.
       providerHostPluginSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-host
+        ./crates/phenix-plugin-providers
         ./crates/phenix-provider-auth-strategies
         ./crates/phenix-provider-discovery
         ./crates/phenix-provider-builtins
@@ -373,17 +373,17 @@
         ./crates/phenix-basic-contracts
       ]);
       providerHostPlugin = rust.buildRustPackage {
-        pname = "phenix-plugin-provider-host";
+        pname = "phenix-plugin-providers";
         version = "0.1.0";
         src = providerHostPluginSource;
         cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-plugin-provider-host" ];
-        cargoTestFlags = [ "-p" "phenix-plugin-provider-host" ];
+        cargoBuildFlags = [ "-p" "phenix-plugin-providers" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-providers" ];
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
         installPhase = ''
           mkdir -p $out/lib
-          cp target/*/release/libphenix_plugin_provider_host.so $out/lib/plugin.so
+          cp target/*/release/libphenix_plugin_providers.so $out/lib/plugin.so
         '';
         postFixup = ''
           ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
@@ -2845,6 +2845,8 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
+        phenix-plugin-providers = providerHostPlugin;
+        # Temporary packaging alias; same executable, not a second plugin.
         phenix-plugin-provider-host = providerHostPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
