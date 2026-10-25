@@ -5,7 +5,6 @@
 //! the explicitly documented HTTPS /v1/models endpoint. The kernel does not
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
-use curl::easy::{Easy2, Handler, List, WriteError};
 use phenix_provider_auth_strategies::ApiKeyAttempts;
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
@@ -14,8 +13,10 @@ use phenix_provider_contracts::{
     ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
     ProviderModel,
 };
-use phenix_provider_discovery::{parse, CatalogFormat};
-use std::time::Duration;
+use phenix_provider_discovery::{
+    http::{fetch_bearer_catalog, CatalogFetchError},
+    parse, CatalogFormat,
+};
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
@@ -138,29 +139,9 @@ fn require_identity(provider: &str, connection: &str) -> Result<(), ProviderErro
     }
 }
 
-struct Response {
-    bytes: Vec<u8>,
-    too_large: bool,
-}
-impl Handler for Response {
-    fn write(&mut self, incoming: &[u8]) -> Result<usize, WriteError> {
-        if self
-            .bytes
-            .len()
-            .checked_add(incoming.len())
-            .is_none_or(|size| size > MAX_BODY)
-        {
-            self.too_large = true;
-            return Ok(0);
-        }
-        self.bytes.extend_from_slice(incoming);
-        Ok(incoming.len())
-    }
-}
-
-/// This is a verification probe, not a transport of model prompts. It never
-/// forwards redirects or provider error bodies. Credential bytes do not enter
-/// request URLs, journals, returned structures, or diagnostics.
+/// Reuse the generic, bounded Bearer catalog strategy. The provider's only
+/// specializations are its published endpoint, account authorization and
+/// Responses-model selection convention.
 fn fetch_models(
     secret: &phenix_provider_contracts::CredentialSecret,
 ) -> Result<Vec<String>, ProviderError> {
@@ -169,60 +150,27 @@ fn fetch_models(
         return Err(invalid("invalid OpenAI API key encoding"));
     }
     let token = std::str::from_utf8(bytes).map_err(|_| invalid("invalid API key encoding"))?;
-    let address = models_url()?;
-    let mut easy = Easy2::new(Response {
-        bytes: Vec::new(),
-        too_large: false,
-    });
-    let configure = (|| -> Result<(), curl::Error> {
-        easy.url(&address)?;
-        easy.get(true)?;
-        easy.follow_location(false)?;
-        easy.connect_timeout(Duration::from_secs(4))?;
-        easy.timeout(Duration::from_secs(10))?;
-        easy.ssl_verify_peer(true)?;
-        easy.ssl_verify_host(true)?;
-        easy.signal(false)?;
-        let mut headers = List::new();
-        headers.append(&format!("Authorization: Bearer {token}"))?;
-        headers.append("Accept: application/json")?;
-        easy.http_headers(headers)?;
-        Ok(())
-    })();
-    configure.map_err(|_| {
-        error(
-            ProviderErrorCode::Unavailable,
-            "API verification unavailable",
-        )
-    })?;
-    let outcome = easy.perform();
-    let status = easy.response_code().unwrap_or(0);
-    if status == 401 || status == 403 {
-        return Err(error(
+    let body = fetch_bearer_catalog(&models_url()?, token).map_err(|problem| match problem {
+        CatalogFetchError::Unauthorized => error(
             ProviderErrorCode::AuthenticationRequired,
             "OpenAI API key rejected",
-        ));
-    }
-    if status == 429 || status >= 500 {
-        return Err(error(
+        ),
+        CatalogFetchError::RateLimited | CatalogFetchError::Unavailable => error(
             ProviderErrorCode::Unavailable,
             "OpenAI API verification unavailable",
-        ));
-    }
-    if status != 200 {
-        return Err(error(
-            ProviderErrorCode::Denied,
-            "OpenAI models request denied",
-        ));
-    }
-    if easy.get_ref().too_large {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI model catalog too large",
-        ));
-    }
-    outcome.map_err(|_| error(ProviderErrorCode::Unavailable, "OpenAI API request failed"))?;
-    parse_model_ids(&easy.get_ref().bytes)
+        ),
+        CatalogFetchError::Rejected => {
+            error(ProviderErrorCode::Denied, "OpenAI models request denied")
+        }
+        CatalogFetchError::TooLarge => {
+            error(ProviderErrorCode::Unavailable, "OpenAI model catalog too large")
+        }
+        CatalogFetchError::InvalidBearer => invalid("invalid OpenAI API key encoding"),
+        CatalogFetchError::UnsafeEndpoint => {
+            error(ProviderErrorCode::Denied, "invalid OpenAI model catalog endpoint")
+        }
+    })?;
+    parse_model_ids(&body)
 }
 
 fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
