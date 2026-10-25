@@ -5,6 +5,7 @@
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
 use phenix_provider_builtins::registrations;
+use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
@@ -16,7 +17,7 @@ use phenix_provider_protocols::{
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
     siwc_transport::{
-        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
+        exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
     },
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
@@ -620,8 +621,13 @@ mod plugin {
             )));
         }
         let account = authorized_account(host, &identity)?;
-        let response = chatgpt_models(&account.access_token)
-            .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+        // The subscription catalog uses a different wire schema, but its
+        // authenticated, bounded GET is the same strategy as other providers.
+        let response = fetch_bearer_catalog(
+            "https://api.openai.com/v1/models",
+            &account.access_token,
+        )
+        .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
         let discovered = parse_chatgpt_models(&response)
             .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
         if discovered.len() > query.limit as usize {
