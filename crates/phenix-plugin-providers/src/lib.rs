@@ -376,9 +376,8 @@ mod plugin {
         }
         let mut pages = Vec::with_capacity(count);
         for index in 0..count {
-            match imports::Contributors::invoke_at::<ProviderRegistrations::list>(
-                host, index, &(),
-            ) {
+            match imports::Contributors::invoke_at::<ProviderRegistrations::list>(host, index, &())
+            {
                 Ok(page) => pages.push(page),
                 Err(failure) => {
                     let _ = state.registry.abort();
