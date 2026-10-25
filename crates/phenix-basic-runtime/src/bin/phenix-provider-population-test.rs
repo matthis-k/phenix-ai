@@ -163,17 +163,25 @@ fn run() -> Result<(), String> {
     // The provider manager, not an external controller, publishes the
     // immutable catalog on the generic settlement trigger.
     let listed: ProviderPage = invoke(&kernel, catalog, scope)?;
-    let ids = listed.providers.iter().map(|provider| provider.id.as_str()).collect::<Vec<_>>();
-    let openai = listed.providers.iter().find(|provider| provider.id == "openai");
+    let ids = listed
+        .providers
+        .iter()
+        .map(|provider| provider.id.as_str())
+        .collect::<Vec<_>>();
+    let openai = listed
+        .providers
+        .iter()
+        .find(|provider| provider.id == "openai");
     if listed.revision != 1
-        || ids != [
-            "anthropic",
-            "openai",
-            "opencode-go",
-            "opencode-zen",
-            "openrouter",
-            "zai",
-        ]
+        || ids
+            != [
+                "anthropic",
+                "openai",
+                "opencode-go",
+                "opencode-zen",
+                "openrouter",
+                "zai",
+            ]
         || openai.is_none_or(|provider| provider.connections.len() != 2)
     {
         return Err(format!("incorrect published provider snapshot: {listed:?}"));
