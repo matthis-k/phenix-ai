@@ -348,11 +348,15 @@ mod tests {
                 .code,
             ErrorCode::InvalidInput
         );
-        let forged = vec![vec![info("unknown")]];
-        // No alternative executor may be registered from payload metadata.
-        let selected = Registry::from_selected([intrinsic.clone()], &forged).unwrap();
-        assert!(selected.selected().is_some());
-        assert_eq!(selected.selected().unwrap().routes["unknown"], Some(0));
+        let mut malformed = external.clone();
+        malformed.arguments_schema = "[]".into();
+        assert_eq!(
+            Registry::from_selected([intrinsic.clone()], &[vec![malformed]])
+                .err()
+                .unwrap()
+                .code,
+            ErrorCode::InvalidInput
+        );
 
         let good = Registry::from_selected([intrinsic], &[vec![external]]).unwrap();
         let snapshot = good.selected().unwrap();
