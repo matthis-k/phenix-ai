@@ -1,7 +1,7 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
-use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 use phenix_basic_contracts::AgentRunFinished;
+use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
@@ -242,25 +242,23 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[AgentRunFinished::EVENT],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "submit",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.input@1/submit",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }, StaticGraphNode {
-        id: "run-finished",
-        triggers: &["phenix.basic.prompt"],
-        after: &["phenix.basic.agent/submit"],
-        selector: "",
-        operation: "phenix.agent.lifecycle@1/finished",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    nodes: &[
+        StaticGraphNode::on(
+            "submit",
+            &["phenix.basic.prompt"],
+            "phenix.basic.input@1/submit",
+        ),
+        StaticGraphNode {
+            id: "run-finished",
+            triggers: &["phenix.basic.prompt"],
+            after: &["phenix.basic.agent/submit"],
+            selector: "",
+            operation: "phenix.agent.lifecycle@1/finished",
+            writes: &[],
+            join: JoinPolicy::AllActive,
+            failure: FailurePolicy::FailRoot,
+        },
+    ],
 };
 
 #[cfg(feature = "staged-graph")]
@@ -294,7 +292,10 @@ mod run_event_graph_tests {
         assert_eq!(graph.nodes[1].id, "run-finished");
         assert_eq!(graph.nodes[1].triggers, vec!["phenix.basic.prompt"]);
         assert_eq!(graph.nodes[1].after, vec!["phenix.basic.agent/submit"]);
-        assert_eq!(graph.nodes[1].operation, "phenix.agent.lifecycle@1/finished");
+        assert_eq!(
+            graph.nodes[1].operation,
+            "phenix.agent.lifecycle@1/finished"
+        );
     }
 }
 
@@ -327,12 +328,12 @@ mod staged_graph_tests;
 mod plugin {
     use phenix_basic_contracts::{
         error, AdvancedPreparedModelRequest, AgentLifecycle, AgentRunFinished, BasicError,
-        BasicInput, BasicOutput, BasicTurnAdvance,
-        BasicTurnPrepare, CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind,
-        EventPage, GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
-        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
-        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
-        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
+        BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare, CatalogCursor, Context,
+        ErrorCode, Event, EventJournal, EventKind, EventPage, GraphStateChange, JournalAppend,
+        JournalQuery, Message, Model, ModelRequest, ObserverCheckpoint, ObserverRequest,
+        PromptSubmitted, RunResult, RunStatus, Scope, Session, SessionSnapshot, Skills,
+        ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome, ToolQuery, ToolRequest,
+        TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -917,7 +918,7 @@ mod plugin {
             Ok(Advance::Done(reply)) => {
                 state.completed = Some(reply.clone());
                 PendingResult::Ready(Ok(reply))
-            },
+            }
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
             Err(CallError::Kernel(failure)) => reconcile_model_failure(host, &running, failure),
         }
