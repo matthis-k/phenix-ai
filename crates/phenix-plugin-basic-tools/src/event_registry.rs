@@ -337,10 +337,7 @@ mod tests {
     fn legacy_candidate_rejects_forgery_without_publishing_partial_state() {
         let intrinsic = info("uppercase");
         let external = info("fixture.reverse");
-        let invalid = vec![
-            vec![external.clone()],
-            vec![external.clone()],
-        ];
+        let invalid = vec![vec![external.clone()], vec![external.clone()]];
         assert_eq!(
             Registry::from_selected([intrinsic.clone()], &invalid)
                 .err()
