@@ -1,5 +1,5 @@
-//! Native product: kernel.begin → tools.populate → reverse plugin hook
-//! → owner settlement → selected tool invocation; no second scheduler.
+//! Native product: kernel.begin → selected contributor metadata → owner
+//! settlement → selected tool invocation; one graph, no double registration.
 use phenix_basic_contracts::{ToolCall, ToolPage, ToolQuery, ToolRequest, ToolResult};
 use phenix_contract::{KernelEvent, Portable};
 use phenix_kernel::{
@@ -15,8 +15,6 @@ const RESOURCE: &str = "phenix.session.tool-session";
 const CATALOG: &str = "phenix.basic.catalog@1";
 const TOOL: &str = "phenix.basic.tool@1";
 const EXECUTOR: &str = "phenix.basic.tool-registrations@1";
-const REGISTRY: &str = "phenix.tools.registry@1";
-const POPULATE: &str = "phenix.tools.populate@1";
 const STARTUP: &str = "phenix.tools.startup@1";
 const SETTLEMENT: &str = "phenix.tools.settlement@1";
 
@@ -65,9 +63,7 @@ fn test() -> Result<(), String> {
         "definitions": [&args[3]],
         "slots": [
             {"caller": MANAGER, "slot": "Contributors", "provider": CONTRIBUTOR,
-             "export": "Registrations", "index": 0},
-            {"caller": CONTRIBUTOR, "slot": "Registry", "provider": MANAGER,
-             "export": "Registry", "index": 0}
+             "export": "Registrations", "index": 0}
         ],
         "grants": [
             grant("root", CATALOG, "list"),
@@ -75,9 +71,7 @@ fn test() -> Result<(), String> {
             grant(MANAGER, STARTUP, "begin"),
             grant(MANAGER, SETTLEMENT, "complete"),
             grant(MANAGER, EXECUTOR, "list"),
-            grant(MANAGER, EXECUTOR, "execute"),
-            grant(CONTRIBUTOR, REGISTRY, "register"),
-            grant(CONTRIBUTOR, POPULATE, "register")
+            grant(MANAGER, EXECUTOR, "execute")
         ],
         "authority": {
             "operations": [
@@ -86,9 +80,7 @@ fn test() -> Result<(), String> {
                 format!("{STARTUP}/begin"),
                 format!("{SETTLEMENT}/complete"),
                 format!("{EXECUTOR}/list"),
-                format!("{EXECUTOR}/execute"),
-                format!("{REGISTRY}/register"),
-                format!("{POPULATE}/register")
+                format!("{EXECUTOR}/execute")
             ],
             "resources": [RESOURCE]
         },
@@ -120,9 +112,9 @@ fn test() -> Result<(), String> {
     }
     let steps = graph.steps().len();
     drop(graph);
-    if steps != 3 {
+    if steps != 2 {
         return Err(format!(
-            "expected manager begin, contributor, settlement; got {steps}"
+            "expected manager begin and settlement; got {steps}"
         ));
     }
 
