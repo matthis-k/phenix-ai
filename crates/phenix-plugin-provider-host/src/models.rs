@@ -135,6 +135,56 @@ mod tests {
     }
 
     #[test]
+    fn admitted_model_catalog_uses_bounded_transport_and_never_promotes_embeddings() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+            time::Duration,
+        };
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/models",
+            server.local_addr().unwrap().port()
+        );
+        let service = thread::spawn(move || {
+            let (mut peer, _) = server.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut raw = [0u8; 8192];
+            let size = peer.read(&mut raw).unwrap();
+            let received = String::from_utf8_lossy(&raw[..size]).to_string();
+            let payload = r#"{"object":"list","data":[{"id":"text-embedding-3-large"},{"id":"gpt-5"},{"id":"gpt-4o-mini"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            );
+            peer.write_all(response.as_bytes()).unwrap();
+            received
+        });
+        let mut connection = registrations()[0].connections[0].clone();
+        connection.model_sources[0].endpoint = Some(url.clone());
+        connection.base_url = Some(url.trim_end_matches("/models").to_owned());
+        connection.protocols[0].endpoint = Some(
+            url.trim_end_matches("/models").to_owned() + "/responses",
+        );
+        connection.protocols[1].endpoint = Some(
+            url.trim_end_matches("/models").to_owned() + "/chat/completions",
+        );
+        let secret = CredentialSecret::new(b"private-test-token".to_vec()).unwrap();
+        let page = discover(&connection, "personal", &secret, 20).unwrap();
+        assert_eq!(page.profile_id.as_deref(), Some("personal"));
+        assert_eq!(
+            page.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["gpt-4o-mini", "gpt-5"]
+        );
+        assert!(page.models.iter().all(|m| m.protocol_id == "openai-responses"));
+        let request = service.join().unwrap();
+        assert!(request.starts_with("GET /models HTTP/1.1"));
+        assert!(request.contains("Authorization: Bearer private-test-token"));
+    }
+
+    #[test]
     fn responses_eligibility_is_conservative() {
         for allowed in ["gpt-4.1", "gpt-4o-mini", "gpt-5", "gpt-6", "o3-mini"] {
             assert!(response_eligible(allowed));
