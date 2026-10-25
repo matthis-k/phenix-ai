@@ -1530,7 +1530,10 @@ mod tests {
                 .unwrap(),
             ["alpha/a", "alpha/z"]
         );
-        assert_eq!(first.predecessors["alpha/z"], BTreeSet::from(["alpha/a".into()]));
+        assert_eq!(
+            first.predecessors["alpha/z"],
+            BTreeSet::from(["alpha/a".into()])
+        );
         assert_eq!(first.predecessors, second.predecessors);
     }
 
