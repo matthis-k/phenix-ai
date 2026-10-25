@@ -684,8 +684,7 @@ mod tests {
                 discovery: declaration::Discovery::None,
             }],
         }];
-        let descriptor = declaration::compile(&standalone, &BuiltinAuthenticationAdapters)
-            .unwrap();
+        let descriptor = declaration::compile(&standalone, &BuiltinAuthenticationAdapters).unwrap();
         let configured_key = descriptor[0].connections[0].auth_methods[0]
             .adapter
             .config
