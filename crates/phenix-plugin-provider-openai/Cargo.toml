@@ -1,0 +1,13 @@
+[package]
+name = "phenix-plugin-provider-openai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-provider-contracts = { path = "../phenix-provider-contracts" }
+phenix-provider-builtins = { path = "../phenix-provider-builtins" }
