@@ -2071,6 +2071,7 @@ dependencies = [
 name = "phenix-plugin-provider-chatgpt"
 version = "0.1.0"
 dependencies = [
+ "phenix-provider-discovery",
  "curl",
  "phenix-provider-builtins",
  "phenix-provider-contracts",
@@ -2195,7 +2196,9 @@ dependencies = [
 name = "phenix-provider-discovery"
 version = "0.1.0"
 dependencies = [
+ "curl",
  "serde_json",
+ "url",
 ]
 
 [[package]]
