@@ -362,37 +362,20 @@ mod plugin {
             // This temporary direct compatibility adapter uses the same
             // authoritative Registry as the graph path, never a second
             // snapshot or a caller-provided execution route.
-            // Construct a candidate with the SAME Registry type and its
-            // validation rules, but commit it to plugin state only after all
-            // selected imports and registrations succeed. A transient
-            // unavailable contributor must not strand a direct caller in
-            // Collecting or silently publish a partial catalog.
-            let mut candidate = super::event_registry::Registry::default();
-            candidate
-                .begin(TOOLS.iter().map(super::tool))
-                .map_err(CallError::Domain)?;
+            // Import failures leave the owner state untouched. The registry
+            // constructor verifies and publishes a complete candidate before
+            // its one authoritative snapshot replaces Idle.
             let mut selected_catalogs = Vec::with_capacity(count);
             for index in 0..count {
                 selected_catalogs.push(
                     imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?,
                 );
             }
-            for catalog in &selected_catalogs {
-                for offered in catalog {
-                    candidate
-                        .register(offered.clone(), &selected_catalogs)
-                        .map_err(CallError::Domain)?;
-                }
-            }
-            let tools = candidate
-                .preview()
-                .map_err(CallError::Domain)?
-                .into_iter()
-                .map(|entry| entry.info)
-                .collect::<Vec<_>>();
-            let revision = super::revision(&tools, count);
-            candidate.publish(revision).map_err(CallError::Domain)?;
-            state.registry = candidate;
+            state.registry = super::event_registry::Registry::from_selected(
+                TOOLS.iter().map(super::tool),
+                &selected_catalogs,
+            )
+            .map_err(CallError::Domain)?;
         }
         state.registry.selected().ok_or_else(|| {
             CallError::Domain(error(
