@@ -9,7 +9,7 @@ use crate::{
 use phenix_contract::{
     graph_node_key, standard_lifecycle_events, state_change_property, state_change_schema,
     ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
-    ScopedRequest, Value, ValueSchema,
+    LifecycleEvent, ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -535,6 +535,58 @@ impl Kernel {
         self.begin_action_inner(action_id, payload, scope, true)
     }
 
+    /// Host-only admission of a fixed lifecycle source. It uses the same
+    /// graph executor and grants as every action, but cannot be submitted via
+    /// the public action catalog. Begin can enter an indefinitely pending main
+    /// loop; its caller must pump/cancel its GraphExecution normally.
+    pub fn begin_lifecycle(
+        &self,
+        event: LifecycleEvent,
+    ) -> Result<GraphExecution<'_>, Failure> {
+        self.check_thread()?;
+        if let LifecycleEvent::PluginLoaded { plugin } = &event {
+            if !self.images.borrow().contains_key(plugin) {
+                return Err(Failure::new(
+                    Code::MissingBinding,
+                    "plugin-loaded source references an unloaded plugin",
+                ));
+            }
+        }
+        {
+            let state = self.state.borrow();
+            let already_emitted = match &event {
+                LifecycleEvent::Begin => state.lifecycle_begin,
+                LifecycleEvent::PluginLoaded { plugin } => {
+                    state.lifecycle_loaded.contains(plugin)
+                }
+                LifecycleEvent::Shutdown => state.lifecycle_shutdown,
+            };
+            if already_emitted {
+                return Err(Failure::new(
+                    Code::ScopeRejected,
+                    "lifecycle source already admitted in this generation",
+                ));
+            }
+        }
+        let id = event.id();
+        let scope = ScopedRequest {
+            authority: self.prepared.authority.clone(),
+            resource: self.prepared.resource.clone(),
+        };
+        let execution = self.begin_event_inner(id, id, &event.payload(), scope, true)?;
+        // Admit before committing the one-shot marker. A denied/busy attempt
+        // must remain retryable with a correct scope after its root is dropped.
+        let mut state = self.state.borrow_mut();
+        match event {
+            LifecycleEvent::Begin => state.lifecycle_begin = true,
+            LifecycleEvent::PluginLoaded { plugin } => {
+                state.lifecycle_loaded.insert(plugin);
+            }
+            LifecycleEvent::Shutdown => state.lifecycle_shutdown = true,
+        }
+        Ok(execution)
+    }
+
     fn begin_action_inner(
         &self,
         action_id: &str,
@@ -588,7 +640,33 @@ impl Kernel {
             return Err(Failure::new(Code::Denied, "action resource is not granted"));
         }
 
-        let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
+        self.begin_event_inner(action_id, &action.event, payload, scope, pending_allowed)
+    }
+
+    fn begin_event_inner(
+        &self,
+        action_id: &str,
+        event: &str,
+        payload: &Value,
+        scope: ScopedRequest,
+        pending_allowed: bool,
+    ) -> Result<GraphExecution<'_>, Failure> {
+        let graph = self
+            .prepared
+            .graph
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "no prepared graph"))?;
+        if !graph
+            .events
+            .get(event)
+            .is_some_and(|declared| declared.payload.accepts(payload))
+        {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "graph event payload does not match its schema",
+            ));
+        }
+        let active = graph.activation_order(&BTreeSet::from([event.into()]))?;
         let epoch_cursor = self.cells.borrow().epoch().0;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
         Ok(GraphExecution {
@@ -1036,6 +1114,26 @@ mod tests {
             contribution("delta", false, vec![node("d", &[], &["beta/b"], &[])]),
         ]
     }
+    #[test]
+    fn intrinsic_lifecycle_sources_are_not_public_actions() {
+        let graph = compile(&[contribution(
+            "alpha",
+            false,
+            vec![node(
+                "a",
+                &[phenix_contract::LIFECYCLE_BEGIN],
+                &[],
+                &[],
+            )],
+        )])
+        .unwrap();
+        assert_eq!(graph.activation_order(&BTreeSet::from([
+            phenix_contract::LIFECYCLE_BEGIN.into(),
+        ])).unwrap(), ["alpha/a"]);
+        assert!(graph.discover().next().is_none());
+        assert!(graph.actions.is_empty());
+    }
+
     #[test]
     fn intrinsic_lifecycle_sources_activate_without_plugin_event_definitions() {
         let declarations = [
