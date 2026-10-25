@@ -8,14 +8,14 @@ mod auth;
 mod models;
 mod registration;
 
-use phenix_provider_contracts::{PopulateProviders, ProvidersPopulate};
+use phenix_provider_contracts::{PopulateProviders, ProvidersPopulate, ProvidersReady};
 use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 /// Declare the shared event once. Contributors add their own nodes without
 /// duplicating the event or any scheduling mechanism.
 pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.provider.host",
-    events: &[ProvidersPopulate::EVENT],
+    events: &[ProvidersPopulate::EVENT, ProvidersReady::EVENT],
     actions: &[PopulateProviders::ACTION],
     nodes: &[
         StaticGraphNode {
@@ -394,6 +394,14 @@ mod plugin {
                 "provider catalog is already selected",
             )));
         }
+        // Emission is deferred to the next graph wave: if publication fails,
+        // the parent root stops and the pending ready notice is discarded.
+        // Enqueue before committing so a full queue cannot expose a partial
+        // initialization as successful.
+        host.emit_event(&ProvidersReady {
+            scope: scope.into(),
+            revision: 1,
+        })?;
         let published = state.registry.publish().map_err(CallError::Domain)?;
         state.selected = Some(published.providers);
         Ok(())
