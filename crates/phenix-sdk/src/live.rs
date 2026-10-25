@@ -298,6 +298,21 @@ impl<'call> Host<'call> {
             _ => Err(CallError::Kernel(invalid())),
         }
     }
+    /// Enqueue a plugin-owned custom event in the current graph root.
+    /// This does not synchronously recurse into another plugin or root.
+    /// The kernel validates event ownership, payload schema and queue bounds.
+    pub fn emit<T: Portable>(&self, event: &str, payload: &T) -> Result<(), Failure> {
+        let request = WireValue::map([
+            ("event", WireValue::String(event.into())),
+            ("payload", payload.to_value()),
+        ]);
+        match self.raw("", crate::HOST_GRAPH_EMIT, request)? {
+            (0, WireValue::Null) => Ok(()),
+            (2, value) => Err(Failure::from_value(value)?),
+            _ => Err(invalid()),
+        }
+    }
+
     pub fn slot_count(&self, slot: &str) -> Result<usize, Failure> {
         match self.raw(slot, "phenix.host.slots@1/count", WireValue::Null)? {
             (0, WireValue::U64(n)) => usize::try_from(n).map_err(|_| invalid()),
