@@ -1507,6 +1507,37 @@ mod tests {
     }
 
     #[test]
+    fn edges_resolve_after_collecting_arbitrarily_ordered_nodes() {
+        // The dependent node is deliberately declared before its predecessor.
+        // The event-to-handler edges admit both; after adds only the DAG edge.
+        let unsorted = contribution(
+            "alpha",
+            true,
+            vec![
+                node("z", &["event.prompt"], &["alpha/a"], &[]),
+                node("a", &["event.prompt"], &[], &[]),
+            ],
+        );
+        let mut sorted = unsorted.clone();
+        sorted.nodes.reverse();
+        let first = compile(&[unsorted]).unwrap();
+        let second = compile(&[sorted]).unwrap();
+        assert_eq!(first.identity, second.identity);
+        assert_eq!(first.order, ["alpha/a", "alpha/z"]);
+        assert_eq!(
+            first
+                .activation_order(&BTreeSet::from(["event.prompt".into()]))
+                .unwrap(),
+            ["alpha/a", "alpha/z"]
+        );
+        assert_eq!(
+            first.predecessors["alpha/z"],
+            BTreeSet::from(["alpha/a".into()])
+        );
+        assert_eq!(first.predecessors, second.predecessors);
+    }
+
+    #[test]
     fn independently_contributed_multi_root_graph_is_permutation_invariant() {
         let nodes = fixtures();
         let graph = compile(&nodes).unwrap();
