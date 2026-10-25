@@ -269,8 +269,13 @@ mod plugin {
         // attenuated #0 credential import cannot broaden resources or ops.
         let credential =
             host.invoke_scoped::<ProviderCredentials::resolve>("Credentials#0", &scope, &identity)?;
-        super::models::discover(&connection, identity.profile_id(), &credential, request.limit)
-            .map_err(CallError::Domain)
+        super::models::discover(
+            &connection,
+            identity.profile_id(),
+            &credential,
+            request.limit,
+        )
+        .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]
