@@ -57,8 +57,8 @@ mod plugin {
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
         AuthenticatedProfile, AuthenticationCommand, AuthenticationEvent, CredentialIdentity,
         CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
-        ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery, ProviderRegistrations, ProviderRuntime,
+        ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        ProviderRegistrations, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
