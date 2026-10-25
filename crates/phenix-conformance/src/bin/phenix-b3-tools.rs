@@ -45,6 +45,8 @@ fn main() {
     let catalog = "phenix.basic.catalog@1/list";
     let execute = "phenix.basic.tool@1/execute";
     let count = "phenix.basic.tool@1/count";
+    let startup = "phenix.tools.startup@1/begin";
+    let settlement = "phenix.tools.settlement@1/complete";
     let resource = "phenix.session.s1";
     let resource_set = BTreeSet::from([resource.to_owned()]);
     let policy = Composition {
@@ -64,11 +66,20 @@ fn main() {
                     resources: resource_set.clone(),
                 }
             })
+            .chain([startup, settlement].iter().map(|key| {
+                let target = selection(key);
+                ScopedGrant {
+                    caller: "phenix.basic.tools".into(),
+                    interface: target.interface,
+                    operation: target.operation,
+                    resources: resource_set.clone(),
+                }
+            }))
             .collect(),
         excluded: BTreeSet::new(),
         substitutions: vec![],
         authority: Authority {
-            operations: [catalog, execute, count]
+            operations: [catalog, execute, count, startup, settlement]
                 .iter()
                 .map(|key| (*key).to_owned())
                 .collect(),
