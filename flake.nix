@@ -419,8 +419,8 @@
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
         mkdir -p "$out"
-        python ${./tests/provider-host-api-key-product.py} \\
-          ${kernel}/bin/phenix-kernel ${providerHostPlugin} \\
+        python ${./tests/provider-host-api-key-product.py} \
+          ${kernel}/bin/phenix-kernel ${providerHostPlugin} \
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out"
         test -s "$out/verified.json"
       '';
