@@ -367,6 +367,44 @@ pub trait ProviderRegistry {
     fn abort(&self, request: ProviderQuery) -> Result<(), ProviderError>;
 }
 
+/// Converts provider authoring data to a validated portable descriptor.
+/// The shared convention compiler implements this for ordinary Provider data;
+/// external domain crates may supply their own implementations.
+pub trait ProviderDefinition {
+    fn into_descriptor(self) -> Result<ProviderDescriptor, ProviderError>;
+}
+
+impl ProviderDefinition for ProviderDescriptor {
+    fn into_descriptor(self) -> Result<ProviderDescriptor, ProviderError> {
+        Ok(self)
+    }
+}
+
+/// Typed facade over an ordinary imported M1 contract. It does not install a
+/// registry, own plugin state, dispatch graph nodes or bypass host authority.
+pub struct Providers<'host, 'call> {
+    host: &'host Host<'call>,
+    slot: &'host str,
+    scope: &'host str,
+}
+
+impl<'host, 'call> Providers<'host, 'call> {
+    pub fn new(host: &'host Host<'call>, slot: &'host str, scope: &'host str) -> Self {
+        Self { host, slot, scope }
+    }
+
+    pub fn register(&self, provider: impl ProviderDefinition) -> CallResult<(), ProviderError> {
+        let provider = provider.into_descriptor().map_err(CallError::Domain)?;
+        self.host.invoke::<ProviderRegistry::register>(
+            self.slot,
+            &ProviderRegistration {
+                scope: self.scope.into(),
+                provider,
+            },
+        )
+    }
+}
+
 /// A provider-facing authentication operation. Interactive flows return a
 /// challenge/attempt state; a successful profile is never inferred from a
 /// bool, a stored token, or the existence of a registration.
