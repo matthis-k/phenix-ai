@@ -326,15 +326,16 @@ mod plugin {
         }
         // A full queue must not commit a catalog without delivering ready.
         // The ready notification itself executes only in a later graph wave.
-        host.emit_event(&ToolsReady { revision: 1 })
+        let preview = state.registry.preview().map_err(CallError::Domain)?;
+        let tools = preview.iter().map(|entry| entry.info.clone()).collect::<Vec<_>>();
+        let revision = super::revision(&tools, count);
+        host.emit_event(&ToolsReady { revision })
             .map_err(CallError::Kernel)?;
         let entries = state.registry.publish().map_err(CallError::Domain)?;
-        let tools = entries.iter().map(|entry| entry.info.clone()).collect::<Vec<_>>();
         let routes = entries
             .iter()
             .map(|entry| (entry.info.id.clone(), entry.route))
             .collect::<BTreeMap<_, _>>();
-        let revision = super::revision(&tools, count);
         state.snapshot = Some(ToolSnapshot {
             tools,
             routes,
