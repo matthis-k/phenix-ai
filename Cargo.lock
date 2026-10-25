@@ -2072,8 +2072,10 @@ name = "phenix-plugin-provider-chatgpt"
 version = "0.1.0"
 dependencies = [
  "curl",
+ "phenix-provider-auth-strategies",
  "phenix-provider-builtins",
  "phenix-provider-contracts",
+ "phenix-provider-discovery",
  "phenix-provider-protocols",
  "phenix-sdk",
  "serde",
@@ -2105,10 +2107,10 @@ name = "phenix-plugin-provider-openai-api"
 version = "0.1.0"
 dependencies = [
  "curl",
- "phenix-provider-builtins",
  "phenix-provider-auth-strategies",
- "phenix-provider-discovery",
+ "phenix-provider-builtins",
  "phenix-provider-contracts",
+ "phenix-provider-discovery",
  "phenix-sdk",
  "serde_json",
 ]
@@ -2163,6 +2165,7 @@ name = "phenix-provider-auth-strategies"
 version = "0.1.0"
 dependencies = [
  "phenix-provider-contracts",
+ "phenix-provider-protocols",
 ]
 
 [[package]]
@@ -2197,7 +2200,10 @@ dependencies = [
 name = "phenix-provider-discovery"
 version = "0.1.0"
 dependencies = [
+ "curl",
+ "phenix-provider-protocols",
  "serde_json",
+ "url",
 ]
 
 [[package]]

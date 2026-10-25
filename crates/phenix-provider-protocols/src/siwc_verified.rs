@@ -11,7 +11,6 @@ use crate::oauth_oidc::{
     verify_refreshed_signed_oidc_identity, verify_signed_oidc_identity, OidcError, VerifiedSubject,
 };
 use crate::siwc::require_token_granted_plan_scope;
-use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge};
 use serde_json::Value;
 use zeroize::Zeroize;
 
@@ -29,65 +28,8 @@ pub enum VerificationError {
     IncorrectAccount,
 }
 
-/// The caller retains the freshly generated verifier only for this attempt.
-/// Deliberately not Debug/Clone; in particular, never log a future reauth URL
-/// containing an id_token_hint, nor persist this verifier in a session journal.
-pub struct GeneratedPkce {
-    state: String,
-    nonce: String,
-    challenge: String,
-    verifier: String,
-}
-
-impl GeneratedPkce {
-    pub fn new() -> Self {
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        // Two independent 128-bit values avoid any dependence on a short
-        // random token representation and meet the registration input limits.
-        let state = format!(
-            "{}{}",
-            CsrfToken::new_random().secret(),
-            CsrfToken::new_random().secret()
-        );
-        let nonce = format!(
-            "{}{}",
-            Nonce::new_random().secret(),
-            Nonce::new_random().secret()
-        );
-        Self {
-            state,
-            nonce,
-            challenge: challenge.as_str().to_owned(),
-            verifier: verifier.secret().to_owned(),
-        }
-    }
-
-    pub fn state(&self) -> &str {
-        &self.state
-    }
-    pub fn nonce(&self) -> &str {
-        &self.nonce
-    }
-    pub fn challenge(&self) -> &str {
-        &self.challenge
-    }
-    pub fn verifier(&self) -> &str {
-        &self.verifier
-    }
-}
-
-impl Default for GeneratedPkce {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl Drop for GeneratedPkce {
-    fn drop(&mut self) {
-        self.verifier.zeroize();
-        self.nonce.zeroize();
-        self.state.zeroize();
-    }
-}
+// Compatibility re-export: SIWC uses the shared, issuer-neutral PKCE engine.
+pub use crate::oauth_pkce::GeneratedPkce;
 
 /// Raw token material has no Debug/Clone/serialization. A refresh token is
 /// storage-domain only and MUST NOT be handed to HTTP model inference.

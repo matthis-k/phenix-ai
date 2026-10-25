@@ -5,17 +5,17 @@
 //! the explicitly documented HTTPS /v1/models endpoint. The kernel does not
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
-use curl::easy::{Easy2, Handler, List, WriteError};
 use phenix_provider_auth_strategies::ApiKeyAttempts;
-use phenix_provider_builtins::registrations;
+use phenix_provider_builtins::{discovered_model_page, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
-    ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
-    ProviderModel,
+    ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
-use phenix_provider_discovery::{parse, CatalogFormat};
-use std::time::Duration;
+use phenix_provider_discovery::{
+    http::{fetch_bearer_catalog, CatalogFetchError},
+    parse_standard_openai_model_ids,
+};
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
@@ -48,9 +48,6 @@ fn models_url() -> Result<String, ProviderError> {
         Ok(MODEL_ENDPOINT.into())
     }
 }
-
-const MAX_MODELS: usize = 256;
-const MAX_BODY: usize = 256 * 1024;
 
 fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
     ProviderError {
@@ -138,29 +135,9 @@ fn require_identity(provider: &str, connection: &str) -> Result<(), ProviderErro
     }
 }
 
-struct Response {
-    bytes: Vec<u8>,
-    too_large: bool,
-}
-impl Handler for Response {
-    fn write(&mut self, incoming: &[u8]) -> Result<usize, WriteError> {
-        if self
-            .bytes
-            .len()
-            .checked_add(incoming.len())
-            .is_none_or(|size| size > MAX_BODY)
-        {
-            self.too_large = true;
-            return Ok(0);
-        }
-        self.bytes.extend_from_slice(incoming);
-        Ok(incoming.len())
-    }
-}
-
-/// This is a verification probe, not a transport of model prompts. It never
-/// forwards redirects or provider error bodies. Credential bytes do not enter
-/// request URLs, journals, returned structures, or diagnostics.
+/// Reuse the generic, bounded Bearer catalog strategy. The provider's only
+/// specializations are its published endpoint, account authorization and
+/// Responses-model selection convention.
 fn fetch_models(
     secret: &phenix_provider_contracts::CredentialSecret,
 ) -> Result<Vec<String>, ProviderError> {
@@ -169,112 +146,38 @@ fn fetch_models(
         return Err(invalid("invalid OpenAI API key encoding"));
     }
     let token = std::str::from_utf8(bytes).map_err(|_| invalid("invalid API key encoding"))?;
-    let address = models_url()?;
-    let mut easy = Easy2::new(Response {
-        bytes: Vec::new(),
-        too_large: false,
-    });
-    let configure = (|| -> Result<(), curl::Error> {
-        easy.url(&address)?;
-        easy.get(true)?;
-        easy.follow_location(false)?;
-        easy.connect_timeout(Duration::from_secs(4))?;
-        easy.timeout(Duration::from_secs(10))?;
-        easy.ssl_verify_peer(true)?;
-        easy.ssl_verify_host(true)?;
-        easy.signal(false)?;
-        let mut headers = List::new();
-        headers.append(&format!("Authorization: Bearer {token}"))?;
-        headers.append("Accept: application/json")?;
-        easy.http_headers(headers)?;
-        Ok(())
-    })();
-    configure.map_err(|_| {
-        error(
-            ProviderErrorCode::Unavailable,
-            "API verification unavailable",
-        )
-    })?;
-    let outcome = easy.perform();
-    let status = easy.response_code().unwrap_or(0);
-    if status == 401 || status == 403 {
-        return Err(error(
+    let body = fetch_bearer_catalog(&models_url()?, token).map_err(|problem| match problem {
+        CatalogFetchError::Unauthorized => error(
             ProviderErrorCode::AuthenticationRequired,
             "OpenAI API key rejected",
-        ));
-    }
-    if status == 429 || status >= 500 {
-        return Err(error(
+        ),
+        CatalogFetchError::RateLimited | CatalogFetchError::Unavailable => error(
             ProviderErrorCode::Unavailable,
             "OpenAI API verification unavailable",
-        ));
-    }
-    if status != 200 {
-        return Err(error(
-            ProviderErrorCode::Denied,
-            "OpenAI models request denied",
-        ));
-    }
-    if easy.get_ref().too_large {
-        return Err(error(
+        ),
+        CatalogFetchError::Rejected => {
+            error(ProviderErrorCode::Denied, "OpenAI models request denied")
+        }
+        CatalogFetchError::TooLarge => error(
             ProviderErrorCode::Unavailable,
             "OpenAI model catalog too large",
-        ));
-    }
-    outcome.map_err(|_| error(ProviderErrorCode::Unavailable, "OpenAI API request failed"))?;
-    parse_model_ids(&easy.get_ref().bytes)
+        ),
+        CatalogFetchError::InvalidBearer => invalid("invalid OpenAI API key encoding"),
+        CatalogFetchError::UnsafeEndpoint => error(
+            ProviderErrorCode::Denied,
+            "invalid OpenAI model catalog endpoint",
+        ),
+    })?;
+    parse_model_ids(&body)
 }
 
 fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
-    if body.len() > MAX_BODY {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI model catalog too large",
-        ));
-    }
-    // The documented list envelope is mandatory. Entry parsing and duplicate
-    // detection are shared with other provider discovery implementations.
-    let document: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+    parse_standard_openai_model_ids(body).map_err(|_| {
         error(
             ProviderErrorCode::Unavailable,
             "invalid OpenAI model response",
         )
-    })?;
-    if document.get("object").and_then(serde_json::Value::as_str) != Some("list") {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "unexpected OpenAI catalog shape",
-        ));
-    }
-    let page = parse(CatalogFormat::OpenAi, body).map_err(|_| {
-        error(
-            ProviderErrorCode::Unavailable,
-            "invalid OpenAI model response",
-        )
-    })?;
-    if page.models.len() > MAX_MODELS {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "too many OpenAI models",
-        ));
-    }
-    let mut ids = Vec::with_capacity(page.models.len());
-    for model in page.models {
-        let id = model.id;
-        if id.len() > 128
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b))
-        {
-            return Err(error(
-                ProviderErrorCode::Unavailable,
-                "invalid OpenAI model identity",
-            ));
-        }
-        ids.push(id);
-    }
-    ids.sort_unstable();
-    Ok(ids)
+    })
 }
 
 /// Supported Responses families, rather than treating image, embedding,
@@ -285,16 +188,6 @@ fn supports_responses(model: &str) -> bool {
         .iter()
         .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
 }
-fn revision(ids: &[String]) -> u64 {
-    let hash = ids
-        .iter()
-        .flat_map(|name| name.bytes().chain([0u8]))
-        .fold(14695981039346656037u64, |value, byte| {
-            (value ^ u64::from(byte)).wrapping_mul(1099511628211)
-        });
-    hash.max(1)
-}
-
 #[phenix_sdk::plugin(
     id = "phenix.provider.openai-api",
     version = "1.0.0",
@@ -437,33 +330,16 @@ mod plugin {
             )));
         }
         let ids = models(host, &selected)?;
-        let revision = revision(&ids);
-        let models = ids
-            .into_iter()
-            .filter(|id| supports_responses(id))
-            .map(|id| ProviderModel {
-                label: id.clone(),
-                id,
-                connection_id: CONNECTION.into(),
-                protocol_id: "openai-responses".into(),
-                endpoint_id: "responses".into(),
-                capabilities: Vec::new(),
-                origin: ModelOrigin::Discovered,
-                selectable: true,
-            })
-            .collect::<Vec<_>>();
-        if models.len() > query.limit as usize {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "authorized model catalog exceeds requested page budget",
-            )));
-        }
-        Ok(ModelPage {
-            profile_id: Some(selected.profile_id().into()),
-            models,
-            next_cursor: None,
-            revision,
-        })
+        discovered_model_page(
+            selected.profile_id(),
+            CONNECTION,
+            "openai-responses",
+            "responses",
+            query.limit,
+            ids.into_iter().map(|id| (id.clone(), id)),
+            supports_responses,
+        )
+        .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]
