@@ -7,7 +7,8 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, standard_kernel_events, state_change_property, state_change_schema,
+    graph_node_key, settled_event, settled_event_schema, standard_kernel_events,
+    state_change_property, state_change_schema,
     ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, KernelEvent,
     ScopedRequest, Value, ValueSchema,
 };
@@ -150,7 +151,16 @@ impl CompiledGraph {
         }
         for (id, node) in &nodes {
             for trigger in &node.definition.triggers {
-                if state_change_property(trigger).is_none() && !events.contains_key(trigger) {
+                if let Some(source) = settled_event(trigger) {
+                    let owner = event_owners.get(source).ok_or_else(|| {
+                        invalid(format!("node {id} settles absent event {source}"))
+                    })?;
+                    if owner != &node.owner {
+                        return Err(invalid(format!(
+                            "event settlement {trigger} may only be handled by declaring owner"
+                        )));
+                    }
+                } else if state_change_property(trigger).is_none() && !events.contains_key(trigger) {
                     return Err(invalid(format!("node {id} has absent trigger {trigger}")));
                 }
             }
@@ -352,6 +362,13 @@ impl crate::resolve::Prepared {
                         return Err(Failure::new(
                             Code::SchemaRejected,
                             format!("state trigger {trigger} request schema mismatch"),
+                        ));
+                    }
+                } else if settled_event(trigger).is_some() {
+                    if operation.schema.request != settled_event_schema() {
+                        return Err(Failure::new(
+                            Code::SchemaRejected,
+                            format!("settled hook {trigger} request schema mismatch"),
                         ));
                     }
                 } else if operation.schema.request != graph.events[trigger].payload {
@@ -780,6 +797,7 @@ impl Kernel {
             action: action_id.into(),
             event: event.into(),
             payload: payload.clone(),
+            wave_is_settlement: false,
             node_requests: BTreeMap::new(),
             state_cursor: epoch_cursor,
             had_domain: false,
@@ -848,6 +866,8 @@ pub struct GraphExecution<'a> {
     action: String,
     event: String,
     payload: Value,
+    /// Each emitted event has at most one synthetic owner completion wave.
+    wave_is_settlement: bool,
     /// Event nodes use the action payload; state hooks get scoped epoch data.
     node_requests: BTreeMap<String, Value>,
     state_cursor: u64,
@@ -1013,12 +1033,38 @@ impl GraphExecution<'_> {
             }
             self.event = event.id;
             self.payload = event.payload;
+            self.wave_is_settlement = false;
             self.node_requests.clear();
             self.active = active;
             self.waiting = self.active.iter().cloned().collect();
             self.unsuccessful.clear();
             return Ok(true);
         }
+    }
+
+    /// Synthesize the declaring owner's completion wave only after every
+    /// event subscriber and all pending effects have finished successfully.
+    /// The owner can now commit its staged state *inside this same graph root*.
+    fn admit_settled_wave(&mut self) -> Result<bool, Failure> {
+        if self.wave_is_settlement || self.had_domain {
+            return Ok(false);
+        }
+        let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+        if !graph.event_owners.contains_key(&self.event) {
+            return Ok(false);
+        }
+        let trigger = format!("settled:{}", self.event);
+        let active = graph.project_triggers(&BTreeSet::from([trigger]))?;
+        self.wave_is_settlement = true;
+        if active.is_empty() {
+            return Ok(false);
+        }
+        self.payload = Value::map([]);
+        self.node_requests.clear();
+        self.active = active;
+        self.waiting = self.active.iter().cloned().collect();
+        self.unsuccessful.clear();
+        Ok(true)
     }
 
     /// Admit one committed epoch through the prepared state-trigger DAG.
@@ -1045,6 +1091,7 @@ impl GraphExecution<'_> {
         self.waiting = active.iter().cloned().collect();
         self.active = active;
         self.unsuccessful.clear();
+        self.wave_is_settlement = true;
         self.node_requests = node_requests;
         Ok(true)
     }
@@ -1158,9 +1205,10 @@ impl GraphExecution<'_> {
         // hooks before declaring the admitted root terminal. Hooks can publish
         // further epochs; each is observed after its own wave settles.
         if !self.terminal && !self.stopped && self.waiting.is_empty() && self.pending.is_empty() {
-            // Custom emitted events run before state watches in FIFO order.
-            // Both use this root, scheduler, cancellation and grant checks.
-            if !self.admit_custom_event_wave()? {
+            // Settlement precedes the next FIFO event, so the owner can
+            // atomically publish before observers of its readiness run.
+            // Domain failures and cancellations never admit settlement.
+            if !self.admit_settled_wave()? && !self.admit_custom_event_wave()? {
                 self.admit_state_wave()?;
             }
         }
@@ -1350,7 +1398,7 @@ mod tests {
         assert!(compile(&invalid)
             .unwrap_err()
             .message
-            .contains("duplicate event"));
+            .contains("kernel lifecycle events"));
     }
 
     #[test]
