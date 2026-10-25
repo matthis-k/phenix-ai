@@ -353,6 +353,34 @@ pub(super) unsafe extern "C" fn invoke(scope: u64, slot: Bytes, key: Bytes, inpu
                 },
             );
         }
+        if key == phenix_contract::HOST_GRAPH_EMIT {
+            if !slot.is_empty() {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "graph emission expects no import slot",
+                ));
+            }
+            let Value::Map(mut request) = Value::decode(bytes)? else {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "graph emission expects an event and payload map",
+                ));
+            };
+            let Some(Value::String(id)) = request.remove("event") else {
+                return Err(Failure::new(Code::SchemaRejected, "graph event ID missing"));
+            };
+            let payload = request.remove("payload").ok_or_else(|| {
+                Failure::new(Code::SchemaRejected, "graph event payload missing")
+            })?;
+            if !request.is_empty() {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "unexpected graph emission fields",
+                ));
+            }
+            kernel.queue_graph_event(record.root, &record.caller, &id, payload)?;
+            return Ok(Reply::value(0, Value::Null));
+        }
         if key == phenix_contract::RESOURCE_CONTEXT {
             if !slot.is_empty() || Value::decode(bytes)? != Value::Null {
                 return Err(Failure::new(
