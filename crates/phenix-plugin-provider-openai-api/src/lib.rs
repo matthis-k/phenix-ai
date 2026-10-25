@@ -6,12 +6,11 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use phenix_provider_auth_strategies::ApiKeyAttempts;
-use phenix_provider_builtins::registrations;
+use phenix_provider_builtins::{discovered_model_page, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
-    ModelOrigin, ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
-    ProviderModel,
+    ModelPage, ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
 use phenix_provider_discovery::{
     http::{fetch_bearer_catalog, CatalogFetchError},
@@ -189,16 +188,6 @@ fn supports_responses(model: &str) -> bool {
         .iter()
         .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
 }
-fn revision(ids: &[String]) -> u64 {
-    let hash = ids
-        .iter()
-        .flat_map(|name| name.bytes().chain([0u8]))
-        .fold(14695981039346656037u64, |value, byte| {
-            (value ^ u64::from(byte)).wrapping_mul(1099511628211)
-        });
-    hash.max(1)
-}
-
 #[phenix_sdk::plugin(
     id = "phenix.provider.openai-api",
     version = "1.0.0",
@@ -341,33 +330,16 @@ mod plugin {
             )));
         }
         let ids = models(host, &selected)?;
-        let revision = revision(&ids);
-        let models = ids
-            .into_iter()
-            .filter(|id| supports_responses(id))
-            .map(|id| ProviderModel {
-                label: id.clone(),
-                id,
-                connection_id: CONNECTION.into(),
-                protocol_id: "openai-responses".into(),
-                endpoint_id: "responses".into(),
-                capabilities: Vec::new(),
-                origin: ModelOrigin::Discovered,
-                selectable: true,
-            })
-            .collect::<Vec<_>>();
-        if models.len() > query.limit as usize {
-            return Err(CallError::Domain(error(
-                ProviderErrorCode::Unavailable,
-                "authorized model catalog exceeds requested page budget",
-            )));
-        }
-        Ok(ModelPage {
-            profile_id: Some(selected.profile_id().into()),
-            models,
-            next_cursor: None,
-            revision,
-        })
+        discovered_model_page(
+            selected.profile_id(),
+            CONNECTION,
+            "openai-responses",
+            "responses",
+            query.limit,
+            ids.into_iter().map(|id| (id.clone(), id)),
+            supports_responses,
+        )
+        .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]
