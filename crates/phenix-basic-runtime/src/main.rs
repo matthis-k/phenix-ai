@@ -1017,7 +1017,9 @@ fn activate_kernel_lifecycle(kernel: &Kernel, event: KernelEvent) -> Result<(), 
         );
     }
     if !matches!(execution.completion(), Some(GraphCompletion::Success)) {
-        return Err(format!("{event_id} graph failed; lifecycle state not committed"));
+        return Err(format!(
+            "{event_id} graph failed; lifecycle state not committed"
+        ));
     }
     Ok(())
 }
