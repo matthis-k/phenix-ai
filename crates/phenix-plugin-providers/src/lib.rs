@@ -9,7 +9,7 @@ mod models;
 mod registration;
 
 use phenix_provider_contracts::{PopulateProviders, ProvidersPopulate};
-use phenix_sdk::StaticGraphContribution;
+use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 /// Declare the shared event once. Contributors add their own nodes without
 /// duplicating the event or any scheduling mechanism.
@@ -17,7 +17,16 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.provider.host",
     events: &[ProvidersPopulate::EVENT],
     actions: &[PopulateProviders::ACTION],
-    nodes: &[],
+    nodes: &[StaticGraphNode {
+        id: "on-begin",
+        triggers: &[phenix_sdk::KERNEL_BEGIN],
+        after: &[],
+        selector: "",
+        operation: "phenix.provider.startup@1/begin",
+        writes: &[],
+        join: JoinPolicy::AllActive,
+        failure: FailurePolicy::FailRoot,
+    }],
 };
 
 use phenix_provider_builtins::merge_registration_pages;
@@ -64,6 +73,7 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
     provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime"),
     provide(phenix_provider_contracts::ProviderRegistry, slot = "Registry"),
+    provide(phenix_provider_contracts::ProviderStartup, slot = "Startup"),
     graph(super::GRAPH)
 )]
 mod plugin {
@@ -73,7 +83,8 @@ mod plugin {
         AuthenticatedProfile, AuthenticationCommand, AuthenticationEvent, CredentialIdentity,
         CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
         ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderPage, ProviderQuery,
-        ProviderRegistration, ProviderRegistrations, ProviderRegistry, ProviderRuntime,
+        ProviderKernelBegin, ProviderRegistration, ProviderRegistrations, ProviderRegistry,
+        ProviderRuntime, ProviderStartup,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -299,6 +310,50 @@ mod plugin {
             ProviderErrorCode::Unavailable,
             "selected session protocol adapter is not installed",
         )))
+    }
+
+    /// Kernel.begin is a fixed graph trigger. This manager owns the event
+    /// definition and initiates the next wave inside the SAME graph root.
+    /// Provider-definition plugins only subscribe and call register.
+    #[provide(ProviderStartup::begin)]
+    fn on_begin(
+        state: &mut State,
+        host: &Host<'_>,
+        _: ProviderKernelBegin,
+    ) -> CallResult<(), ProviderError> {
+        let resource = host.resource()?.ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider startup requires an authorized provider resource",
+            ))
+        })?;
+        let scope = resource.strip_prefix("phenix.providers.").ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider startup resource is not a provider scope",
+            ))
+        })?;
+        check(host, scope)?;
+        if state.selected.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Conflict,
+                "provider catalog already selected",
+            )));
+        }
+        state.registry.begin().map_err(CallError::Domain)?;
+        if let Err(failure) = host.emit(
+            ProvidersPopulate::EVENT.id,
+            &ProvidersPopulate {
+                scope: scope.into(),
+            },
+        ) {
+            // No partially initialized catalog if admission of the event
+            // itself fails. A graph failure after emission is handled by the
+            // controller's abort path and never becomes a selected snapshot.
+            let _ = state.registry.abort();
+            return Err(CallError::Kernel(failure));
+        }
+        Ok(())
     }
 
     /// Controller-only: prevent catalog reads before the first graph node runs.
@@ -651,7 +706,7 @@ mod tests {
     fn metadata_exposes_shared_host_without_provider_registrations() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 4);
+        assert_eq!(metadata.provides.len(), 5);
     }
 
     #[test]
