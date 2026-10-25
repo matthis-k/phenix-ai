@@ -301,6 +301,12 @@ impl<'call> Host<'call> {
     /// Enqueue a plugin-owned custom event in the current graph root.
     /// This does not synchronously recurse into another plugin or root.
     /// The kernel validates event ownership, payload schema and queue bounds.
+    /// Emit the declared event without repeating its string identity.
+    /// Offline graph ownership and runtime payload checks still apply.
+    pub fn emit_event<E: crate::GraphEventPayload>(&self, payload: &E) -> Result<(), Failure> {
+        self.emit(E::ID, payload)
+    }
+
     pub fn emit<T: Portable>(&self, event: &str, payload: &T) -> Result<(), Failure> {
         let request = WireValue::map([
             ("event", WireValue::String(event.into())),
