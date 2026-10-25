@@ -17,7 +17,7 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 | --- | --- | --- | --- | --- | --- |
 | G0 – Kernel / event SDK | kernel graph, contract graph, SDK, macros, Basic/ACP host | IMPLEMENTED, verification pending | #1147 intrinsic kernel events; #1148 in-root emission; #1149 owner settlement, typed emit, Basic/ACP begin/shutdown and dependency-ordered plugin-loaded notifications | Formatting and generated workflow passed on recent heads; Nix native shards remain gate | Exact-head native product green; cancellation/failure/pending tests; reconcile parents |
 | G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / two-contributor product pending | #1146–#1149 shared manager/owner settlement; #1150 second plain-data registration hook (five standards), typed register_all, six-provider native catalog check | Rustfmt passed earlier after corrections; full native product pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
-| G2 – Tool discovery and execution | basic-tools, tool-fixture | NOT STARTED | Current typed pull-based ToolRegistrations and ToolExecute audited | Existing baseline tests only | Declare tools.populate/ready, preserve ToolExecute contract, prove external native contribution |
+| G2 – Tool discovery and execution | basic-tools, tool-fixture | IMPLEMENTED / native acceptance pending | #1151: typed tools.populate/ready, owner onBegin→settled, attested private registry, reverse-tool hook; legacy catalog and execute contracts preserved | Rustfmt/ACP frontend passed on recent heads; native tool-population product pending | Exact-head native graph test and production compatibility, then remove redundant list boilerplate |
 | G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | NOT STARTED | Existing graph prompt and property watches inventoried (already event/reactive) | Existing baseline tests only | Add semantic turn/session events only with clear independent consumers |
 | G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | NOT STARTED | Candidate events and authoritative owners inventoried | Not applicable yet | Validate subscriber need; publish only on committed state |
 | G5 – Keep contract-oriented | storage, credentials, model transport, model fixtures, evidence-journal, environment, project-storage | REVIEWED / NO FORCED CONVERSION | Explicit 'no event' exclusions recorded in matrix | Existing contract conformance remains gate | Avoid new events for reads, CAS, tokens, or secrets |
@@ -82,6 +82,29 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   routing. Track ERG-18 as a prerequisite for the G2 migration.
 
 
+- **S11 (G2 implementation)**: draft #1151 now implements the actual
+  manager-owned `phenix.kernel.begin → phenix.tools.populate →
+  settled:phenix.tools.populate → phenix.tools.ready` flow. `basic-tools`
+  owns its registry state, validates each externally offered tool against
+  resolver-selected `ToolRegistrations::list` metadata, and pins the same
+  selected import index for execution. `tool-fixture` subscribes and calls
+  the typed registry contract while retaining its own executor.
+- **S12 (G2 reentrancy fix)**: the manager now gathers all selected tool
+  catalogs **before** emitting populate, not by invoking `list` from inside
+  the contributing plugin's active registration handler. Without this,
+  nested invocation would reenter a poisoned native instance. The same
+  attested catalog is checked again during owner settlement. New native
+  `phenix-tool-population-test` tests the complete graph followed by
+  authenticated reverse-tool execution, and the legacy pull product test
+  retains selected import grants. Acceptance still pending.
+- **S13 (G3 assessment)**: Basic Agent already has a prompt-triggered
+  graph and watched pending-model-request state; Sessions operations remain
+  selected transactional contracts. A mandatory emitted event in a
+  direct `Session::checkpoint` call would fail without a live graph root,
+  because `Host::emit_event` is intentionally same-root-only. Do not
+  introduce a second emitter or silently swallow this failure; log a
+  generic deferred semantic-notification requirement before migration.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -110,6 +133,11 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-17 | Medium | Long-lived model transport work currently relies on separate pending cancel/poll and the host's physical-lease shutdown gating; generic lifecycle pumping cannot safely force early unload (`phenix-plugin-model-http/src/lib.rs`, `phenix-kernel/src/runtime.rs`) | A shared async lifecycle controller that drains or cancels outstanding tickets *before* kernel.shutdown, preserving worker ownership; no token-level graph events | Open; generic G0, not model-http event conversion |
 
 | ERG-18 | High | Tool catalog's imported `ToolRegistrations::{list,execute}` associates routing with resolver-selected slot identity, which would be lost if a registration payload supplied an arbitrary executor name (`phenix-plugin-basic-tools`) | Preserve an attested execution capability/selected binding when moving tool descriptions into an event-driven registry; never trust contributor-supplied route indices | Open; G2 security gate |
+
+| ERG-19 | High | Tool subscriber's active handler cannot be reentered by manager calling its list contract; live registration previously queried the selected tool's list synchronously | Pin preselected contributor catalogs in manager onBegin, verify event registration against the snapshot, and preserve the imported route | **Fixed in #1151**, native product pending |
+| ERG-20 | Medium | Tool authors still define both `ToolRegistrations::list` and `ToolPopulate::register` to provide exactly the same immutable metadata, solely for authenticated routing | Generic SDK-supplied attested executor capability binding in a registration payload; stop requiring a duplicated pull list once provenance can be preserved | Open; G2 cleanup |
+| ERG-21 | High | Direct selected session/storage contracts can run outside any `GraphExecution`, but `Host::emit_event` is permitted only within one active graph root | Generic post-commit semantic notification integration from the owning graph/controller, with no nested root or silent event loss | Open; G3 prerequisite |
+| ERG-22 | Medium | Several manager/startup plugins repeat manual graph declarations even with the common `StaticGraphNode::on` constructor | Optional typed `#[phenix::on(Event)]`/on-settled sugar generated over existing M1 contracts and graph descriptors | Open; shared SDK |
 
 ### New finding policy
 
