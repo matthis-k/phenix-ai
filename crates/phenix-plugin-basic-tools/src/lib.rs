@@ -1,5 +1,6 @@
 //! Independent, session-scoped native ToolCatalog and ToolExecute provider.
 //! Admission and access control remain kernel-owned; this plugin owns tool semantics.
+mod event_registry;
 use phenix_basic_contracts::{
     error, BasicError, CatalogCursor, ErrorCode, ToolCall, ToolInfo, ToolPage, ToolQuery,
 };
