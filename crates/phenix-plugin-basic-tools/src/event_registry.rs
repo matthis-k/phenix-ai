@@ -64,22 +64,6 @@ impl Registry {
         }
     }
 
-    /// The legacy pull adapter publishes into the same generation-local
-    /// state as the event wave; a failed or aborted wave never falls back.
-    pub(crate) fn select_legacy(
-        &mut self,
-        catalog: Catalog,
-    ) -> Result<(), BasicError> {
-        if !matches!(&self.phase, Phase::Idle) {
-            return Err(error(
-                ErrorCode::Conflict,
-                "tool catalog already selected or population started",
-            ));
-        }
-        self.phase = Phase::Published(catalog);
-        Ok(())
-    }
-
     pub(crate) fn begin(
         &mut self,
         builtin: impl IntoIterator<Item = ToolInfo>,
@@ -292,45 +276,32 @@ mod tests {
     }
 
     #[test]
-    fn legacy_and_graph_snapshots_share_one_phase_and_cannot_be_reselected() {
+    fn published_catalog_is_single_authority_and_failure_is_terminal() {
         let mut graph = Registry::default();
         assert!(graph.selected().is_none());
         graph.begin([info("uppercase")]).unwrap();
         assert!(graph.selected().is_none());
-        assert!(graph
-            .select_legacy(Catalog {
-                tools: vec![],
-                routes: BTreeMap::new(),
-                revision: 1,
-            })
-            .is_err());
         let result = graph.publish(19).unwrap();
         assert_eq!(result.revision, 19);
         assert_eq!(result.tools[0].id, "uppercase");
         assert_eq!(graph.selected().unwrap().routes["uppercase"], None);
         assert!(graph.begin([info("length")]).is_err());
+        assert!(graph.publish(2).is_err());
 
+        // Direct pull admission uses begin/register/publish on this same
+        // Registry type; a published generation cannot switch to graph mode.
         let mut pull = Registry::default();
-        pull.select_legacy(Catalog {
-            tools: vec![info("uppercase")],
-            routes: BTreeMap::from([("uppercase".into(), None)]),
-            revision: 1,
-        })
-        .unwrap();
-        assert!(pull.begin([info("length")]).is_err());
+        pull.begin([info("uppercase")]).unwrap();
+        pull.publish(1).unwrap();
         assert_eq!(pull.selected().unwrap().revision, 1);
+        assert!(pull.begin([info("length")]).is_err());
 
         let mut aborted = Registry::default();
         aborted.begin([info("uppercase")]).unwrap();
         aborted.abort().unwrap();
         assert!(aborted.selected().is_none());
-        assert!(aborted
-            .select_legacy(Catalog {
-                tools: vec![],
-                routes: BTreeMap::new(),
-                revision: 1,
-            })
-            .is_err());
+        assert!(aborted.begin([info("length")]).is_err());
+        assert!(aborted.publish(1).is_err());
     }
 
     #[test]
