@@ -163,7 +163,7 @@ pub fn standard_openai_responses_model(model: &str) -> bool {
         .any(|family| {
             model == *family
                 || model
-                    .strip_prefix(family)
+                    .strip_prefix(*family)
                     .is_some_and(|suffix| suffix.starts_with('-'))
         })
 }
