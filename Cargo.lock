@@ -2097,6 +2097,7 @@ dependencies = [
 name = "phenix-plugin-provider-loopback-fixture"
 version = "0.1.0"
 dependencies = [
+ "phenix-basic-contracts",
  "phenix-provider-contracts",
  "phenix-sdk",
 ]
@@ -2106,10 +2107,10 @@ name = "phenix-plugin-provider-openai-api"
 version = "0.1.0"
 dependencies = [
  "curl",
- "phenix-provider-builtins",
  "phenix-provider-auth-strategies",
- "phenix-provider-discovery",
+ "phenix-provider-builtins",
  "phenix-provider-contracts",
+ "phenix-provider-discovery",
  "phenix-sdk",
  "serde_json",
 ]
@@ -2179,6 +2180,7 @@ dependencies = [
 name = "phenix-provider-contracts"
 version = "0.1.0"
 dependencies = [
+ "phenix-basic-contracts",
  "phenix-provider-protocols",
  "phenix-sdk",
  "serde",

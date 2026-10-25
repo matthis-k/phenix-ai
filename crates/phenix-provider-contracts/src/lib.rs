@@ -333,6 +333,60 @@ pub trait ProviderRegistrations {
     fn list(&self) -> Result<ProviderPage, ProviderError>;
 }
 
+/// A provider-facing authentication operation. Interactive flows return a
+/// challenge/attempt state; a successful profile is never inferred from a
+/// bool, a stored token, or the existence of a registration.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum AuthenticationCommand {
+    Status { query: AuthQuery },
+    Begin { request: AuthStart },
+    Poll { request: AuthAttemptQuery },
+    Cancel { request: AuthAttemptQuery },
+}
+
+/// The only outcomes exposed by the unified authentication port.
+/// An awaiting challenge is not an authenticated profile.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum AuthenticationEvent {
+    Status { value: AuthenticationStatus },
+    Challenge { value: AuthChallenge },
+    Attempt { value: AuthAttemptState },
+}
+
+/// Canonical, account-scoped inference request, not a transport configuration.
+/// The provider resolves the permitted protocol, endpoint, credentials,
+/// session-local conversation state and token limits from its private state
+/// and verified bindings, never from untrusted model output.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderCompletion {
+    pub scope: String,
+    pub provider_id: String,
+    pub connection_id: String,
+    pub profile_id: Option<String>,
+    pub model_id: String,
+    pub request: phenix_basic_contracts::ModelRequest,
+}
+
+/// The single provider execution-facing interface. Protocols, authorization
+/// schemes, streaming, conversational IDs and transport retries are internal
+/// strategies; they do not alter this client-facing operation set.
+///
+/// Providers and managers keep authoritative private Rust state. Published
+/// provider metadata grants neither a credential nor permission to invoke a
+/// model. Existing ProviderAuth/ProviderCatalog stay as transition adapters.
+#[contract(id = "phenix.provider.runtime@1")]
+pub trait ProviderRuntime {
+    fn authenticate(
+        &self,
+        command: AuthenticationCommand,
+    ) -> Result<AuthenticationEvent, ProviderError>;
+    fn models(&self, query: ModelQuery) -> Result<ModelPage, ProviderError>;
+    fn complete(
+        &self,
+        request: ProviderCompletion,
+    ) -> Result<phenix_basic_contracts::ModelReply, ProviderError>;
+}
+
 #[contract(id = "phenix.provider.catalog@1")]
 pub trait ProviderCatalog {
     fn list(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
@@ -355,6 +409,7 @@ pub trait ProviderAuth {
     define(ProviderCatalog),
     define(ProviderRegistrations),
     define(ProviderAuth),
+    define(ProviderRuntime),
     define(ProviderCredentials),
     define(HttpModelSession)
 )]
@@ -514,10 +569,56 @@ mod tests {
     }
 
     #[test]
+    fn unified_provider_port_is_typed_and_has_no_implicit_authentication() {
+        let command = AuthenticationCommand::Begin {
+            request: AuthStart {
+                scope: "user".into(),
+                provider_id: "openai".into(),
+                connection_id: "chatgpt".into(),
+                method_id: "chatgpt-sign-in".into(),
+            },
+        };
+        let encoded = command.to_value();
+        assert!(AuthenticationCommand::SCHEMA
+            .owned()
+            .unwrap()
+            .accepts(&encoded));
+        assert_eq!(AuthenticationCommand::from_value(encoded).unwrap(), command);
+
+        let waiting = AuthenticationEvent::Challenge {
+            value: AuthChallenge::OpenBrowser {
+                attempt_id: "pending-1".into(),
+                url: "https://example.test/login".into(),
+            },
+        };
+        assert_eq!(
+            AuthenticationEvent::from_value(waiting.to_value()).unwrap(),
+            waiting
+        );
+        let req = ProviderCompletion {
+            scope: "user".into(),
+            provider_id: "openai".into(),
+            connection_id: "api".into(),
+            profile_id: Some("personal".into()),
+            model_id: "example-model".into(),
+            request: phenix_basic_contracts::ModelRequest {
+                session: "session-1".into(),
+                run: "run-1".into(),
+                history: vec![],
+                tools: vec![],
+                skills: vec![],
+                context: vec![],
+                limits: phenix_basic_contracts::Limits::default(),
+            },
+        };
+        assert_eq!(ProviderCompletion::from_value(req.to_value()).unwrap(), req);
+    }
+
+    #[test]
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 5);
+        assert_eq!(metadata.definitions.len(), 6);
     }
 
     #[test]
