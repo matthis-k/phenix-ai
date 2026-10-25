@@ -203,7 +203,35 @@ mod plugin {
         host: &Host<'_>,
         request: ModelQuery,
     ) -> CallResult<ModelPage, ProviderError> {
-        check(host, &request.scope)?;
+        // The management root is intentionally not a credential root. A
+        // profile-bearing query must be invoked under the exact selected
+        // credential resource; otherwise a provider-list grant could be
+        // abused to choose an arbitrary named account.
+        let selected_identity = match request.profile_id.as_deref() {
+            Some(profile) => {
+                if request.scope != "user" {
+                    return Err(CallError::Domain(error(
+                        ProviderErrorCode::Denied,
+                        "provider management scope unauthorized",
+                    )));
+                }
+                let identity =
+                    CredentialIdentity::new(&request.provider_id, &request.connection_id, profile)
+                        .map_err(CallError::Domain)?;
+                let expected = identity.resource().map_err(CallError::Domain)?;
+                if host.resource()?.as_deref() != Some(expected.as_str()) {
+                    return Err(CallError::Domain(error(
+                        ProviderErrorCode::Denied,
+                        "model account credential root not authorized",
+                    )));
+                }
+                Some(identity)
+            }
+            None => {
+                check(host, &request.scope)?;
+                None
+            }
+        };
         let connection =
             connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
         if request.cursor.is_some() || !(1..=256).contains(&request.limit) {
@@ -212,10 +240,7 @@ mod plugin {
                 "invalid authorized model page request",
             )));
         }
-        // Catalog registration alone neither selects an authenticated account
-        // nor grants a credential import. Even a user-supplied profile ID is
-        // only a selector; the kernel must authorize a second exact resource.
-        let Some(profile) = request.profile_id.as_deref() else {
+        let Some(identity) = selected_identity else {
             return Err(CallError::Domain(missing_model_catalog(
                 !connection.auth_methods.is_empty(),
             )));
@@ -226,9 +251,6 @@ mod plugin {
                 "selected model discovery strategy is not installed",
             )));
         }
-        let identity =
-            CredentialIdentity::new(&request.provider_id, &request.connection_id, profile)
-                .map_err(CallError::Domain)?;
         let count = imports::Credentials::count(host)?;
         if count == 0 {
             return Err(CallError::Domain(error(
@@ -243,12 +265,11 @@ mod plugin {
             )));
         }
         let scope = identity.resolve_scope().map_err(CallError::Domain)?;
-        // An import slot selected with many(min=0) uses the explicit #0
-        // identity. Scoped admission checks resource AND operation at the
-        // kernel boundary, not merely the profile ID in request metadata.
+        // The selected caller root is already this exact account; the
+        // attenuated #0 credential import cannot broaden resources or ops.
         let credential =
             host.invoke_scoped::<ProviderCredentials::resolve>("Credentials#0", &scope, &identity)?;
-        super::models::discover(&connection, profile, &credential, request.limit)
+        super::models::discover(&connection, identity.profile_id(), &credential, request.limit)
             .map_err(CallError::Domain)
     }
 
