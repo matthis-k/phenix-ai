@@ -28,7 +28,9 @@ fn invoke<T: Portable>(
     selected: Selection,
     request: impl Portable,
 ) -> Result<T, String> {
-    let root = kernel.admit_root(selected.clone()).map_err(|e| format!("{e:?}"))?;
+    let root = kernel
+        .admit_root(selected.clone())
+        .map_err(|e| format!("{e:?}"))?;
     let reply = root
         .invoke_selected(&selected, &request.to_value())
         .map_err(|e| format!("{e:?}"))?;
@@ -103,14 +105,18 @@ fn run() -> Result<(), String> {
 
     // Staged state is not an independently selectable catalog.
     let catalog = selection(CATALOG, "list", HOST);
-    let root = kernel.admit_root(catalog.clone()).map_err(|e| format!("{e:?}"))?;
+    let root = kernel
+        .admit_root(catalog.clone())
+        .map_err(|e| format!("{e:?}"))?;
     let before = root
         .invoke_selected(&catalog, &scope.to_value())
         .map_err(|e| format!("{e:?}"))?;
     match before {
         Outcome::Domain(value) => {
             if !format!("{value:?}").contains("Unavailable") {
-                return Err(format!("pre-publication catalog was not unavailable: {value:?}"));
+                return Err(format!(
+                    "pre-publication catalog was not unavailable: {value:?}"
+                ));
             }
         }
         Outcome::Success(_) => return Err("staged catalog leaked before publication".into()),
@@ -127,28 +133,33 @@ fn run() -> Result<(), String> {
         )
         .map_err(|e| format!("graph population: {e:?}"))?;
     if steps.len() != 1 {
-        return Err(format!("expected one event subscriber, got {}", steps.len()));
+        return Err(format!(
+            "expected one event subscriber, got {}",
+            steps.len()
+        ));
     }
 
-    let published: ProviderPage = invoke(
-        &kernel,
-        selection(REGISTRY, "publish", HOST),
-        scope.clone(),
-    )?;
+    let published: ProviderPage =
+        invoke(&kernel, selection(REGISTRY, "publish", HOST), scope.clone())?;
     if published.revision != 1 || published.providers.len() != 6 {
-        return Err(format!("incorrect published provider snapshot: {published:?}"));
+        return Err(format!(
+            "incorrect published provider snapshot: {published:?}"
+        ));
     }
     let listed: ProviderPage = invoke(&kernel, catalog, scope)?;
     if listed != published {
         return Err("published catalog is not the host's selected catalog".into());
     }
     kernel.shutdown().map_err(|e| format!("shutdown: {e:?}"))?;
-    println!("{}", json!({
-        "format": "phenix.provider-population-product.v1",
-        "graph_steps": steps.len(),
-        "providers": published.providers.len(),
-        "revision": published.revision,
-    }));
+    println!(
+        "{}",
+        json!({
+            "format": "phenix.provider-population-product.v1",
+            "graph_steps": steps.len(),
+            "providers": published.providers.len(),
+            "revision": published.revision,
+        })
+    );
     Ok(())
 }
 
