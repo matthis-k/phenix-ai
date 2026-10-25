@@ -6,7 +6,11 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use phenix_provider_auth_strategies::ApiKeyAttempts;
-use phenix_provider_builtins::{discovered_model_page, registrations};
+use phenix_provider_builtins::{
+    declaration::{Auth, Connection, Discovery, KeyPresentation, Protocol, Provider},
+    discovered_model_page,
+};
+use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
@@ -20,6 +24,42 @@ use phenix_provider_discovery::{
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
 const MODEL_ENDPOINT: &str = "https://api.openai.com/v1/models";
+
+/// This provider owns its *data*. Shared protocols, API key handling and
+/// discovery conventions are implemented by the providers runtime/SDK.
+const OPENAI_API: Provider<'static> = Provider {
+    id: "openai",
+    name: "OpenAI",
+    connections: &[Connection {
+        id: "api",
+        name: "OpenAI API",
+        endpoint: "https://api.openai.com/v1",
+        protocols: &[Protocol::OpenAiResponses, Protocol::OpenAiChat],
+        auth: Auth::ApiKey {
+            env_hint: Some("OPENAI_API_KEY"),
+            presentation: KeyPresentation::Bearer,
+        },
+        discovery: Discovery::StandardModels("openai.models"),
+    }],
+};
+
+/// Exactly an M1 event subscription (analogous to a Neovim autocmd).
+/// The providers plugin defines and emits the shared event.
+pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
+    plugin: "phenix.provider.openai-api",
+    events: &[],
+    actions: &[],
+    nodes: &[StaticGraphNode {
+        id: "populate",
+        triggers: &["phenix.providers.populate"],
+        after: &[],
+        selector: "",
+        operation: "phenix.provider.populate@1/register",
+        writes: &[],
+        join: JoinPolicy::AllActive,
+        failure: FailurePolicy::FailRoot,
+    }],
+};
 
 #[cfg(feature = "c11-loopback-test")]
 fn test_base() -> Result<String, ProviderError> {
@@ -89,24 +129,8 @@ fn selected_profile_from_resource(
 }
 
 fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
-    let mut provider = registrations()
-        .into_iter()
-        .find(|p| p.id == PROVIDER)
-        .ok_or_else(|| {
-            error(
-                ProviderErrorCode::Unavailable,
-                "OpenAI registration missing",
-            )
-        })?;
-    provider
-        .connections
-        .retain(|connection| connection.id == CONNECTION);
-    if provider.connections.len() != 1 {
-        return Err(error(
-            ProviderErrorCode::Unavailable,
-            "OpenAI API registration invalid",
-        ));
-    }
+    use phenix_provider_contracts::ProviderDefinition;
+    let mut provider = OPENAI_API.into_descriptor()?;
     #[cfg(feature = "c11-loopback-test")]
     {
         let base = test_base()?;
@@ -198,13 +222,16 @@ fn supports_responses(model: &str) -> bool {
         slot = "Registrations"
     ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
-    require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials")
+    provide(phenix_provider_contracts::ProviderPopulate, slot = "Populate"),
+    require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials"),
+    require(phenix_provider_contracts::ProviderRegistry, slot = "Registry"),
+    graph(super::GRAPH)
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery, ProviderRegistrations,
+        ProviderQuery, ProviderRegistrations, ProviderPopulate, Providers, ProvidersPopulate,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -270,6 +297,13 @@ mod plugin {
             method_id: "api-key".into(),
             status,
         })
+    }
+
+    /// Existing M1 graph trigger. This provider only declares its data and
+    /// invokes the imported providers plugin's generic register contract.
+    #[provide(ProviderPopulate::register)]
+    fn populate(host: &Host<'_>, event: ProvidersPopulate) -> CallResult<(), ProviderError> {
+        Providers::new(host, "Registry", &event.scope).register(OPENAI_API)
     }
 
     /// A concrete provider contributes only its declaration to the manager.
@@ -517,9 +551,22 @@ mod tests {
     #[test]
     fn auth_provider_requires_separate_credential_slot() {
         let meta = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
-        assert_eq!(meta.provides.len(), 3);
-        assert_eq!(meta.requires.len(), 1);
-        assert_eq!(meta.requires[0].slot, "Credentials");
+        assert_eq!(meta.provides.len(), 4);
+        assert_eq!(meta.requires.len(), 2);
+        assert!(meta.requires.iter().any(|slot| slot.slot == "Credentials"));
+        assert!(meta.requires.iter().any(|slot| slot.slot == "Registry"));
+    }
+
+    #[test]
+    fn registration_is_only_an_existing_graph_trigger_and_import() {
+        let graph = GRAPH.owned().unwrap();
+        assert!(graph.events.is_empty());
+        assert!(graph.actions.is_empty());
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].triggers, vec!["phenix.providers.populate"]);
+        assert_eq!(graph.nodes[0].operation, "phenix.provider.populate@1/register");
+        assert_eq!(OPENAI_API.connections.len(), 1);
+        assert_eq!(descriptor().unwrap().connections[0].id, "api");
     }
 
     #[cfg(not(feature = "c11-loopback-test"))]
