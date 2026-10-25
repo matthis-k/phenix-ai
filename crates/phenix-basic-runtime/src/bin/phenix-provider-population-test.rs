@@ -48,8 +48,7 @@ fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.len() != 5 {
         return Err(
-            "usage: phenix-provider-population-test PROVIDERS OPENAI STANDARDS DEFINITIONS"
-                .into(),
+            "usage: phenix-provider-population-test PROVIDERS OPENAI STANDARDS DEFINITIONS".into(),
         );
     }
     let grant = |caller: &str, interface: &str, operation: &str| {
