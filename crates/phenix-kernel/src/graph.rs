@@ -1402,6 +1402,62 @@ mod tests {
     }
 
     #[test]
+    fn custom_event_settlement_is_owned_and_separate_from_fanout() {
+        let publisher = GraphContribution {
+            plugin: "publisher".into(),
+            events: vec![EventDefinition {
+                id: "publisher.populate".into(),
+                payload: ValueSchema::String,
+            }],
+            actions: vec![],
+            nodes: vec![node(
+                "commit",
+                &["settled:publisher.populate"],
+                &[],
+                &[],
+            )],
+        };
+        let subscriber = contribution(
+            "subscriber",
+            false,
+            vec![node("contribute", &["publisher.populate"], &[], &[])],
+        );
+        let graph = compile(&[publisher.clone(), subscriber.clone()]).unwrap();
+        assert_eq!(
+            graph
+                .activation_order(&BTreeSet::from(["publisher.populate".into()]))
+                .unwrap(),
+            ["subscriber/contribute"]
+        );
+        assert_eq!(
+            graph
+                .project_triggers(&BTreeSet::from(["settled:publisher.populate".into()]))
+                .unwrap(),
+            ["publisher/commit"]
+        );
+        assert!(graph.actions.is_empty());
+
+        let mut spoofed = subscriber;
+        spoofed.nodes.push(node(
+            "foreign-commit",
+            &["settled:publisher.populate"],
+            &[],
+            &[],
+        ));
+        assert!(compile(&[publisher.clone(), spoofed])
+            .unwrap_err()
+            .message
+            .contains("declaring owner"));
+
+        let mut missing = publisher;
+        missing.nodes[0].triggers = vec!["settled:nonexistent.populate".into()];
+        assert!(compile(&[missing])
+            .unwrap_err()
+            .message
+            .contains("absent event"));
+    }
+
+    #[test]
     fn arbitrary_plugin_events_preserve_existing_graph_contracts() {
         let declarations = vec![
             GraphContribution {
