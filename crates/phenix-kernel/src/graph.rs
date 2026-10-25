@@ -8,8 +8,8 @@ use crate::{
 };
 use phenix_contract::{
     graph_node_key, standard_lifecycle_events, state_change_property, state_change_schema,
-    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode,
-    LifecycleEvent, ScopedRequest, Value, ValueSchema,
+    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, LifecycleEvent,
+    ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -539,10 +539,7 @@ impl Kernel {
     /// graph executor and grants as every action, but cannot be submitted via
     /// the public action catalog. Begin can enter an indefinitely pending main
     /// loop; its caller must pump/cancel its GraphExecution normally.
-    pub fn begin_lifecycle(
-        &self,
-        event: LifecycleEvent,
-    ) -> Result<GraphExecution<'_>, Failure> {
+    pub fn begin_lifecycle(&self, event: LifecycleEvent) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
         if let LifecycleEvent::PluginLoaded { plugin } = &event {
             if !self.images.borrow().contains_key(plugin) {
@@ -556,9 +553,7 @@ impl Kernel {
             let state = self.state.borrow();
             let already_emitted = match &event {
                 LifecycleEvent::Begin => state.lifecycle_begin,
-                LifecycleEvent::PluginLoaded { plugin } => {
-                    state.lifecycle_loaded.contains(plugin)
-                }
+                LifecycleEvent::PluginLoaded { plugin } => state.lifecycle_loaded.contains(plugin),
                 LifecycleEvent::Shutdown => state.lifecycle_shutdown,
             };
             if already_emitted {
@@ -1119,17 +1114,15 @@ mod tests {
         let graph = compile(&[contribution(
             "alpha",
             false,
-            vec![node(
-                "a",
-                &[phenix_contract::LIFECYCLE_BEGIN],
-                &[],
-                &[],
-            )],
+            vec![node("a", &[phenix_contract::LIFECYCLE_BEGIN], &[], &[])],
         )])
         .unwrap();
-        assert_eq!(graph.activation_order(&BTreeSet::from([
-            phenix_contract::LIFECYCLE_BEGIN.into(),
-        ])).unwrap(), ["alpha/a"]);
+        assert_eq!(
+            graph
+                .activation_order(&BTreeSet::from([phenix_contract::LIFECYCLE_BEGIN.into(),]))
+                .unwrap(),
+            ["alpha/a"]
+        );
         assert!(graph.discover().next().is_none());
         assert!(graph.actions.is_empty());
     }
@@ -1140,12 +1133,7 @@ mod tests {
             contribution(
                 "alpha",
                 false,
-                vec![node(
-                    "a",
-                    &[phenix_contract::LIFECYCLE_BEGIN],
-                    &[],
-                    &[],
-                )],
+                vec![node("a", &[phenix_contract::LIFECYCLE_BEGIN], &[], &[])],
             ),
             contribution(
                 "beta",
@@ -1160,12 +1148,7 @@ mod tests {
             contribution(
                 "gamma",
                 false,
-                vec![node(
-                    "c",
-                    &[phenix_contract::LIFECYCLE_SHUTDOWN],
-                    &[],
-                    &[],
-                )],
+                vec![node("c", &[phenix_contract::LIFECYCLE_SHUTDOWN], &[], &[])],
             ),
         ];
         let graph = compile(&declarations).unwrap();
@@ -1177,7 +1160,9 @@ mod tests {
             (phenix_contract::LIFECYCLE_SHUTDOWN, "gamma/c"),
         ] {
             assert_eq!(
-                graph.activation_order(&BTreeSet::from([event.into()])).unwrap(),
+                graph
+                    .activation_order(&BTreeSet::from([event.into()]))
+                    .unwrap(),
                 [expected]
             );
         }
@@ -1186,7 +1171,10 @@ mod tests {
             id: phenix_contract::LIFECYCLE_BEGIN.into(),
             payload: ValueSchema::String,
         });
-        assert!(compile(&invalid).unwrap_err().message.contains("duplicate event"));
+        assert!(compile(&invalid)
+            .unwrap_err()
+            .message
+            .contains("duplicate event"));
     }
 
     #[test]
