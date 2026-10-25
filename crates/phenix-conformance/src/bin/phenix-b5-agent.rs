@@ -86,7 +86,7 @@ fn submit(
             // via its separately granted, explicitly ordered graph handler.
             assert_eq!(steps.len(), 2);
             assert_eq!(steps[1].node, "phenix.basic.agent/run-finished");
-            assert!(matches!(steps[1].outcome, Outcome::Success(_)));
+            assert!(matches!(&steps[1].outcome, Outcome::Success(_)));
             Ok(RunResult::from_value(value.clone()).unwrap())
         }
         Outcome::Domain(value) => {
