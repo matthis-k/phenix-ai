@@ -107,8 +107,7 @@ impl Registry {
             let mut matches = catalog.iter().filter(|candidate| candidate.id == info.id);
             match (matches.next(), matches.next()) {
                 (None, None) => {}
-                (Some(found), None)
-                    if found == &info && selected.replace(index).is_none() => {}
+                (Some(found), None) if found == &info && selected.replace(index).is_none() => {}
                 _ => return Err(reject("unverified or ambiguous selected tool route")),
             }
         }
