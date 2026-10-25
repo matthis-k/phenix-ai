@@ -1,10 +1,15 @@
 //! Generation-local staging for existing M1 provider-population graph events.
 //! A declaration is data, not authorization or an executable provider.
 use phenix_provider_builtins::merge_registration_pages;
-use phenix_provider_contracts::{ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderPage};
+use phenix_provider_contracts::{
+    ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderPage,
+};
 
 fn issue(code: ProviderErrorCode, message: &str) -> ProviderError {
-    ProviderError { code, message: message.into() }
+    ProviderError {
+        code,
+        message: message.into(),
+    }
 }
 
 #[derive(Default)]
@@ -84,7 +89,10 @@ impl Registry {
         }])
         .map_err(|_| issue(ProviderErrorCode::InvalidInput, "invalid provider catalog"))?;
         self.phase = Phase::Published;
-        Ok(ProviderPage { providers, revision: 1 })
+        Ok(ProviderPage {
+            providers,
+            revision: 1,
+        })
     }
 
     pub(crate) fn abort(&mut self) -> Result<(), ProviderError> {
@@ -114,7 +122,10 @@ mod tests {
         );
         registry.begin().unwrap();
         assert!(registry.is_populating());
-        assert_eq!(registry.begin().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.begin().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
         registry.register(providers[1].clone()).unwrap();
         registry.register(providers[0].clone()).unwrap();
         let catalog = registry.publish().unwrap();
@@ -123,12 +134,18 @@ mod tests {
         assert_eq!(catalog.providers[0].id, "openai");
         assert_eq!(catalog.providers[1].id, "openrouter");
         assert_eq!(catalog.revision, 1);
-        assert_eq!(registry.publish().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.publish().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
         assert_eq!(
             registry.register(providers[2].clone()).unwrap_err().code,
             ProviderErrorCode::Conflict
         );
-        assert_eq!(registry.abort().unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.abort().unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
     }
 
     #[test]
@@ -162,7 +179,10 @@ mod tests {
             ProviderErrorCode::InvalidInput
         );
         registry.register(oauth).unwrap();
-        assert_eq!(registry.publish().unwrap().providers[0].connections.len(), 2);
+        assert_eq!(
+            registry.publish().unwrap().providers[0].connections.len(),
+            2
+        );
     }
 
     #[test]
@@ -170,12 +190,18 @@ mod tests {
         let providers = registrations();
         let mut registry = Registry::default();
         registry.begin().unwrap();
-        assert_eq!(registry.publish().unwrap_err().code, ProviderErrorCode::Unavailable);
+        assert_eq!(
+            registry.publish().unwrap_err().code,
+            ProviderErrorCode::Unavailable
+        );
         registry.register(providers[0].clone()).unwrap();
         registry.abort().unwrap();
         assert!(!registry.is_populating());
         registry.begin().unwrap();
         registry.register(providers[1].clone()).unwrap();
-        assert_eq!(registry.publish().unwrap().providers, vec![providers[1].clone()]);
+        assert_eq!(
+            registry.publish().unwrap().providers,
+            vec![providers[1].clone()]
+        );
     }
 }
