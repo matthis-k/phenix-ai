@@ -81,7 +81,10 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(descriptors.len(), 5);
-        let ids = descriptors.iter().map(|p| p.id.as_str()).collect::<BTreeSet<_>>();
+        let ids = descriptors
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), 5);
         assert!(!ids.contains("openai"));
         assert!(ids.contains("anthropic"));
