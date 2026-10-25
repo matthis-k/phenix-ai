@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     denied_resolver = call(child, 10, "_phenix/credentials/resolve", account)
     assert denied_resolver["error"]["code"] == -32601
     granted = call(child, 8, "_phenix/credentials/capabilities", {})
-    assert granted["result"] == dict(**account, **{"import": True, "revoke": True})
+    assert granted["result"] == dict(**account, **{"import": True, "bind_environment": False, "revoke": True})
     providers = call(child, 7, "_phenix/providers/list", {"scope": "user"})
     assert providers["result"]["revision"] > 0
     assert "openai" in {item["id"] for item in providers["result"]["providers"]}
@@ -220,8 +220,8 @@ with tempfile.TemporaryDirectory(prefix="phenix-acp-credentials-") as temporary:
     capability = call(child, 2, "_phenix/credentials/capabilities", {})
     eligible = capability["result"]["profiles"]
     assert eligible == [
-        dict(**account, **{"import": True, "revoke": True}),
-        dict(**other, **{"import": True, "revoke": True}),
+        dict(**account, **{"import": True, "bind_environment": False, "revoke": True}),
+        dict(**other, **{"import": True, "bind_environment": False, "revoke": True}),
     ], eligible
     assert call(child, 3, "_phenix/credentials/import", dict(
         **account, secret=secret))["result"] == {"ok": True}
