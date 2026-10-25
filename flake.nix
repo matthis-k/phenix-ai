@@ -1637,9 +1637,9 @@
       };
       providerPopulationProductCheck = pkgs.runCommand "phenix-provider-population-product" { } ''
         mkdir -p $out
-        ${providerPopulationTestBinary}/bin/phenix-provider-population-test \\
-          ${providerHostPlugin} \\
-          ${providerPopulateBuiltinsPlugin} \\
+        ${providerPopulationTestBinary}/bin/phenix-provider-population-test \
+          ${providerHostPlugin} \
+          ${providerPopulateBuiltinsPlugin} \
           ${providerDefinitions} > $out/verified.json
         test -s $out/verified.json
       '';
