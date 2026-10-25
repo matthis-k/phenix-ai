@@ -232,6 +232,26 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   publication visibility, route preservation, terminal abort and no reentry.
   Native B3, tool-population, ACP and Nix acceptance pending.
 
+- **S31 (native grant and hook graph acceptance)**: #1151 now owns the
+  B5 conformance grants for ToolStartup/ToolSettlement; #1152 continues
+  to own the AgentRunFinished grant and ordered success/failure assertions.
+  The external tool fixture's ToolRegistry dependency is Optional at
+  startup because its handler is graph-triggered after initialization.
+  Invoking the selected registry remains scoped and authorized; the
+  resolver still rejects genuinely required dependency cycles.
+- **S32 (G2 failure-atomic compatibility selection)**: the shared tool
+  Registry now exposes `from_selected` for the transitional pull path.
+  It prevalidates all resolver-selected contributors into a temporary
+  candidate and publishes it only after the whole catalog passes.
+  Transient unavailable imports or duplicate/invalid declarations cannot
+  strand the manager in Collecting or expose a partial snapshot.
+  Includes rejection and successful-route unit tests.
+- **S33 (G1 provider native boundary)**: native host API-key product's
+  explicit owner-scoped startup and settlement graph grants are now
+  committed in #1150 and inherited through #1154. No kernel permission
+  inference was added. All five PRs remain draft pending native Nix
+  acceptance on the exact revised heads.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
