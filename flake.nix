@@ -1693,6 +1693,10 @@
         { caller = "phenix.basic.agent"; key = "phenix.basic.model@1/complete"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.catalog@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.tool@1/execute"; }
+        # The tool manager owns these graph lifecycle handlers. Neither
+        # event registration nor execution is implicitly authorized.
+        { caller = "phenix.basic.tools"; key = "phenix.tools.startup@1/begin"; }
+        { caller = "phenix.basic.tools"; key = "phenix.tools.settlement@1/complete"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.skills@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.context@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/open"; }
