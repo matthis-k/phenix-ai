@@ -342,6 +342,21 @@ pub struct ProvidersPopulate {
     pub scope: String,
 }
 
+/// Ordinary M1 graph node entry point used by declaration contributors.
+/// The payload is identical to the existing populate event schema.
+#[contract(id = "phenix.provider.populate@1")]
+pub trait ProviderPopulate {
+    fn register(&self, event: ProvidersPopulate) -> Result<(), ProviderError>;
+}
+
+#[action(
+    id = "phenix.providers.populate-action",
+    event = "phenix.providers.populate",
+    description = "Populate the selected generation's provider catalog",
+    requires = "phenix.provider.populate@1/register"
+)]
+pub struct PopulateProviders;
+
 /// One provider declaration contributed during a graph population wave.
 /// The caller's *actual* plugin identity and grant are verified by the kernel;
 /// neither identity nor authority comes from this untrusted payload.
@@ -481,6 +496,7 @@ pub trait ProviderAuth {
     define(ProviderCatalog),
     define(ProviderRegistrations),
     define(ProviderRegistry),
+    define(ProviderPopulate),
     define(ProviderAuth),
     define(ProviderRuntime),
     define(ProviderCredentials),
@@ -691,7 +707,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 7);
+        assert_eq!(metadata.definitions.len(), 8);
     }
 
     #[test]
