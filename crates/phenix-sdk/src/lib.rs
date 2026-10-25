@@ -81,16 +81,8 @@ mod graph_declaration_tests {
                     "example.task@1/finish",
                 )
                 .after(&["example/zeta", "example/alpha"]),
-                StaticGraphNode::on(
-                    "zeta",
-                    &["example.zeta"],
-                    "example.task@1/zeta",
-                ),
-                StaticGraphNode::on(
-                    "alpha",
-                    &["example.alpha"],
-                    "example.task@1/alpha",
-                ),
+                StaticGraphNode::on("zeta", &["example.zeta"], "example.task@1/zeta"),
+                StaticGraphNode::on("alpha", &["example.alpha"], "example.task@1/alpha"),
             ],
         };
         const SECOND: StaticGraphContribution = StaticGraphContribution {
@@ -98,22 +90,14 @@ mod graph_declaration_tests {
             events: &[ALPHA, ZETA],
             actions: &[A, B],
             nodes: &[
-                StaticGraphNode::on(
-                    "alpha",
-                    &["example.alpha"],
-                    "example.task@1/alpha",
-                ),
+                StaticGraphNode::on("alpha", &["example.alpha"], "example.task@1/alpha"),
                 StaticGraphNode::on(
                     "finish",
                     &["example.alpha", "example.zeta"],
                     "example.task@1/finish",
                 )
                 .after(&["example/alpha", "example/zeta"]),
-                StaticGraphNode::on(
-                    "zeta",
-                    &["example.zeta"],
-                    "example.task@1/zeta",
-                ),
+                StaticGraphNode::on("zeta", &["example.zeta"], "example.task@1/zeta"),
             ],
         };
         const FIRST_BYTES: MetadataBytes = descriptor::static_metadata::graph(FIRST);
