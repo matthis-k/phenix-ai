@@ -1350,7 +1350,7 @@ mod tests {
         assert!(compile(&invalid)
             .unwrap_err()
             .message
-            .contains("duplicate event"));
+            .contains("plugin cannot declare kernel lifecycle events"));
     }
 
     #[test]
