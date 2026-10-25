@@ -105,19 +105,23 @@ mod graph_declaration_tests {
         let canonical = FIRST.owned().unwrap();
         assert_eq!(FIRST_BYTES.bytes(), SECOND_BYTES.bytes());
         assert_eq!(FIRST_BYTES.bytes(), canonical.encode().unwrap());
-        assert_eq!(SECOND_BYTES.bytes(), SECOND.owned().unwrap().encode().unwrap());
+        assert_eq!(
+            SECOND_BYTES.bytes(),
+            SECOND.owned().unwrap().encode().unwrap()
+        );
         assert_eq!(
             GraphContribution::decode(FIRST_BYTES.bytes()).unwrap(),
             canonical
         );
         assert_eq!(
-            canonical.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
+            canonical
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
             ["alpha", "finish", "zeta"]
         );
-        assert_eq!(
-            canonical.nodes[1].after,
-            ["example/alpha", "example/zeta"]
-        );
+        assert_eq!(canonical.nodes[1].after, ["example/alpha", "example/zeta"]);
     }
 
     #[test]
