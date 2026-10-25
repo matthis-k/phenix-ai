@@ -1032,9 +1032,11 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 6
+        assert len(report["definitions"]) == 8, report["definitions"]
         assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
+        assert "phenix.provider.registry@1" in report["definitions"], report
+        assert "phenix.provider.populate@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
         assert "phenix.provider.http-model-session@1" in report["definitions"]
         assert report["plugin"] == "phenix.provider-contracts"
