@@ -108,9 +108,10 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 - **S14 (G3 Basic Agent implementation)**: draft #1152 declares
   `phenix.agent.run-finished` as a plugin-owned typed event and adds an
   explicit graph node ordered **after** the existing pending
-  `phenix.basic.agent/submit` operation. The agent saves only the successful
-  ephemeral `RunResult` receipt; it checks session scope and emits the
-  event after durable checkpoint/journal completion. The event contains only
+  `phenix.basic.agent/submit` operation. The agent saves only a
+  redacted ephemeral `AgentRunFinished` notice (no answer or transcript);
+  it checks session scope and emits that notice after durable
+  checkpoint/journal completion. The event contains only
   session/run identities and model/tool counts. Direct Model, Tool, Session,
   Journal, and Storage contracts are unchanged, and the staged-graph
   reprepare path emits no fabricated final answer.
