@@ -623,7 +623,10 @@ impl<'a, 'b> Tools<'a, 'b> {
         self.host.invoke::<ToolRegistry::register>(self.slot, &tool)
     }
 
-    pub fn register_all(&self, tools: impl IntoIterator<Item = ToolInfo>) -> CallResult<(), BasicError> {
+    pub fn register_all(
+        &self,
+        tools: impl IntoIterator<Item = ToolInfo>,
+    ) -> CallResult<(), BasicError> {
         for tool in tools {
             self.register(tool)?;
         }
