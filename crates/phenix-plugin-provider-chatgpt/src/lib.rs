@@ -4,6 +4,7 @@
 //! after an exact loopback callback, issued-client token exchange, signed OIDC
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
+use phenix_provider_auth_strategies::BrowserAttempt;
 use phenix_provider_builtins::registrations;
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
@@ -13,12 +14,12 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_protocols::{
-    oauth_loopback::{CallbackError, OAuthLoopbackListener},
+    oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
     siwc_transport::{exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
     siwc_verified::{
-        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity, GeneratedPkce,
+        refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
         VerificationError, VerifiedChatGptIdentity,
     },
 };
@@ -229,8 +230,7 @@ fn require_attempt_owner(
 struct Pending {
     expires_at: Instant,
     identity: CredentialIdentity,
-    listener: OAuthLoopbackListener,
-    pkce: GeneratedPkce,
+    browser: BrowserAttempt,
     /// Credential generation captured at browser begin. The callback
     /// cannot replace any newer login, refresh, or revocation of this account.
     prior: StoredOAuth,
@@ -538,9 +538,7 @@ mod plugin {
         let pending = |expires_at: Instant| Pending {
             expires_at,
             identity: identity.clone(),
-            listener: OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
-                .unwrap(),
-            pkce: GeneratedPkce::new(),
+            browser: BrowserAttempt::new(Duration::from_secs(MAX_ATTEMPT_SECONDS)).unwrap(),
             prior: StoredOAuth {
                 host_id: "urn:uuid:123e4567-e89b-12d3-a456-426614174000".into(),
                 registration_client_id: None,
@@ -790,10 +788,9 @@ mod plugin {
             return Err(CallError::Domain(unavailable("too many OAuth attempts")));
         }
         let record = stored_or_new(host, &identity)?;
-        let listener = OAuthLoopbackListener::bind(Duration::from_secs(MAX_ATTEMPT_SECONDS))
+        let browser = BrowserAttempt::new(Duration::from_secs(MAX_ATTEMPT_SECONDS))
             .map_err(|_| CallError::Domain(unavailable("could not bind OAuth callback")))?;
-        let pkce = GeneratedPkce::new();
-        let redirect_uri = listener.redirect_uri();
+        let redirect_uri = browser.redirect_uri();
         let registration = match record.returning_client_id() {
             Some(issued_client_id) => Registration::Returning {
                 issued_client_id,
@@ -808,9 +805,9 @@ mod plugin {
             registration,
             host_id: &record.host_id,
             redirect_uri: &redirect_uri,
-            state: pkce.state(),
-            nonce: pkce.nonce(),
-            pkce_challenge: pkce.challenge(),
+            state: browser.state(),
+            nonce: browser.nonce(),
+            pkce_challenge: browser.challenge(),
         };
         let url = attempt
             .authorization_url()
@@ -821,8 +818,7 @@ mod plugin {
             Pending {
                 expires_at: Instant::now() + Duration::from_secs(MAX_ATTEMPT_SECONDS),
                 identity,
-                listener,
-                pkce,
+                browser,
                 prior: record,
             },
         );
@@ -854,7 +850,7 @@ mod plugin {
         let Some(mut pending) = state.attempts.remove(&query.attempt_id) else {
             return Err(CallError::Domain(unavailable("OAuth attempt disappeared")));
         };
-        let callback = match pending.listener.poll() {
+        let callback = match pending.browser.poll() {
             Ok(None) => {
                 state.attempts.insert(query.attempt_id, pending);
                 return Ok(AuthAttemptState::Pending);
@@ -867,7 +863,7 @@ mod plugin {
                 })
             }
         };
-        let redirect = pending.listener.redirect_uri();
+        let redirect = pending.browser.redirect_uri();
         let registration = match pending.prior.returning_client_id() {
             Some(issued_client_id) => Registration::Returning {
                 issued_client_id,
@@ -882,9 +878,9 @@ mod plugin {
             registration,
             host_id: &pending.prior.host_id,
             redirect_uri: &redirect,
-            state: pending.pkce.state(),
-            nonce: pending.pkce.nonce(),
-            pkce_challenge: pending.pkce.challenge(),
+            state: pending.browser.state(),
+            nonce: pending.browser.nonce(),
+            pkce_challenge: pending.browser.challenge(),
         };
         let result = (|| -> CallResult<(VerifiedChatGptIdentity, StoredOAuth), ProviderError> {
             let correlated = attempt
@@ -914,7 +910,7 @@ mod plugin {
             // dropping it clears its allocation on both successful and failed
             // transport paths, without illegally moving from a Zeroizing guard.
             let form = correlated
-                .exchange_form(pending.pkce.verifier())
+                .exchange_form(pending.browser.verifier())
                 .map_err(|_| CallError::Domain(denied("invalid OAuth exchange")))?;
             let tokens = exchange_token(&form)
                 .map_err(|error| CallError::Domain(token_exchange_error(error)))?;
@@ -924,7 +920,7 @@ mod plugin {
                 &tokens,
                 &jwks,
                 &client_id,
-                pending.pkce.nonce(),
+                pending.browser.nonce(),
                 pending
                     .prior
                     .account
@@ -939,7 +935,7 @@ mod plugin {
             let account = OAuthAccount {
                 subject: verified.subject().to_owned(),
                 issued_client_id: verified.issued_client_id().to_owned(),
-                id_token_nonce: pending.pkce.nonce().to_owned(),
+                id_token_nonce: pending.browser.nonce().to_owned(),
                 access_token: tokens.access_token.clone(),
                 refresh_token: tokens.refresh_token.clone(),
                 id_token: tokens.id_token.clone(),
