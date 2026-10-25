@@ -2071,8 +2071,8 @@ dependencies = [
 name = "phenix-plugin-provider-chatgpt"
 version = "0.1.0"
 dependencies = [
- "phenix-provider-discovery",
  "curl",
+ "phenix-provider-discovery",
  "phenix-provider-builtins",
  "phenix-provider-contracts",
  "phenix-provider-protocols",
