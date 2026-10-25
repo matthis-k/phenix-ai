@@ -1621,6 +1621,29 @@
         ./tests/generation-identity-v2.json
       ];
       basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
+      # Native end-to-end event population, driven by a small product test
+      # binary outside the kernel. Uses the existing GraphExecution API.
+      providerPopulationTestBinary = rust.buildRustPackage {
+        pname = "phenix-provider-population-test";
+        version = "0.1.0";
+        src = basicRuntimeSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--bin" "phenix-provider-population-test" ];
+        doCheck = false;
+        installPhase = ''
+          mkdir -p $out/bin
+          cp target/*/release/phenix-provider-population-test $out/bin/
+        '';
+      };
+      providerPopulationProductCheck = pkgs.runCommand "phenix-provider-population-product" { } ''
+        mkdir -p $out
+        ${providerPopulationTestBinary}/bin/phenix-provider-population-test \\
+          ${providerHostPlugin} \\
+          ${providerPopulateBuiltinsPlugin} \\
+          ${providerDefinitions} > $out/verified.json
+        test -s $out/verified.json
+      '';
+
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
@@ -3097,6 +3120,7 @@
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-populate-builtins-plugin = providerPopulateBuiltinsPlugin;
+        provider-population-product = providerPopulationProductCheck;
         provider-host-plugin = providerHostPlugin;
         provider-host-api-key-product = providerHostApiKeyProductCheck;
         provider-openai-api = providerOpenAiApi;
