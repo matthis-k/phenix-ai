@@ -333,7 +333,10 @@ mod plugin {
                 "provider catalog is already selected",
             )));
         }
-        state.registry.register(request.provider).map_err(CallError::Domain)
+        state
+            .registry
+            .register(request.provider)
+            .map_err(CallError::Domain)
     }
 
     /// The population controller invokes publish *after* the graph completes.
