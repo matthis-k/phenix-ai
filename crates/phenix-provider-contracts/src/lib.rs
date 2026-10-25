@@ -379,6 +379,15 @@ pub trait ProviderSettlement {
     fn complete(&self, event: ProvidersPopulated) -> Result<(), ProviderError>;
 }
 
+/// Committed catalog notice. Observed only after a successful, atomically
+/// selected provider catalog; never carries credentials or profiles.
+#[event(id = "phenix.providers.ready")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProvidersReady {
+    pub scope: String,
+    pub revision: u64,
+}
+
 /// One provider declaration contributed during a graph population wave.
 /// The caller's *actual* plugin identity and grant are verified by the kernel;
 /// neither identity nor authority comes from this untrusted payload.
@@ -725,6 +734,13 @@ mod tests {
             },
         };
         assert_eq!(ProviderCompletion::from_value(req.to_value()).unwrap(), req);
+    }
+
+    #[test]
+    fn ready_event_has_typed_scope_and_revision_only() {
+        assert_eq!(ProvidersReady::EVENT.id, "phenix.providers.ready");
+        let notice = ProvidersReady { scope: "user".into(), revision: 1 };
+        assert_eq!(ProvidersReady::from_value(notice.to_value()).unwrap(), notice);
     }
 
     #[test]
