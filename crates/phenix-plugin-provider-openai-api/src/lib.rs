@@ -162,13 +162,15 @@ fn fetch_models(
         CatalogFetchError::Rejected => {
             error(ProviderErrorCode::Denied, "OpenAI models request denied")
         }
-        CatalogFetchError::TooLarge => {
-            error(ProviderErrorCode::Unavailable, "OpenAI model catalog too large")
-        }
+        CatalogFetchError::TooLarge => error(
+            ProviderErrorCode::Unavailable,
+            "OpenAI model catalog too large",
+        ),
         CatalogFetchError::InvalidBearer => invalid("invalid OpenAI API key encoding"),
-        CatalogFetchError::UnsafeEndpoint => {
-            error(ProviderErrorCode::Denied, "invalid OpenAI model catalog endpoint")
-        }
+        CatalogFetchError::UnsafeEndpoint => error(
+            ProviderErrorCode::Denied,
+            "invalid OpenAI model catalog endpoint",
+        ),
     })?;
     parse_model_ids(&body)
 }
