@@ -53,8 +53,7 @@ pub fn standard_bearer_key(connection: &ConnectionDescriptor, method_id: &str) -
                 .config
                 .decode::<ApiKeyOptions>()
                 .is_ok_and(|options| {
-                    options.validate().is_ok()
-                        && options.presentation == ApiKeyPresentation::Bearer
+                    options.validate().is_ok() && options.presentation == ApiKeyPresentation::Bearer
                 })
     })
 }
