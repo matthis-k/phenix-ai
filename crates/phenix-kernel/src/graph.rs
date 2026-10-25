@@ -35,6 +35,8 @@ pub struct CompiledGraph {
     pub identity: String,
     pub nodes: BTreeMap<String, CompiledNode>,
     pub events: BTreeMap<String, EventDefinition>,
+    /// The declaring plugin alone can emit each custom event from a live call.
+    pub event_owners: BTreeMap<String, String>,
     pub actions: BTreeMap<String, ActionInfo>,
     /// Static predecessor constraints; NOT an activation list.
     pub predecessors: BTreeMap<String, BTreeSet<String>>,
@@ -89,12 +91,14 @@ impl CompiledGraph {
             .into_iter()
             .map(|event| (event.id.clone(), event))
             .collect();
+        let mut event_owners = BTreeMap::<String, String>::new();
         let mut action_defs = BTreeMap::<String, ActionDefinition>::new();
         let mut nodes = BTreeMap::new();
         let mut predecessors = BTreeMap::new();
 
         for declaration in &normalized {
             for event in &declaration.events {
+                event_owners.insert(event.id.clone(), declaration.plugin.clone());
                 if events.insert(event.id.clone(), event.clone()).is_some() {
                     return Err(invalid(format!("duplicate event {}", event.id)));
                 }
@@ -197,6 +201,7 @@ impl CompiledGraph {
             identity,
             nodes,
             events,
+            event_owners,
             actions,
             predecessors,
             order,
@@ -1273,6 +1278,7 @@ mod tests {
             ["openai/register"]
         );
         assert!(graph.actions.is_empty());
+        assert_eq!(graph.event_owners["phenix.providers.populate"], "phenix.providers");
         let mut bad = declarations;
         bad[0].events[0].id = "phenix.kernel.fabricated".into();
         assert!(compile(&bad).is_err());
