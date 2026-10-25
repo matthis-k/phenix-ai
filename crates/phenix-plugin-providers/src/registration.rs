@@ -201,7 +201,8 @@ mod tests {
         let mut graph = Registry::default();
         graph.begin().unwrap();
         assert_eq!(
-            graph.select_legacy(vec![providers[0].clone()])
+            graph
+                .select_legacy(vec![providers[0].clone()])
                 .unwrap_err()
                 .code,
             ProviderErrorCode::Conflict
@@ -211,7 +212,8 @@ mod tests {
         let page = graph.publish().unwrap();
         assert_eq!(graph.selected(), Some(page.providers.as_slice()));
         assert_eq!(
-            graph.select_legacy(vec![providers[1].clone()])
+            graph
+                .select_legacy(vec![providers[1].clone()])
                 .unwrap_err()
                 .code,
             ProviderErrorCode::Conflict
@@ -222,7 +224,8 @@ mod tests {
         failed.abort().unwrap();
         assert!(failed.selected().is_none());
         assert_eq!(
-            failed.select_legacy(vec![providers[0].clone()])
+            failed
+                .select_legacy(vec![providers[0].clone()])
                 .unwrap_err()
                 .code,
             ProviderErrorCode::Conflict
