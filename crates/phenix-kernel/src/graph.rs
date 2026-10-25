@@ -1379,7 +1379,10 @@ mod tests {
             ["openai/register"]
         );
         assert!(graph.actions.is_empty());
-        assert_eq!(graph.event_owners["phenix.providers.populate"], "phenix.providers");
+        assert_eq!(
+            graph.event_owners["phenix.providers.populate"],
+            "phenix.providers"
+        );
         let mut bad = declarations;
         bad[0].events[0].id = "phenix.kernel.fabricated".into();
         assert!(compile(&bad).is_err());
