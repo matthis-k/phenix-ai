@@ -100,9 +100,7 @@ fn relocate_loopback_endpoints(
         if let Some(endpoint) = protocol.endpoint.as_deref() {
             let suffix = endpoint
                 .strip_prefix("https://api.openai.com/v1/")
-                .ok_or_else(|| {
-                    error(ProviderErrorCode::Denied, "unexpected protocol endpoint")
-                })?;
+                .ok_or_else(|| error(ProviderErrorCode::Denied, "unexpected protocol endpoint"))?;
             protocol.endpoint = Some(format!("{base}/{suffix}"));
         }
     }
