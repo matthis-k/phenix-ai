@@ -211,6 +211,15 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   but exact-head native/Nix and ACP acceptance are still running.
   All PRs remain draft until those gates succeed.
 
+- **S29 (G0 typed operation subscriptions, draft next lane)**: SDK
+  `on_event!` now accepts an `Operation` marker type as its third argument,
+  deriving the event ID from `GraphEventPayload::ID` and the exact operation
+  from `Operation::KEY`. The legacy literal operation variant is retained
+  unchanged for compatibility; typed bindings compile to the same static
+  descriptor and kernel authority path. Migrated provider-openai,
+  provider-standards, and tool-fixture, and added a test asserting exact
+  canonical metadata byte equivalence. Native acceptance pending.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -243,7 +252,7 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-19 | High | Tool subscriber's active handler cannot be reentered by manager calling its list contract; live registration previously queried the selected tool's list synchronously | Pin preselected contributor catalogs in manager onBegin, verify event registration against the snapshot, and preserve the imported route | **Fixed in #1151**, native product pending |
 | ERG-20 | Medium | Tool authors still define both `ToolRegistrations::list` and `ToolPopulate::register` to provide exactly the same immutable metadata, solely for authenticated routing | Generic SDK-supplied attested executor capability binding in a registration payload; stop requiring a duplicated pull list once provenance can be preserved | Open; G2 cleanup |
 | ERG-21 | High | Direct selected session/storage contracts can run outside any `GraphExecution`, but `Host::emit_event` is permitted only within one active graph root | Generic post-commit semantic notification integration from the owning graph/controller, with no nested root or silent event loss | Open; G3 prerequisite |
-| ERG-22 | Medium | Several manager/startup plugins repeat manual graph declarations even with the common `StaticGraphNode::on` constructor | Optional typed `#[phenix::on(Event)]`/on-settled sugar generated over existing M1 contracts and graph descriptors | **Partially implemented in #1152** via typed on_event!; on-settled/handler generation still open |
+| ERG-22 | Medium | Several manager/startup plugins repeat manual graph declarations even with the common `StaticGraphNode::on` constructor | Optional typed `#[phenix::on(Event)]`/on-settled sugar generated over existing M1 contracts and graph descriptors | **Partially implemented in #1152** via typed on_event! now also infers Operation::KEY in follow-up draft; on-settled/handler generation still open |
 
 | ERG-23 | Medium | A graph successor receives its triggering event payload, not the finished predecessor's typed result, so Basic Agent currently retains an ephemeral completed RunResult for its ordered notification node | Add type-checked predecessor-result binding to the existing graph SDK (not a general event bus), or generated `#[on_completed(BasicInput::submit)]` lowering; preserve authority and cancellation | Open; G3 SDK ergonomics |
 | ERG-24 | Medium | Agent's non-staged submit and staged-model continuation have different terminal steps; blindly emitting run-finished on each reprepare wave would fabricate completion | Introduce a terminal-only semantic completion continuation for staged graph based on `TurnAdvanceOutcome::Complete`, never `Reprepare` | **Implemented in #1152**, native acceptance pending |
