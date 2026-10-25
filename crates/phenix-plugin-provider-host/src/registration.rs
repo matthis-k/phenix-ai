@@ -29,7 +29,10 @@ impl Registry {
     /// Called by the authorized controller *before* triggering graph nodes.
     pub(crate) fn begin(&mut self) -> Result<(), ProviderError> {
         if !matches!(&self.phase, Phase::Idle) {
-            return Err(issue(ProviderErrorCode::Conflict, "provider population already begun"));
+            return Err(issue(
+                ProviderErrorCode::Conflict,
+                "provider population already begun",
+            ));
         }
         self.phase = Phase::Collecting(Vec::new());
         Ok(())
@@ -39,7 +42,10 @@ impl Registry {
     /// Distinct connections can share a provider ID; conflicting ones cannot.
     pub(crate) fn register(&mut self, provider: ProviderDescriptor) -> Result<(), ProviderError> {
         let Phase::Collecting(pending) = &mut self.phase else {
-            return Err(issue(ProviderErrorCode::Conflict, "provider population is not active"));
+            return Err(issue(
+                ProviderErrorCode::Conflict,
+                "provider population is not active",
+            ));
         };
         let mut candidate = pending.clone();
         candidate.push(provider);
@@ -47,7 +53,12 @@ impl Registry {
             providers: candidate.clone(),
             revision: 1,
         }])
-        .map_err(|_| issue(ProviderErrorCode::InvalidInput, "invalid or conflicting provider declaration"))?;
+        .map_err(|_| {
+            issue(
+                ProviderErrorCode::InvalidInput,
+                "invalid or conflicting provider declaration",
+            )
+        })?;
         *pending = candidate;
         Ok(())
     }
@@ -56,10 +67,16 @@ impl Registry {
     /// A failed graph may abort; it cannot expose intermediate registrations.
     pub(crate) fn publish(&mut self) -> Result<ProviderPage, ProviderError> {
         let Phase::Collecting(pending) = &self.phase else {
-            return Err(issue(ProviderErrorCode::Conflict, "provider population is not active"));
+            return Err(issue(
+                ProviderErrorCode::Conflict,
+                "provider population is not active",
+            ));
         };
         if pending.is_empty() {
-            return Err(issue(ProviderErrorCode::Unavailable, "no provider declarations registered"));
+            return Err(issue(
+                ProviderErrorCode::Unavailable,
+                "no provider declarations registered",
+            ));
         }
         let providers = merge_registration_pages([ProviderPage {
             providers: pending.clone(),
@@ -72,7 +89,10 @@ impl Registry {
 
     pub(crate) fn abort(&mut self) -> Result<(), ProviderError> {
         if !matches!(&self.phase, Phase::Collecting(_)) {
-            return Err(issue(ProviderErrorCode::Conflict, "provider population is not active"));
+            return Err(issue(
+                ProviderErrorCode::Conflict,
+                "provider population is not active",
+            ));
         }
         self.phase = Phase::Idle;
         Ok(())
@@ -88,7 +108,10 @@ mod tests {
     fn graph_population_is_invisible_until_published() {
         let providers = registrations();
         let mut registry = Registry::default();
-        assert_eq!(registry.register(providers[0].clone()).unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.register(providers[0].clone()).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
         registry.begin().unwrap();
         assert!(registry.is_populating());
         assert_eq!(registry.begin().unwrap_err().code, ProviderErrorCode::Conflict);
@@ -101,7 +124,10 @@ mod tests {
         assert_eq!(catalog.providers[1].id, "openrouter");
         assert_eq!(catalog.revision, 1);
         assert_eq!(registry.publish().unwrap_err().code, ProviderErrorCode::Conflict);
-        assert_eq!(registry.register(providers[2].clone()).unwrap_err().code, ProviderErrorCode::Conflict);
+        assert_eq!(
+            registry.register(providers[2].clone()).unwrap_err().code,
+            ProviderErrorCode::Conflict
+        );
         assert_eq!(registry.abort().unwrap_err().code, ProviderErrorCode::Conflict);
     }
 
@@ -111,7 +137,10 @@ mod tests {
         let mut registry = Registry::default();
         registry.begin().unwrap();
         registry.register(providers[0].clone()).unwrap();
-        assert_eq!(registry.register(providers[0].clone()).unwrap_err().code, ProviderErrorCode::InvalidInput);
+        assert_eq!(
+            registry.register(providers[0].clone()).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
         let catalog = registry.publish().unwrap();
         assert_eq!(catalog.providers, vec![providers[0].clone()]);
     }
@@ -128,7 +157,10 @@ mod tests {
         registry.register(api).unwrap();
         let mut wrong_label = oauth.clone();
         wrong_label.label = "Spoofed OpenAI".into();
-        assert_eq!(registry.register(wrong_label).unwrap_err().code, ProviderErrorCode::InvalidInput);
+        assert_eq!(
+            registry.register(wrong_label).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
         registry.register(oauth).unwrap();
         assert_eq!(registry.publish().unwrap().providers[0].connections.len(), 2);
     }
