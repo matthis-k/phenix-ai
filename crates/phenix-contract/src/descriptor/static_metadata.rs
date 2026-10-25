@@ -582,11 +582,82 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
 /**
  * Embed static graph declarations without initializing a native plugin.
  * This writer uses the same canonical Value envelope as GraphContribution.
- * Authored graph members must be ordered; cross-plugin order is normalized by
- * CompiledGraph at preparation time.
+ * Authored declaration order has no meaning. This const encoder selects
+ * members in key order so the native section matches GraphContribution::encode.
+ * Graph dependency edges are resolved only after all nodes are collected.
  */
+/// Select the next canonical graph member without allocating during const
+/// metadata emission. This deliberately does not require source-order sorting.
+/// Missing a next distinct key means the declarations contain a duplicate.
+const fn graph_member_len(graph: crate::StaticGraphContribution, field: u8) -> usize {
+    match field {
+        0 => graph.actions.len(),
+        1 => graph.events.len(),
+        _ => graph.nodes.len(),
+    }
+}
+
+const fn graph_member_name(
+    graph: crate::StaticGraphContribution,
+    field: u8,
+    index: usize,
+) -> &'static str {
+    match field {
+        0 => graph.actions[index].id,
+        1 => graph.events[index].id,
+        _ => graph.nodes[index].id,
+    }
+}
+
+const fn next_graph_member(
+    graph: crate::StaticGraphContribution,
+    field: u8,
+    previous: Option<usize>,
+) -> usize {
+    let count = graph_member_len(graph, field);
+    let mut chosen = count;
+    let mut candidate = 0;
+    while candidate < count {
+        let key = graph_member_name(graph, field, candidate);
+        let follows = match previous {
+            Some(prev) => {
+                crate::static_schema::compare(graph_member_name(graph, field, prev), key) < 0
+            }
+            None => true,
+        };
+        if follows
+            && (chosen == count
+                || crate::static_schema::compare(key, graph_member_name(graph, field, chosen)) < 0)
+        {
+            chosen = candidate;
+        }
+        candidate += 1;
+    }
+    assert!(chosen < count, "duplicate graph declaration identity");
+    chosen
+}
+
+const fn next_graph_key(values: &[&str], previous: Option<usize>) -> usize {
+    let mut chosen = values.len();
+    let mut candidate = 0;
+    while candidate < values.len() {
+        let key = values[candidate];
+        let follows = match previous {
+            Some(prev) => crate::static_schema::compare(values[prev], key) < 0,
+            None => true,
+        };
+        if follows
+            && (chosen == values.len() || crate::static_schema::compare(key, values[chosen]) < 0)
+        {
+            chosen = candidate;
+        }
+        candidate += 1;
+    }
+    assert!(chosen < values.len(), "duplicate graph key");
+    chosen
+}
+
 pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataBytes {
-    use crate::static_schema::compare;
     assert!(identity(contribution.plugin), "invalid graph contributor");
     let mut output = MetadataBytes {
         data: [0; METADATA_BYTES],
@@ -597,8 +668,11 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
     output.key("actions");
     output.list(contribution.actions.len());
     let mut i = 0;
+    let mut previous = None;
     while i < contribution.actions.len() {
-        let action = contribution.actions[i];
+        let index = next_graph_member(contribution, 0, previous);
+        let action = contribution.actions[index];
+        previous = Some(index);
         assert!(
             identity(action.id) && identity(action.event),
             "invalid graph action identity"
@@ -607,12 +681,6 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
             !action.description.is_empty() && action.description.len() <= 4096,
             "invalid action description"
         );
-        if i > 0 {
-            assert!(
-                compare(contribution.actions[i - 1].id, action.id) < 0,
-                "duplicate or unordered actions"
-            );
-        }
         output.map(4);
         output.key("description");
         output.text(action.description);
@@ -623,18 +691,16 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
         output.key("requires");
         output.list(action.requires.len());
         let mut j = 0;
+        let mut previous_requirement = None;
         while j < action.requires.len() {
+            let index = next_graph_key(action.requires, previous_requirement);
+            let key = action.requires[index];
             assert!(
-                operation_key_str(action.requires[j]),
+                operation_key_str(key),
                 "invalid action authority requirement"
             );
-            if j > 0 {
-                assert!(
-                    compare(action.requires[j - 1], action.requires[j]) < 0,
-                    "duplicate or unordered required operation"
-                );
-            }
-            output.text(action.requires[j]);
+            output.text(key);
+            previous_requirement = Some(index);
             j += 1;
         }
         i += 1;
@@ -642,15 +708,12 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
     output.key("events");
     output.list(contribution.events.len());
     i = 0;
+    previous = None;
     while i < contribution.events.len() {
-        let event = contribution.events[i];
+        let index = next_graph_member(contribution, 1, previous);
+        let event = contribution.events[index];
+        previous = Some(index);
         assert!(identity(event.id), "invalid event identity");
-        if i > 0 {
-            assert!(
-                compare(contribution.events[i - 1].id, event.id) < 0,
-                "duplicate or unordered events"
-            );
-        }
         output.map(2);
         output.key("id");
         output.text(event.id);
@@ -663,18 +726,15 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
     output.key("nodes");
     output.list(contribution.nodes.len());
     i = 0;
+    previous = None;
     while i < contribution.nodes.len() {
-        let node = contribution.nodes[i];
+        let index = next_graph_member(contribution, 2, previous);
+        let node = contribution.nodes[index];
+        previous = Some(index);
         assert!(
             identity(node.id) && operation_key_str(node.operation),
             "invalid graph node identity or operation"
         );
-        if i > 0 {
-            assert!(
-                compare(contribution.nodes[i - 1].id, node.id) < 0,
-                "duplicate or unordered graph nodes"
-            );
-        }
         output.map(8);
         output.key("after");
         output_graph_keys(&mut output, node.after);
@@ -705,14 +765,11 @@ pub const fn graph(contribution: crate::StaticGraphContribution) -> MetadataByte
 const fn output_graph_keys(output: &mut MetadataBytes, values: &[&str]) {
     output.list(values.len());
     let mut i = 0;
+    let mut previous = None;
     while i < values.len() {
-        if i > 0 {
-            assert!(
-                crate::static_schema::compare(values[i - 1], values[i]) < 0,
-                "duplicate or unordered graph keys"
-            );
-        }
-        output.text(values[i]);
+        let index = next_graph_key(values, previous);
+        output.text(values[index]);
+        previous = Some(index);
         i += 1;
     }
 }
