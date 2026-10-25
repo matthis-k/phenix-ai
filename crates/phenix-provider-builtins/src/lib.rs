@@ -4,6 +4,9 @@
 //! connection, or supply a different provider entirely. The runtime must
 //! revalidate and authorize every selected account and model.
 
+pub mod catalog;
+pub use catalog::discovered_model_page;
+
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
     ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
