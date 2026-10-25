@@ -357,6 +357,18 @@ pub trait ProviderPopulate {
 )]
 pub struct PopulateProviders;
 
+/// Payload for the providers manager's existing kernel begin subscription.
+/// KernelBegin is the empty struct schema of phenix.kernel.begin.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderKernelBegin {}
+
+/// The providers manager can initialize its own registry and emit the
+/// plugin-owned populate event; the kernel only supplies the begin trigger.
+#[contract(id = "phenix.provider.startup@1")]
+pub trait ProviderStartup {
+    fn begin(&self, event: ProviderKernelBegin) -> Result<(), ProviderError>;
+}
+
 /// One provider declaration contributed during a graph population wave.
 /// The caller's *actual* plugin identity and grant are verified by the kernel;
 /// neither identity nor authority comes from this untrusted payload.
@@ -496,6 +508,7 @@ pub trait ProviderAuth {
     define(ProviderCatalog),
     define(ProviderRegistrations),
     define(ProviderRegistry),
+    define(ProviderStartup),
     define(ProviderPopulate),
     define(ProviderAuth),
     define(ProviderRuntime),
@@ -707,7 +720,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 8);
+        assert_eq!(metadata.definitions.len(), 9);
     }
 
     #[test]
