@@ -2,7 +2,7 @@
 //! No catalog, authentication state machine, credential store, or transport.
 //! OpenAI is owned by phenix-plugin-provider-openai, not registered twice.
 
-use phenix_provider_builtins::defaults::PROVIDERS;
+use phenix_provider_builtins::defaults::standard_provider_definitions;
 use phenix_provider_contracts::{ProviderError, ProviderPopulate, Providers, ProvidersPopulate};
 use phenix_sdk::{
     CallResult, FailurePolicy, Host, JoinPolicy, StaticGraphContribution, StaticGraphNode,
@@ -45,11 +45,8 @@ mod plugin {
         host: &Host<'_>,
         event: ProvidersPopulate,
     ) -> CallResult<(), ProviderError> {
-        let providers = Providers::new(host, "Registry", &event.scope);
-        for definition in PROVIDERS.iter().copied().filter(|p| p.id != "openai") {
-            providers.register(definition)?;
-        }
-        Ok(())
+        Providers::new(host, "Registry", &event.scope)
+            .register_all(standard_provider_definitions())
     }
 }
 
@@ -73,10 +70,7 @@ mod tests {
 
     #[test]
     fn shipped_non_openai_providers_are_unique_and_valid() {
-        let descriptors = PROVIDERS
-            .iter()
-            .copied()
-            .filter(|provider| provider.id != "openai")
+        let descriptors = standard_provider_definitions()
             .map(ProviderDefinition::into_descriptor)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
