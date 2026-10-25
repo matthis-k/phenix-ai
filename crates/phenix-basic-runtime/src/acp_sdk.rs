@@ -1071,6 +1071,7 @@ impl Controller {
                     "connection_id": item.identity.connection_id(),
                     "profile_id": item.identity.profile_id(),
                     "import": item.allowed.contains("import"),
+                    "bind_environment": item.allowed.contains("bind_environment"),
                     "revoke": item.allowed.contains("revoke"),
                 })
             })
