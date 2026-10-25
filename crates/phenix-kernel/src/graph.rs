@@ -1264,9 +1264,9 @@ mod tests {
         ];
         let graph = compile(&declarations).unwrap();
         assert_eq!(
-            graph.activation_order(&BTreeSet::from([
-                "phenix.providers.populate".into(),
-            ])).unwrap(),
+            graph
+                .activation_order(&BTreeSet::from(["phenix.providers.populate".into(),]))
+                .unwrap(),
             ["openai/register"]
         );
         assert!(graph.actions.is_empty());
