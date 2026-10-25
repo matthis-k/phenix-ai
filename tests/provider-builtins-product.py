@@ -6,10 +6,11 @@ import subprocess
 import sys
 import tempfile
 
-kernel, package, definitions, destination, openai_api, credentials, chatgpt = sys.argv[1:]
+kernel, host_package, builtin_package, definitions, destination, openai_api, credentials, chatgpt = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
-provider = "phenix.provider.builtins"
+provider = "phenix.provider.host"
+builtin = "phenix.provider.builtins"
 
 
 def encode(value):
@@ -40,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         grants = [dict(caller="root", interface=contract, operation=operation,
                        resources=[grant])]
         slots = []
-        artifacts = [package]
+        artifacts = [host_package]
         if selected_contributor:
             artifacts.extend([openai_api, credentials])
             slots.append(dict(caller="phenix.provider.openai-api", slot="Credentials",
@@ -48,9 +49,6 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
                               export="Credentials"))
             slots.append(dict(caller=provider, slot="Contributors", index=0,
                               provider="phenix.provider.openai-api", export="Registrations"))
-            grants.append(dict(caller=provider, interface=registrations_contract,
-                               operation="list", resources=[grant]))
-            operations.append(registrations_contract + "/list")
             if both_openai_connections:
                 artifacts.append(chatgpt)
                 slots.extend([
@@ -60,9 +58,17 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
                     dict(caller=provider, slot="Contributors", index=1,
                          provider="phenix.provider.chatgpt", export="Registrations"),
                 ])
+        else:
+            artifacts.append(builtin_package)
+            slots.append(dict(caller=provider, slot="Contributors", index=0,
+                              provider=builtin, export="Registrations"))
+        grants.append(dict(caller=provider, interface=registrations_contract,
+                           operation="list", resources=[grant]))
+        operations.append(registrations_contract + "/list")
         composition = dict(
             format="phenix.composition.v3",
-            entry=dict(interface=contract, operation=operation, provider=provider),
+            entry=dict(interface=contract, operation=operation,
+                       provider=builtin if contract == registrations_contract else provider),
             artifacts=artifacts,
             definitions=[definitions],
             slots=slots,
