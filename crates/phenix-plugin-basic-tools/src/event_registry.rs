@@ -37,9 +37,10 @@ fn reject(message: &str) -> BasicError {
 fn valid(tool: &ToolInfo) -> bool {
     !tool.id.is_empty()
         && tool.id.len() <= 128
-        && tool.id.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
-        })
+        && tool
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
         && !tool.description.is_empty()
         && tool.description.len() <= 4096
         && tool.arguments_schema.len() <= 16384
@@ -48,15 +49,23 @@ fn valid(tool: &ToolInfo) -> bool {
 }
 
 impl Registry {
-    pub(crate) fn begin(&mut self, builtin: impl IntoIterator<Item = ToolInfo>) -> Result<(), BasicError> {
+    pub(crate) fn begin(
+        &mut self,
+        builtin: impl IntoIterator<Item = ToolInfo>,
+    ) -> Result<(), BasicError> {
         if !matches!(self.phase, Phase::Idle) {
-            return Err(error(ErrorCode::Conflict, "tool population already started"));
+            return Err(error(
+                ErrorCode::Conflict,
+                "tool population already started",
+            ));
         }
         let mut entries = BTreeMap::new();
         for info in builtin {
             if !valid(&info)
                 || entries.len() >= MAX_TOOLS
-                || entries.insert(info.id.clone(), Entry { info, route: None }).is_some()
+                || entries
+                    .insert(info.id.clone(), Entry { info, route: None })
+                    .is_some()
             {
                 return Err(reject("invalid or duplicate intrinsic tool"));
             }
@@ -75,7 +84,10 @@ impl Registry {
         selected_catalogs: &[Vec<ToolInfo>],
     ) -> Result<(), BasicError> {
         let Phase::Collecting(entries) = &mut self.phase else {
-            return Err(error(ErrorCode::Conflict, "tool population is not collecting"));
+            return Err(error(
+                ErrorCode::Conflict,
+                "tool population is not collecting",
+            ));
         };
         if !valid(&info)
             || selected_catalogs.len() > MAX_CONTRIBUTORS
@@ -90,7 +102,11 @@ impl Registry {
                 return Err(reject("oversized selected tool contributor"));
             }
             if catalog.iter().any(|candidate| candidate.id == info.id) {
-                if catalog.iter().filter(|candidate| candidate.id == info.id).count() != 1
+                if catalog
+                    .iter()
+                    .filter(|candidate| candidate.id == info.id)
+                    .count()
+                    != 1
                     || !catalog.contains(&info)
                     || selected.replace(index).is_some()
                 {
@@ -158,7 +174,10 @@ mod tests {
             ErrorCode::InvalidInput
         );
         registry
-            .register(external.clone(), &[vec![info("foreign")], vec![external.clone()]])
+            .register(
+                external.clone(),
+                &[vec![info("foreign")], vec![external.clone()]],
+            )
             .unwrap();
         let published = registry.publish().unwrap();
         assert_eq!(published.len(), 2);
@@ -180,10 +199,17 @@ mod tests {
         forged.description.push_str(" forged");
         assert!(registry.register(forged, &[vec![reverse.clone()]]).is_err());
         assert!(registry
-            .register(reverse.clone(), &[vec![reverse.clone()], vec![reverse.clone()]])
+            .register(
+                reverse.clone(),
+                &[vec![reverse.clone()], vec![reverse.clone()]]
+            )
             .is_err());
-        registry.register(reverse.clone(), &[vec![reverse.clone()]]).unwrap();
-        assert!(registry.register(reverse.clone(), &[vec![reverse]]).is_err());
+        registry
+            .register(reverse.clone(), &[vec![reverse.clone()]])
+            .unwrap();
+        assert!(registry
+            .register(reverse.clone(), &[vec![reverse]])
+            .is_err());
         assert_eq!(registry.publish().unwrap().len(), 2);
     }
 
@@ -205,6 +231,12 @@ mod tests {
         let mut registry = Registry::default();
         registry.begin([info("uppercase"), info("length")]).unwrap();
         let catalog = registry.publish().unwrap();
-        assert_eq!(catalog.iter().map(|e| e.info.id.as_str()).collect::<Vec<_>>(), ["length", "uppercase"]);
+        assert_eq!(
+            catalog
+                .iter()
+                .map(|e| e.info.id.as_str())
+                .collect::<Vec<_>>(),
+            ["length", "uppercase"]
+        );
     }
 }
