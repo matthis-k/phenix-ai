@@ -117,8 +117,12 @@ existing graph and contract mechanisms, not introduce a parallel registry.
    separate; reload does not duplicate handlers.
 8. Native product proves `kernel.begin → providers.populate →
    provider registration → settled → providers.ready`.
-9. Production host emits intrinsic begin/shutdown at genuine lifecycle points;
-   ABI and authorization conformance must remain green.
+9. The Basic terminal/JSONL and ACP management hosts activate subscribed
+   `phenix.kernel.begin` after native load, then run the existing graph pump.
+   This currently supports finite startup waves only; a pending startup graph
+   requires future asynchronous lifecycle pumping. Shutdown and actual
+   hot-reload/unload dispatch remain subsequent integration work.
+10. ABI and authorization conformance must remain green.
 
 **Migration boundary:** legacy pull-based provider registrations and old
 provider-specific auth/catalog hosts remain temporary compatibility surfaces.
