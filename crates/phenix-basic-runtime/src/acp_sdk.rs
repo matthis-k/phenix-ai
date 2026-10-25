@@ -1466,8 +1466,7 @@ impl Controller {
             return Err(invalid("unknown persisted ACP session"));
         }
         if let Some(previous) = self.sessions.remove(&session) {
-            activate_kernel_shutdown(&previous).map_err(internal)?;
-            previous.shutdown().map_err(internal)?;
+            shutdown_kernel(previous).map_err(internal)?;
         }
         self.sessions.insert(session.clone(), kernel);
         let offset = self.offsets.entry(session.clone()).or_default();
@@ -1674,25 +1673,16 @@ impl Controller {
             }
         }
         for (_, kernel) in self.sessions {
-            activate_kernel_shutdown(&kernel)?;
-            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+            shutdown_kernel(kernel)?;
         }
         if let Some(management) = self.management {
             management.shutdown()?;
         }
         for credential in self.credentials {
-            activate_kernel_shutdown(&credential.kernel)?;
-            credential
-                .kernel
-                .shutdown()
-                .map_err(|_| "credential cleanup failed")?;
+            shutdown_kernel(credential.kernel).map_err(|_| "credential cleanup failed")?;
         }
         for resolver in self.resolvers {
-            activate_kernel_shutdown(&resolver.kernel)?;
-            resolver
-                .kernel
-                .shutdown()
-                .map_err(|_| "model resolver cleanup failed")?;
+            shutdown_kernel(resolver.kernel).map_err(|_| "model resolver cleanup failed")?;
         }
         Ok(())
     }
