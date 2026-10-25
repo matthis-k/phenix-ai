@@ -1736,6 +1736,14 @@
           };
           artifacts = [ "${c9LoopbackProvider}" ];
           slots = [];
+          grants = builtins.filter (binding:
+            binding.caller != "phenix.provider.host"
+          ) providerManagementCompositionSpec.grants;
+          authority = providerManagementCompositionSpec.authority // {
+            operations = builtins.filter (op:
+              op != "phenix.provider.registrations@1/list"
+            ) providerManagementCompositionSpec.authority.operations;
+          };
         }));
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
