@@ -16,7 +16,7 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
 | Group | Source/plugin scope | State | Executed implementation | Validation | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | G0 – Kernel / event SDK | kernel graph, contract graph, SDK, macros, Basic/ACP host | IMPLEMENTED, verification pending | #1147 intrinsic kernel events; #1148 in-root emission; #1149 owner settlement, typed emit, Basic/ACP begin/shutdown and dependency-ordered plugin-loaded notifications | Formatting and generated workflow passed on recent heads; Nix native shards remain gate | Exact-head native product green; cancellation/failure/pending tests; reconcile parents |
-| G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / two-contributor product pending | #1146–#1149 shared manager/owner settlement; #1150 second plain-data registration hook (five standards), typed register_all, six-provider native catalog check | Rustfmt passed earlier after corrections; full native product pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
+| G1 – Provider manager and declarations | providers, provider-openai, provider-standards, provider-builtins, provider-openai-api, provider-chatgpt | PARTIAL / immutable registry snapshot consolidated; native product pending | #1150 typed registration; #1152 removes duplicate selected manager vector, leaving a single registry-owned immutable catalog for event and legacy pull | Unit tests added; native CI pending | Cut over ACP consumers then remove duplicate OAuth/key/catalog and legacy pull registrar |
 | G2 – Tool discovery and execution | basic-tools, tool-fixture | IMPLEMENTED / native acceptance pending | #1151: typed tools.populate/ready, owner onBegin→settled, attested private registry, reverse-tool hook; legacy catalog and execute contracts preserved | Rustfmt/ACP frontend passed on recent heads; native tool-population product pending | Exact-head native graph test and production compatibility, then remove redundant list boilerplate |
 | G3 – Agent orchestration and sessions | basic-agent, basic-session, advanced-preparer-graph, advanced-model-adapter | PARTIAL / both terminal paths implemented | #1152 agent-owned run-finished notice after pending submit graph node, with session/run IDs and nonsecret counters; staged advance emits only after terminal checkpoint (not on Reprepare); Session CAS unchanged | Rustfmt, generated workflow and ACP-v2 passed on recent heads; native Basic/ACP acceptance pending | Verify graph post-submit notification and native graph composition; verify native staged async completion and generic post-commit session notices (ERG-21) |
 | G4 – Optional semantic changes | workspace-selection, basic-memory, compaction-checkpoints, event-journal, evidence-store | REVIEWED / conditional only | Audited existing selected contracts; no concrete independent default subscriber yet establishes a need for new broadcasts; do not add per-CAS or per-token events | Source-level audit only; no new code or native gate | Implement owner-scoped, post-commit notices only when a concrete consumer is identified and ERG-21 is solved |
@@ -145,6 +145,25 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   added. Session-scoped semantic notices remain gated by generic post-commit
   graph delivery (ERG-21); per-token journal append is expressly excluded.
 
+- **S20 (G0 canonical graph declarations)**: static M1 graph metadata now
+  canonicalizes authored events, actions, handlers and dependency keys in
+  a const encoder, without requiring source-order sorting. The kernel
+  separately resolves event-to-handler subscriptions and explicit
+  handler-to-handler edges after collecting contributions. SDK permutation
+  byte-equivalence and kernel DAG-order tests were added. CI formatting
+  fixes committed; native acceptance remains open (ERG-25).
+- **S21 (G1 single authoritative provider catalog)**: the shared provider
+  manager no longer stores an independent selected vector. Registry owns
+  Idle/Collecting/Published(snapshot)/Aborted, and both successful population
+  and temporary legacy pull selection use the same immutable snapshot.
+  Rejected, aborted, or active graph waves prohibit fallback selection.
+  Added registry unit tests; no contract/ABI or credential data moved.
+- **S22 (all 31 plugin progress rows)**: updated the detailed source matrix
+  with implementation/draft/review status for every audited plugin, the
+  actual PR stack, remaining native gates and explicit no-conversion cases.
+  High-benefit next gates: G1 ACP/provider cutover, G2 contributor provenance
+  deduplication, and G3 native pending/cancellation plus ERG-21.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -156,7 +175,7 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-02 | High | Settled handler uses magic `"settled:phenix.providers.populate"` and a separately defined empty Portable struct/contract (`phenix-plugin-providers`, `phenix-provider-contracts`) | Generic `#[phenix::on_settled(ProvidersPopulate)]` or typed `on(ProvidersPopulate::Settled)`; generate request schema/import | Open; G0 SDK |
 | ERG-03 | High | `Providers::new(host, "Registry", &event.scope).register(OPENAI)` needs manually synchronized slot and scope names | Typed injected registry handle from selected imports, with resource scope derived/checked by SDK; retain explicit grants | Open; G1 SDK |
 | ERG-04 | High | Legacy OpenAI API/ChatGPT plugins each own full catalog/auth interfaces alongside `phenix-plugin-providers`; duplicated OAuth/protocol/discovery complexity | Declarative provider plugin holds data + hook; all generic strategies in one shared providers manager (or supporting Rust libraries) | Open; G1 cutover |
-| ERG-05 | Medium | Manager manually decodes `phenix.providers.<scope>` for both begin and settlement, and stores a second `selected` vector in addition to registry phase | Central shared `ProviderScope` validation; single authoritative registry published snapshot, not two state owners | Open; G1 |
+| ERG-05 | Medium | Manager manually decodes `phenix.providers.<scope>` for both begin and settlement, and stores a second `selected` vector in addition to registry phase | Central shared `ProviderScope` validation; single authoritative registry published snapshot, not two state owners | **Partly fixed in #1152**: one published registry snapshot, scope validation remains manual |
 | ERG-06 | Medium | Typed `Host::emit_event` exists, but `#[event]` subscriptions still require trigger-ID strings in static graphs | Typed subscriptions infer event ID/schema from the Rust event type; compatibility with existing graph metadata | Open; G0 |
 | ERG-07 | High | Basic/ACP controllers duplicate finite polling loops for lifecycle admission; pending startup waves are rejected after arbitrary pump budget | Generic lifecycle controller/pump API with async progress, cancellation and shutdown semantics; kernel remains generic | Open; G0 |
 | ERG-08 | Medium | Pull contributor `ProviderRegistrations::list` coexists with event registration and can select a legacy catalog before `kernel.begin` when invoked early | One explicit catalog readiness barrier and phased migration; no silent competing authoritative sources | Open; G1 |
@@ -182,6 +201,7 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-23 | Medium | A graph successor receives its triggering event payload, not the finished predecessor's typed result, so Basic Agent currently retains an ephemeral completed RunResult for its ordered notification node | Add type-checked predecessor-result binding to the existing graph SDK (not a general event bus), or generated `#[on_completed(BasicInput::submit)]` lowering; preserve authority and cancellation | Open; G3 SDK ergonomics |
 | ERG-24 | Medium | Agent's non-staged submit and staged-model continuation have different terminal steps; blindly emitting run-finished on each reprepare wave would fabricate completion | Introduce a terminal-only semantic completion continuation for staged graph based on `TurnAdvanceOutcome::Complete`, never `Reprepare` | **Implemented in #1152**, native acceptance pending |
 
+| ERG-25 | High | Const metadata formerly required lexicographic graph member order, leaking canonical encoding into plugin authoring and causing E0080 on valid out-of-order DAG nodes | Canonicalize all authored graph members at const-encoding time; resolve execution only after collecting edges | **Implemented in #1152**, SDK+kernel permutation tests added; native CI pending |
 ### New finding policy
 
 For each ergonomic issue: attach a source path, why the author needs to write
