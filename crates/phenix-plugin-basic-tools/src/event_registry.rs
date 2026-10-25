@@ -57,6 +57,35 @@ fn valid(tool: &ToolInfo) -> bool {
 }
 
 impl Registry {
+    /// Build a fully validated, published candidate for the transitional
+    /// pull adapter. This function owns the entire candidate, so any
+    /// missing/forged/ambiguous contributor leaves the caller's live Registry
+    /// unchanged. The same begin/register/publish invariants protect event
+    /// publication; there is no second catalog type.
+    pub(crate) fn from_selected(
+        builtin: impl IntoIterator<Item = ToolInfo>,
+        catalogs: &[Vec<ToolInfo>],
+    ) -> Result<Self, BasicError> {
+        if catalogs.len() > MAX_CONTRIBUTORS {
+            return Err(reject("too many selected tool contributors"));
+        }
+        let mut candidate = Self::default();
+        candidate.begin(builtin)?;
+        for catalog in catalogs {
+            for offered in catalog {
+                candidate.register(offered.clone(), catalogs)?;
+            }
+        }
+        let tools = candidate
+            .preview()?
+            .into_iter()
+            .map(|entry| entry.info)
+            .collect::<Vec<_>>();
+        let revision = super::revision(&tools, catalogs.len());
+        candidate.publish(revision)?;
+        Ok(candidate)
+    }
+
     pub(crate) fn selected(&self) -> Option<&Catalog> {
         match &self.phase {
             Phase::Published(catalog) => Some(catalog),
@@ -302,6 +331,34 @@ mod tests {
         assert!(aborted.selected().is_none());
         assert!(aborted.begin([info("length")]).is_err());
         assert!(aborted.publish(1).is_err());
+    }
+
+    #[test]
+    fn legacy_candidate_rejects_forgery_without_publishing_partial_state() {
+        let intrinsic = info("uppercase");
+        let external = info("fixture.reverse");
+        let invalid = vec![
+            vec![external.clone()],
+            vec![external.clone()],
+        ];
+        assert_eq!(
+            Registry::from_selected([intrinsic.clone()], &invalid)
+                .err()
+                .unwrap()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        let forged = vec![vec![info("unknown")]];
+        // No alternative executor may be registered from payload metadata.
+        let selected = Registry::from_selected([intrinsic.clone()], &forged).unwrap();
+        assert!(selected.selected().is_some());
+        assert_eq!(selected.selected().unwrap().routes["unknown"], Some(0));
+
+        let good = Registry::from_selected([intrinsic], &[vec![external]]).unwrap();
+        let snapshot = good.selected().unwrap();
+        assert_eq!(snapshot.routes["fixture.reverse"], Some(0));
+        assert_eq!(snapshot.routes["uppercase"], None);
+        assert!(snapshot.revision > 0);
     }
 
     #[test]
