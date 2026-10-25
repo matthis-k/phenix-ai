@@ -61,6 +61,9 @@ mod tests {
         assert_eq!(graph.actions.len(), 0);
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].triggers, vec!["phenix.providers.populate"]);
-        assert_eq!(graph.nodes[0].operation, "phenix.provider.populate@1/register");
+        assert_eq!(
+            graph.nodes[0].operation,
+            "phenix.provider.populate@1/register"
+        );
     }
 }
