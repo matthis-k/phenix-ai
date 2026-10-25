@@ -67,6 +67,20 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   ACP v2, cache isolation, deterministic session history and official ACP
   interoperability checks. Full Nix candidate remained in progress; no native
   product acceptance or merge claim.
+- **S09 (G1 scope + SDK ergonomics)**: manager event callbacks now share
+  `current_scope(&Host)` backed by the same authorized host resource check;
+  `StaticGraphNode::on(id, triggers, operation)` was added to the canonical
+  M1 graph declarations and used for both OpenAI and standard contributor
+  hooks. This removes repeated selector/after/writes/join/failure fields
+  without inventing a second event mechanism (commits `39625d7`,
+  `8195f2e`, `16b4d29`, `d02c286`). Native tests pending.
+- **S10 (G2 interface boundary review)**: external tool
+  `ToolRegistrations` combines `list` and `execute`. Moving declarations
+  to an event must preserve the **authenticated selected execution binding**,
+  not accept an untrusted `provider_id` or `index` claimed in data. Do not
+  ship a metadata-only registration event wired to unrelated execution
+  routing. Track ERG-18 as a prerequisite for the G2 migration.
+
 
 ## Ergonomics register
 
@@ -90,10 +104,12 @@ interface; it is not automatically implemented merely by being logged.
 
 | ERG-13 | Medium | Provider declaration bundles need a manual registration loop with repetitive per-item error propagation (`phenix-plugin-provider-standards`) | Shared `Providers::register_all(iter)` invokes the same typed contract; does not bypass validation or grant authority | **Implemented in #1150**; native test pending |
 | ERG-14 | High | OpenAI remains defined in both old `defaults::PROVIDERS` and new `phenix-plugin-provider-openai`; registration bundle must explicitly exclude its identity | Complete cutover: one definition owner per provider; remove OpenAI from old legacy defaults and delete retired pull contributor once ACP consumers migrate | Open; G1 de-duplication |
-| ERG-15 | Medium | Standard declaration hook still requires manual `graph(super::GRAPH)`, empty plugin State and `#[provide(...)]` for a one-operation registration | Generate a generic typed event subscriber from the Rust handler; keep graph/ABI metadata as the compiled target | Open; SDK after #1149 |
+| ERG-15 | Medium | Standard declaration hook still requires manual `graph(super::GRAPH)`, empty plugin State and `#[provide(...)]` for a one-operation registration | Generate a generic typed event subscriber from the Rust handler; keep graph/ABI metadata as the compiled target | **Partially fixed** via generic `StaticGraphNode::on` in #1150; typed annotation still open |
 | ERG-16 | Medium | Product assertions assumed provider index zero was OpenAI, while the registry correctly sorts canonical provider IDs | Author-facing provider lookup by stable ID, never by position; product test verifies exact deterministic ID set | **Fixed in #1150**; native test pending |
 
 | ERG-17 | Medium | Long-lived model transport work currently relies on separate pending cancel/poll and the host's physical-lease shutdown gating; generic lifecycle pumping cannot safely force early unload (`phenix-plugin-model-http/src/lib.rs`, `phenix-kernel/src/runtime.rs`) | A shared async lifecycle controller that drains or cancels outstanding tickets *before* kernel.shutdown, preserving worker ownership; no token-level graph events | Open; generic G0, not model-http event conversion |
+
+| ERG-18 | High | Tool catalog's imported `ToolRegistrations::{list,execute}` associates routing with resolver-selected slot identity, which would be lost if a registration payload supplied an arbitrary executor name (`phenix-plugin-basic-tools`) | Preserve an attested execution capability/selected binding when moving tool descriptions into an event-driven registry; never trust contributor-supplied route indices | Open; G2 security gate |
 
 ### New finding policy
 
