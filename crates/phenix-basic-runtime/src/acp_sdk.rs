@@ -1721,6 +1721,9 @@ pub(super) fn run(
                     .map_err(|e| format!("{e:?}"))?
                     .load()
                     .map_err(|e| format!("{e:?}"))?;
+                // Legacy pull-only compositions have no begin subscriber;
+                // event-driven managers stage, register and publish themselves.
+                activate_kernel_begin(&kernel)?;
                 Ok(ProviderManagement { kernel, selected })
             })
             .collect::<Result<Vec<_>, _>>()?;
