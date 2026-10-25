@@ -91,7 +91,7 @@ def probe(managed: bool):
         "openai-responses": "https://api.openai.com/v1/responses",
         "openai-chat": "https://api.openai.com/v1/chat/completions",
     }
-    assert openai["chatgpt"]["protocols"][0]["endpoint"] is None
+    assert openai["chatgpt"]["protocols"][0]["endpoint"] == "https://api.openai.com/v1/responses"
     router = providers["openrouter"]["connections"][0]
     assert {p["id"]: p["endpoint"] for p in router["protocols"]} == {
         "openai-chat": "https://openrouter.ai/api/v1/chat/completions",
