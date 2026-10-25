@@ -66,7 +66,6 @@ impl Drop for GeneratedPkce {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
