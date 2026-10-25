@@ -301,6 +301,23 @@ mod plugin {
         )))
     }
 
+    /// Controller-only: prevent catalog reads before the first graph node runs.
+    #[provide(ProviderRegistry::begin)]
+    fn begin_population(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderQuery,
+    ) -> CallResult<(), ProviderError> {
+        check(host, &request.scope)?;
+        if state.selected.is_some() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Conflict,
+                "provider catalog is already selected",
+            )));
+        }
+        state.registry.begin().map_err(CallError::Domain)
+    }
+
     /// Existing graph handlers call this ordinary typed contract operation.
     /// The kernel checks the selected import, scope and caller grant.
     #[provide(ProviderRegistry::register)]
@@ -337,6 +354,17 @@ mod plugin {
         let page = state.registry.publish().map_err(CallError::Domain)?;
         state.selected = Some(page.providers.clone());
         Ok(page)
+    }
+
+    /// Controller-only: discard the failed event wave without publishing data.
+    #[provide(ProviderRegistry::abort)]
+    fn abort_population(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderQuery,
+    ) -> CallResult<(), ProviderError> {
+        check(host, &request.scope)?;
+        state.registry.abort().map_err(CallError::Domain)
     }
 
     #[provide(ProviderCatalog::list)]
