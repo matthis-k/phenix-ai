@@ -133,6 +133,25 @@ mod plugin {
         Ok(())
     }
 
+    /// Read the single already-authorized provider resource from the live
+    /// call. A contributor cannot choose or forge its own target scope.
+    fn current_scope(host: &Host<'_>) -> CallResult<String, ProviderError> {
+        let resource = host.resource()?.ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider event requires an authorized resource",
+            ))
+        })?;
+        let scope = resource.strip_prefix("phenix.providers.").ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "provider event resource is not a provider scope",
+            ))
+        })?;
+        check(host, scope)?;
+        Ok(scope.into())
+    }
+
     /// Read only the preselected, verified M1 contributions and pin their
     /// validated snapshot to the plugin-owned state for this generation.
     fn selected_catalog<'a>(
@@ -334,19 +353,7 @@ mod plugin {
         host: &Host<'_>,
         _: ProviderKernelBegin,
     ) -> CallResult<(), ProviderError> {
-        let resource = host.resource()?.ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Denied,
-                "provider startup requires an authorized provider resource",
-            ))
-        })?;
-        let scope = resource.strip_prefix("phenix.providers.").ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Denied,
-                "provider startup resource is not a provider scope",
-            ))
-        })?;
-        check(host, scope)?;
+        let scope = current_scope(host)?;
         if state.selected.is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
@@ -375,19 +382,7 @@ mod plugin {
         host: &Host<'_>,
         _: ProvidersPopulated,
     ) -> CallResult<(), ProviderError> {
-        let resource = host.resource()?.ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Denied,
-                "provider population settlement requires a resource",
-            ))
-        })?;
-        let scope = resource.strip_prefix("phenix.providers.").ok_or_else(|| {
-            CallError::Domain(error(
-                ProviderErrorCode::Denied,
-                "provider population settlement has wrong resource",
-            ))
-        })?;
-        check(host, scope)?;
+        let scope = current_scope(host)?;
         if state.selected.is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
