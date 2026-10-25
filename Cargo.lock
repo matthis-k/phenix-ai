@@ -2143,6 +2143,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-tool-fixture"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-workspace-selection"
 version = "0.1.0"
 dependencies = [
