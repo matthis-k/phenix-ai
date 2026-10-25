@@ -392,7 +392,7 @@ mod plugin {
         }
         state.registry.selected().ok_or_else(|| {
             CallError::Domain(error(
-                ErrorCode::Unavailable,
+                ErrorCode::Conflict,
                 "published tool catalog is unavailable",
             ))
         })
