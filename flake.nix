@@ -268,7 +268,7 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 15
+        assert len(report["definitions"]) == 19
         assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
