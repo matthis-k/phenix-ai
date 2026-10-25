@@ -739,6 +739,10 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(ToolCatalog),
     define(ToolExecute),
     define(ToolRegistrations),
+    define(ToolStartup),
+    define(ToolPopulate),
+    define(ToolSettlement),
+    define(ToolRegistry),
     define(Skills),
     define(Context),
     define(Session),
@@ -1059,7 +1063,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 15);
+        assert_eq!(metadata.definitions.len(), 19);
         assert!(metadata
             .definitions
             .iter()
@@ -1075,6 +1079,20 @@ mod tests {
             PromptSubmitted::SCHEMA.owned().unwrap()
         );
         assert!(Blob::from_value(Value::List(vec![])).is_err());
+    }
+
+    #[test]
+    fn tool_events_and_settled_handlers_have_canonical_schemas() {
+        assert_eq!(ToolsPopulate::EVENT.id, "phenix.tools.populate");
+        assert_eq!(ToolsReady::EVENT.id, "phenix.tools.ready");
+        assert_eq!(
+            ToolKernelBegin::SCHEMA.owned().unwrap(),
+            phenix_sdk::standard_kernel_events()[0].payload
+        );
+        assert_eq!(
+            ToolsPopulated::SCHEMA.owned().unwrap(),
+            phenix_sdk::settled_event_schema()
+        );
     }
 
     #[test]
