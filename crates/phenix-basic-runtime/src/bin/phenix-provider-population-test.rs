@@ -12,6 +12,7 @@ use serde_json::json;
 const REGISTRY: &str = "phenix.provider.registry@1";
 const POPULATE: &str = "phenix.provider.populate@1";
 const STARTUP: &str = "phenix.provider.startup@1";
+const SETTLEMENT: &str = "phenix.provider.settlement@1";
 const CATALOG: &str = "phenix.provider.catalog@1";
 const RESOURCE: &str = "phenix.providers.user";
 const HOST: &str = "phenix.provider.host";
@@ -79,6 +80,7 @@ fn run() -> Result<(), String> {
             grant("root", CATALOG, "list"),
             grant(CONTRIBUTOR, POPULATE, "register"),
             grant(HOST, STARTUP, "begin"),
+            grant(HOST, SETTLEMENT, "complete"),
             grant(CONTRIBUTOR, REGISTRY, "register"),
         ],
         "excluded": [],
@@ -91,6 +93,7 @@ fn run() -> Result<(), String> {
                 format!("{REGISTRY}/abort"),
                 format!("{POPULATE}/register"),
                 format!("{STARTUP}/begin"),
+                format!("{SETTLEMENT}/complete"),
                 format!("{CATALOG}/list"),
             ],
             "resources": [RESOURCE],
@@ -111,6 +114,23 @@ fn run() -> Result<(), String> {
     let mut execution = kernel
         .begin_kernel_event(KernelEvent::Begin)
         .map_err(|e| format!("kernel.begin: {e:?}"))?;
+    // Pump just the manager's begin handler: its custom event is queued,
+    // but the provider registration wave has not executed yet.
+    if execution.pump(|_| {}).map_err(|e| format!("{e:?}"))? == GraphStatus::Finished {
+        return Err("kernel.begin finished before the populate event was dispatched".into());
+    }
+    let catalog = selection(CATALOG, "list", HOST);
+    let before = execution
+        .invoke_selected(&catalog, &scope.to_value())
+        .map_err(|e| format!("{e:?}"))?;
+    match before {
+        Outcome::Domain(value) if format!("{value:?}").contains("Unavailable") => {}
+        Outcome::Domain(value) => {
+            return Err(format!("unexpected staging error: {value:?}"));
+        }
+        Outcome::Success(_) => return Err("staged catalog leaked before publication".into()),
+    }
+
     let mut finished = false;
     for _ in 0..32 {
         if execution.pump(|_| {}).map_err(|e| format!("{e:?}"))? == GraphStatus::Finished {
@@ -124,45 +144,19 @@ fn run() -> Result<(), String> {
     let steps = execution.steps().len();
     drop(execution);
 
-    // Staged state is not an independently selectable catalog.
-    let catalog = selection(CATALOG, "list", HOST);
-    let root = kernel
-        .admit_root(catalog.clone())
-        .map_err(|e| format!("{e:?}"))?;
-    let before = root
-        .invoke_selected(&catalog, &scope.to_value())
-        .map_err(|e| format!("{e:?}"))?;
-    match before {
-        Outcome::Domain(value) => {
-            if !format!("{value:?}").contains("Unavailable") {
-                return Err(format!(
-                    "pre-publication catalog was not unavailable: {value:?}"
-                ));
-            }
-        }
-        Outcome::Success(_) => return Err("staged catalog leaked before publication".into()),
-    }
-    drop(root);
-
-    if steps != 2 {
+    if steps != 3 {
         return Err(format!(
-            "expected begin + populate graph nodes, got {steps}"
+            "expected begin, populate, and settlement graph nodes, got {steps}"
         ));
     }
-
-    let published: ProviderPage =
-        invoke(&kernel, selection(REGISTRY, "publish", HOST), scope.clone())?;
-    if published.revision != 1
-        || published.providers.len() != 1
-        || published.providers[0].connections.len() != 2
-    {
-        return Err(format!(
-            "incorrect published provider snapshot: {published:?}"
-        ));
-    }
+    // The provider manager, not an external controller, publishes the
+    // immutable catalog on the generic settlement trigger.
     let listed: ProviderPage = invoke(&kernel, catalog, scope)?;
-    if listed != published {
-        return Err("published catalog is not the host's selected catalog".into());
+    if listed.revision != 1
+        || listed.providers.len() != 1
+        || listed.providers[0].connections.len() != 2
+    {
+        return Err(format!("incorrect published provider snapshot: {listed:?}"));
     }
     kernel.shutdown().map_err(|e| format!("shutdown: {e:?}"))?;
     println!(
@@ -170,8 +164,8 @@ fn run() -> Result<(), String> {
         json!({
             "format": "phenix.provider-population-product.v1",
             "graph_steps": steps,
-            "providers": published.providers.len(),
-            "revision": published.revision,
+            "providers": listed.providers.len(),
+            "revision": listed.revision,
         })
     );
     Ok(())
