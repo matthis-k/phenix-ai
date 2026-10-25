@@ -101,8 +101,7 @@ mod tests {
 
     #[test]
     fn standard_catalog_is_bound_to_the_supplied_account_and_protocol() {
-        let page = page(3, &[("gpt-5", "GPT 5"), ("gpt-4o", "GPT 4o")], |_| true)
-            .unwrap();
+        let page = page(3, &[("gpt-5", "GPT 5"), ("gpt-4o", "GPT 4o")], |_| true).unwrap();
         assert_eq!(page.profile_id.as_deref(), Some("work"));
         assert_eq!(page.models.len(), 2);
         assert!(page.models.iter().all(|model| {
