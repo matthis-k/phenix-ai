@@ -9,7 +9,7 @@ use url::Url;
 
 #[cfg(feature = "oauth2-pkce")]
 pub mod oauth_pkce;
-#[cfg(feature = "siwc-verified")]
+#[cfg(feature = "oauth-loopback")]
 pub mod oauth_loopback;
 #[cfg(feature = "siwc-verified")]
 pub mod oauth_oidc;
