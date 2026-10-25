@@ -10,7 +10,6 @@ use phenix_provider_builtins::{
     declaration::{Auth, Connection, Discovery, KeyPresentation, Protocol, Provider},
     discovered_model_page,
 };
-use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
@@ -20,6 +19,7 @@ use phenix_provider_discovery::{
     http::{fetch_bearer_catalog, CatalogFetchError},
     parse_standard_openai_model_ids,
 };
+use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 const PROVIDER: &str = "openai";
 const CONNECTION: &str = "api";
@@ -231,7 +231,7 @@ mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery, ProviderRegistrations, ProviderPopulate, Providers, ProvidersPopulate,
+        ProviderPopulate, ProviderQuery, ProviderRegistrations, Providers, ProvidersPopulate,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -564,7 +564,10 @@ mod tests {
         assert!(graph.actions.is_empty());
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].triggers, vec!["phenix.providers.populate"]);
-        assert_eq!(graph.nodes[0].operation, "phenix.provider.populate@1/register");
+        assert_eq!(
+            graph.nodes[0].operation,
+            "phenix.provider.populate@1/register"
+        );
         assert_eq!(OPENAI_API.connections.len(), 1);
         assert_eq!(descriptor().unwrap().connections[0].id, "api");
     }
