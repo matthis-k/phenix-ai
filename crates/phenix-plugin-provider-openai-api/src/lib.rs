@@ -112,9 +112,16 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
         let base = test_base()?;
         let c = &mut provider.connections[0];
         c.base_url = Some(base.clone());
+        // The legacy fixture contains both Responses and Chat Completions.
+        // Relocating only one endpoint leaves a cross-origin connection that
+        // the shared registration validator correctly rejects. Preserve
+        // the standard convention suffix for every declared protocol.
         for protocol in &mut c.protocols {
-            if protocol.id == "openai-responses" {
-                protocol.endpoint = Some(format!("{base}/responses"));
+            if let Some(endpoint) = protocol.endpoint.as_deref() {
+                let suffix = endpoint
+                    .strip_prefix("https://api.openai.com/v1/")
+                    .ok_or_else(|| error(ProviderErrorCode::Denied, "unexpected protocol endpoint"))?;
+                protocol.endpoint = Some(format!("{base}/{suffix}"));
             }
         }
         for source in &mut c.model_sources {
