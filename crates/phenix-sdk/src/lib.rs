@@ -47,6 +47,96 @@ mod graph_declaration_tests {
     pub struct Submit;
 
     #[test]
+    fn arbitrary_graph_declaration_order_has_identical_native_metadata() {
+        // These graphs describe the same event-to-node triggers and ordering
+        // edges, but deliberately permute every authored collection.
+        const ALPHA: StaticEventDefinition = StaticEventDefinition {
+            id: "example.alpha",
+            payload: StaticSchema::String,
+        };
+        const ZETA: StaticEventDefinition = StaticEventDefinition {
+            id: "example.zeta",
+            payload: StaticSchema::String,
+        };
+        const A: StaticActionDefinition = StaticActionDefinition {
+            id: "example.action-a",
+            event: "example.alpha",
+            description: "Alpha",
+            requires: &["example.task@1/zeta", "example.task@1/alpha"],
+        };
+        const B: StaticActionDefinition = StaticActionDefinition {
+            id: "example.action-b",
+            event: "example.zeta",
+            description: "Zeta",
+            requires: &[],
+        };
+        const FIRST: StaticGraphContribution = StaticGraphContribution {
+            plugin: "example",
+            events: &[ZETA, ALPHA],
+            actions: &[B, A],
+            nodes: &[
+                StaticGraphNode::on(
+                    "finish",
+                    &["example.zeta", "example.alpha"],
+                    "example.task@1/finish",
+                )
+                .after(&["example/zeta", "example/alpha"]),
+                StaticGraphNode::on(
+                    "zeta",
+                    &["example.zeta"],
+                    "example.task@1/zeta",
+                ),
+                StaticGraphNode::on(
+                    "alpha",
+                    &["example.alpha"],
+                    "example.task@1/alpha",
+                ),
+            ],
+        };
+        const SECOND: StaticGraphContribution = StaticGraphContribution {
+            plugin: "example",
+            events: &[ALPHA, ZETA],
+            actions: &[A, B],
+            nodes: &[
+                StaticGraphNode::on(
+                    "alpha",
+                    &["example.alpha"],
+                    "example.task@1/alpha",
+                ),
+                StaticGraphNode::on(
+                    "finish",
+                    &["example.alpha", "example.zeta"],
+                    "example.task@1/finish",
+                )
+                .after(&["example/alpha", "example/zeta"]),
+                StaticGraphNode::on(
+                    "zeta",
+                    &["example.zeta"],
+                    "example.task@1/zeta",
+                ),
+            ],
+        };
+        const FIRST_BYTES: MetadataBytes = descriptor::static_metadata::graph(FIRST);
+        const SECOND_BYTES: MetadataBytes = descriptor::static_metadata::graph(SECOND);
+        let canonical = FIRST.owned().unwrap();
+        assert_eq!(FIRST_BYTES.bytes(), SECOND_BYTES.bytes());
+        assert_eq!(FIRST_BYTES.bytes(), canonical.encode().unwrap());
+        assert_eq!(SECOND_BYTES.bytes(), SECOND.owned().unwrap().encode().unwrap());
+        assert_eq!(
+            GraphContribution::decode(FIRST_BYTES.bytes()).unwrap(),
+            canonical
+        );
+        assert_eq!(
+            canonical.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
+            ["alpha", "finish", "zeta"]
+        );
+        assert_eq!(
+            canonical.nodes[1].after,
+            ["example/alpha", "example/zeta"]
+        );
+    }
+
+    #[test]
     fn macros_emit_const_sdk_declarations() {
         const GRAPH: StaticGraphContribution = StaticGraphContribution {
             plugin: "example",
