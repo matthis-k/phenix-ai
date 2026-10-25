@@ -98,7 +98,16 @@ with tempfile.TemporaryDirectory(prefix="phenix-tool-registrations-") as temp:
         )
         if not run.stdout:
             raise AssertionError((run.returncode, run.stderr))
-        return json.loads(run.stdout).get("outcome"), run.returncode
+        report = json.loads(run.stdout)
+        if "outcome" not in report:
+            raise AssertionError({
+                "operation": contract + "/" + operation,
+                "selected": selected,
+                "exit_code": run.returncode,
+                "last_failure": report.get("last_failure"),
+                "stderr": run.stderr[-4000:],
+            })
+        return report["outcome"], run.returncode
 
     listed, code = invoke(catalog, "list", dict(
         session=session, query="", cursor=None, limit=32
