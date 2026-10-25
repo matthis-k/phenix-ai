@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 serde_json.workspace = true
+curl = { version = "0.4", default-features = false }
+url = "=2.5.8"
