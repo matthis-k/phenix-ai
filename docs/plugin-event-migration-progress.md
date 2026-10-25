@@ -198,12 +198,18 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   exact-head CI. Existing source fixes are committed on their owning PRs;
   do not merge any lane while this remains unresolved.
 
-- **S27 (stack reconstruction)**: #1150 and #1151 now descend from their
-  current parent heads and are mergeable; old heads are retained under
-  `backup/` refs. #1152 is reconstructed from the synchronized #1151
-  without overwriting the trusted provider ACP lifecycle grants, provider
-  legacy declaration staging, or G2 tool attestation fixes. This does
-  **not** constitute exact-head native validation or a merge.
+- **S27 (stack reconstruction)**: #1150, #1151 and #1152 now descend
+  from their respective current parents and all three PRs are mergeable.
+  Each original head has a `backup/` ref; guarded ref updates were used.
+  The #1152 tree retains trusted provider ACP lifecycle grants, provider
+  legacy declaration staging, the one-authority catalog, and G2 selected
+  tool attestation fixes. This does **not** mean merged or native-verified.
+- **S28 (latest validation)**: after stack reconstruction, CI exposed
+  rustfmt-only differences in #1152's provider Registry unit tests and
+  the typed on_event SDK test; corrected them in commits `0d50f731`
+  and `c639beb6`. The latest generated-workflow validation passed,
+  but exact-head native/Nix and ACP acceptance are still running.
+  All PRs remain draft until those gates succeed.
 
 ## Ergonomics register
 
