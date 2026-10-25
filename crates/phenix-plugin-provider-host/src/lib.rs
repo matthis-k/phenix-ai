@@ -267,8 +267,22 @@ mod plugin {
                 limit: 256,
             },
         )?;
-        phenix_provider_contracts::validate_completion(&request, &authorized)
-            .map_err(CallError::Domain)?;
+        if request.profile_id != authorized.profile_id {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "selected model account does not match verified account",
+            )));
+        }
+        if !authorized.models.iter().any(|model| {
+            model.id == request.model_id
+                && model.connection_id == request.connection_id
+                && model.selectable
+        }) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::NotFound,
+                "model is not selectable for the authorized account",
+            )));
+        }
         Err(CallError::Domain(error(
             ProviderErrorCode::Unavailable,
             "selected session protocol adapter is not installed",
