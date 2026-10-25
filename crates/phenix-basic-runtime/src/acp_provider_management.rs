@@ -181,10 +181,17 @@ impl ProviderManagementGroup {
     }
 
     pub(super) fn shutdown(self) -> Result<(), String> {
+        let mut failures = Vec::new();
         for root in self.roots {
-            shutdown_kernel(root.kernel)?;
+            if let Err(error) = shutdown_kernel(root.kernel) {
+                failures.push(error);
+            }
         }
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
 }
 
