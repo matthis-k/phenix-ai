@@ -80,6 +80,8 @@ pub(super) struct State {
     // Reserved graph lifecycle sources are generation-scoped and one-shot.
     pub(super) lifecycle_begin: bool,
     pub(super) lifecycle_loaded: std::collections::BTreeSet<String>,
+    pub(super) lifecycle_unloaded: std::collections::BTreeSet<String>,
+    pub(super) lifecycle_reloaded: std::collections::BTreeSet<String>,
     pub(super) lifecycle_shutdown: bool,
 }
 #[derive(Clone, Copy)]
