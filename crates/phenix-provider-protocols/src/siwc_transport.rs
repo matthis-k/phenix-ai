@@ -336,7 +336,7 @@ mod tests {
         let (redirect, received) = local(
             "HTTP/1.1 302 Found\r\nLocation: https://attacker.invalid\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             None, MAX_JWKS_BODY);
-        assert_eq!(redirect, Err(TransportError::Unavailable));
+        assert_eq!(redirect, Err(TransportError::HttpStatus(302)));
         assert!(received.starts_with("GET / HTTP/1.1"));
 
         let (rejected, _) = local(
