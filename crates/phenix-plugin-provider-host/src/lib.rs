@@ -185,9 +185,7 @@ mod plugin {
         connection: &phenix_provider_contracts::ConnectionDescriptor,
         identity: &CredentialIdentity,
     ) -> CallResult<bool, ProviderError> {
-        if !auth::standard_bearer_key(connection, "api-key")
-            || !models::can_discover(connection)
-        {
+        if !auth::standard_bearer_key(connection, "api-key") || !models::can_discover(connection) {
             return Ok(false);
         }
         if imports::Credentials::count(host)? != 1 {
