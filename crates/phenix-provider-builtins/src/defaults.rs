@@ -140,7 +140,10 @@ mod tests {
         assert_eq!(providers[0].id, "openai");
         assert_eq!(providers[0].connections.len(), 2);
         assert_eq!(providers[0].connections[0].protocols.len(), 2);
-        assert_eq!(providers[0].connections[1].auth_methods[0].id, "chatgpt-sign-in");
+        assert_eq!(
+            providers[0].connections[1].auth_methods[0].id,
+            "chatgpt-sign-in"
+        );
         assert_eq!(providers[2].id, "anthropic");
         let anthropic_key = providers[2].connections[0].auth_methods[0]
             .adapter
