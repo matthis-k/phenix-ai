@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_candidate_rejects_forgery_without_publishing_partial_state() {
+    fn legacy_candidate_rejects_duplicate_and_malformed_selected_metadata() {
         let intrinsic = info("uppercase");
         let external = info("fixture.reverse");
         let invalid = vec![vec![external.clone()], vec![external.clone()]];
