@@ -113,9 +113,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("kernel.begin: {e:?}"))?;
     let mut finished = false;
     for _ in 0..32 {
-        if execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?
-            == GraphStatus::Finished
-        {
+        if execution.pump(|_| {}).map_err(|e| format!("{e:?}"))? == GraphStatus::Finished {
             finished = true;
             break;
         }
@@ -147,7 +145,9 @@ fn run() -> Result<(), String> {
     drop(root);
 
     if steps != 2 {
-        return Err(format!("expected begin + populate graph nodes, got {steps}"));
+        return Err(format!(
+            "expected begin + populate graph nodes, got {steps}"
+        ));
     }
 
     let published: ProviderPage =
