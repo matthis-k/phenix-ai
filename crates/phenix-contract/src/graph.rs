@@ -3,6 +3,64 @@
 //! selected bindings; none of these strings grant execution rights.
 use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, MAX_COUNT};
 
+/// Kernel-owned lifecycle entry sources. They are intrinsic to every compiled
+/// graph and cannot be re-declared by plugins or submitted as user actions.
+/// Handlers subscribe through the same GraphNode.triggers as ordinary events.
+pub const LIFECYCLE_BEGIN: &str = "phenix.lifecycle.begin";
+pub const LIFECYCLE_PLUGIN_LOADED: &str = "phenix.lifecycle.plugin-loaded";
+pub const LIFECYCLE_SHUTDOWN: &str = "phenix.lifecycle.shutdown";
+
+/// Fixed lifecycle sources: virtual entry vertices, not executable plugin
+/// nodes. Each subscriber still needs a selected operation and a caller grant.
+pub fn standard_lifecycle_events() -> Vec<EventDefinition> {
+    vec![
+        EventDefinition {
+            id: LIFECYCLE_BEGIN.into(),
+            payload: ValueSchema::Struct(std::collections::BTreeMap::new()),
+        },
+        EventDefinition {
+            id: LIFECYCLE_PLUGIN_LOADED.into(),
+            payload: ValueSchema::Struct(std::collections::BTreeMap::from([(
+                "plugin".into(),
+                ValueSchema::String,
+            )])),
+        },
+        EventDefinition {
+            id: LIFECYCLE_SHUTDOWN.into(),
+            payload: ValueSchema::Struct(std::collections::BTreeMap::new()),
+        },
+    ]
+}
+
+/// Only trusted lifecycle controllers may emit these events. They are absent
+/// from the public graph action catalog. A plugin-loaded notification names
+/// the plugin whose initialization already finished; it is not an authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LifecycleEvent {
+    Begin,
+    PluginLoaded { plugin: String },
+    Shutdown,
+}
+
+impl LifecycleEvent {
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Begin => LIFECYCLE_BEGIN,
+            Self::PluginLoaded { .. } => LIFECYCLE_PLUGIN_LOADED,
+            Self::Shutdown => LIFECYCLE_SHUTDOWN,
+        }
+    }
+
+    pub fn payload(&self) -> Value {
+        match self {
+            Self::Begin | Self::Shutdown => Value::map([]),
+            Self::PluginLoaded { plugin } => {
+                Value::map([("plugin", Value::String(plugin.clone()))])
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventDefinition {
     /// Stable semantic event identity, shared across contributing plugins.
@@ -452,6 +510,26 @@ mod tests {
             }],
         }
     }
+    #[test]
+    fn kernel_lifecycle_sources_are_typed_and_reserved() {
+        let events = standard_lifecycle_events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].id, LIFECYCLE_BEGIN);
+        assert_eq!(events[1].id, LIFECYCLE_PLUGIN_LOADED);
+        assert_eq!(events[2].id, LIFECYCLE_SHUTDOWN);
+        for source in [
+            LifecycleEvent::Begin,
+            LifecycleEvent::PluginLoaded {
+                plugin: "phenix.example".into(),
+            },
+            LifecycleEvent::Shutdown,
+        ] {
+            let event = events.iter().find(|event| event.id == source.id()).unwrap();
+            assert!(event.payload.accepts(&source.payload()));
+        }
+        assert!(!events[1].payload.accepts(&LifecycleEvent::Begin.payload()));
+    }
+
     #[test]
     fn static_sdk_declarations_project_into_canonical_schema() {
         const GRAPH: StaticGraphContribution = StaticGraphContribution {
