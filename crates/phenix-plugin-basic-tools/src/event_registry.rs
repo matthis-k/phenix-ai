@@ -101,17 +101,15 @@ impl Registry {
             if catalog.len() > MAX_TOOLS {
                 return Err(reject("oversized selected tool contributor"));
             }
-            if catalog.iter().any(|candidate| candidate.id == info.id) {
-                if catalog
-                    .iter()
-                    .filter(|candidate| candidate.id == info.id)
-                    .count()
-                    != 1
-                    || !catalog.contains(&info)
-                    || selected.replace(index).is_some()
-                {
-                    return Err(reject("unverified or ambiguous selected tool route"));
-                }
+            // Check the selected catalog in one pass. Only one exact
+            // authenticated description may provide a route; neither a
+            // duplicated ID nor a mismatched definition is sufficient.
+            let mut matches = catalog.iter().filter(|candidate| candidate.id == info.id);
+            match (matches.next(), matches.next()) {
+                (None, None) => {}
+                (Some(found), None)
+                    if found == &info && selected.replace(index).is_none() => {}
+                _ => return Err(reject("unverified or ambiguous selected tool route")),
             }
         }
         let index = selected.ok_or_else(|| reject("tool has no selected executor"))?;
