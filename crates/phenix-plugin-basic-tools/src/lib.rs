@@ -330,7 +330,10 @@ mod plugin {
         let revision = super::revision(&tools, count);
         host.emit_event(&ToolsReady { revision })
             .map_err(CallError::Kernel)?;
-        state.registry.publish(revision).map_err(CallError::Domain)?;
+        state
+            .registry
+            .publish(revision)
+            .map_err(CallError::Domain)?;
         // Once the selected execution routes are sealed in the registry,
         // attestation pages are no longer needed. The snapshot is the single
         // authority for both catalog queries and routing.
