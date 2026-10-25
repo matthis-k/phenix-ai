@@ -65,6 +65,18 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         grants.append(dict(caller=provider, interface=registrations_contract,
                            operation="list", resources=[grant]))
         operations.append(registrations_contract + "/list")
+        # The installed manager declares its own kernel lifecycle nodes.
+        # Explicit grants are required even when this older product test
+        # invokes only the direct catalog/registration contracts.
+        for interface, operation_name in (
+            ("phenix.provider.startup@1", "begin"),
+            ("phenix.provider.settlement@1", "complete"),
+        ):
+            grants.append(dict(
+                caller=provider, interface=interface, operation=operation_name,
+                resources=[resource],
+            ))
+            operations.append(interface + "/" + operation_name)
         composition = dict(
             format="phenix.composition.v3",
             entry=dict(interface=contract, operation=operation,
@@ -85,7 +97,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
             capture_output=True, text=True, timeout=30,
         )
         report = json.loads(process.stdout)
-        return report.get("outcome"), process.returncode
+        if "outcome" not in report:
+            raise AssertionError({
+                "operation": contract + "/" + operation,
+                "status": process.returncode,
+                "last_failure": report.get("last_failure"),
+                "stderr": process.stderr[-4000:],
+            })
+        return report["outcome"], process.returncode
 
     catalog = "phenix.provider.catalog@1"
     auth = "phenix.provider.auth@1"
