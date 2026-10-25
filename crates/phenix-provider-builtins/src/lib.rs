@@ -484,6 +484,75 @@ mod declaration_tests {
     }
 
     #[test]
+    fn standard_conventions_are_provider_neutral_and_opt_in() {
+        let connection = ProviderDeclaration {
+            endpoint: "https://inference.example.test/api/v1",
+            protocol: OPENAI_CHAT,
+            auth: "api-key",
+        }
+        .connection("standard", "Standard provider")
+        .unwrap()
+        .with_standard_protocols(&[OPENAI_RESPONSES])
+        .unwrap()
+        .with_standard_models("openai.models")
+        .unwrap();
+        assert_eq!(connection.protocols[0].id, OPENAI_CHAT);
+        assert_eq!(
+            connection.protocols[0].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/chat/completions")
+        );
+        assert_eq!(
+            connection.protocols[1].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/responses")
+        );
+        assert_eq!(
+            connection.model_sources[0].endpoint.as_deref(),
+            Some("https://inference.example.test/api/v1/models")
+        );
+        assert_eq!(connection.model_sources[0].adapter.id, "openai.models");
+        validate_registrations(&[ProviderDescriptor {
+            id: "vendor-neutral".into(),
+            label: "Generic HTTP models".into(),
+            connections: vec![connection],
+        }])
+        .unwrap();
+
+        let unsupported = ProviderDeclaration {
+            endpoint: "https://inference.example.test/api/v1",
+            protocol: "custom-binary",
+            auth: "api-key",
+        }
+        .connection("custom", "Unconventional")
+        .unwrap();
+        assert_eq!(
+            unsupported.with_standard_protocols(&[]).unwrap_err(),
+            "protocol has no registered standard endpoint"
+        );
+        assert_eq!(
+            standard_endpoint("https://example.test/v1?token=unsafe", "models"),
+            Err("standard convention requires a plain endpoint base")
+        );
+    }
+
+    #[test]
+    fn standard_conventions_do_not_install_catalogs_implicitly() {
+        let connection = ProviderDeclaration {
+            endpoint: "https://example.test/v1",
+            protocol: ANTHROPIC_MESSAGES,
+            auth: "api-key",
+        }
+        .connection("api", "Example")
+        .unwrap()
+        .with_standard_protocols(&[])
+        .unwrap();
+        assert_eq!(
+            connection.protocols[0].endpoint.as_deref(),
+            Some("https://example.test/v1/messages")
+        );
+        assert!(connection.model_sources.is_empty());
+    }
+
+    #[test]
     fn unknown_adapter_or_unsafe_endpoint_fails_closed() {
         let declaration = ProviderDeclaration {
             endpoint: "https://api.example.test/v1",
