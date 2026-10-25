@@ -1,6 +1,6 @@
 //! OpenAI provider declarations: data and one existing M1 event hook.
- //! No provider catalog state, credential flows, model transport or dispatch.
- //! The shared phenix-plugin-providers runtime owns those mechanisms.
+//! No provider catalog state, credential flows, model transport or dispatch.
+//! The shared phenix-plugin-providers runtime owns those mechanisms.
 use phenix_provider_builtins::declaration::{
     Auth, AuthPreset, Connection, Discovery, KeyPresentation, Protocol, Provider,
 };
