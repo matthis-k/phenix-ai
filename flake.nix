@@ -1804,12 +1804,16 @@
             { interface = "phenix.provider.auth@1"; operation = "poll"; }
             { interface = "phenix.provider.auth@1"; operation = "cancel"; }
             { interface = "phenix.provider.catalog@1"; operation = "models"; }
-          ] ++ [{
+          ] ++ map (binding: {
             caller = "phenix.provider.host";
-            interface = "phenix.provider.registrations@1";
-            operation = "list";
+            interface = binding.interface;
+            operation = binding.operation;
             resources = [ "phenix.providers.user" ];
-          }];
+          }) [
+            { interface = "phenix.provider.registrations@1"; operation = "list"; }
+            { interface = "phenix.provider.startup@1"; operation = "begin"; }
+            { interface = "phenix.provider.settlement@1"; operation = "complete"; }
+          ];
           excluded = [];
           substitutions = [];
           authority = {
@@ -1822,6 +1826,8 @@
               "phenix.provider.auth@1/cancel"
               "phenix.provider.catalog@1/models"
               "phenix.provider.registrations@1/list"
+              "phenix.provider.startup@1/begin"
+              "phenix.provider.settlement@1/complete"
             ];
             resources = [ "phenix.providers.user" ];
           };
@@ -1841,7 +1847,11 @@
           ) providerManagementCompositionSpec.grants;
           authority = providerManagementCompositionSpec.authority // {
             operations = builtins.filter (op:
-              op != "phenix.provider.registrations@1/list"
+              !(builtins.elem op [
+                "phenix.provider.registrations@1/list"
+                "phenix.provider.startup@1/begin"
+                "phenix.provider.settlement@1/complete"
+              ])
             ) providerManagementCompositionSpec.authority.operations;
           };
         }));
