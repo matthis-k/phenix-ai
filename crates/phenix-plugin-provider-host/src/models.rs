@@ -25,19 +25,15 @@ fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
 /// supported parsing and model eligibility. A registered adapter name alone
 /// never authorizes credential resolution.
 pub fn can_discover(connection: &ConnectionDescriptor) -> bool {
-    connection
-        .model_sources
+    connection.model_sources.iter().any(|source| {
+        source.id == "models"
+            && source.kind == DiscoveryKind::Dynamic
+            && source.endpoint.is_some()
+            && source.adapter.id == "openai.models"
+    }) && connection
+        .protocols
         .iter()
-        .any(|source| {
-            source.id == "models"
-                && source.kind == DiscoveryKind::Dynamic
-                && source.endpoint.is_some()
-                && source.adapter.id == "openai.models"
-        })
-        && connection
-            .protocols
-            .iter()
-            .any(|protocol| protocol.id == "openai-responses" && protocol.endpoint.is_some())
+        .any(|protocol| protocol.id == "openai-responses" && protocol.endpoint.is_some())
 }
 
 fn response_eligible(model: &str) -> bool {
@@ -66,7 +62,10 @@ pub fn discover(
             && item.kind == DiscoveryKind::Dynamic
             && item.adapter.id == "openai.models"
     }) else {
-        return Err(error(ProviderErrorCode::Unavailable, "model adapter unavailable"));
+        return Err(error(
+            ProviderErrorCode::Unavailable,
+            "model adapter unavailable",
+        ));
     };
     let endpoint = source
         .endpoint
@@ -92,8 +91,12 @@ pub fn discover(
             error(ProviderErrorCode::Unavailable, "model catalog unavailable")
         }
     })?;
-    let ids = parse_standard_openai_model_ids(&catalog)
-        .map_err(|_| error(ProviderErrorCode::Unavailable, "invalid model catalog response"))?;
+    let ids = parse_standard_openai_model_ids(&catalog).map_err(|_| {
+        error(
+            ProviderErrorCode::Unavailable,
+            "invalid model catalog response",
+        )
+    })?;
     discovered_model_page(
         profile,
         &connection.id,
@@ -165,20 +168,24 @@ mod tests {
         let mut connection = registrations()[0].connections[0].clone();
         connection.model_sources[0].endpoint = Some(url.clone());
         connection.base_url = Some(url.trim_end_matches("/models").to_owned());
-        connection.protocols[0].endpoint = Some(
-            url.trim_end_matches("/models").to_owned() + "/responses",
-        );
-        connection.protocols[1].endpoint = Some(
-            url.trim_end_matches("/models").to_owned() + "/chat/completions",
-        );
+        connection.protocols[0].endpoint =
+            Some(url.trim_end_matches("/models").to_owned() + "/responses");
+        connection.protocols[1].endpoint =
+            Some(url.trim_end_matches("/models").to_owned() + "/chat/completions");
         let secret = CredentialSecret::new(b"private-test-token".to_vec()).unwrap();
         let page = discover(&connection, "personal", &secret, 20).unwrap();
         assert_eq!(page.profile_id.as_deref(), Some("personal"));
         assert_eq!(
-            page.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            page.models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["gpt-4o-mini", "gpt-5"]
         );
-        assert!(page.models.iter().all(|m| m.protocol_id == "openai-responses"));
+        assert!(page
+            .models
+            .iter()
+            .all(|m| m.protocol_id == "openai-responses"));
         let request = service.join().unwrap();
         assert!(request.starts_with("GET /models HTTP/1.1"));
         assert!(request.contains("Authorization: Bearer private-test-token"));
