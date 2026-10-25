@@ -537,8 +537,10 @@ impl Kernel {
 
     /// Host-only admission of a fixed lifecycle source. It uses the same
     /// graph executor and grants as every action, but cannot be submitted via
-    /// the public action catalog. Begin can enter an indefinitely pending main
-    /// loop; its caller must pump/cancel its GraphExecution normally.
+    /// the public action catalog. Begin may *initialize* the agent's main-loop
+    /// state; with one serial root it must finish or be cancelled before other
+    /// actions (including shutdown) can be admitted. The trusted host owns
+    /// pumping and orderly lifecycle sequencing.
     pub fn begin_lifecycle(&self, event: LifecycleEvent) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
         match &event {
