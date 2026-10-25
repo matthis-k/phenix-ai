@@ -6,42 +6,42 @@ use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, MAX_CO
 /// Kernel-owned lifecycle entry sources. They are intrinsic to every compiled
 /// graph and cannot be re-declared by plugins or submitted as user actions.
 /// Handlers subscribe through the same GraphNode.triggers as ordinary events.
-pub const LIFECYCLE_BEGIN: &str = "phenix.lifecycle.begin";
-pub const LIFECYCLE_PLUGIN_LOADED: &str = "phenix.lifecycle.plugin-loaded";
-pub const LIFECYCLE_PLUGIN_UNLOADED: &str = "phenix.lifecycle.plugin-unloaded";
-pub const LIFECYCLE_PLUGIN_RELOADED: &str = "phenix.lifecycle.plugin-reloaded";
-pub const LIFECYCLE_SHUTDOWN: &str = "phenix.lifecycle.shutdown";
+pub const KERNEL_BEGIN: &str = "phenix.kernel.begin";
+pub const KERNEL_PLUGIN_LOADED: &str = "phenix.kernel.plugin-loaded";
+pub const KERNEL_PLUGIN_UNLOADED: &str = "phenix.kernel.plugin-unloaded";
+pub const KERNEL_PLUGIN_RELOADED: &str = "phenix.kernel.plugin-reloaded";
+pub const KERNEL_SHUTDOWN: &str = "phenix.kernel.shutdown";
 
 /// Entire intrinsic namespace belongs to the kernel lifecycle controller.
 /// Provider and application events use their own plugin-defined namespaces.
-pub fn reserved_lifecycle_id(id: &str) -> bool {
-    id.starts_with("phenix.lifecycle.")
+pub fn reserved_kernel_event_id(id: &str) -> bool {
+    id.starts_with("phenix.kernel.")
 }
 
 /// Fixed lifecycle sources: virtual entry vertices, not executable plugin
 /// nodes. Each subscriber still needs a selected operation and a caller grant.
-pub fn standard_lifecycle_events() -> Vec<EventDefinition> {
+pub fn standard_kernel_events() -> Vec<EventDefinition> {
     vec![
         EventDefinition {
-            id: LIFECYCLE_BEGIN.into(),
+            id: KERNEL_BEGIN.into(),
             payload: ValueSchema::Struct(std::collections::BTreeMap::new()),
         },
         EventDefinition {
-            id: LIFECYCLE_PLUGIN_LOADED.into(),
+            id: KERNEL_PLUGIN_LOADED.into(),
             payload: ValueSchema::Struct(std::collections::BTreeMap::from([(
                 "plugin".into(),
                 ValueSchema::String,
             )])),
         },
         EventDefinition {
-            id: LIFECYCLE_PLUGIN_UNLOADED.into(),
+            id: KERNEL_PLUGIN_UNLOADED.into(),
             payload: ValueSchema::Struct(std::collections::BTreeMap::from([(
                 "plugin".into(),
                 ValueSchema::String,
             )])),
         },
         EventDefinition {
-            id: LIFECYCLE_PLUGIN_RELOADED.into(),
+            id: KERNEL_PLUGIN_RELOADED.into(),
             payload: ValueSchema::Struct(std::collections::BTreeMap::from([
                 ("plugin".into(), ValueSchema::String),
                 ("previous_generation".into(), ValueSchema::String),
@@ -49,7 +49,7 @@ pub fn standard_lifecycle_events() -> Vec<EventDefinition> {
             ])),
         },
         EventDefinition {
-            id: LIFECYCLE_SHUTDOWN.into(),
+            id: KERNEL_SHUTDOWN.into(),
             payload: ValueSchema::Struct(std::collections::BTreeMap::new()),
         },
     ]
@@ -59,7 +59,7 @@ pub fn standard_lifecycle_events() -> Vec<EventDefinition> {
 /// from the public graph action catalog. A plugin-loaded notification names
 /// the plugin whose initialization already finished; it is not an authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LifecycleEvent {
+pub enum KernelEvent {
     /// Once when a ready graph is activated. May enter the main agent loop.
     Begin,
     /// After successful native initialization. Includes the selected plugin ID.
@@ -78,14 +78,14 @@ pub enum LifecycleEvent {
     Shutdown,
 }
 
-impl LifecycleEvent {
+impl KernelEvent {
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Begin => LIFECYCLE_BEGIN,
-            Self::PluginLoaded { .. } => LIFECYCLE_PLUGIN_LOADED,
-            Self::PluginUnloaded { .. } => LIFECYCLE_PLUGIN_UNLOADED,
-            Self::PluginReloaded { .. } => LIFECYCLE_PLUGIN_RELOADED,
-            Self::Shutdown => LIFECYCLE_SHUTDOWN,
+            Self::Begin => KERNEL_BEGIN,
+            Self::PluginLoaded { .. } => KERNEL_PLUGIN_LOADED,
+            Self::PluginUnloaded { .. } => KERNEL_PLUGIN_UNLOADED,
+            Self::PluginReloaded { .. } => KERNEL_PLUGIN_RELOADED,
+            Self::Shutdown => KERNEL_SHUTDOWN,
         }
     }
 
@@ -307,7 +307,7 @@ impl GraphContribution {
             return Err(bad("graph contribution identity, order or duplicate"));
         }
         for event in &self.events {
-            if reserved_lifecycle_id(&event.id) {
+            if reserved_kernel_event_id(&event.id) {
                 return Err(bad("plugin cannot declare kernel lifecycle events"));
             }
             if !identifier(&event.id) {
@@ -565,41 +565,41 @@ mod tests {
     }
     #[test]
     fn kernel_lifecycle_sources_are_typed_and_reserved() {
-        let events = standard_lifecycle_events();
+        let events = standard_kernel_events();
         assert_eq!(events.len(), 5);
-        assert_eq!(events[0].id, LIFECYCLE_BEGIN);
-        assert_eq!(events[1].id, LIFECYCLE_PLUGIN_LOADED);
-        assert_eq!(events[2].id, LIFECYCLE_PLUGIN_UNLOADED);
-        assert_eq!(events[3].id, LIFECYCLE_PLUGIN_RELOADED);
-        assert_eq!(events[4].id, LIFECYCLE_SHUTDOWN);
+        assert_eq!(events[0].id, KERNEL_BEGIN);
+        assert_eq!(events[1].id, KERNEL_PLUGIN_LOADED);
+        assert_eq!(events[2].id, KERNEL_PLUGIN_UNLOADED);
+        assert_eq!(events[3].id, KERNEL_PLUGIN_RELOADED);
+        assert_eq!(events[4].id, KERNEL_SHUTDOWN);
         for source in [
-            LifecycleEvent::Begin,
-            LifecycleEvent::PluginLoaded {
+            KernelEvent::Begin,
+            KernelEvent::PluginLoaded {
                 plugin: "phenix.example".into(),
             },
-            LifecycleEvent::PluginUnloaded {
+            KernelEvent::PluginUnloaded {
                 plugin: "phenix.example".into(),
             },
-            LifecycleEvent::PluginReloaded {
+            KernelEvent::PluginReloaded {
                 plugin: "phenix.example".into(),
                 previous_generation: "generation-a".into(),
                 generation: "generation-b".into(),
             },
-            LifecycleEvent::Shutdown,
+            KernelEvent::Shutdown,
         ] {
             let event = events.iter().find(|event| event.id == source.id()).unwrap();
             assert!(event.payload.accepts(&source.payload()));
         }
-        assert!(!events[1].payload.accepts(&LifecycleEvent::Begin.payload()));
-        assert!(reserved_lifecycle_id("phenix.lifecycle.plugin-reloaded"));
-        assert!(reserved_lifecycle_id("phenix.lifecycle.future"));
-        assert!(!reserved_lifecycle_id("phenix.providers.populate"));
+        assert!(!events[1].payload.accepts(&KernelEvent::Begin.payload()));
+        assert!(reserved_kernel_event_id("phenix.kernel.plugin-reloaded"));
+        assert!(reserved_kernel_event_id("phenix.kernel.future"));
+        assert!(!reserved_kernel_event_id("phenix.providers.populate"));
         let mut custom = sample();
         custom.events[0].id = "example.custom-event".into();
         custom.nodes[0].triggers = vec!["example.custom-event".into()];
         custom.actions[0].event = "example.custom-event".into();
         assert!(custom.normalized().is_ok());
-        custom.events[0].id = "phenix.lifecycle.impostor".into();
+        custom.events[0].id = "phenix.kernel.impostor".into();
         assert!(custom.normalized().is_err());
     }
 
