@@ -772,8 +772,7 @@ fn run_console(
             }
         }
     }
-    activate_kernel_shutdown(&kernel)?;
-    kernel.shutdown().map_err(|e| format!("{e:?}"))
+    shutdown_kernel(kernel)
 }
 
 fn jsonl_session(line: &str) -> Result<String, String> {
@@ -955,8 +954,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         }
     }
     for (_, kernel) in sessions {
-        activate_kernel_shutdown(&kernel)?;
-        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        shutdown_kernel(kernel)?;
     }
     Ok(())
 }
@@ -1030,6 +1028,19 @@ fn activate_kernel_begin(kernel: &Kernel) -> Result<(), String> {
 
 fn activate_kernel_shutdown(kernel: &Kernel) -> Result<(), String> {
     activate_kernel_lifecycle(kernel, KernelEvent::Shutdown)
+}
+
+/// Always stop native plugins, even if a plugin's shutdown event fails.
+/// Preserve both failure signals rather than silently swallowing either one.
+fn shutdown_kernel(kernel: Kernel) -> Result<(), String> {
+    let hooks = activate_kernel_shutdown(&kernel);
+    let native = kernel.shutdown().map_err(|failure| format!("{failure:?}"));
+    match (hooks, native) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(hook), Ok(())) => Err(hook),
+        (Ok(()), Err(stop)) => Err(stop),
+        (Err(hook), Err(stop)) => Err(format!("{hook}; native teardown: {stop}")),
+    }
 }
 
 fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
