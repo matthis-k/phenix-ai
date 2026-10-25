@@ -1028,12 +1028,17 @@ impl GraphExecution<'_> {
             let Some(event) = next else { return Ok(false) };
             let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
             let active = graph.activation_order(&BTreeSet::from([event.id.clone()]))?;
-            if active.is_empty() {
-                continue;
-            }
             self.event = event.id;
             self.payload = event.payload;
             self.wave_is_settlement = false;
+            if active.is_empty() {
+                // A zero-subscriber event still has a successful completion
+                // boundary. Its owner may have a settle hook to finalize.
+                if self.admit_settled_wave()? {
+                    return Ok(true);
+                }
+                continue;
+            }
             self.node_requests.clear();
             self.active = active;
             self.waiting = self.active.iter().cloned().collect();
