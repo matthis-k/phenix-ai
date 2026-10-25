@@ -172,6 +172,32 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   renames cannot silently desynchronize registration hooks. Added SDK
   metadata equivalence unit coverage; exact-head native CI still pending.
 
+- **S24 (G2 native acceptance repairs, owning #1151)**: replaced the
+  selected-contributor route validation's repeated catalog scans with a
+  single two-element iterator check; preserved exact metadata equality,
+  unique selected executor and no contributor-selected route indexes.
+  Removed the redundant borrow at manager settlement. Both were previously
+  rejected by `-D warnings`. Propagated offline preparation diagnostics
+  into `tool-contributors-product.py` rather than returning an opaque `None`.
+  Latest checked #1151 head `d9c878e6` passed Rustfmt, generated workflow,
+  ACP-v2, cache isolation and deterministic history; native Nix matrix and
+  official ACP remained in progress at observation. No merge.
+- **S25 (G1 legacy/event bridge, owning #1150)**: the provider manager
+  stages verified legacy selected `ProviderRegistrations::list` pages in its
+  own private generation registry at `kernel.begin`, then emits the standard
+  populate event; all contributors settle into the same publication path.
+  Failures abort staging; legacy and event duplicate identities remain
+  subject to the same catalog validation. Trusted ACP provider composition
+  now grants only the manager's declared startup/settlement operations.
+  Also repaired the contract-definition Nix assertion and added native
+  provider-builtins offline failure diagnostics. No automatic authority
+  grants were added in the kernel.
+- **S26 (stack integration blocker)**: #1150–#1152 report merge conflicts
+  against their updated bases after parent PR amendments. New head native
+  checks cannot be claimed green until stack synchronization/rebase and
+  exact-head CI. Existing source fixes are committed on their owning PRs;
+  do not merge any lane while this remains unresolved.
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -210,6 +236,8 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-24 | Medium | Agent's non-staged submit and staged-model continuation have different terminal steps; blindly emitting run-finished on each reprepare wave would fabricate completion | Introduce a terminal-only semantic completion continuation for staged graph based on `TurnAdvanceOutcome::Complete`, never `Reprepare` | **Implemented in #1152**, native acceptance pending |
 
 | ERG-25 | High | Const metadata formerly required lexicographic graph member order, leaking canonical encoding into plugin authoring and causing E0080 on valid out-of-order DAG nodes | Canonicalize all authored graph members at const-encoding time; resolve execution only after collecting edges | **Implemented in #1152**, SDK+kernel permutation tests added; native CI pending |
+| ERG-26 | High | Installing the provider host's graph startup/settlement nodes requires declared, scoped operation grants in legacy ACP/product compositions; without them offline preparation rejects the graph before plugin execution | Update trusted composition/deployment builders to grant only owner lifecycle hooks under the exact resource; retain fail-closed kernel admission | **Partially fixed in #1150**, builtins product/ACP management composition updated; remaining native compositions and exact-head acceptance pending |
+
 ### New finding policy
 
 For each ergonomic issue: attach a source path, why the author needs to write
