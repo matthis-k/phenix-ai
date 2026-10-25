@@ -2,8 +2,9 @@
 //! This is a test binary, not an alternative kernel scheduler or plugin API.
 use phenix_contract::{KernelEvent, Portable};
 use phenix_kernel::{
+    graph::{GraphCompletion, GraphStatus},
     resolve::{Composition, Prepared, Selection},
-    GraphCompletion, GraphStatus, Kernel, Outcome,
+    Kernel, Outcome,
 };
 use phenix_provider_contracts::{ProviderPage, ProviderQuery};
 use serde_json::json;
