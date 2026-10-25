@@ -128,10 +128,28 @@ pub const PROVIDERS: &[Provider<'static>] = &[
     },
 ];
 
+/// Providers in the shared standard bundle. OpenAI is intentionally omitted:
+/// its separately installed declaration plugin owns that provider identity.
+/// This partition is a transitional fixture until legacy pull registration is
+/// removed; new third-party plugins should declare their own provider values.
+pub fn standard_provider_definitions() -> impl Iterator<Item = Provider<'static>> {
+    PROVIDERS
+        .iter()
+        .copied()
+        .filter(|provider| provider.id != "openai")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{declaration::compile, BuiltinAuthenticationAdapters};
+
+    #[test]
+    fn event_contribution_bundle_never_redefines_openai() {
+        let standards = standard_provider_definitions().collect::<Vec<_>>();
+        assert_eq!(standards.len(), 5);
+        assert!(standards.iter().all(|provider| provider.id != "openai"));
+    }
 
     #[test]
     fn all_shipped_providers_are_described_by_static_data() {
