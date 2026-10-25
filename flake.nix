@@ -268,7 +268,7 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 15
+        assert len(report["definitions"]) == 19
         assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
@@ -1683,6 +1683,29 @@
         test -s $out/verified.json
       '';
 
+      # Native tool event population drives the *existing* graph executor,
+      # then proves selected executor routing after manager-owned settlement.
+      toolPopulationTestBinary = rust.buildRustPackage {
+        pname = "phenix-tool-population-test";
+        version = "0.1.0";
+        src = basicRuntimeSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--bin" "phenix-tool-population-test" ];
+        doCheck = false;
+        installPhase = ''
+          mkdir -p $out/bin
+          cp target/*/release/phenix-tool-population-test $out/bin/
+        '';
+      };
+      toolPopulationProductCheck = pkgs.runCommand "phenix-tool-population-product" { } ''
+        mkdir -p $out
+        ${toolPopulationTestBinary}/bin/phenix-tool-population-test \
+          ${basicTools} \
+          ${toolFixture} \
+          ${basicDefinitions} > $out/verified.json
+        test -s $out/verified.json
+      '';
+
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
@@ -1705,6 +1728,9 @@
         { caller = "phenix.basic.agent"; key = "phenix.basic.model@1/complete"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.catalog@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.tool@1/execute"; }
+        # Tool owner has explicitly scoped, not inferred, lifecycle grants.
+        { caller = "phenix.basic.tools"; key = "phenix.tools.startup@1/begin"; }
+        { caller = "phenix.basic.tools"; key = "phenix.tools.settlement@1/complete"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.skills@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.context@1/list"; }
         { caller = "phenix.basic.agent"; key = "phenix.basic.session@1/open"; }
@@ -3186,6 +3212,7 @@
         b4-http = httpModelCheck;
         b3-tools = basicToolsCheck;
         tool-contributors = toolContributorsCheck;
+        tool-population-product = toolPopulationProductCheck;
         b2-journal = eventJournalCheck;
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
