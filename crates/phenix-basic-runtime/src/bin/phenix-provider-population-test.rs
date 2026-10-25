@@ -97,7 +97,9 @@ fn verify_empty_population(host_artifact: &str, definitions: &str) -> Result<(),
         .map_err(|e| format!("empty kernel.begin: {e:?}"))?;
     let mut done = false;
     for _ in 0..32 {
-        if execution.pump(|_| {}).map_err(|e| format!("empty pump: {e:?}"))?
+        if execution
+            .pump(|_| {})
+            .map_err(|e| format!("empty pump: {e:?}"))?
             == GraphStatus::Finished
         {
             done = true;
@@ -105,26 +107,42 @@ fn verify_empty_population(host_artifact: &str, definitions: &str) -> Result<(),
         }
     }
     if !done || execution.completion() != Some(GraphCompletion::Domain) {
-        return Err(format!("empty settlement should reject an empty catalog: {:?}", execution.completion()));
+        return Err(format!(
+            "empty settlement should reject an empty catalog: {:?}",
+            execution.completion()
+        ));
     }
     if execution.steps().len() != 2
         || execution.steps()[0].node != "phenix.provider.host/on-begin"
         || execution.steps()[1].node != "phenix.provider.host/on-populated"
         || !matches!(&execution.steps()[1].outcome, Outcome::Domain(_))
     {
-        return Err(format!("owner settlement not admitted after zero subscribers: {:?}", execution.steps()));
+        return Err(format!(
+            "owner settlement not admitted after zero subscribers: {:?}",
+            execution.steps()
+        ));
     }
     drop(execution);
     let selected = selection(CATALOG, "list", HOST);
-    let root = kernel.admit_root(selected.clone()).map_err(|e| format!("{e:?}"))?;
+    let root = kernel
+        .admit_root(selected.clone())
+        .map_err(|e| format!("{e:?}"))?;
     let listed = root
-        .invoke_selected(&selected, &ProviderQuery { scope: "user".into() }.to_value())
+        .invoke_selected(
+            &selected,
+            &ProviderQuery {
+                scope: "user".into(),
+            }
+            .to_value(),
+        )
         .map_err(|e| format!("{e:?}"))?;
     if !matches!(listed, Outcome::Domain(_)) {
         return Err("failed empty population leaked a selected catalog".into());
     }
     drop(root);
-    kernel.shutdown().map_err(|e| format!("empty shutdown: {e:?}"))?;
+    kernel
+        .shutdown()
+        .map_err(|e| format!("empty shutdown: {e:?}"))?;
     Ok(())
 }
 
