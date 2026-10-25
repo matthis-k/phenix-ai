@@ -6,8 +6,8 @@ license.workspace = true
 
 [features]
 oauth2-pkce = ["dep:openidconnect"]
-oauth-loopback = []
-siwc-verified = ["oauth2-pkce", "oauth-loopback", "dep:serde_json", "dep:curl"]
+oauth-loopback = ["oauth2-pkce", "dep:serde_json"]
+siwc-verified = ["oauth-loopback", "dep:curl"]
 model-codecs = ["dep:phenix-sdk", "dep:phenix-basic-contracts", "dep:serde_json", "dep:sse-parse"]
 
 [dependencies]
