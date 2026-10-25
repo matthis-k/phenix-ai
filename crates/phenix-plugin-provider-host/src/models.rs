@@ -11,7 +11,7 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_discovery::{
     http::{fetch_bearer_catalog, CatalogFetchError},
-    parse_standard_openai_model_ids,
+    parse_standard_openai_model_ids, standard_openai_responses_model,
 };
 
 fn error(code: ProviderErrorCode, message: &str) -> ProviderError {
@@ -34,15 +34,6 @@ pub fn can_discover(connection: &ConnectionDescriptor) -> bool {
         .protocols
         .iter()
         .any(|protocol| protocol.id == "openai-responses" && protocol.endpoint.is_some())
-}
-
-fn response_eligible(model: &str) -> bool {
-    // A model being in /models is not proof that it supports Responses.
-    // Keep the conservative known-family rule of the existing API plugin,
-    // until an explicit per-model capability strategy replaces it.
-    ["gpt-4.1", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "o4"]
-        .iter()
-        .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
 }
 
 pub fn discover(
@@ -104,7 +95,7 @@ pub fn discover(
         "responses",
         limit,
         ids.into_iter().map(|id| (id.clone(), id)),
-        response_eligible,
+        standard_openai_responses_model,
     )
 }
 
@@ -194,10 +185,10 @@ mod tests {
     #[test]
     fn responses_eligibility_is_conservative() {
         for allowed in ["gpt-4.1", "gpt-4o-mini", "gpt-5", "gpt-6", "o3-mini"] {
-            assert!(response_eligible(allowed));
+            assert!(standard_openai_responses_model(allowed));
         }
         for denied in ["whisper-1", "text-embedding-3-large", "gpt-50", "o4not"] {
-            assert!(!response_eligible(denied));
+            assert!(!standard_openai_responses_model(denied));
         }
     }
 }
