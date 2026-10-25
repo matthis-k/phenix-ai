@@ -20,6 +20,12 @@ pub enum TransportError {
     Rejected,
     TooLarge,
     InvalidTokenResponse,
+    /// The request never received a usable HTTP response.
+    Network,
+    Timeout,
+    Tls,
+    /// Status only, never the token endpoint's response body or URL.
+    HttpStatus(u16),
 }
 
 #[derive(Default)]
@@ -49,6 +55,22 @@ impl Handler for BoundedBody {
         }
         self.bytes.extend_from_slice(data);
         Ok(data.len())
+    }
+}
+
+/// Preserve safe transport failure categories without passing curl's error
+/// buffer, token response, authorization code or request URL to the client.
+fn classify_curl_error(problem: &curl::Error) -> TransportError {
+    if problem.is_operation_timedout() {
+        TransportError::Timeout
+    } else if problem.is_peer_failed_verification()
+        || problem.is_ssl_connect_error()
+        || problem.is_ssl_cacert_badfile()
+        || problem.is_ssl_certproblem()
+    {
+        TransportError::Tls
+    } else {
+        TransportError::Network
     }
 }
 
@@ -119,14 +141,17 @@ fn request_with_auth(
     if easy.get_ref().too_large {
         return Err(TransportError::TooLarge);
     }
-    // Do not follow redirects or accept error/redirect HTML as token/JWKS.
-    // Deliberately do not include the response body or URL in errors.
+    // Curl can fail before an HTTP response exists, even though the browser
+    // sign-in itself succeeded. Preserve that distinction for safe UX.
+    outcome.map_err(|problem| classify_curl_error(&problem))?;
+    // Never follow redirects or accept error/redirect HTML as OAuth tokens.
+    // HTTP status is safe diagnostic metadata; the response body remains secret.
     match code {
         200 => {}
         400 | 401 | 403 => return Err(TransportError::Rejected),
-        _ => return Err(TransportError::Unavailable),
+        0 => return Err(TransportError::Network),
+        status => return Err(TransportError::HttpStatus(status as u16)),
     }
-    outcome.map_err(|_| TransportError::Unavailable)?;
     if !allow_empty && easy.get_ref().bytes.is_empty() {
         return Err(TransportError::Unavailable);
     }
@@ -311,7 +336,7 @@ mod tests {
         let (redirect, received) = local(
             "HTTP/1.1 302 Found\r\nLocation: https://attacker.invalid\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             None, MAX_JWKS_BODY);
-        assert_eq!(redirect, Err(TransportError::Unavailable));
+        assert_eq!(redirect, Err(TransportError::HttpStatus(302)));
         assert!(received.starts_with("GET / HTTP/1.1"));
 
         let (rejected, _) = local(
@@ -327,6 +352,27 @@ mod tests {
             3,
         );
         assert_eq!(too_large, Err(TransportError::TooLarge));
+    }
+
+    #[test]
+    fn oauth_post_reports_status_without_exposing_error_bodies() {
+        let form = "grant_type=authorization_code&client_id=issued&resource=valid&code=private";
+        for (code, expected) in [
+            (302, TransportError::HttpStatus(302)),
+            (404, TransportError::HttpStatus(404)),
+            (429, TransportError::HttpStatus(429)),
+            (500, TransportError::HttpStatus(500)),
+            (503, TransportError::HttpStatus(503)),
+        ] {
+            let response = format!(
+                "HTTP/1.1 {code} Failure\r\nContent-Length: 16\r\nConnection: close\r\n\r\nprivate-error-42"
+            );
+            let response: &'static str = Box::leak(response.into_boxed_str());
+            let (result, request) = local(response, Some(form), MAX_TOKEN_BODY);
+            assert_eq!(result, Err(expected));
+            assert!(request.starts_with("POST / HTTP/1.1"));
+            assert!(request.ends_with(form));
+        }
     }
 
     #[test]

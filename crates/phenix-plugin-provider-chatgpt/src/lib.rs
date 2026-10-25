@@ -64,10 +64,31 @@ fn oauth_callback_error(error: RegistrationError) -> ProviderError {
 fn token_exchange_error(error: TransportError) -> ProviderError {
     match error {
         TransportError::InvalidForm => denied("OAuth token exchange request was invalid"),
-        TransportError::Unavailable => unavailable("OAuth token endpoint unavailable"),
+        TransportError::Unavailable => {
+            unavailable("OAuth token transport returned no usable response")
+        }
         TransportError::Rejected => denied("OAuth token endpoint rejected the authorization code"),
         TransportError::TooLarge => denied("OAuth token response exceeded the size limit"),
         TransportError::InvalidTokenResponse => denied("OAuth token response was invalid"),
+        TransportError::Network => unavailable(
+            "OAuth token request could not connect; check DNS, proxy, or VPN and retry sign-in",
+        ),
+        TransportError::Timeout => unavailable("OAuth token request timed out; retry sign-in"),
+        TransportError::Tls => unavailable(
+            "OAuth token TLS handshake or certificate verification failed; check system trust",
+        ),
+        TransportError::HttpStatus(429) => unavailable(
+            "OAuth token endpoint rate limited the request (HTTP 429); retry sign-in later",
+        ),
+        TransportError::HttpStatus(300..=399) => unavailable(
+            "OAuth token endpoint redirected unexpectedly; check proxy or captive portal",
+        ),
+        TransportError::HttpStatus(500..=599) => unavailable(
+            "OAuth token endpoint returned a server error (HTTP 5xx); retry sign-in later",
+        ),
+        TransportError::HttpStatus(status) => unavailable(&format!(
+            "OAuth token endpoint returned unexpected HTTP status {status}",
+        )),
     }
 }
 
@@ -1122,6 +1143,21 @@ mod tests {
 
         let token = token_exchange_error(TransportError::InvalidTokenResponse);
         assert_eq!(token.message, "OAuth token response was invalid");
+
+        for (failure, expected) in [
+            (TransportError::Network, "could not connect"),
+            (TransportError::Timeout, "timed out"),
+            (TransportError::Tls, "TLS handshake"),
+            (TransportError::HttpStatus(429), "HTTP 429"),
+            (TransportError::HttpStatus(302), "redirected unexpectedly"),
+            (TransportError::HttpStatus(503), "HTTP 5xx"),
+            (TransportError::HttpStatus(404), "HTTP status 404"),
+        ] {
+            let error = token_exchange_error(failure);
+            assert_eq!(error.code, ProviderErrorCode::Unavailable);
+            assert!(error.message.contains(expected), "{error:?}");
+            assert!(!error.message.contains("private"));
+        }
 
         let scope = identity_verification_error(VerificationError::MissingPlanPermission);
         assert_eq!(scope.code, ProviderErrorCode::Denied);
