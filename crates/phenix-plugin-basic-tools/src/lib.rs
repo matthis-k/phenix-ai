@@ -1,11 +1,59 @@
 //! Independent, session-scoped native ToolCatalog and ToolExecute provider.
 //! Admission and access control remain kernel-owned; this plugin owns tool semantics.
+mod event_registry;
 use phenix_basic_contracts::{
     error, BasicError, CatalogCursor, ErrorCode, ToolCall, ToolInfo, ToolPage, ToolQuery,
 };
+use phenix_basic_contracts::{ToolsPopulate, ToolsReady};
+use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
 use std::collections::BTreeMap;
 
+/// Tools owns the extension phase; other plugins may subscribe but cannot
+/// emit tools.populate on its behalf. No alternative graph scheduler.
+pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
+    plugin: "phenix.basic.tools",
+    events: &[ToolsPopulate::EVENT, ToolsReady::EVENT],
+    actions: &[],
+    nodes: &[
+        StaticGraphNode::on(
+            "on-begin",
+            &[phenix_sdk::KERNEL_BEGIN],
+            "phenix.tools.startup@1/begin",
+        ),
+        StaticGraphNode::on(
+            "on-populated",
+            &["settled:phenix.tools.populate"],
+            "phenix.tools.settlement@1/complete",
+        ),
+    ],
+};
+
 const REVISION: u64 = 1;
+
+/// Content-address the validated catalog for cursor invalidation. A legacy
+/// built-in-only catalog preserves the existing revision for compatibility.
+fn revision(tools: &[ToolInfo], contributors: usize) -> u64 {
+    if contributors == 0 {
+        return REVISION;
+    }
+    tools
+        .iter()
+        .fold(14695981039346656037_u64, |mut hash, entry| {
+            for byte in entry
+                .id
+                .bytes()
+                .chain([0])
+                .chain(entry.description.bytes())
+                .chain([0])
+                .chain(entry.arguments_schema.bytes())
+                .chain([u8::from(entry.idempotent), 0])
+            {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+            }
+            hash
+        })
+        .max(1)
+}
 
 /// One source of truth for the shipped tool metadata and execution handler.
 /// Runtime routing and JSON admission use this table, not repeated name matches.
@@ -139,17 +187,22 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
     version = "1.0.0",
     provide(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
     provide(phenix_basic_contracts::ToolExecute, slot = "Tools"),
+    provide(phenix_basic_contracts::ToolRegistry, slot = "Registry"),
+    provide(phenix_basic_contracts::ToolStartup, slot = "Startup"),
+    provide(phenix_basic_contracts::ToolSettlement, slot = "Settlement"),
     require(
         phenix_basic_contracts::ToolRegistrations,
         slot = "Contributors",
         many(min = 0)
-    )
+    ),
+    graph(super::GRAPH)
 )]
 mod plugin {
     use super::*;
     use phenix_basic_contracts::{
-        BasicError, Scope, ToolCatalog, ToolExecute, ToolPage, ToolQuery, ToolRegistrations,
-        ToolRequest, ToolResult,
+        BasicError, Scope, ToolCatalog, ToolExecute, ToolInfo, ToolKernelBegin, ToolPage,
+        ToolQuery, ToolRegistrations, ToolRegistry, ToolRequest, ToolResult, ToolSettlement,
+        ToolStartup, ToolsPopulate, ToolsPopulated, ToolsReady,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -164,6 +217,136 @@ mod plugin {
     pub struct State {
         counts: BTreeMap<String, u64>,
         snapshot: Option<ToolSnapshot>,
+        registry: super::event_registry::Registry,
+        /// Attested selected contributor catalogs captured BEFORE event
+        /// fan-out, so event handlers cannot recursively enter themselves.
+        attested_catalogs: Option<Vec<Vec<ToolInfo>>>,
+    }
+
+    /// Kernel.begin stages the manager-owned intrinsic tools and emits the
+    /// plugin-owned populate event. Subscriber plugins register through the
+    /// ordinary selected ToolRegistry contract, not event payload routing.
+    #[provide(ToolStartup::begin)]
+    fn on_begin(
+        state: &mut State,
+        host: &Host<'_>,
+        _: ToolKernelBegin,
+    ) -> CallResult<(), BasicError> {
+        if state.snapshot.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool catalog already selected",
+            )));
+        }
+        let count = imports::Contributors::count(host)?;
+        if count > 64 {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "too many tool contributors",
+            )));
+        }
+        let mut catalogs = Vec::with_capacity(count);
+        for index in 0..count {
+            catalogs.push(imports::Contributors::invoke_at::<ToolRegistrations::list>(
+                host,
+                index,
+                &(),
+            )?);
+        }
+        state
+            .registry
+            .begin(TOOLS.iter().map(super::tool))
+            .map_err(CallError::Domain)?;
+        state.attested_catalogs = Some(catalogs);
+        if let Err(failure) = host.emit_event(&ToolsPopulate {}) {
+            let _ = state.registry.abort();
+            return Err(CallError::Kernel(failure));
+        }
+        Ok(())
+    }
+
+    /// Verify every contribution against a preselected M1 import. The actual
+    /// imported executor index comes from the resolver, never untrusted data.
+    #[provide(ToolRegistry::register)]
+    fn register(state: &mut State, offered: ToolInfo) -> CallResult<(), BasicError> {
+        if state.snapshot.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool catalog is already published",
+            )));
+        }
+        let catalogs = state.attested_catalogs.as_deref().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool registration requires an attested population wave",
+            ))
+        })?;
+        state
+            .registry
+            .register(offered, catalogs)
+            .map_err(CallError::Domain)
+    }
+
+    /// Finalize only after the entire tools.populate wave has settled.
+    /// Legacy pull-only contributors are staged through the SAME registry,
+    /// preserving their authenticated execution route during migration.
+    #[provide(ToolSettlement::complete)]
+    fn on_populated(
+        state: &mut State,
+        host: &Host<'_>,
+        _: ToolsPopulated,
+    ) -> CallResult<(), BasicError> {
+        if state.snapshot.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool catalog is already published",
+            )));
+        }
+        let catalogs = state.attested_catalogs.as_deref().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool settlement requires an attested population wave",
+            ))
+        })?;
+        let count = catalogs.len();
+        for (index, catalog) in catalogs.iter().enumerate() {
+            for offered in catalog {
+                if let Some(existing) = state.registry.find(&offered.id) {
+                    if existing.route != Some(index) || existing.info != *offered {
+                        return Err(CallError::Domain(error(
+                            ErrorCode::InvalidInput,
+                            "duplicate or mismatched tool contributor",
+                        )));
+                    }
+                    continue;
+                }
+                state
+                    .registry
+                    .register(offered.clone(), catalogs)
+                    .map_err(CallError::Domain)?;
+            }
+        }
+        // A full queue must not commit a catalog without delivering ready.
+        // The ready notification itself executes only in a later graph wave.
+        let preview = state.registry.preview().map_err(CallError::Domain)?;
+        let tools = preview
+            .iter()
+            .map(|entry| entry.info.clone())
+            .collect::<Vec<_>>();
+        let revision = super::revision(&tools, count);
+        host.emit_event(&ToolsReady { revision })
+            .map_err(CallError::Kernel)?;
+        let entries = state.registry.publish().map_err(CallError::Domain)?;
+        let routes = entries
+            .iter()
+            .map(|entry| (entry.info.id.clone(), entry.route))
+            .collect::<BTreeMap<_, _>>();
+        state.snapshot = Some(ToolSnapshot {
+            tools,
+            routes,
+            revision,
+        });
+        Ok(())
     }
 
     fn selected_snapshot<'a>(
@@ -171,6 +354,12 @@ mod plugin {
         host: &Host<'_>,
     ) -> CallResult<&'a ToolSnapshot, BasicError> {
         if state.snapshot.is_none() {
+            if state.registry.blocks_pull_catalog() {
+                return Err(CallError::Domain(error(
+                    ErrorCode::Conflict,
+                    "tool catalog population has not settled",
+                )));
+            }
             let count = imports::Contributors::count(host)?;
             if count > 64 {
                 return Err(CallError::Domain(error(
@@ -178,68 +367,38 @@ mod plugin {
                     "too many tool contributors",
                 )));
             }
-            let mut routes = BTreeMap::new();
-            let mut tools = Vec::new();
-            for definition in TOOLS {
-                routes.insert(definition.id.to_owned(), None);
-                tools.push(tool(definition));
-            }
+            // Reuse the same generation-private validation path for both the
+            // existing pull adapter and future event-triggered contributors.
+            // The route is derived ONLY from the selected contributor import,
+            // never from the event payload or a plugin-supplied index.
+            let mut registry = super::event_registry::Registry::default();
+            registry
+                .begin(TOOLS.iter().map(super::tool))
+                .map_err(CallError::Domain)?;
+            let mut selected_catalogs = Vec::with_capacity(count);
             for index in 0..count {
-                let contributions =
-                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?;
-                if contributions.len() > 256 {
-                    return Err(CallError::Domain(error(
-                        ErrorCode::InvalidInput,
-                        "too many registered tools",
-                    )));
-                }
-                for offered in contributions {
-                    if offered.id.is_empty()
-                        || offered.id.len() > 128
-                        || !offered.id.bytes().all(|byte| {
-                            byte.is_ascii_alphanumeric()
-                                || byte == b'.'
-                                || byte == b'-'
-                                || byte == b'_'
-                        })
-                        || offered.description.is_empty()
-                        || offered.description.len() > 4096
-                        || offered.arguments_schema.len() > 16384
-                        || !serde_json::from_str::<serde_json::Value>(&offered.arguments_schema)
-                            .is_ok_and(|schema| schema.is_object())
-                        || tools.len() >= 256
-                        || routes.insert(offered.id.clone(), Some(index)).is_some()
-                    {
-                        return Err(CallError::Domain(error(
-                            ErrorCode::InvalidInput,
-                            "invalid or conflicting tool registration",
-                        )));
-                    }
-                    tools.push(offered);
+                selected_catalogs.push(
+                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?,
+                );
+            }
+            for catalog in &selected_catalogs {
+                for offered in catalog {
+                    registry
+                        .register(offered.clone(), &selected_catalogs)
+                        .map_err(CallError::Domain)?;
                 }
             }
-            tools.sort_by(|a, b| a.id.cmp(&b.id));
-            let revision = if count == 0 {
-                REVISION
-            } else {
-                tools
-                    .iter()
-                    .fold(14695981039346656037_u64, |mut hash, entry| {
-                        for byte in entry
-                            .id
-                            .bytes()
-                            .chain([0])
-                            .chain(entry.description.bytes())
-                            .chain([0])
-                            .chain(entry.arguments_schema.bytes())
-                            .chain([u8::from(entry.idempotent), 0])
-                        {
-                            hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
-                        }
-                        hash
-                    })
-                    .max(1)
-            };
+            let selected = registry.publish().map_err(CallError::Domain)?;
+            let routes = selected
+                .iter()
+                .map(|entry| (entry.info.id.clone(), entry.route))
+                .collect::<BTreeMap<_, _>>();
+            let tools = selected
+                .into_iter()
+                .map(|entry| entry.info)
+                .collect::<Vec<_>>();
+
+            let revision = super::revision(&tools, count);
             state.snapshot = Some(ToolSnapshot {
                 tools,
                 routes,
