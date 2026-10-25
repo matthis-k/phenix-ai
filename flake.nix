@@ -928,7 +928,7 @@
           touch $out/verified
         '';
       };
-      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ]);
+      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ./crates/phenix-provider-protocols ./crates/phenix-basic-contracts ]);
       providerDiscoveryCheck = rust.buildRustPackage {
         pname = "phenix-provider-discovery";
         version = "0.1.0";
