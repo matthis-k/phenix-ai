@@ -134,6 +134,18 @@ impl Registry {
         }
     }
 
+    /// Inspect the complete staged candidate without publishing it. Used to
+    /// compute the same immutable revision advertised by the ready event.
+    pub(crate) fn preview(&self) -> Result<Vec<Entry>, BasicError> {
+        match &self.phase {
+            Phase::Collecting(entries) => Ok(entries.values().cloned().collect()),
+            _ => Err(error(
+                ErrorCode::Conflict,
+                "tool population is not collecting",
+            )),
+        }
+    }
+
     pub(crate) fn publish(&mut self) -> Result<Vec<Entry>, BasicError> {
         let Phase::Collecting(entries) = &self.phase else {
             return Err(error(ErrorCode::Conflict, "tool population cannot publish"));
