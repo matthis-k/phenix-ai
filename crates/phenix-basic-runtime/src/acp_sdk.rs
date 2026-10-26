@@ -170,6 +170,19 @@ impl Drop for CredentialImportRequest {
     }
 }
 
+/// Introspect allowed connection-level actions before any session exists.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/control/state", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ControlStateRequest {}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/models/select", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct DefaultModelSelectRequest {
+    value: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
 #[request(method = "_phenix/credentials/env-bind", response = serde_json::Value)]
 #[serde(deny_unknown_fields)]
@@ -213,6 +226,8 @@ enum Command {
     ProviderAuthPoll(ProviderAuthPollRequest, Reply<serde_json::Value>),
     ProviderAuthCancel(ProviderAuthCancelRequest, Reply<serde_json::Value>),
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
+    ControlState(ControlStateRequest, Reply<serde_json::Value>),
+    DefaultModelSelect(DefaultModelSelectRequest, Reply<serde_json::Value>),
     CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
     CredentialEnvironment(CredentialEnvironmentRequest, Reply<serde_json::Value>),
@@ -234,6 +249,8 @@ impl Command {
             Self::ProviderAuthPoll(_, reply) => reply.respond_with_error(error),
             Self::ProviderAuthCancel(_, reply) => reply.respond_with_error(error),
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
+            Self::ControlState(_, reply) => reply.respond_with_error(error),
+            Self::DefaultModelSelect(_, reply) => reply.respond_with_error(error),
             Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
             Self::CredentialEnvironment(_, reply) => reply.respond_with_error(error),
@@ -375,6 +392,9 @@ fn bounded_transport(
 
 #[path = "acp_provider_management.rs"]
 mod provider_management;
+#[path = "model_control_state.rs"]
+mod model_control_state;
+use model_control_state::{ControlAction, ControlState, DenialCode};
 #[cfg(test)]
 use provider_management::{
     charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
@@ -707,6 +727,8 @@ struct Controller {
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     selected_http_seen: std::collections::BTreeSet<String>,
+    default_model_selection: Option<ModelSelection>,
+    default_model_revision: u64,
     initialized: bool,
     issued: u64,
     queued: Arc<PendingPrompts>,
@@ -730,6 +752,8 @@ impl Controller {
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             selected_http_seen: std::collections::BTreeSet::new(),
+            default_model_selection: None,
+            default_model_revision: 0,
             initialized: false,
             issued: 0,
             queued,
@@ -829,6 +853,14 @@ impl Controller {
                 } else {
                     self.provider_models(request)
                 };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ControlState(_, reply) => {
+                let result = self.describe_control_state();
+                let _ = reply.respond_with_result(result);
+            }
+            Command::DefaultModelSelect(request, reply) => {
+                let result = self.select_default_model(request);
                 let _ = reply.respond_with_result(result);
             }
             Command::CredentialCapabilities(_, reply) => {
@@ -1781,6 +1813,8 @@ pub(super) fn run(
     let provider_auth_poll = tx.clone();
     let provider_auth_cancel = tx.clone();
     let provider_models = tx.clone();
+    let control_state = tx.clone();
+    let default_model_select = tx.clone();
     let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
     let credential_environment = tx.clone();
@@ -1862,6 +1896,21 @@ pub(super) fn run(
         .on_receive_request(
             async move |request: ProviderModelsRequest, reply, _peer| {
                 submit(&provider_models, Command::ProviderModels(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ControlStateRequest, reply, _peer| {
+                submit(&control_state, Command::ControlState(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: DefaultModelSelectRequest, reply, _peer| {
+                submit(
+                    &default_model_select,
+                    Command::DefaultModelSelect(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
