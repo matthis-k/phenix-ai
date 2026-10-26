@@ -153,7 +153,7 @@ pub fn chatgpt_models(access_token: &str) -> Result<Vec<u8>, TransportError> {
     request_with_auth(
         "https://api.openai.com/v1/models",
         None,
-        256 * 1024,
+        crate::siwc_models::MAX_CATALOG_BYTES,
         Some(access_token),
         false,
     )
