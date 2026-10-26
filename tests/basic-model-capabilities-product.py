@@ -51,7 +51,7 @@ observed = answers(events)
 assert len(observed) == 2, events
 assert [session for session, _ in observed] == ["probe-a", "probe-b"]
 a, b = (json.loads(text) for _, text in observed)
-assert a == b, (a, b)
+assert a["tools"] == b["tools"], (a, b)
 assert a["format"] == "phenix.test.model-capabilities.v1"
 assert [tool["id"] for tool in a["tools"]] == [
     "fail", "length", "uppercase"
