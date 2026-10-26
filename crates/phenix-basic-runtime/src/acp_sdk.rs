@@ -921,7 +921,10 @@ impl Controller {
             if expected != self.default_model_revision {
                 return Err(stale_model_conflict());
             }
-            if record.as_ref().is_some_and(|(stored, _)| stored == checked.selection()) {
+            if record
+                .as_ref()
+                .is_some_and(|(stored, _)| stored == checked.selection())
+            {
                 return Ok(expected);
             }
             super::model_selection_state::compare_and_swap(
@@ -1354,7 +1357,8 @@ impl Controller {
             return Err(invalid("ambiguous default model selection"));
         }
         // Selection is intent, never a credential or installation grant.
-        let binding = self.management
+        let binding = self
+            .management
             .as_ref()
             .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
             .current_http_binding(&selected.selected)?;
