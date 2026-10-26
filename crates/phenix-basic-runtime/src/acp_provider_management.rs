@@ -30,9 +30,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
         let mut seen = std::collections::BTreeSet::new();
         let mut provider_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.id.is_empty()
-                || !provider_ids.insert(provider.id.clone())
-            {
+            if provider.id.is_empty() || !provider_ids.insert(provider.id.clone()) {
                 return Err(invalid("invalid registered provider"));
             }
             for connection in &provider.connections {
@@ -55,8 +53,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
         }
         let mut source_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.id.is_empty() || !source_ids.insert(provider.id.clone())
-            {
+            if provider.id.is_empty() || !source_ids.insert(provider.id.clone()) {
                 return Err(invalid("invalid registered provider"));
             }
             if let Some(existing) = merged.iter_mut().find(|item| item.id == provider.id) {
