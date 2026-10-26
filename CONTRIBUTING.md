@@ -17,6 +17,20 @@ This guide describes **how to contribute**, not a frozen description of the curr
 
 Read the linked spec and implementation PRs when changing an area. Specifications are design snapshots, not automatically accurate descriptions of `main`. Older graph design proposals are superseded for future graph-v2 work by [v2.4](spec/graph-architecture-v2.4.md), but existing M1 graph-v1 code remains valid until a tested migration replaces it. Inspect the relevant source, accepted tests, and current PR merge state. Update the existing owner rather than creating a second roadmap.
 
+## Specification change policy
+
+A spec records the desired design, even when the code does not implement it. New or substantially changed specs must state their **status**, **date and inspected commit**, **scope**, **superseded predecessors**, **owning roadmap/PR**, and **acceptance tests needed to close the gap**. Use these status meanings:
+
+| Status | Meaning |
+| --- | --- |
+| **Proposed** | Design under review; implementation may be absent |
+| **Accepted design** | Approved target semantics; not evidence of implementation |
+| **Partially implemented** | Some requirements have code; remaining requirements must stay explicit |
+| **Verified / integrated** | A specific scope passed acceptance at a named commit; not blanket acceptance of the entire spec |
+| **Superseded / historical** | Retained for context; no longer determines future changes |
+
+Check the [spec index](spec/README.md) before writing new guidance. Prefer amending the latest relevant specification and referring to the implementing PR. When a new spec supersedes an old prescription, replace the obsolete active text with a short link to the successor and preserve historical source in Git history. **A design requirement remains open until implementation and its acceptance gate are verified.** Do not close a gap by editing the spec to match incomplete code without an explicit design decision.
+
 ## Roadmap and PR workflow
 
 Follow the dependency order agreed in the owning roadmap:
