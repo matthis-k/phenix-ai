@@ -396,9 +396,7 @@ mod model_control_state;
 mod provider_management;
 use model_control_state::{ControlAction, ControlState, DenialCode};
 #[cfg(test)]
-use provider_management::{
-    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
-};
+use provider_management::{is_missing_model_discovery, ModelPageAccumulator};
 use provider_management::{
     is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
     stale_native_model_choice, ProviderManagement, ProviderManagementGroup,
@@ -2251,15 +2249,6 @@ mod tests {
     }
 
     #[test]
-    fn model_picker_budgets_all_connections_and_pages_globally() {
-        let mut inspected = 0;
-        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
-        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
-        assert!(charge_model_option_budget(&mut inspected, 2).is_err());
-        assert_eq!(inspected, 2);
-    }
-
-    #[test]
     fn absent_discovery_never_becomes_a_false_model_offer() {
         assert!(is_missing_model_discovery(&ProviderErrorCode::Unavailable));
         assert!(is_missing_model_discovery(
@@ -2450,7 +2439,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_model_pages_bound_revision_cursor_profile_and_size() {
+    fn provider_model_pages_reject_invalid_revision_or_cursors_without_count_caps() {
         use phenix_provider_contracts::{ModelOrigin, ProviderModel};
 
         let fixture = |revision, profile: Option<&str>, next: Option<&str>| ModelPage {
