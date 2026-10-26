@@ -1134,6 +1134,12 @@ impl Controller {
         &mut self,
         request: DefaultModelSelectRequest,
     ) -> acp::Result<serde_json::Value> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(Self::control_denial(DenialCode::ConnectionClosed));
+        }
+        if !self.initialized {
+            return Err(Self::control_denial(DenialCode::NotInitialized));
+        }
         let offers = self.pre_session_offers()?;
         let state = ControlState {
             initialized: self.initialized,
