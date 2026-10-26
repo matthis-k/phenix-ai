@@ -384,9 +384,8 @@ mod tests {
 
     #[test]
     fn recovery_rerun_only_matches_preconnect_failures() {
-        let recover = |error: TransportError| {
-            matches!(error, TransportError::Dns | TransportError::Connect)
-        };
+        let recover =
+            |error: TransportError| matches!(error, TransportError::Dns | TransportError::Connect);
         for failure in [TransportError::Dns, TransportError::Connect] {
             assert!(recover(failure));
         }
