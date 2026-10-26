@@ -2689,7 +2689,7 @@
       } ''
         mkdir -p $out
         python ${./tests/p1-release-evidence.py} --self-test
-        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} ${p1AuthLauncherProductCheck} ${p1CombinedAuthProductCheck} ${nativeModelSelectionCheck} ${nativeRoutingRestartCheck} $out
+        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} ${p1AuthLauncherProductCheck} ${p1CombinedAuthProductCheck} ${basicAcpProviderManagementCheck} ${nativeModelSelectionCheck} ${nativeRoutingRestartCheck} $out
         test -s "$out/evidence.json"
       '';
       release = pkgs.runCommand "phenix-m1-release" { } ''
