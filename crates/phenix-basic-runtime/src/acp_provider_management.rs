@@ -19,19 +19,18 @@ pub(super) struct ProviderManagementGroup {
 /// Multiple connection implementations may contribute to the same displayed
 /// provider, but claiming the same provider+connection is ambiguous and denied.
 fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
-    if pages.is_empty() || pages.len() > 32 {
+    if pages.is_empty() {
         return Err(invalid("provider management root count is invalid"));
     }
     if pages.len() == 1 {
         let page = &pages[0];
-        if page.revision == 0 || page.providers.len() > 32 {
+        if page.revision == 0 {
             return Err(invalid("provider catalog is invalid"));
         }
         let mut seen = std::collections::BTreeSet::new();
         let mut provider_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.connections.len() > 32
-                || provider.id.is_empty()
+            if provider.id.is_empty()
                 || !provider_ids.insert(provider.id.clone())
             {
                 return Err(invalid("invalid registered provider"));
@@ -48,7 +47,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
     let mut identities = std::collections::BTreeSet::new();
     let mut digest = 14695981039346656037u64;
     for page in pages {
-        if page.revision == 0 || page.providers.len() > 32 {
+        if page.revision == 0 {
             return Err(invalid("provider catalog has invalid revision or size"));
         }
         for byte in page.revision.to_le_bytes() {
@@ -56,9 +55,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
         }
         let mut source_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.id.is_empty()
-                || provider.connections.len() > 32
-                || !source_ids.insert(provider.id.clone())
+            if provider.id.is_empty() || !source_ids.insert(provider.id.clone())
             {
                 return Err(invalid("invalid registered provider"));
             }
@@ -84,9 +81,6 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
                 digest = (digest ^ u64::from(byte)).wrapping_mul(1099511628211);
             }
         }
-    }
-    if merged.len() > 32 || identities.len() > 32 {
-        return Err(invalid("combined provider catalog exceeds limits"));
     }
     Ok(ProviderPage {
         providers: merged,
@@ -181,15 +175,10 @@ impl ProviderManagementGroup {
         for root in &self.roots {
             let (source_offers, source_denials) = root.authorized_http_offers_report(resolvers)?;
             for offer in source_offers {
-                if offers.len() >= 128 || !ids.insert(offer.id.clone()) {
-                    return Err(invalid("ambiguous or oversized native model options"));
+                if !ids.insert(offer.id.clone()) {
+                    return Err(invalid("ambiguous native model options"));
                 }
                 offers.push(offer);
-            }
-            if denials.len().saturating_add(source_denials.len()) > 128 {
-                return Err(invalid(
-                    "provider model discovery diagnostics exceeded limits",
-                ));
             }
             denials.extend(source_denials);
         }
@@ -223,7 +212,6 @@ pub(super) struct ModelPageAccumulator {
     pub(super) models: Vec<phenix_provider_contracts::ProviderModel>,
     pub(super) revision: Option<u64>,
     pub(super) cursors: std::collections::BTreeSet<String>,
-    pub(super) pages: usize,
 }
 
 impl ModelPageAccumulator {
@@ -232,22 +220,12 @@ impl ModelPageAccumulator {
         page: ModelPage,
         profile: &Option<String>,
     ) -> acp::Result<Option<String>> {
-        if self.pages >= 64
-            || page.revision == 0
+        if page.revision == 0
             || self.revision.is_some_and(|prev| prev != page.revision)
             || &page.profile_id != profile
-            || page.models.len() > 256
-            || self
-                .models
-                .len()
-                .checked_add(page.models.len())
-                .is_none_or(|count| count > 4096)
         {
-            return Err(invalid(
-                "provider catalog page changed or exceeded its budget",
-            ));
+            return Err(invalid("provider catalog page changed"));
         }
-        self.pages += 1;
         self.revision = Some(page.revision);
         let next = page.next_cursor;
         if let Some(cursor) = &next {
@@ -425,9 +403,6 @@ pub(super) fn native_model_option_id(
 /// current runtime-issued catalog choices ever reach native installation.
 pub(super) fn stale_native_model_choice(chosen: &str, current_revision: u64) -> bool {
     const PREFIX: &str = "phenix.native-model@1:";
-    if chosen.len() > 4096 {
-        return false;
-    }
     chosen
         .strip_prefix(PREFIX)
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
@@ -457,18 +432,6 @@ pub(super) fn is_previous_native_selection(
         return Ok(false);
     };
     Ok(native_model_option_id(current, previous)? == chosen)
-}
-
-/// One controller model-menu refresh must have a global bound, not one
-/// budget independently repeated for every provider and connection.
-pub(super) fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
-    if *used >= maximum {
-        return Err(invalid(
-            "provider model selection exceeded discovery budget",
-        ));
-    }
-    *used += 1;
-    Ok(())
 }
 
 /// Only explicitly unavailable/not-yet-discovered provider catalogs are
@@ -582,19 +545,15 @@ impl ProviderManagement {
                 scope: "user".into(),
             },
         )?;
-        if listed.revision == 0 || listed.providers.len() > 32 {
-            return Err(invalid(
-                "provider selection catalog is invalid or too large",
-            ));
+        if listed.revision == 0 {
+            return Err(invalid("provider selection catalog has invalid revision"));
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut offered = Vec::new();
         let mut denials = Vec::new();
-        let mut inspected_connections = 0;
-        let mut inspected_pages = 0;
         for provider in listed.providers {
-            if provider.connections.len() > 32 || !ids.insert(provider.id.clone()) {
-                return Err(invalid("ambiguous or oversized provider selection"));
+            if !ids.insert(provider.id.clone()) {
+                return Err(invalid("ambiguous provider selection"));
             }
             let exact: ProviderDescriptor = self.read(
                 "phenix.provider.catalog@1",
@@ -609,7 +568,6 @@ impl ProviderManagement {
             }
             let mut connections = std::collections::BTreeSet::new();
             for connection in &exact.connections {
-                charge_model_option_budget(&mut inspected_connections, 32)?;
                 if !connections.insert(&connection.id) {
                     return Err(invalid("duplicate provider connection"));
                 }
@@ -663,7 +621,6 @@ impl ProviderManagement {
                     let mut collected = ModelPageAccumulator::default();
                     let mut cursor = None;
                     let full = loop {
-                        charge_model_option_budget(&mut inspected_pages, 128)?;
                         let page = match self.optional_model_page(&ModelQuery {
                             scope: "user".into(),
                             provider_id: exact.id.clone(),
@@ -740,9 +697,6 @@ impl ProviderManagement {
                                 .any(|r| binding.credential_identity() == Some(&r.identity))
                         {
                             continue;
-                        }
-                        if offered.len() >= 128 {
-                            return Err(invalid("too many selectable HTTP models"));
                         }
                         offered.push(NativeModelOffer {
                             id: native_model_option_id(&desired, 0)?,
