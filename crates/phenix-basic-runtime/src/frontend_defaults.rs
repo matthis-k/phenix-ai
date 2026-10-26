@@ -35,6 +35,25 @@ pub fn session_for_input<'a>(
     }
 }
 
+/// Only the JSONL wire adapter needs a session field in its typed Input
+/// schema. Normalize the input after shared session resolution; never allow
+/// the packet to specify a different identity than the admitted session.
+pub fn jsonl_with_session(line: &str, session: &str) -> Result<String, String> {
+    let mut packet: serde_json::Value =
+        serde_json::from_str(line).map_err(|_| "invalid JSONL input".to_owned())?;
+    let object = packet
+        .as_object_mut()
+        .ok_or_else(|| "JSONL input must be an object".to_owned())?;
+    match object.get("session") {
+        None | Some(serde_json::Value::Null) => {
+            object.insert("session".into(), serde_json::json!(session));
+        }
+        Some(serde_json::Value::String(explicit)) if explicit == session => {}
+        _ => return Err("JSONL input session mismatch".into()),
+    }
+    serde_json::to_string(&packet).map_err(|_| "cannot encode JSONL input".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +73,24 @@ mod tests {
             session_for_input(Some("chosen"), Some("existing"), true),
             SessionDecision::Existing("chosen"),
         );
+    }
+
+    #[test]
+    fn jsonl_default_input_normalizes_session_without_cross_session_fallback() {
+        let normalized = jsonl_with_session(
+            r#"{"type":"prompt","text":"hi"}"#,
+            INPUT_SESSION,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&normalized).unwrap();
+        assert_eq!(value["session"], "s1");
+        assert!(jsonl_with_session(
+            r#"{"type":"prompt","session":"foreign","text":"hi"}"#,
+            INPUT_SESSION
+        )
+        .is_err());
+        assert!(jsonl_with_session(r#"{"type":"prompt","session":17}"#, INPUT_SESSION)
+            .is_err());
     }
 
     #[test]
