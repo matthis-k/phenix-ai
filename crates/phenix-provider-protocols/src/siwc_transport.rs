@@ -429,9 +429,14 @@ mod tests {
             socket.write_all(response.as_bytes()).unwrap();
             String::from_utf8(buf[..count].to_vec()).unwrap()
         });
-        let received =
-            request_with_auth(&endpoint, None, Some(MAX_TOKEN_BODY), Some("test-bearer"), false)
-                .expect("catalog response");
+        let received = request_with_auth(
+            &endpoint,
+            None,
+            Some(MAX_TOKEN_BODY),
+            Some("test-bearer"),
+            false,
+        )
+        .expect("catalog response");
         let request = worker.join().unwrap();
         assert!(request.starts_with("GET /models HTTP/1.1"));
         assert!(request
