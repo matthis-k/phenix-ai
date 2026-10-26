@@ -34,6 +34,17 @@ pub enum ProviderErrorCode {
     Unavailable,
     Conflict,
     AuthenticationRequired,
+    // Discovery is optional for a provider, but a failed authenticated
+    // catalog must carry a specific safe reason through the control plane.
+    DiscoveryNetwork,
+    DiscoveryTimeout,
+    DiscoveryUnauthorized,
+    DiscoveryRateLimited,
+    DiscoveryServerError,
+    DiscoveryInvalidResponse,
+    DiscoveryIssuerUnavailable,
+    DiscoveryRejected,
+    DiscoveryTooLarge,
     // Local credential generation was revoked, but the remote refresh
     // session could not be confirmed revoked (network/issuer unavailable).
     RemoteRevocationUnconfirmed,
