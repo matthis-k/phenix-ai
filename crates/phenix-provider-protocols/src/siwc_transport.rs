@@ -99,7 +99,10 @@ fn request_with_auth(
     // become tokens; don't even buffer their contents.
     match response.status().as_u16() {
         200 => {}
-        400 | 401 | 403 => return Err(TransportError::Rejected),
+        // OAuth token endpoints return an opaque Rejected error. For bearer
+        // catalog reads the status is safe diagnostic metadata, allowing the
+        // provider to distinguish expired auth from quota and server errors.
+        400 | 401 | 403 if bearer.is_none() => return Err(TransportError::Rejected),
         status => return Err(TransportError::HttpStatus(status)),
     }
 
