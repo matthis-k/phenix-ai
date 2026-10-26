@@ -1584,31 +1584,48 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
-        // The connection-level default becomes independently persisted session
-        // intent; it is not a global bearer installation or cross-session grant.
-        if let Some(desired) = self.default_model_selection.clone() {
-            let management = self
-                .management
-                .as_ref()
-                .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?;
-            let binding = management.current_http_binding(&desired)?;
-            // An interrupted persistence/install must never fall back to
-            // the old HTTP preset in a newly created session.
-            self.selected_http_seen.insert(session.clone());
-            super::model_selection_state::compare_and_swap(
-                self.sessions
-                    .get(&session)
-                    .ok_or_else(|| invalid("new session unavailable"))?,
-                &self.composition,
-                &session,
-                &binding,
-                0,
-            )
-            .map_err(|_| invalid("default model persistence denied"))?;
-            self.install_current_http_model(&session, &desired)?;
+        // Creating a session is transactional from the ACP client's point of
+        // view: failing default selection or model admission must not leave
+        // an unacknowledged session counted as active in control state.
+        let initialized = (|| {
+            // The connection-level default becomes independently persisted
+            // session intent, never a global bearer installation or grant.
+            if let Some(desired) = self.default_model_selection.clone() {
+                let management = self.management.as_ref().ok_or_else(|| {
+                    Self::control_denial(DenialCode::ProviderManagementNotInstalled)
+                })?;
+                let binding = management.current_http_binding(&desired)?;
+                // An interrupted persistence/install must never fall back
+                // to the old HTTP preset for this new session.
+                self.selected_http_seen.insert(session.clone());
+                super::model_selection_state::compare_and_swap(
+                    self.sessions
+                        .get(&session)
+                        .ok_or_else(|| invalid("new session unavailable"))?,
+                    &self.composition,
+                    &session,
+                    &binding,
+                    0,
+                )
+                .map_err(|_| invalid("default model persistence denied"))?;
+                self.install_current_http_model(&session, &desired)?;
+            }
+            self.model_options(&session)
+        })();
+        match initialized {
+            Ok(options) => Ok(NewSessionResponse::new(session).config_options(options)),
+            Err(error) => {
+                // Do not expose a phantom active session after a failed
+                // session/new response. Shutdown is best-effort; preserve
+                // the actionable admission/persistence error for the caller.
+                self.offsets.remove(&session);
+                self.selected_http_seen.remove(&session);
+                if let Some(kernel) = self.sessions.remove(&session) {
+                    let _ = kernel.shutdown();
+                }
+                Err(error)
+            }
         }
-        let options = self.model_options(&session)?;
-        Ok(NewSessionResponse::new(session).config_options(options))
     }
 
     fn load_session(
