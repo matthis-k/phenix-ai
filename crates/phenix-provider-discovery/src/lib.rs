@@ -148,7 +148,8 @@ mod tests {
             .collect::<Vec<_>>();
         let body = serde_json::to_vec(&serde_json::json!({
             "object": "list", "data": models
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(body.len() > 1024 * 1024);
         let ids = parse_standard_openai_model_ids(&body).unwrap();
         assert_eq!(ids.len(), 4097);
