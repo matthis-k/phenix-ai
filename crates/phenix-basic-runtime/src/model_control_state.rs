@@ -301,7 +301,9 @@ mod tests {
                                                 description["action"],
                                                 serde_json::json!(action)
                                             );
-                                            assert!(unique.insert(description["action"].to_string()));
+                                            assert!(
+                                                unique.insert(description["action"].to_string())
+                                            );
                                             let denial = state.deny(*action);
                                             assert_eq!(
                                                 description["allowed"],
