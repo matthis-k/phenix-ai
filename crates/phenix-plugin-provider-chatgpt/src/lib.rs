@@ -5,7 +5,7 @@
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
 use phenix_provider_auth_strategies::BrowserAttempt;
-use phenix_provider_builtins::{discovered_model_page, registrations};
+use phenix_provider_builtins::{discovered_model_page_from_cursor, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
@@ -690,7 +690,7 @@ mod plugin {
                 "model catalog account not authorized",
             )));
         }
-        if query.cursor.is_some() || query.limit == 0 || query.limit > 256 {
+        if query.limit == 0 || query.limit > 256 {
             return Err(CallError::Domain(denied(
                 "invalid ChatGPT model page request",
             )));
@@ -705,12 +705,13 @@ mod plugin {
             .map_err(|error| CallError::Domain(model_discovery_transport_error(error)))?;
         let discovered = parse_chatgpt_models(&response)
             .map_err(|error| CallError::Domain(model_discovery_parse_error(error)))?;
-        discovered_model_page(
+        discovered_model_page_from_cursor(
             identity.profile_id(),
             CONNECTION,
             "openai-responses",
             "responses",
             query.limit,
+            query.cursor.as_deref(),
             discovered
                 .into_iter()
                 .map(|item| (item.slug, item.display_name)),
