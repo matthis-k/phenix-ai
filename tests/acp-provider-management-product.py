@@ -203,6 +203,23 @@ def probe_undiscovered_http_choices():
         protocolVersion=1, clientCapabilities={}
     ))
     assert initialized["result"]["protocolVersion"] == 1
+    # Connection-level actions are available before session/new. The runtime
+    # must explain why provider model selection is not yet possible instead
+    # of inventing a ChatGPT/HTTP model from registration metadata.
+    control = request(30, "_phenix/control/state", {})
+    assert control["result"]["format"] == "phenix.control.state.v1", control
+    actions = {x["action"]: x for x in control["result"]["actions"]}
+    assert actions["session_new"]["allowed"], control
+    assert actions["models_list"]["allowed"], control
+    assert not actions["models_select"]["allowed"], control
+    assert actions["models_select"]["denial"]["code"] == "no_selectable_models", control
+    assert not actions["session_prompt"]["allowed"], control
+    assert actions["session_prompt"]["denial"]["code"] == "session_required", control
+    assert control["result"]["models"] == [], control
+    denied_default = request(31, "_phenix/models/select", {"value": "forged"})
+    assert denied_default["error"]["code"] == -32602, denied_default
+    assert denied_default["error"]["data"]["format"] == "phenix.control.denial.v1"
+    assert denied_default["error"]["data"]["code"] == "no_selectable_models"
     created = request(2, "session/new", dict(cwd="/tmp", mcpServers=[]))
     assert "result" in created, created
     session = created["result"]["sessionId"]
