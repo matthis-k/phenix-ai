@@ -1766,8 +1766,9 @@ impl Controller {
         let mut payload = install.to_value();
         let result = root.invoke(&payload);
         scrub_portable_secret_bytes(&mut payload);
-        match result.map_err(internal)? {
-            Outcome::Success(value) => <() as Portable>::from_value(value).map_err(internal),
+        match result.map_err(|failure| prompt_failure("model_install", failure))? {
+            Outcome::Success(value) => <() as Portable>::from_value(value)
+                .map_err(|failure| prompt_failure("model_install", failure)),
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
                 Err(provider_rejection(problem))
@@ -1871,7 +1872,8 @@ impl Controller {
                     .map_err(|failure| prompt_failure("graph_admission", failure))?;
             }
             if !closed.load(Ordering::Acquire) {
-                send_updates(kernel, Some(&execution), session, after, peer, closed)?;
+                send_updates(kernel, Some(&execution), session, after, peer, closed)
+                    .map_err(|_| prompt_failure("frontend_render", "redacted"))?;
             }
             if status == GraphStatus::Finished {
                 let cancelled = finish_submission(&execution)
@@ -1881,7 +1883,8 @@ impl Controller {
                     record_cancelled(kernel, session)
                         .map_err(|failure| prompt_failure("graph_cancel_record", failure))?;
                     if !closed.load(Ordering::Acquire) {
-                        send_updates(kernel, None, session, after, peer, closed)?;
+                        send_updates(kernel, None, session, after, peer, closed)
+                            .map_err(|_| prompt_failure("frontend_render", "redacted"))?;
                     }
                 }
                 set_owner_marker(owner, None)
