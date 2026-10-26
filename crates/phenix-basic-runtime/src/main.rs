@@ -876,7 +876,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             "phenix.basic.frontend@1/decode",
             ClientInput {
                 session: session.clone(),
-                line,
+                line: frontend_defaults::jsonl_with_session(&line, &session)?,
             },
         ))?;
         if input.is_cancel() {
@@ -919,7 +919,10 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                             "phenix.basic.frontend@1/decode",
                             ClientInput {
                                 session: session.clone(),
-                                line: pending_line,
+                                line: frontend_defaults::jsonl_with_session(
+                                    &pending_line,
+                                    &session,
+                                )?,
                             },
                         ))?;
                         if cancellation.is_cancel() {
