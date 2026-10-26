@@ -40,3 +40,12 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Implementation:** specification only. Native module compiler and tests **not implemented**.
 - **Verification:** no module-specific executable tests exist; confirm documentation diff and existing clean workspace CI separately.
 - **Next:** implement module IR and typed boundary lowering as part of graph-v2 V0/V1, test interface-only composition and authorized internal replacement before adding domain managers.
+
+## 2026-10-27 R4 legacy non-selected framework purge and author UX target
+
+- **Before:** the active Cargo workspace contained eight crates, but 18 retired implementation and helper crates still occupied the rewrite tree despite not being build-selected.
+- **Change:** remove 120 tracked files under 18 unused crates; keep only the ABI/kernel/SDK/contracts and two tiny fixtures. Source preserved at reference commit `31f86f4`.
+- **Top-down target:** document usage-first plugin call sites and default Basic, provider, agent, tools, memory and compaction behaviors in `docs/plugin-author-ux.md`. Document repeated design/implementation/feedback cycles in `docs/design-implementation-cycles.md`.
+- **Domain logic:** port algorithmic pieces from the reference as needed; do not retain its framework or import the retired crates for convenience.
+- **Verification:** Git tree purge verified by diff; compiling tests for this exact commit are initially not run. The legacy flake remains intentionally incompatible with this rewrite.
+- **Next:** implement only the canonical graph-v2 minimal module/Flow authoring slice and run author-facing fixture tests, then native selected dispatch.

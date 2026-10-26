@@ -1,9 +1,0 @@
-[package]
-name = "phenix-environment-contracts"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-phenix-sdk = { path = "../phenix-sdk" }
-serde.workspace = true
