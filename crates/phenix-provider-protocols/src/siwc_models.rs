@@ -4,11 +4,8 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-// The account catalog can contain many hidden entries with large per-model
-// metadata. Bound the wire JSON separately from the small, selectable list.
-pub(crate) const MAX_CATALOG_BYTES: usize = 8 * 1024 * 1024;
-const MAX_CATALOG_ENTRIES: usize = 4096;
-const MAX_VISIBLE_MODELS: usize = 128;
+// Provider catalog size is not a product policy. The optional transport
+// resource limit is controlled by the user, never compiled into this parser.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatGptModel {
@@ -39,17 +36,11 @@ fn valid_display_name(label: &str) -> bool {
 /// Preserve server ordering and show only visibility:list, per SIWC docs.
 /// A populated catalog does not by itself prove plan scope or inference quota.
 pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogError> {
-    if body.len() > MAX_CATALOG_BYTES {
-        return Err(CatalogError::TooLarge);
-    }
     let json: Value = serde_json::from_slice(body).map_err(|_| CatalogError::InvalidShape)?;
     let models = json
         .get("models")
         .and_then(Value::as_array)
         .ok_or(CatalogError::InvalidShape)?;
-    if models.len() > MAX_CATALOG_ENTRIES {
-        return Err(CatalogError::TooLarge);
-    }
     let mut result = Vec::new();
     let mut ids = BTreeSet::new();
     for entry in models {
@@ -72,9 +63,6 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
         }
         if !ids.insert(slug) {
             return Err(CatalogError::DuplicateModel);
-        }
-        if result.len() >= MAX_VISIBLE_MODELS {
-            return Err(CatalogError::TooLarge);
         }
         result.push(ChatGptModel {
             slug: slug.to_owned(),
@@ -149,7 +137,7 @@ mod tests {
         );
         let body = serde_json::to_vec(&serde_json::json!({ "models": models })).unwrap();
         assert!(body.len() > 256 * 1024);
-        assert!(body.len() < MAX_CATALOG_BYTES);
+
         assert_eq!(
             parse_chatgpt_models(&body).unwrap(),
             vec![ChatGptModel {
@@ -160,28 +148,17 @@ mod tests {
     }
 
     #[test]
-    fn raw_and_visible_catalog_limits_still_fail_closed() {
-        let too_many_raw = serde_json::json!({
-            "models": vec![serde_json::json!({ "visibility": "hidden" });
-                MAX_CATALOG_ENTRIES + 1],
+    fn large_raw_and_visible_catalogs_have_no_implicit_count_cap() {
+        let catalog = serde_json::json!({
+            "models": (0..4097).map(|i| serde_json::json!({
+                "visibility": "list",
+                "slug": format!("gpt-{i}"),
+                "display_name": format!("Model {i}"),
+            })).collect::<Vec<_>>(),
         });
-        assert_eq!(
-            parse_chatgpt_models(&serde_json::to_vec(&too_many_raw).unwrap()),
-            Err(CatalogError::TooLarge)
-        );
-        let too_many_visible = serde_json::json!({
-            "models": (0..=MAX_VISIBLE_MODELS)
-                .map(|i| serde_json::json!({
-                    "visibility": "list",
-                    "slug": format!("gpt-{i}"),
-                    "display_name": format!("GPT {i}"),
-                }))
-                .collect::<Vec<_>>(),
-        });
-        assert_eq!(
-            parse_chatgpt_models(&serde_json::to_vec(&too_many_visible).unwrap()),
-            Err(CatalogError::TooLarge)
-        );
+        let parsed = parse_chatgpt_models(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 4097);
+        assert_eq!(parsed[4096].slug, "gpt-4096");
     }
 
     #[test]
@@ -204,9 +181,5 @@ mod tests {
         ] {
             assert!(parse_chatgpt_models(body).is_err(), "{body:?}");
         }
-        assert_eq!(
-            parse_chatgpt_models(&vec![b' '; MAX_CATALOG_BYTES + 1]),
-            Err(CatalogError::TooLarge)
-        );
     }
 }
