@@ -1078,10 +1078,21 @@ impl Controller {
     }
 
     fn describe_control_state(&self) -> acp::Result<serde_json::Value> {
-        let discovered = self.pre_session_offers();
-        let (offers, discovery_failure) = match discovered {
-            Ok(offers) => (offers, None),
-            Err(_) => (Vec::new(), Some("provider_catalog_denied_or_unavailable")),
+        let discovered = if can_switch_native_model(&self.composition) {
+            self.management
+                .as_ref()
+                .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))
+                .and_then(|manager| manager.authorized_http_offers_report(&self.resolvers))
+        } else {
+            Err(Self::control_denial(DenialCode::ModelControlNotInstalled))
+        };
+        let (offers, denials, discovery_failure) = match discovered {
+            Ok((offers, denials)) => (offers, denials, None),
+            Err(_) => (
+                Vec::new(),
+                Vec::new(),
+                Some("provider_catalog_denied_or_unavailable"),
+            ),
         };
         let state = ControlState {
             initialized: self.initialized,
@@ -1113,6 +1124,7 @@ impl Controller {
             )?),
             None => serde_json::Value::Null,
         };
+        value["model_denials"] = serde_json::json!(denials);
         value["model_discovery_error"] = serde_json::json!(discovery_failure);
         Ok(value)
     }
