@@ -6,7 +6,7 @@
 //! HTTP errors never expose token response bodies or credential values.
 use crate::siwc::TOKEN_URL;
 use crate::siwc_verified::{TokenEnvelope, JWKS_URL, MAX_JWKS_BODY, MAX_TOKEN_BODY};
-use curl::easy::{Easy2, Handler, List, WriteError};
+use curl::easy::{Easy2, Handler, HttpVersion, IpResolve, List, WriteError};
 use std::time::Duration;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -108,6 +108,25 @@ fn request_with_auth(
     bearer: Option<&str>,
     allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
+    // OAuth authorization codes are one-shot. A second POST is safe only if
+    // libcurl did not resolve/connect, so no token request reached the issuer.
+    // Do not retry timeouts, HTTP transfers, TLS failures or any HTTP status:
+    // a server might have consumed the code already.
+    let result = request_with_auth_family(url, post, limit, bearer, allow_empty, false);
+    if matches!(&result, Err(TransportError::Dns | TransportError::Connect)) {
+        return request_with_auth_family(url, post, limit, bearer, allow_empty, true);
+    }
+    result
+}
+
+fn request_with_auth_family(
+    url: &str,
+    post: Option<&str>,
+    limit: usize,
+    bearer: Option<&str>,
+    allow_empty: bool,
+    ipv4_only: bool,
+) -> Result<Vec<u8>, TransportError> {
     let mut easy = Easy2::new(BoundedBody {
         bytes: Vec::new(),
         bound: limit,
@@ -150,7 +169,18 @@ fn request_with_auth(
         .map_err(|_| TransportError::Unavailable)?;
     easy.signal(false)
         .map_err(|_| TransportError::Unavailable)?;
+    if ipv4_only {
+        // Normal path stays dual-stack, including on IPv6-only hosts.
+        // Only a failed pre-connect attempt takes the IPv4 recovery path.
+        easy.ip_resolve(IpResolve::V4)
+            .map_err(|_| TransportError::Unavailable)?;
+    }
     if let Some(form) = post {
+        // Token exchange is a short, non-streaming form POST. Pin HTTP/1.1
+        // to avoid problematic HTTP/2 framing in embedded libcurl builds.
+        // TLS peer and hostname verification remain mandatory.
+        easy.http_version(HttpVersion::V11)
+            .map_err(|_| TransportError::Unavailable)?;
         easy.post(true).map_err(|_| TransportError::Unavailable)?;
         easy.post_fields_copy(form.as_bytes())
             .map_err(|_| TransportError::Unavailable)?;
@@ -350,6 +380,28 @@ mod tests {
         });
         let outcome = request_with_auth(&address, post, limit, None, allow_empty);
         (outcome, server.join().unwrap())
+    }
+
+    #[test]
+    fn recovery_rerun_only_matches_preconnect_failures() {
+        let recover = |error: TransportError| {
+            matches!(error, TransportError::Dns | TransportError::Connect)
+        };
+        for failure in [TransportError::Dns, TransportError::Connect] {
+            assert!(recover(failure));
+        }
+        for failure in [
+            TransportError::Proxy,
+            TransportError::Transfer,
+            TransportError::Network,
+            TransportError::Timeout,
+            TransportError::Tls,
+            TransportError::Rejected,
+            TransportError::HttpStatus(502),
+            TransportError::InvalidTokenResponse,
+        ] {
+            assert!(!recover(failure));
+        }
     }
 
     #[test]
