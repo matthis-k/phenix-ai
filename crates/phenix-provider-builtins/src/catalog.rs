@@ -26,6 +26,9 @@ pub fn discovered_model_page(
 
 /// A bounded *page*, not a bounded catalog. Revalidate the full catalog for
 /// every cursor read so visibility/identity changes alter the revision.
+// Compatibility bridge for declarative registration; the next SDK pass
+// will consolidate the identity fields into a typed catalog source.
+#[allow(clippy::too_many_arguments)]
 pub fn discovered_model_page_from_cursor(
     profile: &str,
     connection: &str,
