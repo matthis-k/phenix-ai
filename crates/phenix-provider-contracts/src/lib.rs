@@ -34,8 +34,8 @@ pub enum ProviderErrorCode {
     Unavailable,
     Conflict,
     AuthenticationRequired,
-    // Discovery is optional for a provider, but a failed authenticated
-    // catalog must carry a specific safe reason through the control plane.
+    // The account-scoped catalog may be unavailable for a specific reason.
+    // Only typed codes cross the ACP authority boundary; never response bodies.
     DiscoveryNetwork,
     DiscoveryTimeout,
     DiscoveryUnauthorized,
