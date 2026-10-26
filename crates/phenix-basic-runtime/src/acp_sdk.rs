@@ -434,6 +434,12 @@ fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialId
         && root_operations.contains("revoke")
         && nested_operations.is_empty()
         && spec.slots.is_empty();
+    // An environment-only launcher authorizes storing a variable name, never
+    // importing raw secret bytes or silently acquiring revoke authority.
+    let environment_only = spec.entry.operation == "bind_environment"
+        && root_operations == std::collections::BTreeSet::from(["bind_environment"])
+        && nested_operations.is_empty()
+        && spec.slots.is_empty();
     let direct_revoke = spec.entry.operation == "revoke"
         && root_operations == std::collections::BTreeSet::from(["revoke"]);
     // A provider-owned revoke root may privately resolve the exact account
@@ -454,7 +460,7 @@ fn validate_credentials_spec(spec: &Composition) -> Result<(String, CredentialId
         .map(|operation| format!("{CONTRACT}/{operation}"))
         .collect::<std::collections::BTreeSet<_>>();
     if spec.entry.interface != CONTRACT
-        || !(api_key || simple_revoke || nested_revoke)
+        || !(api_key || environment_only || simple_revoke || nested_revoke)
         || spec.authority.operations != operations
         || spec.authority.resources != resources
         || !spec.excluded.is_empty()
