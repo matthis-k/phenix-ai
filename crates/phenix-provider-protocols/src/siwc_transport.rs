@@ -94,7 +94,7 @@ fn request_with_auth(
                 .map_err(|_| TransportError::InvalidForm)?,
         );
     }
-    let mut response = builder.send().map_err(|error| request_error(&error))?;
+    let response = builder.send().map_err(|error| request_error(&error))?;
     // The HTTP status is safe metadata. Error bodies and redirects never
     // become tokens; don't even buffer their contents.
     match response.status().as_u16() {
