@@ -131,17 +131,22 @@ mod tests {
         // Reproduces account catalogs with hundreds of hidden records and
         // >256 KiB of model metadata: earlier versions reported TooLarge.
         let mut models = (0..512)
-            .map(|i| serde_json::json!({
-                "visibility": "hidden",
-                "slug": format!("internal-{i}"),
-                "metadata": "x".repeat(1024),
-            }))
+            .map(|i| {
+                serde_json::json!({
+                    "visibility": "hidden",
+                    "slug": format!("internal-{i}"),
+                    "metadata": "x".repeat(1024),
+                })
+            })
             .collect::<Vec<_>>();
-        models.insert(200, serde_json::json!({
-            "visibility": "list",
-            "slug": "gpt-visible",
-            "display_name": "Visible model",
-        }));
+        models.insert(
+            200,
+            serde_json::json!({
+                "visibility": "list",
+                "slug": "gpt-visible",
+                "display_name": "Visible model",
+            }),
+        );
         let body = serde_json::to_vec(&serde_json::json!({ "models": models })).unwrap();
         assert!(body.len() > 256 * 1024);
         assert!(body.len() < MAX_CATALOG_BYTES);
