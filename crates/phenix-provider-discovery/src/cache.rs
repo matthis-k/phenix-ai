@@ -67,14 +67,12 @@ pub struct CatalogView {
 
 /// Check provider-supplied pages even when they did not pass through the
 /// built-in JSON decoder. Plugins may declare static models or use their own
-/// adapters, but none may store unbounded or ambiguous catalog data.
+/// adapters. Validate identities and duplicate entries without imposing catalog size limits.
 fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
     let mut ids = BTreeSet::new();
     for model in &page.models {
         for field in [&model.id, &model.label] {
-            if field.is_empty()
-                || field.chars().any(char::is_control)
-            {
+            if field.is_empty() || field.chars().any(char::is_control) {
                 return Err(CacheError::InvalidCatalog);
             }
         }
@@ -83,9 +81,7 @@ fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
         }
     }
     if let Some(cursor) = &page.next_provider_cursor {
-        if cursor.is_empty()
-            || cursor.chars().any(char::is_control)
-        {
+        if cursor.is_empty() || cursor.chars().any(char::is_control) {
             return Err(CacheError::InvalidCatalog);
         }
     }
