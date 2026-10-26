@@ -31,6 +31,10 @@ There is no graph-v1 compatibility promise for new plugin graph declarations. Do
 
 These are *logical graph fragments*, not a mandate for one native crate per row. Shared domain managers own their live state. Concrete declaration plugins contain only registrations; algorithm plugins implement domain-specific operations. Policy and serialization live in shared Rust libraries when useful. Storage and journals remain durable domain services, not a general plugin state replacement.
 
+## Module interfaces and editable internals
+
+The latest target contract is [v2.4 §2.4 and §7.4](../spec/graph-architecture-v2.4.md): each logical module declares stable typed Entry/Exit ports for ordinary composition. Internal nodes and logical edges remain inspectable and explicitly patchable under normal graph mutation and flow authorization. Module interfaces are compile-time boundaries, not additional native plugins, roots, or schedulers. Advanced patches pin the module revision and targeted topology. Changes to internals preserve exported types/security and must pass behavioral parity tests.
+
 ## Planned graph connections
 
 ```mermaid
@@ -68,7 +72,7 @@ Prefer a few cohesive manager plugins with small contributions over one crate pe
 ## Migration and test gates
 
 1. **Purge and baseline:** pinned reference branch, no old plugin crate present, small fixtures compile against SDK and public contracts. Only clean workspace Cargo tests count initially.
-2. **V0/V1 graph compiler:** typed `Source -> Invoke -> Flow -> Invoke` including native pending/cancel and denied bindings. Follow v2.4 V0/V1.
+2. **V0/V1 graph compiler:** canonical module interface lowering and typed `Source -> Invoke -> Flow -> Invoke` including native pending/cancel and denied bindings. Follow v2.4 V0/V1.
 3. **V2/V4 finite waves:** Switch/Merge/Join/Closed/Failed and bounded `Deferred::Next`; test arrival-order independence, authorization and physical draining.
 4. **Basic parity:** minimal selected session, journal, tools, model, agent and frontend handlers. Compare a shared deterministic scenario corpus to the reference branch. No special graph runner in any plugin.
 5. **P2 extensions:** independent memory retrieval/write, verified changed-candidate compaction, code intelligence, approval and durable jobs.

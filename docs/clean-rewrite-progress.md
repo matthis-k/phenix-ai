@@ -32,3 +32,11 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - Workflow: [first clean Rust run](https://github.com/matthis-k/phenix-ai/actions/runs/40395088816), commit `355871dde43fb204d5a842e34ba180f781a533a2`.
 - **Failed** at `cargo fmt --all -- --check`; three formatting differences in the new fixture Rust sources. Cargo tests and native build did not run on that head.
 - Corrected the three differences in the next commit. Their success remains **unverified until its own run finishes**.
+
+## 2026-10-26 R3 module-boundary design
+
+- **Before:** graph-v2 defines individual nodes and named graph exports; the clean domain plan lacks a clear standard-vs-advanced interface for nested subgraphs.
+- **Design change:** add v2.4 §2.4 and §7.4: stable Entry/Exit module interface, accessible internal graph IDs, explicit advanced patch grants, offline lowering, checked version preconditions, and tests. Link from clean rewrite plan. No new native plugin type.
+- **Implementation:** specification only. Native module compiler and tests **not implemented**.
+- **Verification:** no module-specific executable tests exist; confirm documentation diff and existing clean workspace CI separately.
+- **Next:** implement module IR and typed boundary lowering as part of graph-v2 V0/V1, test interface-only composition and authorized internal replacement before adding domain managers.

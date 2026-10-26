@@ -40,6 +40,8 @@
 | D30 | `Value::Ref` delivery does not grant dereference authority | Portable references are identifiers, not capabilities |
 | D31 | Effective-export rebinding checks exact security by default | Patch winner changes cannot silently alter trust assumptions |
 | D32 | A mandatory hard-budget claim is a composition acceptance constraint | Unmediated cost effects invalidate any hard-enforcement claim |
+| D33 | Graph modules expose stable typed entry/exit interfaces while leaving their internal nodes inspectable and patchable | Ordinary composition stays simple without removing advanced customization |
+| D34 | Module boundaries are compile-time metadata; editing an internal node requires ordinary graph mutation authority and exact preconditions | No second scheduler, hidden plugin state, or authority bypass |
 
 ### 0.1 Historical implementation snapshot (25 October 2026; verify against current code)
 
@@ -108,6 +110,7 @@ pub struct GraphContributionV2 {
     pub nodes: Vec<NodeDecl>,
     pub edges: Vec<EdgeDecl>,
     pub patches: Vec<GraphPatch>,
+    pub modules: Vec<ModuleDecl>,        // Offline namespaces/interfaces; no native work
 }
 
 pub struct SourceDecl {
@@ -277,6 +280,56 @@ classDiagram
 A graph may have arbitrarily many disconnected components or dormant nodes. A persistent source declaration does not retain a root. Roots are instantiated per admitted external event, while plugin-emitted and deferred events initiate additional waves *within* their already admitted root. Existing M1 admits serial roots; this proposal does not claim concurrent root support.
 
 No root/wave IDs or live `Value`s appear in inspectable graph descriptors. `Order` edges do not connect flow reachability sets or imply cross-root synchronization.
+
+### 2.4 Module identity and exported boundaries
+
+Modules are **offline graph namespaces and authoring contracts**. One plugin may contribute multiple modules, and modules may nest. A module is neither a plugin instance, a separate scheduler, a new root, a state store, nor a permission boundary. Member nodes remain ordinary graph-v2 nodes and use the same M1 dispatcher and generation authority. An interface appears as a dedicated boundary node in inspection/editor views, but the compiler lowers its wiring to checked core `Flow` edges. No native pass-through call is needed.
+
+Conceptual additions to the graph-v2 IR, not compiling Rust:
+
+```rust
+pub struct ModuleDecl {
+    pub id: ModuleId,                   // Unique within the contributor
+    pub revision: u32,                  // Versioned public usage contract
+    pub parent: Option<ModuleId>,       // Acyclic namespace ownership
+    pub members: Vec<NodeId>,           // Canonical fully qualified member nodes
+    pub ports: Vec<ModulePortDecl>,
+}
+pub enum ModulePortDecl {
+    Entry {
+        name: ExportName,
+        schema: ValueSchema,
+        security: PortSecurity,
+        targets: Vec<ModuleInputTarget>, // Explicit fan-out; nonempty
+    },
+    Exit {
+        name: ExportName,
+        schema: ValueSchema,
+        security: PortSecurity,
+        source: ModuleOutputSource,     // One selected producer; use Merge explicitly
+    },
+}
+pub enum ModuleInputTarget {
+    Node(InPortRef),
+    ChildEntry(ModulePortRef),
+}
+pub enum ModuleOutputSource {
+    Node(OutPortRef),
+    ChildExit(ModulePortRef),
+}
+```
+
+An **Entry** is a typed input from the module user's perspective and an internal source of that same checked value. An **Exit** is an internal typed sink and a typed output to the user. Boundary aliases carry normal `Flow` semantics, not `Order`, and do not manufacture `Value`, `Closed`, `Failed`, or extra `WaveId` identities. Every declared Entry target must be explicit; a boundary with no targets rejects at preparation. An Exit has exactly one specified producer; a module author must insert an explicit `Merge` or `Join` when required. A nested child may be connected through its exported ports. Recursive module nesting, duplicate node ownership, ambiguous names, aliases to nonmembers, and inconsistent types or security labels reject offline. A declared but unconnected module interface remains dormant and does not retain a root.
+
+An interface entry is **not automatically an external action**. An external user trigger still requires a separately declared, authorized `SourceDecl` and action. Composing two modules connects typed exported ports within the admitted root/wave; an ordinary external source occurrence creates a root exactly as §3 defines.
+
+Canonical member identities remain under the existing `plugin/node` ID scheme, with a module-qualified local node name such as `memory.recall.rank`. No incompatible second node-ID format is required. Module IDs, revisions, port aliases, selected targets, security labels, member ownership, and lowered edges contribute to the canonical compiled graph and provenance digests. The source/patch origin map retains the corresponding module boundaries for inspection.
+
+**Interface stability:** exported port names, request/response schemas, security classification/integrity bounds, error behavior, and declared semantic effects form the consumer-facing module contract. Rebinding an export to a different internal implementation is permitted only when checked bindings and all exported guarantees remain satisfied; the compiler verifies structural/security compatibility, while behavior still needs conformance tests. Breaking an export requires a new module interface revision. Nothing guarantees that a concrete internal node ID remains available across module revisions.
+
+**Internal editability:** every internal node/edge can be inspected and addressed by its qualified canonical ID. The normal SDK module handle exposes only typed interface ports. An advanced graph editor or authorized `GraphPatch` can explicitly target internals, including a replace/splice/reconnect, with exact `expects` preconditions for the selected module revision and affected topology/ports. A stale patch fails with a named diagnostic rather than guessing its new target. This is a tooling/compatibility distinction: the runtime does not hide internal graph metadata. Protected values, credentials, and plugin-private Rust state remain separately authorized and are not exposed by inspection.
+
+**Authority:** discovering an internal ID conveys no invocation, read, stream-observation, dataflow, or graph-mutation rights. Direct cross-module wiring to an internal port is an advanced graph edit and requires the same explicit mutation and flow grants as any patch. A valid patch cannot widen the root's effective authority, forge an external entry source, relabel a Secret port, or bypass a selected cost-bearing effect reservation. Module interface checks and patch decisions run at offline preparation before native loading. Active generations remain immutable; edits take effect only in a prepared successor generation.
 
 ## 3. Finite-wave execution algebra and built-in operators
 
@@ -818,6 +871,58 @@ Compiled graph patches can be authored through fluent builders, a declarative ma
 ### 7.3 Graph visualization and patch explanation
 
 Expose an inspection API returning canonical graph JSON/Value metadata plus `dot`/Mermaid exports and an origin map for each generated edge. Key queries: `show graph`, `show sources`, `show route(edge_id)`, `explain patch(id)`, `why node active`, `why patch superseded`, `why flow denied`. Keep inspection read-only; it cannot change a live graph.
+
+### 7.4 Usage-first module interfaces and advanced internal customization
+
+The ordinary API returns a typed module handle with exported entry and exit ports. Advanced authors explicitly select a module's internal topology and issue a normal patch. Both author to the *same* compiled graph-v2 IR.
+
+```rust
+// Illustrative SDK-only authoring, not implemented in the clean rewrite.
+let mut m = g.module("memory.recall", 1);
+let query = m.entry::<RecallInput>("query");
+let result = m.exit::<RecallResult>("result");
+let scope = m.invoke::<ResolveScope>("scope");
+let fetch = m.invoke::<FetchEvidence>("fetch");
+let rank = m.invoke::<RankEvidence>("rank");
+let verify = m.invoke::<VerifyEvidence>("verify");
+
+m.flow(query.inside(), scope.input());
+m.flow(scope.ok(), fetch.input());
+m.flow(fetch.ok(), rank.input());
+m.flow(rank.ok(), verify.input());
+m.flow(verify.ok(), result.inside());
+
+// Normal consumer: named interface only.
+g.flow(agent.recall_request(), m.entry_port("query"));
+g.flow(m.exit_port("result"), agent.recalled_evidence());
+
+// Advanced customization: exact internal target and checked replacement.
+g.patch("custom-ranking")
+ .expect_module("memory.recall", 1)
+ .replace_node(m.internal_node("rank"), custom_rank);
+```
+
+An interface is a stable **logical boundary**, not necessarily a physical Invoke node. Graph viewers may show it as a dedicated boundary vertex. Compiler lowering removes any display-only boundary vertices and carries original port/edge provenance. The module's internal nodes are addressable even when the standard SDK hides them behind a compact interface handle. A simple module author can expose one operation and no internals; a larger agent, memory, or compaction module can expose a few named interfaces while keeping its whole graph editable.
+
+**Review and conformance matrix:**
+
+| Case | Required result |
+| --- | --- |
+| Compose two modules only through exported ports | Deterministic typed wiring, identical behavior to flattened graph |
+| Permute declaration and nested-module order | Same compiled topology and provenance digest |
+| Inspect an internal node | Full authorized structural metadata, stable qualified identity for that exact revision; no secrets |
+| Replace an internal ranking node with correct patch grants | Valid new generation; stable public `RecallResult` interface |
+| Omit graph mutation or flow grant | Reject at offline preparation, even if the internal node ID is known |
+| Patch a stale internal node or port | Reject with failed expectation, never retarget silently |
+| Change public schema, classification, or declared effect | Reject compatible-revision claim; require explicit breaking revision and applicable grants |
+| Repeat or cycle module ownership; export invalid child target | Reject offline before native load |
+| Wire an Entry to several internal targets | Deterministic explicit fan-out with individual checked flow grants |
+| Use an Exit with several possible producers | Require explicit Merge/Join; never depend on race order |
+| Present an interface as an external action without SourceDecl | No root admission; require separately authorized action |
+| Observe a module boundary during pending/cancellation/deferred feedback | No extra roots/waves/tickets or altered closure precedence |
+| Swap one internal implementation and replay scripted scenarios | Equal public behavior when parity is intended; track changed semantic outcomes |
+
+The compiler should expose `show module <id>` and `show module <id> --internal` through the same read-only inspection mechanism described in §7.3. Reports include the selected module revision, interface-to-port mapping, internal patch decisions, graph digest and any protected/redacted labels. This is a *proposed* UI contract, not an implemented command.
 
 ## 8. Module and file plan
 
