@@ -492,6 +492,16 @@ impl ProviderManagement {
         &self,
         resolvers: &[ModelCredentialResolver],
     ) -> acp::Result<Vec<NativeModelOffer>> {
+        self.authorized_http_offers_report(resolvers)
+            .map(|(offers, _)| offers)
+    }
+
+    /// Audit each missing model surface without exposing provider responses,
+    /// tokens or other accounts. An empty model picker is not a success claim.
+    pub(super) fn authorized_http_offers_report(
+        &self,
+        resolvers: &[ModelCredentialResolver],
+    ) -> acp::Result<(Vec<NativeModelOffer>, Vec<serde_json::Value>)> {
         let listed: ProviderPage = self.read(
             "phenix.provider.catalog@1",
             "list",
@@ -506,6 +516,7 @@ impl ProviderManagement {
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut offered = Vec::new();
+        let mut denials = Vec::new();
         let mut inspected_connections = 0;
         let mut inspected_pages = 0;
         for provider in listed.providers {
@@ -545,6 +556,12 @@ impl ProviderManagement {
                         .collect::<Vec<_>>()
                 };
                 if profiles.is_empty() {
+                    denials.push(serde_json::json!({
+                        "provider_id": exact.id,
+                        "connection_id": connection.id,
+                        "code": "no_authorized_account_resolver",
+                        "message": "No exact-account model credential resolver was installed",
+                    }));
                     continue;
                 }
                 let auth: AuthenticationStatus = self.read(
@@ -559,6 +576,13 @@ impl ProviderManagement {
                 for profile in profiles {
                     if let Some(profile_id) = profile.as_deref() {
                         if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                            denials.push(serde_json::json!({
+                                "provider_id": exact.id,
+                                "connection_id": connection.id,
+                                "profile_id": profile_id,
+                                "code": "account_not_authenticated",
+                                "message": "Account is not authenticated or its grant has expired",
+                            }));
                             continue;
                         }
                     }
@@ -576,8 +600,15 @@ impl ProviderManagement {
                             limit: 256,
                         })?
                         else {
-                            // Registration without discovery is not a selectable
-                            // model or a reason to break unrelated ACP sessions.
+                            // Missing discovery is not silently treated as a
+                            // healthy empty model catalog.
+                            denials.push(serde_json::json!({
+                                "provider_id": exact.id,
+                                "connection_id": connection.id,
+                                "profile_id": profile,
+                                "code": "catalog_unavailable",
+                                "message": "Provider model discovery is unavailable or denied",
+                            }));
                             break None;
                         };
                         cursor = collected.push(page, &profile)?;
@@ -588,6 +619,16 @@ impl ProviderManagement {
                     let Some(full) = full else {
                         continue;
                     };
+                    if full.models.is_empty() {
+                        denials.push(serde_json::json!({
+                            "provider_id": exact.id,
+                            "connection_id": connection.id,
+                            "profile_id": profile,
+                            "code": "catalog_empty",
+                            "message": "The provider returned no selectable models",
+                        }));
+                    }
+                    let before_count = offered.len();
                     for model in &full.models {
                         if !model.selectable || model.connection_id != connection.id {
                             continue;
@@ -641,6 +682,15 @@ impl ProviderManagement {
                             selected: desired,
                         });
                     }
+                    if !full.models.is_empty() && offered.len() == before_count {
+                        denials.push(serde_json::json!({
+                            "provider_id": exact.id,
+                            "connection_id": connection.id,
+                            "profile_id": profile,
+                            "code": "model_admission_denied",
+                            "message": "Discovered models did not pass executable model or credential admission",
+                        }));
+                    }
                 }
             }
         }
@@ -648,7 +698,7 @@ impl ProviderManagement {
         if offered.iter().any(|entry| !distinct.insert(&entry.id)) {
             return Err(invalid("duplicate native model option"));
         }
-        Ok(offered)
+        Ok((offered, denials))
     }
 }
 
