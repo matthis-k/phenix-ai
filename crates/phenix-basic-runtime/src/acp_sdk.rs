@@ -1078,7 +1078,13 @@ impl Controller {
     }
 
     fn describe_control_state(&self) -> acp::Result<serde_json::Value> {
-        let discovered = if can_switch_native_model(&self.composition) {
+        let discovered = if !self.initialized || self.closed.load(Ordering::Acquire) {
+            Err(Self::control_denial(if self.initialized {
+                DenialCode::ConnectionClosed
+            } else {
+                DenialCode::NotInitialized
+            }))
+        } else if can_switch_native_model(&self.composition) {
             self.management
                 .as_ref()
                 .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))
