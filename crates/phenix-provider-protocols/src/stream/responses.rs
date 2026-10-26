@@ -30,7 +30,36 @@ impl Stream {
             serde_json::from_str(data).map_err(|_| invalid("malformed Responses JSON"))?;
         let kind = string(&frame, "type")?;
         if matches!(kind, "error" | "response.failed") {
-            return Err(failed("HTTP model reported an error"));
+            // Subscription-plan errors may arrive *inside* an SSE stream,
+            // after an HTTP 200. Keep only explicitly documented machine
+            // codes; raw provider text must not reach graph or ACP errors.
+            let error = if kind == "response.failed" {
+                &frame["response"]["error"]
+            } else {
+                &frame["error"]
+            };
+            let message = match error["code"].as_str() {
+                Some("subscription_sharing_user_not_eligible") =>
+                    "subscription_sharing_user_not_eligible",
+                Some("subscription_sharing_usage_limit_exceeded") =>
+                    "subscription_sharing_usage_limit_exceeded",
+                Some("subscription_sharing_usage_unavailable") =>
+                    "subscription_sharing_usage_unavailable",
+                Some("subscription_sharing_unsupported_capability") =>
+                    "subscription_sharing_unsupported_capability",
+                Some("subscription_sharing_route_not_supported") =>
+                    "subscription_sharing_route_not_supported",
+                Some("subscription_sharing_invalid_user") =>
+                    "subscription_sharing_invalid_user",
+                Some("chatpass_v2_scope_not_authorized") =>
+                    "chatpass_v2_scope_not_authorized",
+                Some("chatpass_v2_invalid_authorization_context") =>
+                    "chatpass_v2_invalid_authorization_context",
+                Some("subscription_sharing_user_unavailable") =>
+                    "subscription_sharing_user_unavailable",
+                _ => "HTTP model reported an error",
+            };
+            return Err(failed(message));
         }
         if kind == "response.incomplete" {
             return Err(
