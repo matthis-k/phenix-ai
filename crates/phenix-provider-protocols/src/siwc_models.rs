@@ -4,8 +4,11 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-const MAX_CATALOG_BYTES: usize = 256 * 1024;
-const MAX_MODELS: usize = 256;
+// The account catalog can contain many hidden entries with large per-model
+// metadata. Bound the wire JSON separately from the small, selectable list.
+pub(crate) const MAX_CATALOG_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CATALOG_ENTRIES: usize = 4096;
+const MAX_VISIBLE_MODELS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatGptModel {
@@ -44,7 +47,7 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
         .get("models")
         .and_then(Value::as_array)
         .ok_or(CatalogError::InvalidShape)?;
-    if models.len() > MAX_MODELS {
+    if models.len() > MAX_CATALOG_ENTRIES {
         return Err(CatalogError::TooLarge);
     }
     let mut result = Vec::new();
@@ -69,6 +72,9 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
         }
         if !ids.insert(slug) {
             return Err(CatalogError::DuplicateModel);
+        }
+        if result.len() >= MAX_VISIBLE_MODELS {
+            return Err(CatalogError::TooLarge);
         }
         result.push(ChatGptModel {
             slug: slug.to_owned(),
@@ -117,6 +123,59 @@ mod tests {
                 slug: "gpt-test".into(),
                 display_name: "Test".into(),
             }]
+        );
+    }
+
+    #[test]
+    fn large_hidden_catalog_keeps_only_authorized_visible_models() {
+        // Reproduces account catalogs with hundreds of hidden records and
+        // >256 KiB of model metadata: earlier versions reported TooLarge.
+        let mut models = (0..512)
+            .map(|i| serde_json::json!({
+                "visibility": "hidden",
+                "slug": format!("internal-{i}"),
+                "metadata": "x".repeat(1024),
+            }))
+            .collect::<Vec<_>>();
+        models.insert(200, serde_json::json!({
+            "visibility": "list",
+            "slug": "gpt-visible",
+            "display_name": "Visible model",
+        }));
+        let body = serde_json::to_vec(&serde_json::json!({ "models": models })).unwrap();
+        assert!(body.len() > 256 * 1024);
+        assert!(body.len() < MAX_CATALOG_BYTES);
+        assert_eq!(
+            parse_chatgpt_models(&body).unwrap(),
+            vec![ChatGptModel {
+                slug: "gpt-visible".into(),
+                display_name: "Visible model".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn raw_and_visible_catalog_limits_still_fail_closed() {
+        let too_many_raw = serde_json::json!({
+            "models": vec![serde_json::json!({ "visibility": "hidden" });
+                MAX_CATALOG_ENTRIES + 1],
+        });
+        assert_eq!(
+            parse_chatgpt_models(&serde_json::to_vec(&too_many_raw).unwrap()),
+            Err(CatalogError::TooLarge)
+        );
+        let too_many_visible = serde_json::json!({
+            "models": (0..=MAX_VISIBLE_MODELS)
+                .map(|i| serde_json::json!({
+                    "visibility": "list",
+                    "slug": format!("gpt-{i}"),
+                    "display_name": format!("GPT {i}"),
+                }))
+                .collect::<Vec<_>>(),
+        });
+        assert_eq!(
+            parse_chatgpt_models(&serde_json::to_vec(&too_many_visible).unwrap()),
+            Err(CatalogError::TooLarge)
         );
     }
 
