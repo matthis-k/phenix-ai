@@ -305,7 +305,7 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
             String::from_utf8(bytes).unwrap()
         });
-        let outcome = request_with_auth(&address, post, limit, None, allow_empty);
+        let outcome = request_with_auth(&address, post, Some(limit), None, allow_empty);
         (outcome, server.join().unwrap())
     }
 
