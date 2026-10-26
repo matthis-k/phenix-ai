@@ -187,7 +187,9 @@ impl ProviderManagementGroup {
                 offers.push(offer);
             }
             if denials.len().saturating_add(source_denials.len()) > 128 {
-                return Err(invalid("provider model discovery diagnostics exceeded limits"));
+                return Err(invalid(
+                    "provider model discovery diagnostics exceeded limits",
+                ));
             }
             denials.extend(source_denials);
         }
