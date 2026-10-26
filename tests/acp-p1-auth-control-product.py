@@ -107,7 +107,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-auth-control-") as private:
                  "connection_id": connection}
         status = client.call("_phenix/providers/auth/status", scope)
         assert status["result"]["connection_id"] == connection, status
-        assert status["result"]["profiles"] == [], status
+        initial_profiles = status["result"]["profiles"]
+        if connection == "api":
+            assert [(item["id"], item["method_id"]) for item in initial_profiles] == [
+                ("personal", "api-key")
+            ], status
+            assert all("Unavailable" in item["status"] for item in initial_profiles), status
+        else:
+            assert initial_profiles == [], status
 
         method = "api-key" if connection == "api" else "chatgpt-sign-in"
         started = client.call("_phenix/providers/auth/begin", {
@@ -139,7 +146,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-auth-control-") as private:
         assert "error" in replay, replay
 
         final_status = client.call("_phenix/providers/auth/status", scope)
-        assert final_status["result"]["profiles"] == [], final_status
+        final_profiles = final_status["result"]["profiles"]
+        if connection == "api":
+            assert [(item["id"], item["method_id"]) for item in final_profiles] == [
+                ("personal", "api-key")
+            ], final_status
+            assert all("Unavailable" in item["status"] for item in final_profiles), final_status
+        else:
+            assert final_profiles == [], final_status
         client.close()
     finally:
         client.abort()
