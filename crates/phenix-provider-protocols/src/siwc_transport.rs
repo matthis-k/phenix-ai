@@ -6,7 +6,10 @@
 //! HTTP errors never expose token response bodies or credential values.
 use crate::siwc::TOKEN_URL;
 use crate::siwc_verified::{TokenEnvelope, JWKS_URL, MAX_JWKS_BODY, MAX_TOKEN_BODY};
-use curl::easy::{Easy2, Handler, List, WriteError};
+use openidconnect::reqwest::blocking::Client;
+use openidconnect::reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use openidconnect::reqwest::redirect::Policy;
+use std::io::Read;
 use std::time::Duration;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -20,7 +23,6 @@ pub enum TransportError {
     Rejected,
     TooLarge,
     InvalidTokenResponse,
-    /// The request never received a usable HTTP response.
     Network,
     Timeout,
     Tls,
@@ -28,54 +30,34 @@ pub enum TransportError {
     HttpStatus(u16),
 }
 
-#[derive(Default)]
-struct BoundedBody {
-    bytes: Vec<u8>,
-    bound: usize,
-    too_large: bool,
-}
-// Protect partial token responses on rejected, interrupted and oversized
-// exchanges, not just on successful token parsing.
-impl Drop for BoundedBody {
-    fn drop(&mut self) {
-        self.bytes.zeroize();
-    }
-}
-
-impl Handler for BoundedBody {
-    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if self
-            .bytes
-            .len()
-            .checked_add(data.len())
-            .is_none_or(|n| n > self.bound)
-        {
-            self.too_large = true;
-            return Ok(0);
-        }
-        self.bytes.extend_from_slice(data);
-        Ok(data.len())
-    }
+/// The shared OAuth2/OIDC transport uses the same reqwest + Rustls stack as
+/// oldmain's working Codex flow. No hand-built libcurl POST/response state.
+///
+/// The OAuth code is single use. Do not retry a failed token request: even
+/// when the transport reports an error the server may have consumed it.
+fn client() -> Result<Client, TransportError> {
+    Client::builder()
+        .use_rustls_tls()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| TransportError::Unavailable)
 }
 
-/// Preserve safe transport failure categories without passing curl's error
-/// buffer, token response, authorization code or request URL to the client.
-fn classify_curl_error(problem: &curl::Error) -> TransportError {
-    if problem.is_operation_timedout() {
+/// Map only coarse error categories; reqwest errors may include URLs,
+/// private proxy configuration or headers. They never reach the ACP client.
+fn request_error(error: &openidconnect::reqwest::Error) -> TransportError {
+    if error.is_timeout() {
         TransportError::Timeout
-    } else if problem.is_peer_failed_verification()
-        || problem.is_ssl_connect_error()
-        || problem.is_ssl_cacert_badfile()
-        || problem.is_ssl_certproblem()
-    {
-        TransportError::Tls
     } else {
         TransportError::Network
     }
 }
 
-/// This is deliberately an implementation helper, not an arbitrary HTTP
-/// request exposed to provider credentials or client-side URLs.
+/// Only trusted static endpoints or a revocation endpoint validated to the
+/// exact configured issuer origin may reach this helper. Never follow any
+/// redirects, or emit returned response bodies on error.
 fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, TransportError> {
     request_with_auth(url, post, limit, None, false)
 }
@@ -87,20 +69,16 @@ fn request_with_auth(
     bearer: Option<&str>,
     allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
-    let mut easy = Easy2::new(BoundedBody {
-        bytes: Vec::new(),
-        bound: limit,
-        too_large: false,
-    });
-    let mut headers = List::new();
-    headers
-        .append("Accept: application/json")
-        .map_err(|_| TransportError::Unavailable)?;
-    if post.is_some() {
-        headers
-            .append("Content-Type: application/x-www-form-urlencoded")
-            .map_err(|_| TransportError::Unavailable)?;
+    let client = client()?;
+    let mut builder = if let Some(form) = post {
+        client
+            .post(url)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+    } else {
+        client.get(url)
     }
+    .header(ACCEPT, "application/json");
     if let Some(token) = bearer {
         if token.is_empty()
             || token.len() > 4096
@@ -110,52 +88,35 @@ fn request_with_auth(
         {
             return Err(TransportError::InvalidForm);
         }
-        headers
-            .append(&format!("Authorization: Bearer {token}"))
-            .map_err(|_| TransportError::Unavailable)?;
+        builder = builder.header(
+            AUTHORIZATION,
+            openidconnect::reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| TransportError::InvalidForm)?,
+        );
     }
-    easy.url(url).map_err(|_| TransportError::Unavailable)?;
-    easy.http_headers(headers)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.follow_location(false)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.connect_timeout(Duration::from_secs(5))
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.timeout(Duration::from_secs(15))
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_peer(true)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_host(true)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.signal(false)
-        .map_err(|_| TransportError::Unavailable)?;
-    if let Some(form) = post {
-        easy.post(true).map_err(|_| TransportError::Unavailable)?;
-        easy.post_fields_copy(form.as_bytes())
-            .map_err(|_| TransportError::Unavailable)?;
-    } else {
-        easy.get(true).map_err(|_| TransportError::Unavailable)?;
-    }
-    let outcome = easy.perform();
-    let code = easy.response_code().unwrap_or_default();
-    if easy.get_ref().too_large {
-        return Err(TransportError::TooLarge);
-    }
-    // Curl can fail before an HTTP response exists, even though the browser
-    // sign-in itself succeeded. Preserve that distinction for safe UX.
-    outcome.map_err(|problem| classify_curl_error(&problem))?;
-    // Never follow redirects or accept error/redirect HTML as OAuth tokens.
-    // HTTP status is safe diagnostic metadata; the response body remains secret.
-    match code {
+    let mut response = builder.send().map_err(|error| request_error(&error))?;
+    // The HTTP status is safe metadata. Error bodies and redirects never
+    // become tokens; don't even buffer their contents.
+    match response.status().as_u16() {
         200 => {}
         400 | 401 | 403 => return Err(TransportError::Rejected),
-        0 => return Err(TransportError::Network),
-        status => return Err(TransportError::HttpStatus(status as u16)),
+        status => return Err(TransportError::HttpStatus(status)),
     }
-    if !allow_empty && easy.get_ref().bytes.is_empty() {
+
+    // HTTP response bodies (including *partial* OAuth credentials) must be
+    // bounded and zeroized on all error paths.
+    let mut raw = Zeroizing::new(Vec::new());
+    response
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut raw)
+        .map_err(|_| TransportError::Network)?;
+    if raw.len() > limit {
+        return Err(TransportError::TooLarge);
+    }
+    if !allow_empty && raw.is_empty() {
         return Err(TransportError::Unavailable);
     }
-    Ok(std::mem::take(&mut easy.get_mut().bytes))
+    Ok(std::mem::take(&mut raw))
 }
 
 fn valid_form(form: &str) -> bool {
