@@ -77,7 +77,11 @@ impl<'a> Frame<'a> {
             (1, 0) => Payload::End,
             _ => return Err(bad("invalid stream frame tag")),
         };
-        Ok(Self { id, offset, payload })
+        Ok(Self {
+            id,
+            offset,
+            payload,
+        })
     }
 }
 
@@ -92,10 +96,19 @@ pub struct Receiver {
 }
 impl Receiver {
     pub fn new(id: TransferId, user_max: Option<u64>) -> Self {
-        Self { id, offset: 0, ended: false, user_max }
+        Self {
+            id,
+            offset: 0,
+            ended: false,
+            user_max,
+        }
     }
-    pub fn offset(&self) -> u64 { self.offset }
-    pub fn ended(&self) -> bool { self.ended }
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
     pub fn admit<'a>(&mut self, frame: Frame<'a>) -> Result<Option<&'a [u8]>, Failure> {
         if self.ended || frame.id != self.id || frame.offset != self.offset {
             return Err(bad("foreign, replayed or out-of-order stream frame"));
@@ -107,7 +120,10 @@ impl Receiver {
             }
             Payload::Data(bytes) if !bytes.is_empty() && bytes.len() <= MAX_CHUNK => {
                 let count = u64::try_from(bytes.len()).map_err(|_| bad("offset overflow"))?;
-                let next = self.offset.checked_add(count).ok_or_else(|| bad("offset overflow"))?;
+                let next = self
+                    .offset
+                    .checked_add(count)
+                    .ok_or_else(|| bad("offset overflow"))?;
                 if self.user_max.is_some_and(|max| next > max) {
                     return Err(bad("user-configured stream byte limit exceeded"));
                 }
@@ -129,23 +145,41 @@ pub struct Producer<R> {
 }
 impl<R: Read> Producer<R> {
     pub fn new(source: R, id: TransferId) -> Self {
-        Self { source, id, offset: 0, ended: false }
+        Self {
+            source,
+            id,
+            offset: 0,
+            ended: false,
+        }
     }
     pub fn next_frame(&mut self, bytes_per_frame: usize) -> io::Result<Option<Vec<u8>>> {
-        if self.ended { return Ok(None); }
+        if self.ended {
+            return Ok(None);
+        }
         let mut data = vec![0; bytes_per_frame.clamp(1, MAX_CHUNK)];
         let count = self.source.read(&mut data)?;
         data.truncate(count);
         let frame = if count == 0 {
             self.ended = true;
-            Frame { id: self.id, offset: self.offset, payload: Payload::End }
+            Frame {
+                id: self.id,
+                offset: self.offset,
+                payload: Payload::End,
+            }
         } else {
             let previous = self.offset;
-            self.offset = self.offset.checked_add(count as u64)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "stream offset overflow"))?;
-            Frame { id: self.id, offset: previous, payload: Payload::Data(&data) }
+            self.offset = self.offset.checked_add(count as u64).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "stream offset overflow")
+            })?;
+            Frame {
+                id: self.id,
+                offset: previous,
+                payload: Payload::Data(&data),
+            }
         };
-        frame.encode().map(Some)
+        frame
+            .encode()
+            .map(Some)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 }
@@ -153,7 +187,9 @@ impl<R: Read> Producer<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn id(n: u8) -> TransferId { TransferId::from_kernel([n; 16]).unwrap() }
+    fn id(n: u8) -> TransferId {
+        TransferId::from_kernel([n; 16]).unwrap()
+    }
 
     #[test]
     fn multi_megabyte_value_is_streamed_in_bounded_frames() {
@@ -176,18 +212,53 @@ mod tests {
     #[test]
     fn rejects_cross_stream_replay_and_unexpected_eof() {
         let mut receiver = Receiver::new(id(1), None);
-        let frame = Frame { id: id(1), offset: 0, payload: Payload::Data(b"ab") };
+        let frame = Frame {
+            id: id(1),
+            offset: 0,
+            payload: Payload::Data(b"ab"),
+        };
         assert_eq!(receiver.admit(frame).unwrap(), Some(b"ab".as_slice()));
         assert!(receiver.admit(frame).is_err());
-        assert!(receiver.admit(Frame { id: id(2), offset: 2, payload: Payload::End }).is_err());
-        assert!(receiver.admit(Frame { id: id(1), offset: 3, payload: Payload::End }).is_err());
-        assert_eq!(receiver.admit(Frame { id: id(1), offset: 2, payload: Payload::End }).unwrap(), None);
-        assert!(receiver.admit(Frame { id: id(1), offset: 2, payload: Payload::End }).is_err());
+        assert!(receiver
+            .admit(Frame {
+                id: id(2),
+                offset: 2,
+                payload: Payload::End
+            })
+            .is_err());
+        assert!(receiver
+            .admit(Frame {
+                id: id(1),
+                offset: 3,
+                payload: Payload::End
+            })
+            .is_err());
+        assert_eq!(
+            receiver
+                .admit(Frame {
+                    id: id(1),
+                    offset: 2,
+                    payload: Payload::End
+                })
+                .unwrap(),
+            None
+        );
+        assert!(receiver
+            .admit(Frame {
+                id: id(1),
+                offset: 2,
+                payload: Payload::End
+            })
+            .is_err());
     }
 
     #[test]
     fn malformed_frames_and_explicit_limits_fail_closed() {
-        let frame = Frame { id: id(1), offset: u32::MAX as u64 + 1, payload: Payload::Data(b"hello") };
+        let frame = Frame {
+            id: id(1),
+            offset: u32::MAX as u64 + 1,
+            payload: Payload::Data(b"hello"),
+        };
         let bytes = frame.encode().unwrap();
         assert_eq!(Frame::decode(&bytes).unwrap(), frame);
         let mut corrupt = bytes.clone();
@@ -197,7 +268,13 @@ mod tests {
         corrupt[32] = 2;
         assert!(Frame::decode(&corrupt).is_err());
         let mut limited = Receiver::new(id(1), Some(4));
-        assert!(limited.admit(Frame { id: id(1), offset: 0, payload: Payload::Data(b"hello") }).is_err());
+        assert!(limited
+            .admit(Frame {
+                id: id(1),
+                offset: 0,
+                payload: Payload::Data(b"hello")
+            })
+            .is_err());
         assert_eq!(limited.offset(), 0);
         assert!(TransferId::from_kernel([0; 16]).is_err());
     }
