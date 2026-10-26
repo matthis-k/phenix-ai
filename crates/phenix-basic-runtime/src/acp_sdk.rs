@@ -297,16 +297,31 @@ fn internal_basic(problem: BasicError) -> acp::Error {
         "message": problem.message,
     }))
 }
-/// Prompt failures carry stage and status diagnostics, not arbitrary
-/// provider/native error prose which may contain tokens or user content.
+/// Only machine-readable classifications of native failures cross the ACP
+/// boundary. Error prose can include provider response bodies and credentials.
 fn prompt_failure(phase: &'static str, reason: impl ToString) -> acp::Error {
-    let reason = reason.to_string();
-    let status = reason
-        .strip_prefix("ModelFailed: HTTP model status ")
+    prompt_failure_details(phase, &reason.to_string(), None, None, None)
+}
+
+fn prompt_failure_details(
+    phase: &'static str,
+    reason: &str,
+    basic_code: Option<&ErrorCode>,
+    kernel_code: Option<&phenix_contract::Code>,
+    node: Option<&str>,
+) -> acp::Error {
+    let from_model = basic_code.is_some_and(|code| *code == ErrorCode::ModelFailed);
+    let model_text = if from_model {
+        Some(reason)
+    } else {
+        reason.strip_prefix("ModelFailed: ")
+    };
+    let status = model_text
+        .and_then(|message| message.strip_prefix("HTTP model status "))
         .filter(|digits| digits.len() == 3 && digits.bytes().all(|digit| digit.is_ascii_digit()))
         .and_then(|digits| digits.parse::<u16>().ok())
         .filter(|code| (100..600).contains(code));
-    let known_model_code = match reason.strip_prefix("ModelFailed: ") {
+    let known_model_code = match model_text {
         Some(
             "subscription_sharing_user_not_eligible"
             | "subscription_sharing_usage_limit_exceeded"
@@ -317,16 +332,89 @@ fn prompt_failure(phase: &'static str, reason: impl ToString) -> acp::Error {
             | "chatpass_v2_scope_not_authorized"
             | "chatpass_v2_invalid_authorization_context"
             | "subscription_sharing_user_unavailable",
-        ) => reason.strip_prefix("ModelFailed: "),
+        ) => model_text,
         _ => None,
     };
+    // These are exact local implementation literals. Do not forward any
+    // substring of an untrusted provider failure.
+    let reason_code = match reason {
+        "HTTP model reported an error" => Some("provider_stream_error"),
+        "HTTP transport failed" => Some("http_transport_failed"),
+        "HTTP model cancelled" => Some("model_cancelled"),
+        "HTTP response is not an event stream" => Some("unexpected_http_content_type"),
+        "incomplete model stream" => Some("incomplete_model_stream"),
+        "missing model usage" => Some("missing_model_usage"),
+        "invalid Responses creation" => Some("invalid_responses_creation"),
+        "Responses completion disagrees with streamed output" => {
+            Some("responses_completion_mismatch")
+        }
+        "HTTP worker failed" => Some("http_worker_failed"),
+        "missing HTTP worker result" => Some("missing_http_worker_result"),
+        "HTTP progress queue failed" => Some("http_progress_failed"),
+        "reply exceeds portable bounds" => Some("reply_exceeds_inline_abi"),
+        "SSE frame exceeds portable bounds" => Some("sse_frame_exceeds_inline_abi"),
+        "request exceeds portable payload bounds" => Some("request_exceeds_inline_abi"),
+        "selected HTTP model is not installed for session" => {
+            Some("model_not_installed")
+        }
+        _ => None,
+    };
+    let safe_node = node.filter(|id| {
+        !id.is_empty()
+            && id.len() <= 96
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    });
     acp::Error::internal_error().data(serde_json::json!({
         "format": "phenix.prompt.failure.v1",
         "phase": phase,
         "http_status": status,
         "provider_code": known_model_code,
+        "basic_code": basic_code,
+        "kernel_code": kernel_code,
+        "reason_code": reason_code,
+        "node": safe_node,
     }))
 }
+
+/// Unlike the Terminal compatibility result formatter, ACP must retain the
+/// typed domain/kernel distinction through graph finalization.
+fn finish_submission_acp(execution: &GraphExecution<'_>) -> acp::Result<bool> {
+    let cancelled = match execution.completion() {
+        Some(GraphCompletion::Success | GraphCompletion::Domain) => false,
+        Some(GraphCompletion::Cancelled) => true,
+        Some(GraphCompletion::Failure(failure)) => {
+            return Err(prompt_failure_details(
+                "graph_result",
+                "",
+                None,
+                Some(&failure.code),
+                None,
+            ));
+        }
+        None => return Err(prompt_failure("graph_result", "graph not finished")),
+    };
+    if execution.steps().is_empty() && !cancelled {
+        return Err(prompt_failure("graph_result", "graph had no active node"));
+    }
+    for step in execution.steps() {
+        if let Outcome::Domain(value) = &step.outcome {
+            let problem = BasicError::from_value(value.clone()).map_err(|_| {
+                prompt_failure("graph_result", "invalid graph domain error")
+            })?;
+            return Err(prompt_failure_details(
+                "graph_result",
+                &problem.message,
+                Some(&problem.code),
+                None,
+                Some(&step.node),
+            ));
+        }
+    }
+    Ok(cancelled)
+}
+
 fn internal_storage(reason: impl ToString) -> acp::Error {
     internal_basic(BasicError {
         code: ErrorCode::StorageFailed,
@@ -1876,8 +1964,7 @@ impl Controller {
                     .map_err(|_| prompt_failure("frontend_render", "redacted"))?;
             }
             if status == GraphStatus::Finished {
-                let cancelled = finish_submission(&execution)
-                    .map_err(|failure| prompt_failure("graph_result", failure))?;
+                let cancelled = finish_submission_acp(&execution)?;
                 drop(execution);
                 if cancelled {
                     record_cancelled(kernel, session)
@@ -2685,6 +2772,50 @@ mod tests {
             "ModelFailed: HTTP model status 401 TOKEN=private",
         );
         assert!(!format!("{malformed:?}").contains("TOKEN=private"));
+    }
+
+    #[test]
+    fn graph_result_diagnostics_preserve_basic_code_and_node_without_untrusted_text() {
+        let problem = ErrorCode::ModelFailed;
+        let error = prompt_failure_details(
+            "graph_result",
+            "HTTP model reported an error",
+            Some(&problem),
+            None,
+            Some("model.complete"),
+        );
+        let visible = format!("{error:?}");
+        assert!(visible.contains("ModelFailed"));
+        assert!(visible.contains("model.complete"));
+        assert!(visible.contains("provider_stream_error"));
+        let unknown = prompt_failure_details(
+            "graph_result",
+            "TOKEN=secret private provider body",
+            Some(&problem),
+            None,
+            Some("model.complete SECRET=secret"),
+        );
+        let redacted = format!("{unknown:?}");
+        assert!(!redacted.contains("TOKEN=secret"));
+        assert!(!redacted.contains("SECRET=secret"));
+        assert!(redacted.contains("ModelFailed"));
+        let status = prompt_failure_details(
+            "graph_result",
+            "HTTP model status 403",
+            Some(&problem),
+            None,
+            Some("model.complete"),
+        );
+        assert!(format!("{status:?}").contains("403"));
+        let kernel = prompt_failure_details(
+            "graph_result",
+            "secret",
+            None,
+            Some(&phenix_contract::Code::ScopeRejected),
+            None,
+        );
+        assert!(format!("{kernel:?}").contains("ScopeRejected"));
+        assert!(!format!("{kernel:?}").contains("secret"));
     }
 
     #[test]
