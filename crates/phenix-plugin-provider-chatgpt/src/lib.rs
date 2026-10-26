@@ -70,8 +70,20 @@ fn token_exchange_error(error: TransportError) -> ProviderError {
         TransportError::Rejected => denied("OAuth token endpoint rejected the authorization code"),
         TransportError::TooLarge => denied("OAuth token response exceeded the size limit"),
         TransportError::InvalidTokenResponse => denied("OAuth token response was invalid"),
+        TransportError::Dns => unavailable(
+            "OAuth token DNS resolution failed; check network DNS or VPN",
+        ),
+        TransportError::Proxy => unavailable(
+            "OAuth token proxy hostname could not be resolved; check proxy configuration",
+        ),
+        TransportError::Connect => unavailable(
+            "OAuth token TCP connection failed; check firewall, VPN or proxy",
+        ),
+        TransportError::Transfer => unavailable(
+            "OAuth token HTTP transfer failed after connection; check proxy or HTTP/2 compatibility",
+        ),
         TransportError::Network => unavailable(
-            "OAuth token request could not connect; check DNS, proxy, or VPN and retry sign-in",
+            "OAuth token request failed at the transport layer; check local network configuration",
         ),
         TransportError::Timeout => unavailable("OAuth token request timed out; retry sign-in"),
         TransportError::Tls => unavailable(
@@ -1145,7 +1157,11 @@ mod tests {
         assert_eq!(token.message, "OAuth token response was invalid");
 
         for (failure, expected) in [
-            (TransportError::Network, "could not connect"),
+            (TransportError::Dns, "DNS resolution failed"),
+            (TransportError::Proxy, "proxy hostname"),
+            (TransportError::Connect, "TCP connection failed"),
+            (TransportError::Transfer, "HTTP transfer failed"),
+            (TransportError::Network, "transport layer"),
             (TransportError::Timeout, "timed out"),
             (TransportError::Tls, "TLS handshake"),
             (TransportError::HttpStatus(429), "HTTP 429"),
