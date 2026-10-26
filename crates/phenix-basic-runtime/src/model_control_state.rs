@@ -8,11 +8,17 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlAction {
+    ConnectionInitialize,
+    ConnectionClose,
     ProvidersList,
     AuthenticationStatus,
     AuthenticationBegin,
     AuthenticationPoll,
     AuthenticationCancel,
+    CredentialsCapabilities,
+    CredentialsImport,
+    CredentialsBindEnvironment,
+    CredentialsRevoke,
     ModelsList,
     ModelsSelect,
     SessionNew,
@@ -22,12 +28,18 @@ pub enum ControlAction {
     SessionCancel,
 }
 
-pub const ALL_ACTIONS: [ControlAction; 12] = [
+pub const ALL_ACTIONS: [ControlAction; 18] = [
+    ControlAction::ConnectionInitialize,
+    ControlAction::ConnectionClose,
     ControlAction::ProvidersList,
     ControlAction::AuthenticationStatus,
     ControlAction::AuthenticationBegin,
     ControlAction::AuthenticationPoll,
     ControlAction::AuthenticationCancel,
+    ControlAction::CredentialsCapabilities,
+    ControlAction::CredentialsImport,
+    ControlAction::CredentialsBindEnvironment,
+    ControlAction::CredentialsRevoke,
     ControlAction::ModelsList,
     ControlAction::ModelsSelect,
     ControlAction::SessionNew,
@@ -41,6 +53,8 @@ pub const ALL_ACTIONS: [ControlAction; 12] = [
 #[serde(rename_all = "snake_case")]
 pub enum DenialCode {
     NotInitialized,
+    AlreadyInitialized,
+    CredentialManagementNotInstalled,
     ConnectionClosed,
     ProviderManagementNotInstalled,
     ModelControlNotInstalled,
@@ -52,6 +66,10 @@ impl DenialCode {
     pub const fn message(self) -> &'static str {
         match self {
             Self::NotInitialized => "Initialize the ACP connection first",
+            Self::AlreadyInitialized => "This ACP connection is already initialized",
+            Self::CredentialManagementNotInstalled => {
+                "The launcher did not grant credential management for this connection"
+            },
             Self::ConnectionClosed => "The ACP connection is closed",
             Self::ProviderManagementNotInstalled => {
                 "The launcher did not install an authorized provider management composition"
@@ -74,6 +92,7 @@ pub struct ControlState {
     pub initialized: bool,
     pub closed: bool,
     pub provider_management: bool,
+    pub credential_management: bool,
     pub model_control: bool,
     pub available_models: usize,
     pub default_model_selected: bool,
@@ -87,16 +106,30 @@ impl ControlState {
         if self.closed {
             return Some(DenialCode::ConnectionClosed);
         }
+        if action == ControlAction::ConnectionClose {
+            return None;
+        }
+        if action == ControlAction::ConnectionInitialize {
+            return self.initialized.then_some(DenialCode::AlreadyInitialized);
+        }
         if !self.initialized {
             return Some(DenialCode::NotInitialized);
         }
         match action {
+            ControlAction::ConnectionInitialize | ControlAction::ConnectionClose => None,
             ControlAction::ProvidersList
             | ControlAction::AuthenticationStatus
             | ControlAction::AuthenticationBegin
             | ControlAction::AuthenticationPoll
             | ControlAction::AuthenticationCancel => {
                 (!self.provider_management).then_some(DenialCode::ProviderManagementNotInstalled)
+            }
+            ControlAction::CredentialsCapabilities
+            | ControlAction::CredentialsImport
+            | ControlAction::CredentialsBindEnvironment
+            | ControlAction::CredentialsRevoke => {
+                (!self.credential_management)
+                    .then_some(DenialCode::CredentialManagementNotInstalled)
             }
             ControlAction::ModelsList => {
                 (!self.model_control).then_some(DenialCode::ModelControlNotInstalled)
@@ -179,6 +212,7 @@ mod tests {
             initialized: true,
             closed: false,
             provider_management: true,
+            credential_management: true,
             model_control: true,
             available_models: 2,
             default_model_selected: false,
