@@ -1,0 +1,29 @@
+name: Clean graph rewrite - Rust fixtures
+
+on:
+  push:
+    branches:
+      - rewrite/graph-v2-clean-plugins-**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-core-and-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Test selected clean workspace
+        run: cargo test --workspace
+      - name: Build native plugin fixtures
+        run: cargo build --release -p phenix-plugin-model-fixture -p phenix-plugin-tool-reverse
+      - name: Verify exactly two native fixture libraries
+        run: |
+          test -f target/release/libphenix_plugin_model_fixture.so
+          test -f target/release/libphenix_plugin_tool_reverse.so
