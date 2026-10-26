@@ -20,7 +20,12 @@ pub enum TransportError {
     Rejected,
     TooLarge,
     InvalidTokenResponse,
-    /// The request never received a usable HTTP response.
+    /// Failure categories are sourced only from libcurl's numeric CURLcode;
+    /// never display its error buffer (which can contain URL or proxy details).
+    Dns,
+    Proxy,
+    Connect,
+    Transfer,
     Network,
     Timeout,
     Tls,
@@ -67,8 +72,24 @@ fn classify_curl_error(problem: &curl::Error) -> TransportError {
         || problem.is_ssl_connect_error()
         || problem.is_ssl_cacert_badfile()
         || problem.is_ssl_certproblem()
+        || problem.is_ssl_issuer_error()
     {
         TransportError::Tls
+    } else if problem.is_couldnt_resolve_proxy() {
+        TransportError::Proxy
+    } else if problem.is_couldnt_resolve_host() {
+        TransportError::Dns
+    } else if problem.is_couldnt_connect() {
+        TransportError::Connect
+    } else if problem.is_http2_error()
+        || problem.is_http2_stream_error()
+        || problem.is_recv_error()
+        || problem.is_send_error()
+        || problem.is_got_nothing()
+    {
+        // A connection was attempted and may already have returned headers.
+        // Do not misdiagnose a failed HTTP transfer as a DNS/connect failure.
+        TransportError::Transfer
     } else {
         TransportError::Network
     }
@@ -329,6 +350,28 @@ mod tests {
         });
         let outcome = request_with_auth(&address, post, limit, None, allow_empty);
         (outcome, server.join().unwrap())
+    }
+
+    #[test]
+    fn curl_failures_are_classified_without_exposing_error_buffers() {
+        // libcurl CURLcode values are stable: proxy DNS=5, host DNS=6,
+        // TCP connect=7, HTTP/2=16, timeout=28, TLS=35, receive=56,
+        // HTTP/2 stream=92. The application never forwards libcurl's
+        // verbose error buffer, which may contain private proxy URLs.
+        for (code, expected) in [
+            (5, TransportError::Proxy),
+            (6, TransportError::Dns),
+            (7, TransportError::Connect),
+            (16, TransportError::Transfer),
+            (28, TransportError::Timeout),
+            (35, TransportError::Tls),
+            (56, TransportError::Transfer),
+            (92, TransportError::Transfer),
+        ] {
+            let mut failure = curl::Error::new(code);
+            failure.set_extra("private proxy URL and code".into());
+            assert_eq!(classify_curl_error(&failure), expected);
+        }
     }
 
     #[test]
