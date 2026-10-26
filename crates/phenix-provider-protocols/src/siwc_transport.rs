@@ -236,7 +236,7 @@ pub fn revoke_renewable_session(
         .append_pair("token_type_hint", "refresh_token")
         .append_pair("client_id", issued_client_id);
     let form = Zeroizing::new(form.finish());
-    let response = request_with_auth(endpoint.as_str(), Some(&form), 4096, None, true)?;
+    let response = request_with_auth(endpoint.as_str(), Some(&form), Some(4096), None, true)?;
     // SIWC defines an empty 200 for both a revoked and already-invalid token.
     // A nonempty response is not a confirmed remote sign-out.
     if !response.is_empty() {
