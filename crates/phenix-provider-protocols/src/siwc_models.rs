@@ -50,6 +50,12 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
     let mut result = Vec::new();
     let mut ids = BTreeSet::new();
     for entry in models {
+        // The documented picker filters visibility before reading a model's
+        // display fields. Hidden and future entries need not carry every
+        // field required for a visible, selectable model.
+        if entry.get("visibility").and_then(Value::as_str) != Some("list") {
+            continue;
+        }
         let slug = entry
             .get("slug")
             .and_then(Value::as_str)
@@ -58,24 +64,16 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
             .get("display_name")
             .and_then(Value::as_str)
             .ok_or(CatalogError::InvalidModel)?;
-        let visibility = entry
-            .get("visibility")
-            .and_then(Value::as_str)
-            .ok_or(CatalogError::InvalidModel)?;
         if !valid_slug(slug) || !valid_display_name(label) {
             return Err(CatalogError::InvalidModel);
         }
         if !ids.insert(slug) {
             return Err(CatalogError::DuplicateModel);
         }
-        // New/undocumented visibility values are never selectable.
-        // An unknown hidden tier should not suppress unrelated listed models.
-        if visibility == "list" {
-            result.push(ChatGptModel {
-                slug: slug.to_owned(),
-                display_name: label.to_owned(),
-            });
-        }
+        result.push(ChatGptModel {
+            slug: slug.to_owned(),
+            display_name: label.to_owned(),
+        });
     }
     Ok(result)
 }
@@ -103,6 +101,22 @@ mod tests {
                     display_name: "GPT 5.6".into(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn hidden_catalog_entries_need_no_picker_fields() {
+        let response = br#"{"models":[
+          {"visibility":"hide"},
+          {"visibility":"hidden","slug":"bad slug","metadata":{"future":true}},
+          {"visibility":"list","slug":"gpt-test","display_name":"Test"}
+        ]}"#;
+        assert_eq!(
+            parse_chatgpt_models(response).unwrap(),
+            vec![ChatGptModel {
+                slug: "gpt-test".into(),
+                display_name: "Test".into(),
+            }]
         );
     }
 
