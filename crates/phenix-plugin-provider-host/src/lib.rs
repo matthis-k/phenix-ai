@@ -167,19 +167,6 @@ mod plugin {
             })
     }
 
-    fn selected_connection(
-        state: &mut State,
-        host: &Host<'_>,
-        provider_id: &str,
-        connection_id: &str,
-    ) -> CallResult<bool, ProviderError> {
-        Ok(
-            !connection_descriptor(state, host, provider_id, connection_id)?
-                .auth_methods
-                .is_empty(),
-        )
-    }
-
     /// Revalidate selected credentials against the real declared catalog.
     /// Stored credentials alone never constitute successful authentication.
     fn verified_key(
