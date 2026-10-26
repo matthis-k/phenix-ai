@@ -10,8 +10,6 @@ use phenix_provider_protocols::{validate_endpoint, EndpointMode};
 use std::time::Duration;
 use url::Url;
 
-const MAX_CATALOG_BYTES: usize = 256 * 1024;
-
 /// Only safe transport categories reach a provider's typed error mapping.
 /// Never include bearer values, URLs, HTTP bodies, or curl error strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,16 +26,17 @@ pub enum CatalogFetchError {
 struct Body {
     bytes: Vec<u8>,
     too_large: bool,
+    max_bytes: Option<usize>,
 }
 
 impl Handler for Body {
     fn write(&mut self, incoming: &[u8]) -> Result<usize, WriteError> {
-        if self
-            .bytes
-            .len()
-            .checked_add(incoming.len())
-            .is_none_or(|total| total > MAX_CATALOG_BYTES)
-        {
+        if self.max_bytes.is_some_and(|limit| {
+            self.bytes
+                .len()
+                .checked_add(incoming.len())
+                .is_none_or(|total| total > limit)
+        }) {
             self.too_large = true;
             return Ok(0);
         }
@@ -66,6 +65,16 @@ fn approved_endpoint(endpoint: &str) -> bool {
 /// redirects or interpreting its format. TLS peer/host checks are mandatory.
 /// The provider retains responsibility for credential grants and URL origin.
 pub fn fetch_bearer_catalog(endpoint: &str, bearer: &str) -> Result<Vec<u8>, CatalogFetchError> {
+    fetch_bearer_catalog_with_limit(endpoint, bearer, None)
+}
+
+/// Only an explicit caller policy applies a total HTTP catalog size limit.
+/// Catalogs are not truncated: an opted-in limit fails atomically.
+pub fn fetch_bearer_catalog_with_limit(
+    endpoint: &str,
+    bearer: &str,
+    max_bytes: Option<usize>,
+) -> Result<Vec<u8>, CatalogFetchError> {
     if !approved_endpoint(endpoint) {
         return Err(CatalogFetchError::UnsafeEndpoint);
     }
@@ -80,6 +89,7 @@ pub fn fetch_bearer_catalog(endpoint: &str, bearer: &str) -> Result<Vec<u8>, Cat
     let mut easy = Easy2::new(Body {
         bytes: Vec::new(),
         too_large: false,
+        max_bytes,
     });
     let mut headers = List::new();
     headers
@@ -127,6 +137,13 @@ mod tests {
     };
 
     fn local(response: &str) -> (Result<Vec<u8>, CatalogFetchError>, String) {
+        local_with_limit(response, None)
+    }
+
+    fn local_with_limit(
+        response: &str,
+        max_bytes: Option<usize>,
+    ) -> (Result<Vec<u8>, CatalogFetchError>, String) {
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!(
             "http://127.0.0.1:{}/models",
@@ -143,7 +160,7 @@ mod tests {
             client.write_all(owned.as_bytes()).unwrap();
             String::from_utf8(request[..read].to_vec()).unwrap()
         });
-        let result = fetch_bearer_catalog(&endpoint, "fake-test-key");
+        let result = fetch_bearer_catalog_with_limit(&endpoint, "fake-test-key", max_bytes);
         (result, reader.join().unwrap())
     }
 
@@ -170,13 +187,15 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: https://other.invalid/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         );
         assert_eq!(redirect, Err(CatalogFetchError::Unavailable));
-        let huge = "x".repeat(MAX_CATALOG_BYTES + 1);
+        let huge = "x".repeat(256 * 1024 + 1);
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             huge.len(),
             huge
         );
-        let (too_large, _) = local(&response);
+        let (unbounded, _) = local(&response);
+        assert_eq!(unbounded.unwrap(), huge.as_bytes());
+        let (too_large, _) = local_with_limit(&response, Some(256 * 1024));
         assert_eq!(too_large, Err(CatalogFetchError::TooLarge));
     }
 
