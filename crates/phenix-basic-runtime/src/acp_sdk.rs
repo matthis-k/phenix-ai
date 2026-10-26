@@ -297,6 +297,21 @@ fn internal_basic(problem: BasicError) -> acp::Error {
         "message": problem.message,
     }))
 }
+/// Prompt failures carry stage and status diagnostics, not arbitrary
+/// provider/native error prose which may contain tokens or user content.
+fn prompt_failure(phase: &'static str, reason: impl ToString) -> acp::Error {
+    let reason = reason.to_string();
+    let status = reason
+        .strip_prefix("ModelFailed: HTTP model status ")
+        .filter(|digits| digits.len() == 3 && digits.bytes().all(|digit| digit.is_ascii_digit()))
+        .and_then(|digits| digits.parse::<u16>().ok())
+        .filter(|code| (100..600).contains(code));
+    acp::Error::internal_error().data(serde_json::json!({
+        "format": "phenix.prompt.failure.v1",
+        "phase": phase,
+        "http_status": status,
+    }))
+}
 fn internal_storage(reason: impl ToString) -> acp::Error {
     internal_basic(BasicError {
         code: ErrorCode::StorageFailed,
@@ -1757,7 +1772,7 @@ impl Controller {
         };
         if has_model_selection_storage(&self.composition) {
             match super::model_selection_state::read(kernel, &self.composition, &session)
-                .map_err(internal)?
+                .map_err(|failure| prompt_failure("model_state", failure))?
             {
                 Some((stored, _revision)) => {
                     // A once-selected native transport cannot silently return
@@ -1783,7 +1798,7 @@ impl Controller {
                 line: serde_json::json!({"prompt": request}).to_string(),
             },
         )
-        .map_err(internal)?
+        .map_err(|failure| prompt_failure("frontend_decode", failure))?
         .map_err(|cause| {
             if cause.code == ErrorCode::InvalidInput {
                 invalid(&cause.message)
@@ -1791,11 +1806,13 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        let mut owner = session_lock(&session).map_err(internal_storage)?;
-        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
+        let mut owner = session_lock(&session)
+            .map_err(|failure| prompt_failure("session_lock", failure))?;
+        recover_owned_run(kernel, &session, &mut owner)
+            .map_err(|failure| prompt_failure("session_recovery", failure))?;
         let execution =
             begin_submission(kernel, submission, basic_scope(&self.composition, &session))
-                .map_err(internal)?;
+                .map_err(|failure| prompt_failure("graph_begin", failure))?;
         let offset = self.offsets.entry(session.clone()).or_default();
         Self::drive(
             kernel,
@@ -1826,26 +1843,31 @@ impl Controller {
             if !stopping
                 && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
             {
-                execution.cancel().map_err(internal)?;
+                execution.cancel().map_err(|failure| prompt_failure("graph_cancel", failure))?;
                 stopping = true;
             }
-            let status = execution.pump(|_| {}).map_err(internal)?;
+            let status = execution.pump(|_| {})
+                .map_err(|failure| prompt_failure("graph_pump", failure))?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
+                marked = mark_admitted_run(kernel, &execution, session, owner)
+                    .map_err(|failure| prompt_failure("graph_admission", failure))?;
             }
             if !closed.load(Ordering::Acquire) {
                 send_updates(kernel, Some(&execution), session, after, peer, closed)?;
             }
             if status == GraphStatus::Finished {
-                let cancelled = finish_submission(&execution).map_err(internal)?;
+                let cancelled = finish_submission(&execution)
+                    .map_err(|failure| prompt_failure("graph_result", failure))?;
                 drop(execution);
                 if cancelled {
-                    record_cancelled(kernel, session).map_err(internal)?;
+                    record_cancelled(kernel, session)
+                        .map_err(|failure| prompt_failure("graph_cancel_record", failure))?;
                     if !closed.load(Ordering::Acquire) {
                         send_updates(kernel, None, session, after, peer, closed)?;
                     }
                 }
-                set_owner_marker(owner, None).map_err(internal)?;
+                set_owner_marker(owner, None)
+                    .map_err(|failure| prompt_failure("owner_checkpoint", failure))?;
                 return Ok(PromptResponse::new(if cancelled {
                     StopReason::Cancelled
                 } else {
@@ -2614,6 +2636,21 @@ mod tests {
         let mut forged = spec.clone();
         forged.entry.operation = "revoke".into();
         assert!(validate_model_resolver_spec(&forged).is_err());
+    }
+
+    #[test]
+    fn prompt_diagnostics_are_phase_scoped_and_redacted() {
+        for phase in ["frontend_decode", "graph_begin", "graph_result"] {
+            let error = prompt_failure(phase, "ModelFailed: response contains TOKEN=private");
+            let visible = format!("{error:?}");
+            assert!(!visible.contains("TOKEN=private"));
+            assert!(visible.contains("phenix.prompt.failure.v1"));
+            assert!(visible.contains(phase));
+        }
+        let status = prompt_failure("graph_result", "ModelFailed: HTTP model status 401");
+        assert!(format!("{status:?}").contains("401"));
+        let malformed = prompt_failure("graph_result", "ModelFailed: HTTP model status 401 TOKEN=private");
+        assert!(!format!("{malformed:?}").contains("TOKEN=private"));
     }
 
     #[test]
