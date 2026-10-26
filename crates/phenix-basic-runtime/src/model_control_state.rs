@@ -267,4 +267,67 @@ mod tests {
             .as_array()
             .is_some_and(|a| a.len() == ALL_ACTIONS.len()));
     }
+
+    #[test]
+    fn every_capability_state_exposes_a_complete_explained_action_table() {
+        // Exhaustive over the independent connection/capability/session flags.
+        // The client must never infer an allowed action or lose its denial code.
+        for initialized in [false, true] {
+            for closed in [false, true] {
+                for provider_management in [false, true] {
+                    for credential_management in [false, true] {
+                        for model_control in [false, true] {
+                            for available_models in [0, 2] {
+                                for default_model_selected in [false, true] {
+                                    for session_active in [false, true] {
+                                        let state = ControlState {
+                                            initialized,
+                                            closed,
+                                            provider_management,
+                                            credential_management,
+                                            model_control,
+                                            available_models,
+                                            default_model_selected,
+                                            session_active,
+                                        };
+                                        let value = state.describe();
+                                        let actions = value["actions"].as_array().unwrap();
+                                        assert_eq!(actions.len(), ALL_ACTIONS.len());
+                                        let mut unique = std::collections::BTreeSet::new();
+                                        for (action, description) in
+                                            ALL_ACTIONS.iter().zip(actions.iter())
+                                        {
+                                            assert_eq!(
+                                                description["action"],
+                                                serde_json::json!(action)
+                                            );
+                                            assert!(unique.insert(description["action"].to_string()));
+                                            let denial = state.deny(*action);
+                                            assert_eq!(
+                                                description["allowed"],
+                                                serde_json::json!(denial.is_none())
+                                            );
+                                            match denial {
+                                                Some(reason) => {
+                                                    assert_eq!(
+                                                        description["denial"]["code"],
+                                                        serde_json::json!(reason)
+                                                    );
+                                                    assert_eq!(
+                                                        description["denial"]["message"],
+                                                        reason.message()
+                                                    );
+                                                }
+                                                None => assert!(description["denial"].is_null()),
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
