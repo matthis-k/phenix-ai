@@ -191,7 +191,10 @@ mod tests {
         let mut state = ready();
         assert!(state.deny(ControlAction::ModelsList).is_none());
         assert!(state.deny(ControlAction::ModelsSelect).is_none());
-        assert_eq!(state.deny(ControlAction::SessionPrompt), Some(DenialCode::SessionRequired));
+        assert_eq!(
+            state.deny(ControlAction::SessionPrompt),
+            Some(DenialCode::SessionRequired)
+        );
         assert_eq!(state.phase(), "models_available");
         state.default_model_selected = true;
         assert_eq!(state.phase(), "model_selected");
@@ -204,18 +207,32 @@ mod tests {
     fn deny_each_invalid_transition_with_distinct_reason() {
         let mut state = ready();
         state.available_models = 0;
-        assert_eq!(state.deny(ControlAction::ModelsSelect), Some(DenialCode::NoSelectableModels));
+        assert_eq!(
+            state.deny(ControlAction::ModelsSelect),
+            Some(DenialCode::NoSelectableModels)
+        );
         state.model_control = false;
-        assert_eq!(state.deny(ControlAction::ModelsList), Some(DenialCode::ModelControlNotInstalled));
+        assert_eq!(
+            state.deny(ControlAction::ModelsList),
+            Some(DenialCode::ModelControlNotInstalled)
+        );
         state.provider_management = false;
         assert_eq!(
             state.deny(ControlAction::AuthenticationBegin),
             Some(DenialCode::ProviderManagementNotInstalled)
         );
         state.initialized = false;
-        assert_eq!(state.deny(ControlAction::SessionNew), Some(DenialCode::NotInitialized));
+        assert_eq!(
+            state.deny(ControlAction::SessionNew),
+            Some(DenialCode::NotInitialized)
+        );
         state.closed = true;
-        assert_eq!(state.deny(ControlAction::SessionNew), Some(DenialCode::ConnectionClosed));
-        assert!(state.describe()["actions"].as_array().is_some_and(|a| a.len() == ALL_ACTIONS.len()));
+        assert_eq!(
+            state.deny(ControlAction::SessionNew),
+            Some(DenialCode::ConnectionClosed)
+        );
+        assert!(state.describe()["actions"]
+            .as_array()
+            .is_some_and(|a| a.len() == ALL_ACTIONS.len()));
     }
 }
