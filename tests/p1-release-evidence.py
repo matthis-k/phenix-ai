@@ -88,7 +88,7 @@ def load(path):
     return json.loads(path.read_text())
 
 
-def verify(host, pending, shipping, launcher, combined):
+def verify(host, pending, shipping, launcher, combined, selected_output, routing_output):
     summary = load(host / "evidence.json")
     require(summary.get("format") == "phenix.basic.host-smoke.v1", "host evidence format")
     for flag in ("terminal", "jsonl", "acp_v1_session_reload"):
@@ -115,14 +115,14 @@ def verify(host, pending, shipping, launcher, combined):
 
     # Release-gate the native model and auth evidence produced by real ACP
     # product tests. None of these offline fixtures proves a live paid login.
-    selected = load(host / "c9-selected/native-model-acceptance.json")
+    selected = load(selected_output / "native-model-acceptance.json")
     require(selected.get("format") == "phenix.c9.selected-http.v1", "native selection format")
     for field in NATIVE_SELECTION_FACTS:
         require(selected.get(field) is True, "missing native model guarantee: " + field)
     require(selected.get("production_provider_login") is False,
             "native fixture must not claim production login")
 
-    restarted = load(host / "native-routing-restart.json")
+    restarted = load(routing_output / "native-routing-restart.json")
     require(restarted.get("format") == "phenix.native-routing-restart.v1",
             "native routing restart format")
     require(restarted.get("no_successful_provider_selection_claimed") is True,
@@ -182,10 +182,10 @@ def self_test():
 
     with TemporaryDirectory() as d:
         base = Path(d)
-        for dirname in ("host", "pending", "shipping", "launcher", "combined"):
+        for dirname in ("host", "pending", "shipping", "launcher", "combined", "selected", "routing"):
             (base / dirname).mkdir()
-        host, pending, shipping, launcher, combined = (
-            base / x for x in ("host", "pending", "shipping", "launcher", "combined")
+        host, pending, shipping, launcher, combined, selected, routing = (
+            base / x for x in ("host", "pending", "shipping", "launcher", "combined", "selected", "routing")
         )
         sample = {
             host / "evidence.json": {
@@ -203,12 +203,12 @@ def self_test():
                 "format": "phenix.acp.pending-http-product.v1",
                 **{x: True for x in ACP_HTTP_FACTS},
             },
-            host / "c9-selected/native-model-acceptance.json": {
+            selected / "native-model-acceptance.json": {
                 "format": "phenix.c9.selected-http.v1",
                 "production_provider_login": False,
                 **{x: True for x in NATIVE_SELECTION_FACTS},
             },
-            host / "native-routing-restart.json": {
+            routing / "native-routing-restart.json": {
                 "format": "phenix.native-routing-restart.v1",
                 "no_successful_provider_selection_claimed": True,
                 "cases": {name: {
@@ -230,15 +230,14 @@ def self_test():
         }
         for filename, cases in HOST_CASES.items():
             sample[host / filename] = {"cases": sorted(cases)}
-        (host / "c9-selected").mkdir()
         for path, value in sample.items():
             path.write_text(json.dumps(value))
-        require(verify(host, pending, shipping, launcher, combined)["p1_accepted"] is False, "test baseline")
+        require(verify(host, pending, shipping, launcher, combined, selected, routing)["p1_accepted"] is False, "test baseline")
         for path, field in [
             (host / "evidence.json", "terminal"),
             (pending / "pending-basic-http.json", "no_interrupted_model_replay"),
             (pending / "acp-pending-http.json", "client_eof_cancels_active_graph"),
-            (host / "c9-selected/native-model-acceptance.json",
+            (selected / "native-model-acceptance.json",
              "stale_client_selection_rejected"),
             (launcher / "accepted.json", "default_no_env_acp_initialized"),
             (combined / "p1-combined-auth.json", "cross_connection_attempt_denied"),
@@ -248,19 +247,19 @@ def self_test():
             tampered[field] = False
             path.write_text(json.dumps(tampered))
             try:
-                verify(host, pending, shipping, launcher, combined)
+                verify(host, pending, shipping, launcher, combined, selected, routing)
             except AssertionError:
                 pass
             else:
                 raise AssertionError("tampered evidence was admitted: " + field)
             path.write_text(json.dumps(original))
-        restart_path = host / "native-routing-restart.json"
+        restart_path = routing / "native-routing-restart.json"
         original_restart = copy.deepcopy(sample[restart_path])
         forged_restart = copy.deepcopy(original_restart)
         forged_restart["cases"]["orphaned_witness"]["prompt_denied"] = False
         restart_path.write_text(json.dumps(forged_restart))
         try:
-            verify(host, pending, shipping, launcher, combined)
+            verify(host, pending, shipping, launcher, combined, selected, routing)
         except AssertionError:
             pass
         else:
@@ -273,7 +272,7 @@ def self_test():
         forged = dict(sample[declaration], p1_accepted=True)
         declaration.write_text(json.dumps(forged))
         try:
-            verify(host, pending, shipping, launcher, combined)
+            verify(host, pending, shipping, launcher, combined, selected, routing)
         except AssertionError:
             pass
         else:
@@ -284,7 +283,7 @@ def self_test():
         broken = {"cases": list(HOST_CASES[missing.name] - {"caller-tool-limit-no-effect"})}
         missing.write_text(json.dumps(broken))
         try:
-            verify(host, pending, shipping, launcher, combined)
+            verify(host, pending, shipping, launcher, combined, selected, routing)
         except AssertionError:
             pass
         else:
@@ -295,10 +294,10 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
         self_test()
     else:
-        if len(sys.argv) != 7:
-            raise SystemExit("usage: p1-release-evidence.py HOST HTTP SHIPPING AUTH_LAUNCHER COMBINED_AUTH OUTPUT")
-        host, pending, shipping, launcher, combined, output = map(Path, sys.argv[1:])
-        result = verify(host, pending, shipping, launcher, combined)
+        if len(sys.argv) != 9:
+            raise SystemExit("usage: p1-release-evidence.py HOST HTTP SHIPPING AUTH_LAUNCHER COMBINED_AUTH SELECTION ROUTING OUTPUT")
+        host, pending, shipping, launcher, combined, selected, routing, output = map(Path, sys.argv[1:])
+        result = verify(host, pending, shipping, launcher, combined, selected, routing)
         output.mkdir(parents=True, exist_ok=True)
         (output / "evidence.json").write_text(json.dumps(result, sort_keys=True, indent=2))
         print("P1 product release preflight passed; official ACP SDK CI still required")
