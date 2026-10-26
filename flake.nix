@@ -2258,6 +2258,26 @@
           exit 1
         fi
       '';
+      # A stage-correlated diagnostic using the production frontend/agent
+      # contracts with a deterministic Model implementation.
+      promptHopJsonlCheck = pkgs.runCommand "phenix-p1-prompt-hop-jsonl" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-prompt-hop-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} jsonl "$out"
+        test -s "$out/trace.json"
+      '';
+      promptHopAcpCheck = pkgs.runCommand "phenix-p1-prompt-hop-acp" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-prompt-hop-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} acp "$out"
+        test -s "$out/trace.json"
+      '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
@@ -3023,6 +3043,8 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        p1-prompt-hop-jsonl = promptHopJsonlCheck;
+        p1-prompt-hop-acp = promptHopAcpCheck;
         basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
         basic-streaming = basicStreamingCheck;
