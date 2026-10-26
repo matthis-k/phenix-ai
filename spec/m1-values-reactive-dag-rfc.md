@@ -1,11 +1,11 @@
 # RFC: Kernel values, reactive references, and contributed execution DAGs
 
-Status: proposed; specification only
+Status: **superseded as a future graph design** by [Graph Architecture v2.4](graph-architecture-v2.4.md). Historical M1 design context only; retained for traceability.
 Target: M1 after accepted clean-start M0.4
 Date: 2026-10-11
 Baseline: PR #771, branch `rewrite/minimal-kernel`, head `1ece5161cfb75f96bed7cbff8f48b3e5690efacc`
 Roadmap: [m1-roadmap.md](m1-roadmap.md)
-Precedence: M0 requirements and evidence remain frozen. This RFC governs only new M1 capabilities.
+Precedence: M0 evidence is historical. The existing M1 graph-v1 behavior is defined by current source/tests. This RFC no longer governs future graph-v2 implementation; use v2.4.
 
 ## 1. Decision
 
