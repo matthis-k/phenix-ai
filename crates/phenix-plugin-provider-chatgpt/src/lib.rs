@@ -15,7 +15,7 @@ use phenix_provider_contracts::{
 use phenix_provider_protocols::{
     oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
-    siwc_models::parse_chatgpt_models,
+    siwc_models::{parse_chatgpt_models, CatalogError},
     siwc_transport::{
         chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
     },
@@ -136,13 +136,20 @@ fn model_discovery_transport_error(error: TransportError) -> ProviderError {
     }
 }
 
-fn model_discovery_parse_error(error: phenix_provider_protocols::siwc_models::CatalogError) -> ProviderError {
-    let code = if matches!(error, phenix_provider_protocols::siwc_models::CatalogError::TooLarge) {
+fn model_discovery_parse_error(error: CatalogError) -> ProviderError {
+    let code = if matches!(error, CatalogError::TooLarge) {
         ProviderErrorCode::DiscoveryTooLarge
     } else {
         ProviderErrorCode::DiscoveryInvalidResponse
     };
     problem(code, "ChatGPT model catalog has an invalid response schema")
+}
+
+fn issuer_jwks_error() -> ProviderError {
+    problem(
+        ProviderErrorCode::DiscoveryIssuerUnavailable,
+        "ChatGPT issuer signing keys could not be fetched",
+    )
 }
 
 fn identity_verification_error(error: VerificationError) -> ProviderError {
@@ -513,8 +520,7 @@ mod plugin {
                     "ChatGPT refresh failed; reauthorize if revoked",
                 ))
             })?;
-            let keys = issuer_jwks()
-                .map_err(|_| CallError::Domain(problem(ProviderErrorCode::DiscoveryIssuerUnavailable, "ChatGPT issuer signing keys could not be fetched")))?;
+            let keys = issuer_jwks().map_err(|_| CallError::Domain(issuer_jwks_error()))?;
             let verified = verify_chatgpt_persisted_identity(
                 &tokens,
                 &keys,
@@ -556,8 +562,7 @@ mod plugin {
                 "ChatGPT login not completed",
             ))
         })?;
-        let keys =
-            issuer_jwks().map_err(|_| CallError::Domain(problem(ProviderErrorCode::DiscoveryIssuerUnavailable, "ChatGPT issuer signing keys could not be fetched")))?;
+        let keys = issuer_jwks().map_err(|_| CallError::Domain(issuer_jwks_error()))?;
         let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
             access_token: account.access_token.clone(),
             refresh_token: account.refresh_token.clone(),
