@@ -64,6 +64,7 @@ The categories below are an audit of the top-level `spec/` Markdown files on `ma
 
 ### Roadmaps, migration trackers and exact-head evidence snapshots
 
+- [`pr-integration-queue.md`](pr-integration-queue.md) — dated active PR dependencies and removal gates
 - [`m1-roadmap.md`](m1-roadmap.md)
 - [`p2-advanced-agent-roadmap.md`](p2-advanced-agent-roadmap.md)
 - [`m1-ci-matrix.md`](m1-ci-matrix.md)
