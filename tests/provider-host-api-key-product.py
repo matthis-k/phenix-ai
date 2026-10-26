@@ -140,7 +140,18 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
             capture_output=True, text=True, env=env, timeout=30,
         )
         assert proc.stdout, ("missing native response", proc.returncode, proc.stderr[-150:])
-        return json.loads(proc.stdout).get("outcome"), proc.returncode
+        report = json.loads(proc.stdout)
+        outcome = report.get("outcome")
+        if outcome is None:
+            # Preparation/admission failures emit an inspect report before the
+            # invocation boundary. Never obscure them as `AssertionError: None`.
+            # The diagnostic is an error category/message, not credential data.
+            outcome = dict(
+                kind="kernel_failure",
+                failure=report.get("last_failure"),
+                phase=report.get("phase"),
+            )
+        return outcome, proc.returncode
 
     try:
         query = dict(scope="user", provider_id="openai", connection_id="api")
