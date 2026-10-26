@@ -501,17 +501,6 @@ impl ProviderManagement {
         classify_model_page(reply)
     }
 
-    /// Enumerate only models executable with the launcher's exact credential
-    /// identity (or explicit no-auth). A stored key/profile is not itself a
-    /// capability. Each choice is checked again before native install.
-    pub(super) fn authorized_http_offers(
-        &self,
-        resolvers: &[ModelCredentialResolver],
-    ) -> acp::Result<Vec<NativeModelOffer>> {
-        self.authorized_http_offers_report(resolvers)
-            .map(|(offers, _)| offers)
-    }
-
     /// Audit each missing model surface without exposing provider responses,
     /// tokens or other accounts. An empty model picker is not a success claim.
     pub(super) fn authorized_http_offers_report(
