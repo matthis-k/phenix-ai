@@ -1,0 +1,39 @@
+name: Temporary P1 OAuth lockfile refresh
+
+on:
+  pull_request:
+    paths:
+      - 'crates/phenix-provider-protocols/Cargo.toml'
+      - '.github/workflows/temp-p1-oauth-lock.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'fix/p1-library-backed-oauth-transport-20261026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.96.1'
+      - name: Resolve new Rustls dependencies and update only Cargo.lock
+        run: |
+          set -euo pipefail
+          cargo fetch --manifest-path Cargo.toml --target x86_64-unknown-linux-gnu
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already current"
+            exit 0
+          fi
+          git add Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build(p1): resolve pinned OAuth reqwest Rustls dependencies"
+          git push origin HEAD:"${{ github.head_ref }}"
