@@ -1,9 +1,11 @@
 # Phenix M1 implementation roadmap: contract-first reactive values and DAGs
 
+> **Status note (26 October 2026):** This is a dated implementation/evidence ledger, not a live description of `main`. Source, tests, and current PR merge state determine what exists. The [specification index](README.md) separates current M1 code from the proposed v2.4 graph target. Keep historical evidence, but do not promote prior per-stage `pending` or `draft` lines to current facts.
+
 Status: P1 integrated product accepted at 68f46f63; C4 authoritative CI accepted on main at b7017042; post-P1 work resumed
 Updated: 2026-10-20
 Baseline: [clean-start RFC](clean-start-rfc.md), accepted M0.0-M0.4 in PR #771
-Normative semantics: [M1 value/reference/DAG RFC](m1-values-reactive-dag-rfc.md)
+Implemented M1 graph-v1 semantics: [G1/G2 graph declaration contract](m1-graph-declarations.md) and current source/tests. Future graph-v2 design target: [Graph Architecture v2.4](graph-architecture-v2.4.md), which is not implemented. The [older value/reactive DAG RFC](m1-values-reactive-dag-rfc.md) is historical and no longer governs future graph redesign.
 This file is the single task/evidence tracker for M1. Do not duplicate completion percentages in PR bodies.
 
 ## Current integrated acceptance and next stages
