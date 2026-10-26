@@ -93,6 +93,58 @@ fn token_exchange_error(error: TransportError) -> ProviderError {
     }
 }
 
+fn model_discovery_transport_error(error: TransportError) -> ProviderError {
+    // Account/response contents and token-bearing reqwest errors never leave
+    // this provider. Only coarse statuses from the fixed issuer/catalog URLs.
+    match error {
+        TransportError::Network | TransportError::Tls => problem(
+            ProviderErrorCode::DiscoveryNetwork,
+            "ChatGPT model catalog network or TLS connection failed",
+        ),
+        TransportError::Timeout => problem(
+            ProviderErrorCode::DiscoveryTimeout,
+            "ChatGPT model catalog request timed out",
+        ),
+        TransportError::Rejected | TransportError::HttpStatus(401 | 403) => problem(
+            ProviderErrorCode::DiscoveryUnauthorized,
+            "ChatGPT model catalog rejected this OAuth token (HTTP 401/403)",
+        ),
+        TransportError::HttpStatus(429) => problem(
+            ProviderErrorCode::DiscoveryRateLimited,
+            "ChatGPT model catalog is rate limited (HTTP 429)",
+        ),
+        TransportError::HttpStatus(500..=599) => problem(
+            ProviderErrorCode::DiscoveryServerError,
+            "ChatGPT model catalog returned a server error (HTTP 5xx)",
+        ),
+        TransportError::TooLarge => problem(
+            ProviderErrorCode::DiscoveryTooLarge,
+            "ChatGPT model catalog exceeded the maximum size",
+        ),
+        TransportError::Unavailable | TransportError::InvalidTokenResponse => problem(
+            ProviderErrorCode::DiscoveryInvalidResponse,
+            "ChatGPT model catalog returned no usable response",
+        ),
+        TransportError::InvalidForm => problem(
+            ProviderErrorCode::DiscoveryRejected,
+            "ChatGPT model catalog bearer was invalid",
+        ),
+        TransportError::HttpStatus(_) => problem(
+            ProviderErrorCode::DiscoveryRejected,
+            "ChatGPT model catalog returned an unexpected HTTP status",
+        ),
+    }
+}
+
+fn model_discovery_parse_error(error: phenix_provider_protocols::siwc_models::CatalogError) -> ProviderError {
+    let code = if matches!(error, phenix_provider_protocols::siwc_models::CatalogError::TooLarge) {
+        ProviderErrorCode::DiscoveryTooLarge
+    } else {
+        ProviderErrorCode::DiscoveryInvalidResponse
+    };
+    problem(code, "ChatGPT model catalog has an invalid response schema")
+}
+
 fn identity_verification_error(error: VerificationError) -> ProviderError {
     match error {
         VerificationError::InvalidTokenResponse => denied("OAuth token response was invalid"),
@@ -645,9 +697,9 @@ mod plugin {
         // selection, bounded JSON, TLS, redirects and token ownership remain
         // enforced by the shared SIWC helper.
         let response = chatgpt_models(&account.access_token)
-            .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+            .map_err(|error| CallError::Domain(model_discovery_transport_error(error)))?;
         let discovered = parse_chatgpt_models(&response)
-            .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
+            .map_err(|error| CallError::Domain(model_discovery_parse_error(error)))?;
         discovered_model_page(
             identity.profile_id(),
             CONNECTION,
