@@ -306,10 +306,25 @@ fn prompt_failure(phase: &'static str, reason: impl ToString) -> acp::Error {
         .filter(|digits| digits.len() == 3 && digits.bytes().all(|digit| digit.is_ascii_digit()))
         .and_then(|digits| digits.parse::<u16>().ok())
         .filter(|code| (100..600).contains(code));
+    let known_model_code = match reason.strip_prefix("ModelFailed: ") {
+        Some(
+            "subscription_sharing_user_not_eligible"
+            | "subscription_sharing_usage_limit_exceeded"
+            | "subscription_sharing_usage_unavailable"
+            | "subscription_sharing_unsupported_capability"
+            | "subscription_sharing_route_not_supported"
+            | "subscription_sharing_invalid_user"
+            | "chatpass_v2_scope_not_authorized"
+            | "chatpass_v2_invalid_authorization_context"
+            | "subscription_sharing_user_unavailable",
+        ) => reason.strip_prefix("ModelFailed: "),
+        _ => None,
+    };
     acp::Error::internal_error().data(serde_json::json!({
         "format": "phenix.prompt.failure.v1",
         "phase": phase,
         "http_status": status,
+        "provider_code": known_model_code,
     }))
 }
 fn internal_storage(reason: impl ToString) -> acp::Error {
@@ -2652,6 +2667,16 @@ mod tests {
         }
         let status = prompt_failure("graph_result", "ModelFailed: HTTP model status 401");
         assert!(format!("{status:?}").contains("401"));
+        let selected = prompt_failure(
+            "graph_result",
+            "ModelFailed: subscription_sharing_usage_limit_exceeded",
+        );
+        assert!(format!("{selected:?}").contains("subscription_sharing_usage_limit_exceeded"));
+        let forged = prompt_failure(
+            "graph_result",
+            "ModelFailed: subscription_sharing_unrecognized_TOKEN=private",
+        );
+        assert!(!format!("{forged:?}").contains("TOKEN=private"));
         let malformed = prompt_failure(
             "graph_result",
             "ModelFailed: HTTP model status 401 TOKEN=private",
