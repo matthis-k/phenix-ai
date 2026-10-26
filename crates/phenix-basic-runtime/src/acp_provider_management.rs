@@ -164,20 +164,34 @@ impl ProviderManagementGroup {
         &self,
         resolvers: &[ModelCredentialResolver],
     ) -> acp::Result<Vec<NativeModelOffer>> {
-        // Verify installation identity before allowing any provider to
-        // publish an executable choice. A duplicate is always a hard error.
+        self.authorized_http_offers_report(resolvers)
+            .map(|(offers, _)| offers)
+    }
+
+    /// Merge only authority-checked offers while retaining bounded,
+    /// account-scoped reasons for missing offers from every installed root.
+    pub(super) fn authorized_http_offers_report(
+        &self,
+        resolvers: &[ModelCredentialResolver],
+    ) -> acp::Result<(Vec<NativeModelOffer>, Vec<serde_json::Value>)> {
         self.list()?;
         let mut offers = Vec::new();
+        let mut denials = Vec::new();
         let mut ids = std::collections::BTreeSet::new();
         for root in &self.roots {
-            for offer in root.authorized_http_offers(resolvers)? {
+            let (source_offers, source_denials) = root.authorized_http_offers_report(resolvers)?;
+            for offer in source_offers {
                 if offers.len() >= 128 || !ids.insert(offer.id.clone()) {
                     return Err(invalid("ambiguous or oversized native model options"));
                 }
                 offers.push(offer);
             }
+            if denials.len().saturating_add(source_denials.len()) > 128 {
+                return Err(invalid("provider model discovery diagnostics exceeded limits"));
+            }
+            denials.extend(source_denials);
         }
-        Ok(offers)
+        Ok((offers, denials))
     }
 
     pub(super) fn shutdown(self) -> Result<(), String> {
