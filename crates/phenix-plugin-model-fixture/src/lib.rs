@@ -10,7 +10,10 @@ pub fn respond(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         return Err(error(ErrorCode::InvalidInput, "empty run ID"));
     }
     let Some(Message::User { text: prompt }) = request.history.last() else {
-        return Err(error(ErrorCode::InvalidReply, "expected final user message"));
+        return Err(error(
+            ErrorCode::InvalidReply,
+            "expected final user message",
+        ));
     };
     let text = format!("fixture:{prompt}");
     let output_tokens = (text.len() / 4 + 1) as u64;

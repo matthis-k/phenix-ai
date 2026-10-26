@@ -26,3 +26,9 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - No preservation of a redundant old plugin API for the rewrite.
 - No claim that unit tests cover real native composition.
 - The reference branch is read-only evidence for behavioral comparisons.
+
+## 2026-10-26 R2 format gate
+
+- Workflow: [first clean Rust run](https://github.com/matthis-k/phenix-ai/actions/runs/40395088816), commit `355871dde43fb204d5a842e34ba180f781a533a2`.
+- **Failed** at `cargo fmt --all -- --check`; three formatting differences in the new fixture Rust sources. Cargo tests and native build did not run on that head.
+- Corrected the three differences in the next commit. Their success remains **unverified until its own run finishes**.

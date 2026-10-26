@@ -37,12 +37,17 @@ mod plugin {
             )));
         }
         if request.call.tool != ID {
-            return Err(CallError::Domain(error(ErrorCode::NotFound, "unknown tool")));
+            return Err(CallError::Domain(error(
+                ErrorCode::NotFound,
+                "unknown tool",
+            )));
         }
         let input: String = serde_json::from_str(&request.call.arguments).map_err(|_| {
             CallError::Domain(error(ErrorCode::InvalidInput, "expected JSON string"))
         })?;
-        Ok(ToolResult { text: reverse(&input) })
+        Ok(ToolResult {
+            text: reverse(&input),
+        })
     }
 }
 
