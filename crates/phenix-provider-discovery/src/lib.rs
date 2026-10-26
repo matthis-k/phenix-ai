@@ -159,10 +159,21 @@ pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, Cata
 pub fn standard_openai_responses_model(model: &str) -> bool {
     const FAMILIES: &[&str] = &["gpt-4.1", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "o4"];
     FAMILIES.iter().any(|family| {
-        model == *family
-            || model
-                .strip_prefix(*family)
-                .is_some_and(|suffix| suffix.starts_with('-'))
+        let Some(suffix) = model.strip_prefix(*family) else {
+            return false;
+        };
+        if suffix.is_empty() || suffix.starts_with('-') {
+            return true;
+        }
+        // Dotted model versions such as gpt-5.2 are distinct from gpt-50
+        // and unrelated model families. Never match arbitrary suffixes.
+        let Some(version) = suffix.strip_prefix('.') else {
+            return false;
+        };
+        let numeric = version.split_once('-').map_or(version, |(v, _)| v);
+        numeric
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|digit| digit.is_ascii_digit()))
     })
 }
 
@@ -178,6 +189,7 @@ mod tests {
             "gpt-4o",
             "gpt-5",
             "gpt-5.2",
+            "gpt-5.2-mini",
             "gpt-6",
             "o1",
             "o3-mini",
@@ -200,6 +212,8 @@ mod tests {
             "gpt-5/embedding",
             "gpt-5:other",
             "gpt-5_preview",
+            "gpt-5.2embedding",
+            "gpt-5.x",
         ] {
             assert!(!standard_openai_responses_model(model), "{model}");
         }
