@@ -441,7 +441,34 @@ mod tests {
         assert!(cache.is_empty());
     }
     #[test]
-    fn rejects_ambiguous_or_unbounded_pages_without_changing_revision() {
+    fn preserves_large_catalog_without_arbitrary_size_or_count_limits() {
+        let mut cache = CatalogCache::default();
+        let models = (0..4097)
+            .map(|index| CatalogModel {
+                id: format!("model-{index}"),
+                label: "model description ".repeat(32),
+            })
+            .collect::<Vec<_>>();
+        let revision = cache
+            .put(
+                key(Some("work")),
+                100,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                CatalogPage {
+                    models,
+                    next_provider_cursor: None,
+                },
+            )
+            .unwrap();
+        assert!(revision > 0);
+        let view = cache.view(&key(Some("work")), 101, 7).unwrap();
+        assert_eq!(view.page.models.len(), 4097);
+        assert_eq!(view.page.models[4096].id, "model-4096");
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_malformed_pages_without_changing_revision() {
         let mut cache = CatalogCache::default();
         let account = key(Some("work"));
         let first = cache
