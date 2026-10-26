@@ -11,9 +11,10 @@ pub use catalog::discovered_model_page;
 
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
-    ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
-    ProviderPage,
+    DiscoveryKind, ProviderDescriptor, ProviderPage,
 };
+#[cfg(test)]
+use phenix_provider_contracts::{ConnectionDescriptor, DiscoverySource, ProtocolBinding};
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::{BTreeMap, BTreeSet};
 
