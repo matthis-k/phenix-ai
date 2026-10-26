@@ -127,10 +127,8 @@ impl ControlState {
             ControlAction::CredentialsCapabilities
             | ControlAction::CredentialsImport
             | ControlAction::CredentialsBindEnvironment
-            | ControlAction::CredentialsRevoke => {
-                (!self.credential_management)
-                    .then_some(DenialCode::CredentialManagementNotInstalled)
-            }
+            | ControlAction::CredentialsRevoke => (!self.credential_management)
+                .then_some(DenialCode::CredentialManagementNotInstalled),
             ControlAction::ModelsList => {
                 (!self.model_control).then_some(DenialCode::ModelControlNotInstalled)
             }
