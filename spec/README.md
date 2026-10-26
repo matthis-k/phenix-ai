@@ -57,7 +57,7 @@ The categories below are an audit of the top-level `spec/` Markdown files on `ma
 - [`basic-http-model-contract.md`](basic-http-model-contract.md)
 - [`basic-observer-contract.md`](basic-observer-contract.md)
 
-### Older proposals superseded as future graph design
+### Superseded legacy proposals (redirects; full source retained in Git history)
 
 - [`m1-values-reactive-dag-rfc.md`](m1-values-reactive-dag-rfc.md)
 - [`m1-plugin-contracts-rfc.md`](m1-plugin-contracts-rfc.md)
