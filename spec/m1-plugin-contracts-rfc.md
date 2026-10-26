@@ -1,6 +1,6 @@
 # RFC: Declarative plugin contracts and Rust annotation API
 
-Status: proposal; M1 contract and SDK authoring extension
+Status: historical authoring proposal, partly implemented. Current interface/ABI details come from source and [M1 contract authoring](m1-contract-authoring-contract.md). Future graph contribution semantics come from [v2.4](graph-architecture-v2.4.md), not this older RFC.
 Date: 2026-10-11
 Depends on: [clean-start RFC](clean-start-rfc.md)
 Related: [M1 value/ref and reactive DAG RFC](m1-values-reactive-dag-rfc.md)
