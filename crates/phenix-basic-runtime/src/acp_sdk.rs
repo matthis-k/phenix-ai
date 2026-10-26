@@ -1556,6 +1556,29 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
+        // The connection-level default becomes independently persisted session
+        // intent; it is not a global bearer installation or cross-session grant.
+        if let Some(desired) = self.default_model_selection.clone() {
+            let management = self
+                .management
+                .as_ref()
+                .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?;
+            let binding = management.current_http_binding(&desired)?;
+            // An interrupted persistence/install must never fall back to
+            // the old HTTP preset in a newly created session.
+            self.selected_http_seen.insert(session.clone());
+            super::model_selection_state::compare_and_swap(
+                self.sessions
+                    .get(&session)
+                    .ok_or_else(|| invalid("new session unavailable"))?,
+                &self.composition,
+                &session,
+                &binding,
+                0,
+            )
+            .map_err(|_| invalid("default model persistence denied"))?;
+            self.install_current_http_model(&session, &desired)?;
+        }
         let options = self.model_options(&session)?;
         Ok(NewSessionResponse::new(session).config_options(options))
     }
