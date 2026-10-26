@@ -2264,6 +2264,7 @@
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
         mkdir -p "$out"
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/acp-provider-management.sqlite"
         python ${./tests/acp-provider-management-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} \
           ${providerManagementComposition} ${basicHttpComposition} "$out"
