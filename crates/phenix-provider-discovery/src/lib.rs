@@ -8,9 +8,6 @@ pub mod http;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-const MAX_CATALOG_BYTES: usize = 1024 * 1024;
-const MAX_MODELS: usize = 4096;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogFormat {
     OpenAi,
@@ -54,9 +51,6 @@ fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, CatalogError> {
 /// actual provider's documented format and verify connection authentication.
 /// Neither endpoint nor protocol is inferred from the model name.
 pub fn parse(format: CatalogFormat, bytes: &[u8]) -> Result<CatalogPage, CatalogError> {
-    if bytes.len() > MAX_CATALOG_BYTES {
-        return Err(CatalogError::TooLarge);
-    }
     let value: Value = serde_json::from_slice(bytes).map_err(|_| CatalogError::InvalidResponse)?;
     let key = if format == CatalogFormat::ChatGptSubscription {
         "models"
@@ -67,9 +61,6 @@ pub fn parse(format: CatalogFormat, bytes: &[u8]) -> Result<CatalogPage, Catalog
         .get(key)
         .and_then(Value::as_array)
         .ok_or(CatalogError::InvalidResponse)?;
-    if data.len() > MAX_MODELS {
-        return Err(CatalogError::TooLarge);
-    }
     let mut models = Vec::with_capacity(data.len());
     let mut ids = BTreeSet::new();
     for item in data {
@@ -130,9 +121,6 @@ pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, Cata
         return Err(CatalogError::InvalidResponse);
     }
     let parsed = parse(CatalogFormat::OpenAi, bytes)?;
-    if parsed.models.len() > 256 {
-        return Err(CatalogError::TooLarge);
-    }
     let mut ids = Vec::with_capacity(parsed.models.len());
     for model in parsed.models {
         if model.id.len() > 128
@@ -152,6 +140,19 @@ pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, Cata
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_model_catalog_has_no_implicit_count_or_byte_rejection() {
+        let models = (0..4097)
+            .map(|i| serde_json::json!({"id": format!("gpt-{i}"), "metadata": "x".repeat(512)}))
+            .collect::<Vec<_>>();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "object": "list", "data": models
+        })).unwrap();
+        assert!(body.len() > 1024 * 1024);
+        let ids = parse_standard_openai_model_ids(&body).unwrap();
+        assert_eq!(ids.len(), 4097);
+    }
 
     #[test]
     fn standard_openai_ids_validate_envelope_and_deterministic_order() {
@@ -263,8 +264,8 @@ mod tests {
             Err(CatalogError::DuplicateModel)
         );
         assert_eq!(
-            parse(CatalogFormat::OpenAi, &vec![b' '; MAX_CATALOG_BYTES + 1]),
-            Err(CatalogError::TooLarge)
+            parse(CatalogFormat::OpenAi, &vec![b' '; 1024 * 1024 + 1]),
+            Err(CatalogError::InvalidResponse)
         );
         assert_eq!(
             parse(CatalogFormat::Anthropic, br#"{"data":[],"has_more":true}"#),
