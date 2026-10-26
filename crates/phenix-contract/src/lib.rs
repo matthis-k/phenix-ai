@@ -12,6 +12,7 @@ pub use static_schema::{StaticField, StaticSchema, StaticVariant};
 mod portable;
 pub use portable::Blob;
 pub mod value;
+pub mod transfer;
 pub use descriptor::*;
 pub use scope::*;
 use serde::{Deserialize, Serialize};
