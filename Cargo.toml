@@ -1,5 +1,14 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/phenix-contract",
+    "crates/phenix-artifact",
+    "crates/phenix-kernel",
+    "crates/phenix-macros",
+    "crates/phenix-sdk",
+    "crates/phenix-basic-contracts",
+    "crates/phenix-plugin-model-fixture",
+    "crates/phenix-plugin-tool-reverse",
+]
 resolver = "2"
 
 [workspace.package]
