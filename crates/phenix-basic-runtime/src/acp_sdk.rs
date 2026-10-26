@@ -1059,6 +1059,100 @@ impl Controller {
         )
     }
 
+    fn control_denial(code: DenialCode) -> acp::Error {
+        acp::Error::invalid_params().data(serde_json::json!({
+            "format": "phenix.control.denial.v1",
+            "code": code,
+            "message": code.message(),
+        }))
+    }
+
+    fn pre_session_offers(&self) -> acp::Result<Vec<provider_management::NativeModelOffer>> {
+        if !can_switch_native_model(&self.composition) {
+            return Err(Self::control_denial(DenialCode::ModelControlNotInstalled));
+        }
+        self.management
+            .as_ref()
+            .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
+            .authorized_http_offers(&self.resolvers)
+    }
+
+    fn describe_control_state(&self) -> acp::Result<serde_json::Value> {
+        let discovered = self.pre_session_offers();
+        let (offers, discovery_failure) = match discovered {
+            Ok(offers) => (offers, None),
+            Err(_) => (Vec::new(), Some("provider_catalog_denied_or_unavailable")),
+        };
+        let state = ControlState {
+            initialized: self.initialized,
+            closed: self.closed.load(Ordering::Acquire),
+            provider_management: self.management.is_some(),
+            model_control: can_switch_native_model(&self.composition) && self.management.is_some(),
+            available_models: offers.len(),
+            default_model_selected: self.default_model_selection.is_some(),
+            session_active: !self.sessions.is_empty(),
+        };
+        let mut value = state.describe();
+        value["revision"] = serde_json::json!(self.default_model_revision);
+        value["models"] = serde_json::Value::Array(offers
+            .iter()
+            .map(|offer| {
+                Ok(serde_json::json!({
+                    "id": native_model_option_id(&offer.selected, self.default_model_revision)?,
+                    "name": offer.label,
+                    "authorized": true,
+                }))
+            })
+            .collect::<acp::Result<Vec<_>>>()?);
+        value["selected"] = match &self.default_model_selection {
+            Some(selected) => serde_json::json!(native_model_option_id(
+                selected,
+                self.default_model_revision
+            )?),
+            None => serde_json::Value::Null,
+        };
+        value["model_discovery_error"] = serde_json::json!(discovery_failure);
+        Ok(value)
+    }
+
+    fn select_default_model(
+        &mut self,
+        request: DefaultModelSelectRequest,
+    ) -> acp::Result<serde_json::Value> {
+        let offers = self.pre_session_offers()?;
+        let state = ControlState {
+            initialized: self.initialized,
+            closed: self.closed.load(Ordering::Acquire),
+            provider_management: self.management.is_some(),
+            model_control: true,
+            available_models: offers.len(),
+            default_model_selected: self.default_model_selection.is_some(),
+            session_active: !self.sessions.is_empty(),
+        };
+        if let Some(reason) = state.deny(ControlAction::ModelsSelect) {
+            return Err(Self::control_denial(reason));
+        }
+        let mut candidates = offers.into_iter().filter(|offer| {
+            native_model_option_id(&offer.selected, self.default_model_revision)
+                .is_ok_and(|id| id == request.value)
+        });
+        let selected = candidates.next().ok_or_else(stale_model_conflict)?;
+        if candidates.next().is_some() {
+            return Err(invalid("ambiguous default model selection"));
+        }
+        // Selection is intent, never a credential or installation grant.
+        self.management
+            .as_ref()
+            .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
+            .current_http_binding(&selected.selected)?;
+        self.default_model_revision = self
+            .default_model_revision
+            .checked_add(1)
+            .ok_or_else(|| internal("default model revision overflow"))?;
+        self.default_model_selection = Some(selected.selected);
+        self.describe_control_state()
+    }
+
     fn provider_models(&self, request: ProviderModelsRequest) -> acp::Result<serde_json::Value> {
         if request.scope != "user"
             || request.provider_id.is_empty()
