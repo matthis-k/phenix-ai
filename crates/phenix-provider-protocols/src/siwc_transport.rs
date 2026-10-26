@@ -393,7 +393,7 @@ mod tests {
         let catalog =
             r#"{"models":[{"slug":"gpt-test","display_name":"Test","visibility":"list"}]}"#;
         let response = format!(
-            "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             catalog.len(),
             catalog,
         );
