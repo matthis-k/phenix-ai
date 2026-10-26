@@ -514,7 +514,7 @@ mod plugin {
                 ))
             })?;
             let keys = issuer_jwks()
-                .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
+                .map_err(|_| CallError::Domain(problem(ProviderErrorCode::DiscoveryIssuerUnavailable, "ChatGPT issuer signing keys could not be fetched")))?;
             let verified = verify_chatgpt_persisted_identity(
                 &tokens,
                 &keys,
@@ -557,7 +557,7 @@ mod plugin {
             ))
         })?;
         let keys =
-            issuer_jwks().map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
+            issuer_jwks().map_err(|_| CallError::Domain(problem(ProviderErrorCode::DiscoveryIssuerUnavailable, "ChatGPT issuer signing keys could not be fetched")))?;
         let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
             access_token: account.access_token.clone(),
             refresh_token: account.refresh_token.clone(),
