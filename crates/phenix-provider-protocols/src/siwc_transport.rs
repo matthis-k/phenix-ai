@@ -389,6 +389,36 @@ mod tests {
     }
 
     #[test]
+    fn subscription_catalog_uses_bounded_bearer_get_over_shared_transport() {
+        let catalog = r#"{"models":[{"slug":"gpt-test","display_name":"Test","visibility":"list"}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{}",
+            catalog.len(),
+            catalog,
+        );
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://127.0.0.1:{}/models", server.local_addr().unwrap().port());
+        let worker = thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut buf = [0u8; 4096];
+            let count = socket.read(&mut buf).unwrap();
+            socket.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(buf[..count].to_vec()).unwrap()
+        });
+        let received = request_with_auth(&endpoint, None, MAX_TOKEN_BODY, Some("test-bearer"), false)
+            .expect("catalog response");
+        let request = worker.join().unwrap();
+        assert!(request.starts_with("GET /models HTTP/1.1"));
+        assert!(request.contains("Authorization: Bearer test-bearer"));
+        assert_eq!(received, catalog.as_bytes());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&received).unwrap()["models"][0]["slug"],
+            "gpt-test"
+        );
+    }
+
+    #[test]
     fn bearer_catalog_rejects_control_characters_before_network() {
         for token in ["", "bad\nheader", "bad:extra", "x\r", "a b"] {
             assert_eq!(chatgpt_models(token), Err(TransportError::InvalidForm),);
