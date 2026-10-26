@@ -144,31 +144,64 @@ mod tests {
 
     #[test]
     fn large_model_catalog_is_paged_without_implicit_count_limit() {
-        let all = (0..513).map(|i| (format!("gpt-{i}"), format!("Model {i}"))).collect::<Vec<_>>();
+        let all = (0..513)
+            .map(|i| (format!("gpt-{i}"), format!("Model {i}")))
+            .collect::<Vec<_>>();
         let first = discovered_model_page_from_cursor(
-            "work", "api", "openai-responses", "responses", 256,
-            None, all.clone(), |_| true,
-        ).unwrap();
+            "work",
+            "api",
+            "openai-responses",
+            "responses",
+            256,
+            None,
+            all.clone(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(first.models.len(), 256);
         assert_eq!(first.next_cursor.as_deref(), Some("offset:256"));
         let second = discovered_model_page_from_cursor(
-            "work", "api", "openai-responses", "responses", 256,
-            first.next_cursor.as_deref(), all.clone(), |_| true,
-        ).unwrap();
+            "work",
+            "api",
+            "openai-responses",
+            "responses",
+            256,
+            first.next_cursor.as_deref(),
+            all.clone(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(second.models.len(), 256);
         assert_eq!(second.revision, first.revision);
         let third = discovered_model_page_from_cursor(
-            "work", "api", "openai-responses", "responses", 256,
-            second.next_cursor.as_deref(), all.clone(), |_| true,
-        ).unwrap();
+            "work",
+            "api",
+            "openai-responses",
+            "responses",
+            256,
+            second.next_cursor.as_deref(),
+            all.clone(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(third.models.len(), 1);
         assert_eq!(third.models[0].id, "gpt-512");
         assert!(third.next_cursor.is_none());
         for malformed in ["offset:0", "offset:999", "offset:-1", "offset:001"] {
-            assert!(discovered_model_page_from_cursor(
-                "work", "api", "openai-responses", "responses", 256,
-                Some(malformed), all.clone(), |_| true,
-            ).is_err(), "{malformed}");
+            assert!(
+                discovered_model_page_from_cursor(
+                    "work",
+                    "api",
+                    "openai-responses",
+                    "responses",
+                    256,
+                    Some(malformed),
+                    all.clone(),
+                    |_| true,
+                )
+                .is_err(),
+                "{malformed}"
+            );
         }
     }
 
