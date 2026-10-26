@@ -354,9 +354,7 @@ fn prompt_failure_details(
         "reply exceeds portable bounds" => Some("reply_exceeds_inline_abi"),
         "SSE frame exceeds portable bounds" => Some("sse_frame_exceeds_inline_abi"),
         "request exceeds portable payload bounds" => Some("request_exceeds_inline_abi"),
-        "selected HTTP model is not installed for session" => {
-            Some("model_not_installed")
-        }
+        "selected HTTP model is not installed for session" => Some("model_not_installed"),
         _ => None,
     };
     let safe_node = node.filter(|id| {
@@ -400,9 +398,8 @@ fn finish_submission_acp(execution: &GraphExecution<'_>) -> acp::Result<bool> {
     }
     for step in execution.steps() {
         if let Outcome::Domain(value) = &step.outcome {
-            let problem = BasicError::from_value(value.clone()).map_err(|_| {
-                prompt_failure("graph_result", "invalid graph domain error")
-            })?;
+            let problem = BasicError::from_value(value.clone())
+                .map_err(|_| prompt_failure("graph_result", "invalid graph domain error"))?;
             return Err(prompt_failure_details(
                 "graph_result",
                 &problem.message,
