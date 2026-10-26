@@ -3,6 +3,7 @@
 
 mod acp_sdk;
 mod model_selection_state;
+mod frontend_defaults;
 mod provider_deployment;
 use phenix_basic_contracts::{
     BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
