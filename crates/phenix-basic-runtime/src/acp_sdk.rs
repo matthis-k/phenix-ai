@@ -1806,8 +1806,8 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        let mut owner = session_lock(&session)
-            .map_err(|failure| prompt_failure("session_lock", failure))?;
+        let mut owner =
+            session_lock(&session).map_err(|failure| prompt_failure("session_lock", failure))?;
         recover_owned_run(kernel, &session, &mut owner)
             .map_err(|failure| prompt_failure("session_recovery", failure))?;
         let execution =
@@ -1843,10 +1843,13 @@ impl Controller {
             if !stopping
                 && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
             {
-                execution.cancel().map_err(|failure| prompt_failure("graph_cancel", failure))?;
+                execution
+                    .cancel()
+                    .map_err(|failure| prompt_failure("graph_cancel", failure))?;
                 stopping = true;
             }
-            let status = execution.pump(|_| {})
+            let status = execution
+                .pump(|_| {})
                 .map_err(|failure| prompt_failure("graph_pump", failure))?;
             if !marked {
                 marked = mark_admitted_run(kernel, &execution, session, owner)
@@ -2649,7 +2652,10 @@ mod tests {
         }
         let status = prompt_failure("graph_result", "ModelFailed: HTTP model status 401");
         assert!(format!("{status:?}").contains("401"));
-        let malformed = prompt_failure("graph_result", "ModelFailed: HTTP model status 401 TOKEN=private");
+        let malformed = prompt_failure(
+            "graph_result",
+            "ModelFailed: HTTP model status 401 TOKEN=private",
+        );
         assert!(!format!("{malformed:?}").contains("TOKEN=private"));
     }
 
