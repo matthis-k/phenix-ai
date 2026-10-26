@@ -12,12 +12,11 @@ use phenix_provider_contracts::{
     CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelPage,
     ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
-use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_protocols::{
     oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
+    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
         VerificationError, VerifiedChatGptIdentity,
@@ -638,11 +637,13 @@ mod plugin {
             )));
         }
         let account = authorized_account(host, &identity)?;
-        // The subscription catalog uses a different wire schema, but its
-        // authenticated, bounded GET is the same strategy as other providers.
-        let response =
-            fetch_bearer_catalog("https://api.openai.com/v1/models", &account.access_token)
-                .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+        // Use the same verified reqwest/Rustls transport as OAuth token
+        // exchange. The old generic discovery adapter still uses libcurl,
+        // which failed for this user's real sign-in environment. Account
+        // selection, bounded JSON, TLS, redirects and token ownership remain
+        // enforced by the shared SIWC helper.
+        let response = chatgpt_models(&account.access_token)
+            .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
         let discovered = parse_chatgpt_models(&response)
             .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
         discovered_model_page(
