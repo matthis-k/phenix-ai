@@ -15,7 +15,7 @@ These three scenarios now have separate Nix check outputs:
 | `p1-native-routing-restart` | `native-routing-restart.json` | Fail-closed recovery of invalid durable selection and witness state |
 | `basic-host-smoke` | terminal, JSONL, observer, ACP and storage evidence | Default Basic frontend operation only |
 
-`p1-release-preflight` explicitly receives the independent model selection
+`p1-release-preflight` explicitly receives provider management, independent model selection,
 and restart derivation outputs, retaining every previous semantic assertion
 including native CAS, revocation, session reload, and denied corrupt routing
 records. Its self-test now mutates those *separate* evidence directories to
