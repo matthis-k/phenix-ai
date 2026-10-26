@@ -24,14 +24,16 @@ concrete, selectable model.
 | Model request projection and capabilities | real Basic agent + `phenix.model.history-test` | `basic-model-capabilities` | No |
 | Model replies, errors, limits and continuation | `phenix.model.scripted` | `b4-scripted` and agent checks | No |
 | Multi-turn history, storage and recovery | `phenix.model.history-test` + real Basic Session | `basic-history-verification` | No |
-| Frontend ACP contract | verification composition + ACP frontend | `basic-history-verification` ACP scenario | No |
+| ACP Model request projection | verification composition + ACP frontend | `basic-acp-model-capabilities` | No |
+| Frontend ACP history and updates | verification composition + ACP frontend | `basic-history-verification` ACP scenario | No |
 | Provider registration and model discovery | provider builtins and loopback fixtures | provider/ACP product checks | No |
 | Credential storage, auth policy and lifecycle | credential-test backend or synthetic transport | authentication product checks | No real provider secret |
 | Production provider interoperability | actual network service and credentials | opt-in live smoke check (not a required offline CI gate) | Yes |
 
-The `basic-model-capabilities` check is intentionally distinct from both
-history verification and auth verification. It drives the real Basic graph
-over JSONL; the selected test-only Model returns the exact `ModelRequest`
+The `basic-model-capabilities` and `basic-acp-model-capabilities` checks
+are independently executed and distinct from history and auth verification. The JSONL check drives the real Basic
+graph; the ACP check drives the real frontend against the same graph. In both
+cases, the selected test-only Model returns the exact `ModelRequest`
 snapshot available at the Model contract: tool IDs, descriptions, JSON argument
 schemas and idempotency; skill IDs; context IDs. It never claims that a tool
 is executable merely because it was advertised. The check separately observes
