@@ -16,7 +16,9 @@ use phenix_provider_protocols::{
     oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
     siwc_models::parse_chatgpt_models,
-    siwc_transport::{chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
+    siwc_transport::{
+        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
+    },
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
         VerificationError, VerifiedChatGptIdentity,
