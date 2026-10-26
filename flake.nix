@@ -785,6 +785,26 @@
         ${pkgs.python3}/bin/python ${./tests/p1-auth-launcher-product.py} \
           ${self.packages.${system}.phenix-basic-p1-auth-acp}/bin/phenix-basic-p1-auth-acp "$out"
       '';
+      # Control-plane tests: separate API-key and OAuth state machines.
+      # Both run without sessions, model enumeration or model invocation.
+      p1ApiKeyControlCheck = pkgs.runCommand "phenix-p1-api-key-control" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-p1-auth-control-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${openAiApiManagementComposition} api "$out"
+        test -s "$out/accepted.json"
+      '';
+      p1OAuthControlCheck = pkgs.runCommand "phenix-p1-oauth-control" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-p1-auth-control-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${chatGptManagementComposition} chatgpt "$out"
+        test -s "$out/accepted.json"
+      '';
       p1CombinedAuthProductCheck = pkgs.runCommand "phenix-p1-combined-auth-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1265,6 +1285,17 @@
             ./crates/phenix-plugin-provider-loopback-fixture
           ]);
         });
+      # Concrete provider metadata is tested independently of authentication
+      # or outbound model requests, using the same native fixture.
+      p1ModelDiscoveryCheck = pkgs.runCommand "phenix-p1-model-discovery" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-p1-model-discovery-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${providerLoopbackManagementComposition} "$out"
+        test -s "$out/accepted.json"
+      '';
       providerRuntimeProductCheck = pkgs.runCommand "phenix-provider-runtime-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2997,6 +3028,7 @@
         environment-product = environmentProductCheck;
         workspace-product = workspaceProductCheck;
         provider-contracts = providerContractsCheck;
+        p1-model-discovery = p1ModelDiscoveryCheck;
         provider-runtime-product = providerRuntimeProductCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
@@ -3008,6 +3040,8 @@
         provider-openai-api = providerOpenAiApi;
         provider-chatgpt = providerChatGpt;
         p1-auth-launcher-product = p1AuthLauncherProductCheck;
+        p1-api-key-control = p1ApiKeyControlCheck;
+        p1-oauth-control = p1OAuthControlCheck;
         p1-combined-auth-product = p1CombinedAuthProductCheck;
         provider-openai-api-product = providerOpenAiApiProductCheck;
         provider-openai-api-launcher = providerOpenAiApiLauncherCheck;
