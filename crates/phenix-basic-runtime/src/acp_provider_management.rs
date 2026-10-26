@@ -480,21 +480,54 @@ pub(super) fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
         ProviderErrorCode::Unavailable
             | ProviderErrorCode::AuthenticationRequired
             | ProviderErrorCode::NotFound
+            | ProviderErrorCode::DiscoveryNetwork
+            | ProviderErrorCode::DiscoveryTimeout
+            | ProviderErrorCode::DiscoveryUnauthorized
+            | ProviderErrorCode::DiscoveryRateLimited
+            | ProviderErrorCode::DiscoveryServerError
+            | ProviderErrorCode::DiscoveryInvalidResponse
+            | ProviderErrorCode::DiscoveryIssuerUnavailable
+            | ProviderErrorCode::DiscoveryRejected
+            | ProviderErrorCode::DiscoveryTooLarge
     )
 }
 
-// Missing discovery is a permitted optional capability, not a malformed
-// success reply or a blanket suppression of provider/authority denials.
-fn classify_model_page(result: Result<ModelPage, ProviderError>) -> acp::Result<Option<ModelPage>> {
+// The runtime emits allowlisted explanations based only on the typed code.
+// Provider-supplied messages or response bodies must never reach Neovim.
+fn model_discovery_denial(code: &ProviderErrorCode) -> (&'static str, &'static str) {
+    match code {
+        ProviderErrorCode::DiscoveryNetwork => ("catalog_network", "Catalog network or TLS connection failed; check DNS, VPN or proxy"),
+        ProviderErrorCode::DiscoveryTimeout => ("catalog_timeout", "Catalog request timed out; retry"),
+        ProviderErrorCode::DiscoveryUnauthorized => ("catalog_unauthorized", "ChatGPT catalog rejected the OAuth token; reauthenticate the ChatGPT account"),
+        ProviderErrorCode::DiscoveryRateLimited => ("catalog_rate_limited", "Model catalog rate limited this account; retry later"),
+        ProviderErrorCode::DiscoveryServerError => ("catalog_server_error", "Model catalog returned HTTP 5xx; retry later"),
+        ProviderErrorCode::DiscoveryInvalidResponse => ("catalog_invalid_response", "Model catalog response did not match the expected format"),
+        ProviderErrorCode::DiscoveryIssuerUnavailable => ("catalog_issuer_unavailable", "Cannot verify ChatGPT issuer signing keys"),
+        ProviderErrorCode::DiscoveryRejected => ("catalog_rejected", "Catalog rejected the request or redirected unexpectedly"),
+        ProviderErrorCode::DiscoveryTooLarge => ("catalog_too_large", "Model catalog response exceeded safety limits"),
+        ProviderErrorCode::AuthenticationRequired => ("account_not_authenticated", "The selected account requires authentication"),
+        ProviderErrorCode::NotFound => ("catalog_unavailable", "Provider model discovery is not installed"),
+        _ => ("catalog_unavailable", "Provider model discovery is unavailable or denied"),
+    }
+}
+
+// Missing discovery is optional, but its *reason* is not discarded. Invalid
+// provider replies, authority denials and conflicts still reject the read.
+fn classify_model_page(
+    result: Result<ModelPage, ProviderError>,
+) -> acp::Result<Result<ModelPage, ProviderErrorCode>> {
     match result {
-        Ok(page) => Ok(Some(page)),
-        Err(problem) if is_missing_model_discovery(&problem.code) => Ok(None),
+        Ok(page) => Ok(Ok(page)),
+        Err(problem) if is_missing_model_discovery(&problem.code) => Ok(Err(problem.code)),
         Err(problem) => Err(provider_rejection(problem)),
     }
 }
 
 impl ProviderManagement {
-    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
+    fn optional_model_page(
+        &self,
+        query: &ModelQuery,
+    ) -> acp::Result<Result<ModelPage, ProviderErrorCode>> {
         let reply = self
             .invoke_typed("phenix.provider.catalog@1", "models", query)
             .map_err(internal)?;
@@ -596,25 +629,26 @@ impl ProviderManagement {
                     let mut cursor = None;
                     let full = loop {
                         charge_model_option_budget(&mut inspected_pages, 128)?;
-                        let Some(page) = self.optional_model_page(&ModelQuery {
+                        let page = match self.optional_model_page(&ModelQuery {
                             scope: "user".into(),
                             provider_id: exact.id.clone(),
                             connection_id: connection.id.clone(),
                             profile_id: profile.clone(),
                             cursor: cursor.clone(),
                             limit: 256,
-                        })?
-                        else {
-                            // Missing discovery is not silently treated as a
-                            // healthy empty model catalog.
-                            denials.push(serde_json::json!({
-                                "provider_id": exact.id,
-                                "connection_id": connection.id,
-                                "profile_id": profile,
-                                "code": "catalog_unavailable",
-                                "message": "Provider model discovery is unavailable or denied",
-                            }));
-                            break None;
+                        })? {
+                            Ok(page) => page,
+                            Err(reason) => {
+                                let (code, message) = model_discovery_denial(&reason);
+                                denials.push(serde_json::json!({
+                                    "provider_id": exact.id,
+                                    "connection_id": connection.id,
+                                    "profile_id": profile,
+                                    "code": code,
+                                    "message": message,
+                                }));
+                                break None;
+                            }
                         };
                         cursor = collected.push(page, &profile)?;
                         if cursor.is_none() {
@@ -728,13 +762,38 @@ mod typed_result_tests {
             code: ProviderErrorCode::AuthenticationRequired,
             message: "no credentials".into(),
         };
-        assert!(classify_model_page(Err(missing)).unwrap().is_none());
+        assert_eq!(classify_model_page(Err(missing)).unwrap().unwrap_err(), ProviderErrorCode::AuthenticationRequired);
 
         let denied = ProviderError {
             code: ProviderErrorCode::Denied,
             message: "access denied".into(),
         };
         assert!(classify_model_page(Err(denied)).is_err());
+    }
+
+    #[test]
+    fn catalog_failures_are_preserved_as_safe_typed_denials() {
+        for (reason, code) in [
+            (ProviderErrorCode::DiscoveryNetwork, "catalog_network"),
+            (ProviderErrorCode::DiscoveryTimeout, "catalog_timeout"),
+            (ProviderErrorCode::DiscoveryUnauthorized, "catalog_unauthorized"),
+            (ProviderErrorCode::DiscoveryRateLimited, "catalog_rate_limited"),
+            (ProviderErrorCode::DiscoveryServerError, "catalog_server_error"),
+            (ProviderErrorCode::DiscoveryInvalidResponse, "catalog_invalid_response"),
+            (ProviderErrorCode::DiscoveryIssuerUnavailable, "catalog_issuer_unavailable"),
+            (ProviderErrorCode::DiscoveryRejected, "catalog_rejected"),
+            (ProviderErrorCode::DiscoveryTooLarge, "catalog_too_large"),
+        ] {
+            let failure = ProviderError {
+                code: reason.clone(),
+                message: "potentially secret provider response; never emit".into(),
+            };
+            let rejected = classify_model_page(Err(failure)).unwrap().unwrap_err();
+            assert_eq!(rejected, reason);
+            let (actual, safe_message) = model_discovery_denial(&rejected);
+            assert_eq!(actual, code);
+            assert!(!safe_message.contains("potentially secret"));
+        }
     }
 
     #[test]
