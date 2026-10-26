@@ -496,18 +496,53 @@ pub(super) fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
 // Provider-supplied messages or response bodies must never reach Neovim.
 fn model_discovery_denial(code: &ProviderErrorCode) -> (&'static str, &'static str) {
     match code {
-        ProviderErrorCode::DiscoveryNetwork => ("catalog_network", "Catalog network or TLS connection failed; check DNS, VPN or proxy"),
-        ProviderErrorCode::DiscoveryTimeout => ("catalog_timeout", "Catalog request timed out; retry"),
-        ProviderErrorCode::DiscoveryUnauthorized => ("catalog_unauthorized", "ChatGPT catalog rejected the OAuth token; reauthenticate the ChatGPT account"),
-        ProviderErrorCode::DiscoveryRateLimited => ("catalog_rate_limited", "Model catalog rate limited this account; retry later"),
-        ProviderErrorCode::DiscoveryServerError => ("catalog_server_error", "Model catalog returned HTTP 5xx; retry later"),
-        ProviderErrorCode::DiscoveryInvalidResponse => ("catalog_invalid_response", "Model catalog response did not match the expected format"),
-        ProviderErrorCode::DiscoveryIssuerUnavailable => ("catalog_issuer_unavailable", "Cannot verify ChatGPT issuer signing keys"),
-        ProviderErrorCode::DiscoveryRejected => ("catalog_rejected", "Catalog rejected the request or redirected unexpectedly"),
-        ProviderErrorCode::DiscoveryTooLarge => ("catalog_too_large", "Model catalog response exceeded safety limits"),
-        ProviderErrorCode::AuthenticationRequired => ("account_not_authenticated", "The selected account requires authentication"),
-        ProviderErrorCode::NotFound => ("catalog_unavailable", "Provider model discovery is not installed"),
-        _ => ("catalog_unavailable", "Provider model discovery is unavailable or denied"),
+        ProviderErrorCode::DiscoveryNetwork => (
+            "catalog_network",
+            "Catalog network or TLS connection failed; check DNS, VPN or proxy",
+        ),
+        ProviderErrorCode::DiscoveryTimeout => {
+            ("catalog_timeout", "Catalog request timed out; retry")
+        }
+        ProviderErrorCode::DiscoveryUnauthorized => (
+            "catalog_unauthorized",
+            "ChatGPT catalog rejected the OAuth token; reauthenticate the ChatGPT account",
+        ),
+        ProviderErrorCode::DiscoveryRateLimited => (
+            "catalog_rate_limited",
+            "Model catalog rate limited this account; retry later",
+        ),
+        ProviderErrorCode::DiscoveryServerError => (
+            "catalog_server_error",
+            "Model catalog returned HTTP 5xx; retry later",
+        ),
+        ProviderErrorCode::DiscoveryInvalidResponse => (
+            "catalog_invalid_response",
+            "Model catalog response did not match the expected format",
+        ),
+        ProviderErrorCode::DiscoveryIssuerUnavailable => (
+            "catalog_issuer_unavailable",
+            "Cannot verify ChatGPT issuer signing keys",
+        ),
+        ProviderErrorCode::DiscoveryRejected => (
+            "catalog_rejected",
+            "Catalog rejected the request or redirected unexpectedly",
+        ),
+        ProviderErrorCode::DiscoveryTooLarge => (
+            "catalog_too_large",
+            "Model catalog response exceeded safety limits",
+        ),
+        ProviderErrorCode::AuthenticationRequired => (
+            "account_not_authenticated",
+            "The selected account requires authentication",
+        ),
+        ProviderErrorCode::NotFound => (
+            "catalog_unavailable",
+            "Provider model discovery is not installed",
+        ),
+        _ => (
+            "catalog_unavailable",
+            "Provider model discovery is unavailable or denied",
+        ),
     }
 }
 
@@ -762,7 +797,10 @@ mod typed_result_tests {
             code: ProviderErrorCode::AuthenticationRequired,
             message: "no credentials".into(),
         };
-        assert_eq!(classify_model_page(Err(missing)).unwrap().unwrap_err(), ProviderErrorCode::AuthenticationRequired);
+        assert_eq!(
+            classify_model_page(Err(missing)).unwrap().unwrap_err(),
+            ProviderErrorCode::AuthenticationRequired
+        );
 
         let denied = ProviderError {
             code: ProviderErrorCode::Denied,
@@ -776,11 +814,26 @@ mod typed_result_tests {
         for (reason, code) in [
             (ProviderErrorCode::DiscoveryNetwork, "catalog_network"),
             (ProviderErrorCode::DiscoveryTimeout, "catalog_timeout"),
-            (ProviderErrorCode::DiscoveryUnauthorized, "catalog_unauthorized"),
-            (ProviderErrorCode::DiscoveryRateLimited, "catalog_rate_limited"),
-            (ProviderErrorCode::DiscoveryServerError, "catalog_server_error"),
-            (ProviderErrorCode::DiscoveryInvalidResponse, "catalog_invalid_response"),
-            (ProviderErrorCode::DiscoveryIssuerUnavailable, "catalog_issuer_unavailable"),
+            (
+                ProviderErrorCode::DiscoveryUnauthorized,
+                "catalog_unauthorized",
+            ),
+            (
+                ProviderErrorCode::DiscoveryRateLimited,
+                "catalog_rate_limited",
+            ),
+            (
+                ProviderErrorCode::DiscoveryServerError,
+                "catalog_server_error",
+            ),
+            (
+                ProviderErrorCode::DiscoveryInvalidResponse,
+                "catalog_invalid_response",
+            ),
+            (
+                ProviderErrorCode::DiscoveryIssuerUnavailable,
+                "catalog_issuer_unavailable",
+            ),
             (ProviderErrorCode::DiscoveryRejected, "catalog_rejected"),
             (ProviderErrorCode::DiscoveryTooLarge, "catalog_too_large"),
         ] {
