@@ -390,10 +390,10 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
-#[path = "acp_provider_management.rs"]
-mod provider_management;
 #[path = "model_control_state.rs"]
 mod model_control_state;
+#[path = "acp_provider_management.rs"]
+mod provider_management;
 use model_control_state::{ControlAction, ControlState, DenialCode};
 #[cfg(test)]
 use provider_management::{
@@ -1094,16 +1094,18 @@ impl Controller {
         };
         let mut value = state.describe();
         value["revision"] = serde_json::json!(self.default_model_revision);
-        value["models"] = serde_json::Value::Array(offers
-            .iter()
-            .map(|offer| {
-                Ok(serde_json::json!({
-                    "id": native_model_option_id(&offer.selected, self.default_model_revision)?,
-                    "name": offer.label,
-                    "authorized": true,
-                }))
-            })
-            .collect::<acp::Result<Vec<_>>>()?);
+        value["models"] = serde_json::Value::Array(
+            offers
+                .iter()
+                .map(|offer| {
+                    Ok(serde_json::json!({
+                        "id": native_model_option_id(&offer.selected, self.default_model_revision)?,
+                        "name": offer.label,
+                        "authorized": true,
+                    }))
+                })
+                .collect::<acp::Result<Vec<_>>>()?,
+        );
         value["selected"] = match &self.default_model_selection {
             Some(selected) => serde_json::json!(native_model_option_id(
                 selected,
