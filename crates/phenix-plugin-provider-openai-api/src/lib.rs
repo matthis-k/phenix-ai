@@ -6,7 +6,7 @@
 //! know the provider or manage its secrets. This plugin does not implement
 //! subscription OAuth, plaintext storage, or arbitrary endpoint configuration.
 use phenix_provider_auth_strategies::ApiKeyAttempts;
-use phenix_provider_builtins::{discovered_model_page, registrations};
+use phenix_provider_builtins::{discovered_model_page_from_cursor, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
@@ -321,7 +321,6 @@ mod plugin {
         require_identity(&query.provider_id, &query.connection_id).map_err(CallError::Domain)?;
         let selected = scoped_profile(host)?;
         if query.profile_id.as_deref() != Some(selected.profile_id())
-            || query.cursor.is_some()
             || query.limit == 0
             || query.limit > 256
         {
@@ -330,12 +329,13 @@ mod plugin {
             )));
         }
         let ids = models(host, &selected)?;
-        discovered_model_page(
+        discovered_model_page_from_cursor(
             selected.profile_id(),
             CONNECTION,
             "openai-responses",
             "responses",
             query.limit,
+            query.cursor.as_deref(),
             ids.into_iter().map(|id| (id.clone(), id)),
             supports_responses,
         )
