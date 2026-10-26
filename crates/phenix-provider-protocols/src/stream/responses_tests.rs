@@ -83,6 +83,21 @@ fn responses_errors_are_redacted_and_limits_are_not_success() {
         );
         assert!(!error.message.contains("secret"));
     }
+    let known = json!({"type":"response.failed","response":{
+        "error":{"code":"subscription_sharing_usage_limit_exceeded",
+                 "message":"TOKEN=private"}
+    }});
+    let mut stream = Stream::new(crate::Protocol::OpenaiResponses);
+    let error = stream.responses_frame(&known.to_string()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::ModelFailed);
+    assert_eq!(error.message, "subscription_sharing_usage_limit_exceeded");
+
+    let forged = json!({"type":"response.failed","response":{
+        "error":{"code":"secret TOKEN=private","message":"TOKEN=private"}
+    }});
+    let error = stream.responses_frame(&forged.to_string()).unwrap_err();
+    assert_eq!(error.message, "HTTP model reported an error");
+
     assert_eq!(
         crate::Protocol::parse("anthropic-messages").unwrap(),
         crate::Protocol::AnthropicMessages
