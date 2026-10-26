@@ -77,11 +77,8 @@ mod tests {
 
     #[test]
     fn jsonl_default_input_normalizes_session_without_cross_session_fallback() {
-        let normalized = jsonl_with_session(
-            r#"{"type":"prompt","text":"hi"}"#,
-            INPUT_SESSION,
-        )
-        .unwrap();
+        let normalized =
+            jsonl_with_session(r#"{"type":"prompt","text":"hi"}"#, INPUT_SESSION).unwrap();
         let value: serde_json::Value = serde_json::from_str(&normalized).unwrap();
         assert_eq!(value["session"], "s1");
         assert!(jsonl_with_session(
@@ -89,8 +86,7 @@ mod tests {
             INPUT_SESSION
         )
         .is_err());
-        assert!(jsonl_with_session(r#"{"type":"prompt","session":17}"#, INPUT_SESSION)
-            .is_err());
+        assert!(jsonl_with_session(r#"{"type":"prompt","session":17}"#, INPUT_SESSION).is_err());
     }
 
     #[test]
