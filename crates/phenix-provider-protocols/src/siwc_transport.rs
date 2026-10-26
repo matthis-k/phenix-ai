@@ -417,7 +417,9 @@ mod tests {
                 .expect("catalog response");
         let request = worker.join().unwrap();
         assert!(request.starts_with("GET /models HTTP/1.1"));
-        assert!(request.contains("Authorization: Bearer test-bearer"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-bearer"));
         assert_eq!(received, catalog.as_bytes());
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&received).unwrap()["models"][0]["slug"],
