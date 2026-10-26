@@ -2048,6 +2048,14 @@
         python ${./tests/basic-model-capabilities-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
         test -s "$out/accepted.json"
       '';
+      # ACP projection is verified separately from JSONL and model history.
+      acpModelCapabilitiesCheck = pkgs.runCommand "phenix-basic-acp-model-capabilities" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-acp-model-capabilities-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
+        test -s "$out/accepted.json"
+      '';
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -3035,6 +3043,7 @@
         basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
         basic-model-capabilities = modelCapabilitiesCheck;
+        basic-acp-model-capabilities = acpModelCapabilitiesCheck;
         basic-streaming = basicStreamingCheck;
         basic-http-product = basicHttpProductCheck;
         basic-launcher-default-state = basicLauncherDefaultCheck;
