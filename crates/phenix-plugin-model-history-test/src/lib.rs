@@ -418,5 +418,4 @@ mod tests {
             serde_json::from_str(&complete(&input).unwrap().text).unwrap();
         assert_eq!(empty["tools"], serde_json::json!([]));
     }
-
 }
