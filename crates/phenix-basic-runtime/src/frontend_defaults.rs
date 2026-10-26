@@ -42,7 +42,10 @@ mod tests {
     #[test]
     fn input_does_not_need_explicit_session_creation() {
         assert_eq!(session_for_input(None, None, true), SessionDecision::Create);
-        assert_eq!(session_for_input(None, None, false), SessionDecision::Existing("s1"));
+        assert_eq!(
+            session_for_input(None, None, false),
+            SessionDecision::Existing("s1")
+        );
         assert_eq!(
             session_for_input(None, Some("existing"), true),
             SessionDecision::Existing("existing"),
