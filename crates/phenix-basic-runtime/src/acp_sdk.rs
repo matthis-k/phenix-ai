@@ -874,6 +874,72 @@ impl Controller {
         }
     }
 
+    /// Startup restores non-secret user preference intent from Basic Storage.
+    /// Credential data remains private in ProviderCredentials. Restoration
+    /// never opens a browser, fetches the provider catalog, or grants a Model.
+    fn restore_default_model(&mut self) -> acp::Result<()> {
+        if !can_switch_native_model(&self.composition) {
+            return Ok(());
+        }
+        let kernel = scoped_kernel(
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        )
+        .map_err(internal)?;
+        let recorded = super::model_selection_state::read(
+            &kernel,
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        );
+        kernel.shutdown().map_err(internal)?;
+        let recorded = recorded.map_err(internal)?;
+        self.default_model_revision = recorded.as_ref().map_or(0, |(_, revision)| *revision);
+        self.default_model_selection = recorded.map(|(selection, _)| selection);
+        Ok(())
+    }
+
+    /// A validated, explicitly selected Model becomes the next connection's
+    /// default as a CAS-checked user preference. Never persist credentials
+    /// here or use a stored intent as authorization for model execution.
+    fn remember_default_model(&mut self, checked: &HttpModelBinding) -> acp::Result<()> {
+        if !can_switch_native_model(&self.composition) {
+            return Err(Self::control_denial(DenialCode::ModelControlNotInstalled));
+        }
+        let kernel = scoped_kernel(
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        )
+        .map_err(internal)?;
+        let result = (|| {
+            let record = super::model_selection_state::read(
+                &kernel,
+                &self.composition,
+                super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+            )
+            .map_err(internal)?;
+            let expected = record.as_ref().map_or(0, |(_, revision)| *revision);
+            if expected != self.default_model_revision {
+                return Err(stale_model_conflict());
+            }
+            if record.as_ref().is_some_and(|(stored, _)| stored == checked.selection()) {
+                return Ok(expected);
+            }
+            super::model_selection_state::compare_and_swap(
+                &kernel,
+                &self.composition,
+                super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+                checked,
+                expected,
+            )
+            .map_err(|_| invalid("default model preference could not be persisted"))
+        })();
+        kernel.shutdown().map_err(internal)?;
+        let revision = result?;
+        self.default_model_revision = revision;
+        self.default_model_selection = Some(checked.selection().clone());
+        Ok(())
+    }
+
     fn dispatch(&mut self, command: Command) {
         match command {
             Command::Initialize(request, reply) => {
@@ -887,12 +953,18 @@ impl Controller {
                     // This handler is v1-only. A higher client version may
                     // negotiate down to stable v1, never silently activate
                     // the SDK's separate draft-v2 lifecycle.
-                    self.initialized = true;
-                    Ok(InitializeResponse::new(ProtocolVersion::V1)
-                        .agent_capabilities(AgentCapabilities::new().load_session(true))
-                        .agent_info(
-                            Implementation::new("phenix-basic", "0.1.0").title("Phenix Basic"),
-                        ))
+                    match self.restore_default_model() {
+                        Ok(()) => {
+                            self.initialized = true;
+                            Ok(InitializeResponse::new(ProtocolVersion::V1)
+                                .agent_capabilities(AgentCapabilities::new().load_session(true))
+                                .agent_info(
+                                    Implementation::new("phenix-basic", "0.1.0")
+                                        .title("Phenix Basic"),
+                                ))
+                        }
+                        Err(error) => Err(error),
+                    }
                 };
                 let _ = reply.respond_with_result(result);
             }
@@ -1282,15 +1354,11 @@ impl Controller {
             return Err(invalid("ambiguous default model selection"));
         }
         // Selection is intent, never a credential or installation grant.
-        self.management
+        let binding = self.management
             .as_ref()
             .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
             .current_http_binding(&selected.selected)?;
-        self.default_model_revision = self
-            .default_model_revision
-            .checked_add(1)
-            .ok_or_else(|| internal("default model revision overflow"))?;
-        self.default_model_selection = Some(selected.selected);
+        self.remember_default_model(&binding)?;
         self.describe_control_state()
     }
 
@@ -1673,6 +1741,9 @@ impl Controller {
         // If installation fails, the selected intent remains fail-closed;
         // subsequent prompts must revalidate and reinstall, never use preset.
         self.install_current_http_model(&session, &desired)?;
+        // Explicit session model selection updates the next-session default,
+        // so the user does not have to repeat the same choice after restart.
+        self.remember_default_model(&checked)?;
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
