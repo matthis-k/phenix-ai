@@ -59,13 +59,13 @@ fn request_error(error: &openidconnect::reqwest::Error) -> TransportError {
 /// exact configured issuer origin may reach this helper. Never follow any
 /// redirects, or emit returned response bodies on error.
 fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, TransportError> {
-    request_with_auth(url, post, limit, None, false)
+    request_with_auth(url, post, Some(limit), None, false)
 }
 
 fn request_with_auth(
     url: &str,
     post: Option<&str>,
-    limit: usize,
+    max_bytes: Option<usize>,
     bearer: Option<&str>,
     allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
@@ -94,7 +94,7 @@ fn request_with_auth(
                 .map_err(|_| TransportError::InvalidForm)?,
         );
     }
-    let response = builder.send().map_err(|error| request_error(&error))?;
+    let mut response = builder.send().map_err(|error| request_error(&error))?;
     // The HTTP status is safe metadata. Error bodies and redirects never
     // become tokens; don't even buffer their contents.
     match response.status().as_u16() {
@@ -106,15 +106,25 @@ fn request_with_auth(
         status => return Err(TransportError::HttpStatus(status)),
     }
 
-    // HTTP response bodies (including *partial* OAuth credentials) must be
-    // bounded and zeroized on all error paths.
+    // OAuth token/JWKS responses have protocol-imposed bounds. Model catalog
+    // size has no implicit product cap; an explicit caller policy may set one.
+    // Secret-bearing response memory remains zeroized on every error path.
     let mut raw = Zeroizing::new(Vec::new());
-    response
-        .take(limit.saturating_add(1) as u64)
-        .read_to_end(&mut raw)
-        .map_err(|_| TransportError::Network)?;
-    if raw.len() > limit {
-        return Err(TransportError::TooLarge);
+    match max_bytes {
+        Some(limit) => {
+            (&mut response)
+                .take(limit.saturating_add(1) as u64)
+                .read_to_end(&mut raw)
+                .map_err(|_| TransportError::Network)?;
+            if raw.len() > limit {
+                return Err(TransportError::TooLarge);
+            }
+        }
+        None => {
+            response
+                .read_to_end(&mut raw)
+                .map_err(|_| TransportError::Network)?;
+        }
     }
     if !allow_empty && raw.is_empty() {
         return Err(TransportError::Unavailable);
@@ -153,7 +163,11 @@ pub fn chatgpt_models(access_token: &str) -> Result<Vec<u8>, TransportError> {
     request_with_auth(
         "https://api.openai.com/v1/models",
         None,
-        crate::siwc_models::MAX_CATALOG_BYTES,
+        std::env::var("PHENIX_CHATGPT_MODEL_CATALOG_MAX_BYTES")
+            .ok()
+            .map(|value| value.parse::<usize>())
+            .transpose()
+            .map_err(|_| TransportError::InvalidForm)?,
         Some(access_token),
         false,
     )
@@ -416,7 +430,7 @@ mod tests {
             String::from_utf8(buf[..count].to_vec()).unwrap()
         });
         let received =
-            request_with_auth(&endpoint, None, MAX_TOKEN_BODY, Some("test-bearer"), false)
+            request_with_auth(&endpoint, None, Some(MAX_TOKEN_BODY), Some("test-bearer"), false)
                 .expect("catalog response");
         let request = worker.join().unwrap();
         assert!(request.starts_with("GET /models HTTP/1.1"));
