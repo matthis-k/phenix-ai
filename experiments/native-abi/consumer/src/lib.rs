@@ -51,10 +51,8 @@ impl Generation {
         let loaded = (|| {
             // SAFETY: this spike only loads trusted local CI artifacts.
             let library = unsafe { Library::new(&staged) }.map_err(|e| e.to_string())?;
-            let entry = unsafe {
-                library.get::<Entry>(b"phenix_native_experiment_v1\0")
-            }
-            .map_err(|e| e.to_string())?;
+            let entry = unsafe { library.get::<Entry>(b"phenix_native_experiment_v1\0") }
+                .map_err(|e| e.to_string())?;
             let table = unsafe { entry() };
             if table.is_null() {
                 return Err("null plugin entry".into());
@@ -63,7 +61,10 @@ impl Generation {
             validate(header).map_err(|e| format!("incompatible plugin: {e:?}"))?;
             let create = unsafe { (*table).create };
             Ok(Self {
-                image: Arc::new(Image { library, staged: staged.clone() }),
+                image: Arc::new(Image {
+                    library,
+                    staged: staged.clone(),
+                }),
                 create,
             })
         })();
@@ -84,13 +85,19 @@ impl Generation {
 impl Instance {
     pub fn invoke(&mut self, query: &str, options: Options) -> Result<Response, u32> {
         let request = Request {
-            query: ByteSlice { ptr: query.as_ptr(), len: query.len() },
+            query: ByteSlice {
+                ptr: query.as_ptr(),
+                len: query.len(),
+            },
             options,
         };
-        let mut response = Response { score: 0, calls: 0, status: 0, reserved: 0 };
-        let status = unsafe {
-            (self.object.invoke)(self.object.context, request, &mut response)
+        let mut response = Response {
+            score: 0,
+            calls: 0,
+            status: 0,
+            reserved: 0,
         };
+        let status = unsafe { (self.object.invoke)(self.object.context, request, &mut response) };
         if status != STATUS_OK {
             return Err(status);
         }
@@ -105,13 +112,26 @@ pub fn smoke(paths: &[PathBuf]) -> Result<(), String> {
     for path in paths {
         let old = Generation::open(path)?;
         let mut original = old.instantiate();
-        let options = Options { multiplier: 7, maximum: 2, mode: 0 };
-        let first = original.invoke("alpha beta gamma", options).map_err(|e| e.to_string())?;
+        let options = Options {
+            multiplier: 7,
+            maximum: 2,
+            mode: 0,
+        };
+        let first = original
+            .invoke("alpha beta gamma", options)
+            .map_err(|e| e.to_string())?;
         assert_eq!((first.score, first.calls), (15, 1));
         let second = original.invoke("one", options).map_err(|e| e.to_string())?;
         assert_eq!((second.score, second.calls), (9, 2));
         assert_eq!(
-            original.invoke("oversized", Options { multiplier: 5, maximum: 1, mode: 99 }),
+            original.invoke(
+                "oversized",
+                Options {
+                    multiplier: 5,
+                    maximum: 1,
+                    mode: 99
+                }
+            ),
             Err(native_abi_contract::STATUS_INVALID)
         );
 
@@ -135,7 +155,10 @@ pub fn smoke(paths: &[PathBuf]) -> Result<(), String> {
 pub fn watch_candidate(path: &Path) -> Result<(), String> {
     // Feature-gated compilation probe for hot-lib-reloader. This watcher is
     // deliberately not permitted to swap Phenix production generation handles.
-    let stem = path.file_stem().ok_or("library has no stem")?.to_string_lossy();
+    let stem = path
+        .file_stem()
+        .ok_or("library has no stem")?
+        .to_string_lossy();
     let name = stem.strip_prefix("lib").unwrap_or(&stem);
     let _observer = hot_lib_reloader::LibReloader::new(
         path.parent().ok_or("library has no parent")?,
@@ -154,7 +177,25 @@ pub fn reject_mismatches() {
         table_bytes: std::mem::size_of::<PublicApi>() as u32,
         schema: SCHEMA_ID,
     };
-    assert_eq!(validate(ApiHeader { version: 2, ..valid }), Err(CompatibilityError::Version));
-    assert_eq!(validate(ApiHeader { schema: SCHEMA_ID + 1, ..valid }), Err(CompatibilityError::Schema));
-    assert_eq!(validate(ApiHeader { table_bytes: 0, ..valid }), Err(CompatibilityError::TableSize));
+    assert_eq!(
+        validate(ApiHeader {
+            version: 2,
+            ..valid
+        }),
+        Err(CompatibilityError::Version)
+    );
+    assert_eq!(
+        validate(ApiHeader {
+            schema: SCHEMA_ID + 1,
+            ..valid
+        }),
+        Err(CompatibilityError::Schema)
+    );
+    assert_eq!(
+        validate(ApiHeader {
+            table_bytes: 0,
+            ..valid
+        }),
+        Err(CompatibilityError::TableSize)
+    );
 }
