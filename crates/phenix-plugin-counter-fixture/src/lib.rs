@@ -130,7 +130,11 @@ mod contract_tests {
                     if operation == Counter::increase::KEY
             )
         }));
-        let counter = graph.modules.iter().find(|module| module.id == "counter").unwrap();
+        let counter = graph
+            .modules
+            .iter()
+            .find(|module| module.id == "counter")
+            .unwrap();
         assert!(counter.entries.iter().any(|port| port.name == "increase"));
         assert!(counter.exits.iter().any(|port| port.name == "count"));
     }
