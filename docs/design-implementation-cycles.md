@@ -1,6 +1,6 @@
 # Top-down, bottom-up, top-down implementation loop
 
-All changes happen on the isolated rewrite. The old P1 source remains at \`reference/pre-clean-plugins-20261026\`. Each step records the intended API, actual compiled contract, discovered friction, fixes, and final author-facing API. The v2.4 spec is a **target**, not evidence of shipped behavior.
+All changes happen on the isolated rewrite. The old P1 source remains at `reference/pre-clean-plugins-20261026`. Each step records the intended API, actual compiled contract, discovered friction, fixes, and final author-facing API. The v2.4 spec is a **target**, not evidence of shipped behavior.
 
 ## Phase A: top down, choose the call sites
 
@@ -8,8 +8,8 @@ Start from what a plugin author or a graph consumer types. Define its public por
 
 | Cycle | Target call site | Observable acceptance | Implementation substrate |
 | --- | --- | --- | --- |
-| C0 | Pure \`#[provide]\` stateless handler | Native fixture exports one operation, no State | Existing SDK ABI, typed contract |
-| C1 | \`graph.module(...); m.invoke; m.entry; m.exit; graph.flow\` | Type-check, compile offline, inspect and lower stable boundaries | Portable graph-v2 IR, SDK handles, compiler |
+| C0 | Pure `#[provide]` stateless handler | Native fixture exports one operation, no State | Existing SDK ABI, typed contract |
+| C1 | `graph.module(...); m.invoke; m.entry; m.exit; graph.flow` | Type-check, compile offline, inspect and lower stable boundaries | Portable graph-v2 IR, SDK handles, compiler |
 | C2 | Basic prompt to model to answer | One native selected request/response cycle | Flow scheduling and host dispatcher |
 | C3 | Model request to registered tool batch back to model | Typed branches and deferred bounded waves | Switch, Merge/Join closure, tools policy |
 | C4 | Provider data declaration and shared login | Restored verified auth/model without selecting each time | Shared auth strategies and storage, provider manager |

@@ -7,7 +7,10 @@ use crate::{
     },
     Code, Failure, Operation, Portable, ValueSchema,
 };
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+};
 
 fn invalid(message: impl Into<String>) -> Failure {
     Failure::new(Code::DescriptorInvalid, message)
@@ -79,6 +82,7 @@ pub struct Module {
     id: String,
     revision: u32,
     prefix: String,
+    members: BTreeSet<String>,
     entries: BTreeMap<String, ValueSchema>,
     exits: BTreeMap<String, ValueSchema>,
 }
@@ -120,8 +124,12 @@ impl Module {
 
     /// An internal node ID is discoverable for inspection/advanced patches.
     /// Its identity is not a stable public interface or a permission grant.
-    pub fn internal(&self, local: &str) -> String {
-        format!("{}.{}", self.prefix, local)
+    pub fn internal(&self, local: &str) -> Result<String, Failure> {
+        let node = format!("{}.{}", self.prefix, local);
+        if !self.members.contains(&node) {
+            return Err(invalid(format!("unknown internal node {node}")));
+        }
+        Ok(node)
     }
 
     pub fn revision(&self) -> u32 {
@@ -176,6 +184,7 @@ impl Graph {
             id: builder.id.clone(),
             revision,
             prefix: format!("{}/{}", builder.plan.contributor, builder.id),
+            members: builder.members.iter().cloned().collect(),
             entries: builder
                 .entries
                 .iter()
@@ -198,13 +207,8 @@ impl Graph {
     }
 
     /// One typed Flow between logical module interfaces or concrete node ports.
-    pub fn flow<T: Portable>(&mut self, from: Output<T>, to: Input<T>) -> Result<(), Failure> {
-        self.plan.flows.push(FlowV2 {
-            id: format!("{:?}->{:?}", from.location, to.location),
-            from: from.location,
-            to: to.location,
-        });
-        Ok(())
+    pub fn flow<T: Portable>(&mut self, from: Output<T>, to: Input<T>) {
+        append_flow(&mut self.plan, from.location, to.location);
     }
 
     pub fn finish(self) -> Result<GraphContributionV2, Failure> {
@@ -306,11 +310,7 @@ impl ModuleBuilder<'_> {
         if !self.members.contains(&source.node) || !self.members.contains(&target.node) {
             return Err(invalid("internal Flow crosses module ownership"));
         }
-        self.plan.flows.push(FlowV2 {
-            id: format!("{:?}->{:?}", from.location, to.location),
-            from: from.location,
-            to: to.location,
-        });
+        append_flow(self.plan, from.location, to.location);
         Ok(())
     }
 
@@ -345,6 +345,23 @@ impl ModuleBuilder<'_> {
         });
         Ok(())
     }
+}
+
+fn append_flow(plan: &mut GraphContributionV2, from: OutRefV2, to: InRefV2) {
+    // Stable logical identifiers must never depend on Rust Debug formatting.
+    let source = match &from {
+        OutRefV2::Node(port) => format!("node:{}/{}", port.node, port.port),
+        OutRefV2::ModuleExit { module, port } => format!("exit:{module}/{port}"),
+    };
+    let target = match &to {
+        InRefV2::Node(port) => format!("node:{}/{}", port.node, port.port),
+        InRefV2::ModuleEntry { module, port } => format!("entry:{module}/{port}"),
+    };
+    plan.flows.push(FlowV2 {
+        id: format!("{source}->{target}"),
+        from,
+        to,
+    });
 }
 
 #[cfg(test)]
@@ -385,12 +402,10 @@ mod tests {
             let b = consumer(&mut graph).unwrap();
             (a, b)
         };
-        graph
-            .flow(
-                a.output::<String>("result").unwrap(),
-                b.input::<String>("query").unwrap(),
-            )
-            .unwrap();
+        graph.flow(
+            a.output::<String>("result").unwrap(),
+            b.input::<String>("query").unwrap(),
+        );
         graph.finish().unwrap()
     }
 
@@ -426,7 +441,8 @@ mod tests {
             .unwrap();
         assert!(module.input::<u64>("query").is_err());
         assert!(module.output::<u64>("result").is_err());
-        assert_eq!(module.internal("echo"), "example.graph/echo.echo");
+        assert_eq!(module.internal("echo").unwrap(), "example.graph/echo.echo");
+        assert!(module.internal("nonexistent").is_err());
         assert!(graph.finish().is_ok());
     }
 

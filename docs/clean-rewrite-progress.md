@@ -58,3 +58,12 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Implementation:** counter fixture with local Portable request/response/error, two contract operations, private State, atomic checked transition and generated native metadata; Cargo and native CI updated to include three fixtures.
 - **Verification:** first clean CI run failed at Rust formatting before tests; format corrected in next commit. Exact-head unit/build and native ABI invocation outcomes must be recorded separately.
 - **Remaining:** no compiling graph-v2 topology declaration from plugin-owned operations, no native composed graph test, no P1 equivalence.
+
+## 2026-10-27 C1 first bottom-up/feedback loop
+
+- **Top-down call site:** `Graph::module`, `invoke`, `source`, `entry`, `exit` and typed `flow` with stable logical module boundaries. Author-visible internal IDs remain accessible for advanced patch targeting.
+- **Implementation:** `crates/phenix-contract/src/graph_v2.rs` provides V0 structural graph declarations and validation; `crates/phenix-sdk/src/graph.rs` provides typed authoring and tests. This is not yet a portable ABI descriptor or native graph-v2 executor.
+- **Discovered:** use M1's `valid_node_key` for qualified `plugin/node` identities. The first V0 build compiled, but tests revealed the mistake at `52324d37` (four SDK failures). Corrected at `3f059c33`.
+- **Evidence:** `cargo fmt --all -- --check`, `cargo test --workspace`, and native fixture builds passed at `3f059c33`: [CI run](https://github.com/matthis-k/phenix-ai/actions/runs/40424288316). Earlier formatter check failed at `585cad9c` and tests failed at `52324d37`.
+- **Top-down simplification:** the public `Graph::flow` now returns `()` because the typed edge cannot fail during declaration. Module-local `flow` retains a Result for cross-owner mistakes. Stable edge IDs are derived from logical port names rather than Rust Debug output; unknown `internal` nodes return an error instead of a fabricated ID.
+- **Unverified at this update:** exact-head CI for the ergonomics follow-up; native graph-v2 invocation, selected grants, closure/wave semantics and P1 parity remain unimplemented.

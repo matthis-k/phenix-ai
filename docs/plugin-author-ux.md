@@ -95,8 +95,8 @@ let recall = graph.module("memory.recall", 1, |m| {
     m.exit("result", rank.ok())?;
     Ok(())
 })?;
-graph.flow(agent.recall(), recall.input::<RecallQuery>("query")?)?;
-graph.flow(recall.output::<RecallResult>("result")?, agent.context())?;
+graph.flow(agent.recall(), recall.input::<RecallQuery>("query")?);
+graph.flow(recall.output::<RecallResult>("result")?, agent.context());
 
 // Advanced customization keeps the *same* module interface.
 graph.patch("my-ranker")
@@ -147,12 +147,12 @@ Every family below describes one domain owner or a replaceable concrete adapter.
 1. A single stateless operation needs one handler, not a manually authored State or registration table.
 2. A provider definition carries no transport, OAuth flow, token store or model enumeration implementation.
 3. The Basic agent loop contains policy and typed node wiring, not scheduling infrastructure or handwritten cross-plugin sync.
-4. A module author can connect two selected operations with one typed \`flow\` call; a consumer can connect modules without knowing any internal node IDs.
+4. A module author can connect two selected operations with one typed `flow` call; a consumer can connect modules without knowing any internal node IDs.
 5. Advanced authors can inspect, address and patch internal nodes without bypassing security or relying on undocumented reflection.
 6. The compiled graph's module public interfaces remain stable across equivalent internal refactors. Breaking changes require a new interface revision.
 7. Attempting to omit a typed value, connect incompatible types, target a stale internal ID, invent authority or leave a required import unresolved must produce a precise error before an effect is admitted.
 8. Deterministic mock model, scripted tool, storage-fault and auth-fixture compositions verify actual native dispatch rather than only helper functions.
-9. Developers can answer \`why is this node running?\`, \`what selected this provider?\`, and \`which patch changed this edge?\` from correlated redacted traces.
+9. Developers can answer `why is this node running?`, `what selected this provider?`, and `which patch changed this edge?` from correlated redacted traces.
 10. A basic domain plugin has no dependency on a kernel internals crate. It compiles through published SDK and contract crates.
 
 ## What to reuse from the reference
