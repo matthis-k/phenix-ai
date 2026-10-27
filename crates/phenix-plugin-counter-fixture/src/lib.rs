@@ -60,7 +60,9 @@ mod plugin {
             let mut state = State::default();
             assert_eq!(read(&mut state).value, 0);
             assert_eq!(
-                increase(&mut state, Increase { by: u64::MAX }).unwrap().value,
+                increase(&mut state, Increase { by: u64::MAX })
+                    .unwrap()
+                    .value,
                 u64::MAX
             );
             assert_eq!(
