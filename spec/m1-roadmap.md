@@ -10,6 +10,32 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Graph-v2 implementation-gap matrix (27 October 2026)
+
+Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.
+This is the canonical graph-v2 gap matrix within the existing M1 tracker.
+The v2.4 target does not establish implementation or product acceptance.
+The isolated rewrite #1171 is not a replacement for the working P1 composition.
+
+| Area | Spec reference | Current code | Gap | Migration | Verification | PR/status |
+| --- | --- | --- | --- | --- | --- | --- |
+| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph.rs`: graph-v1 | Canonical v2 declarations, codec, bounds and artifact verification | V0, retain v1 | No v2 metadata acceptance | Not started |
+| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery | Typed per-edge terminality and isolated wave delivery | V0/V1 | No v2 lifecycle acceptance | Not started |
+| Graph patches | v2.4 section 4 | No v2 patch engine | Exact deterministic patch algebra and exports | V3, after V1 | No patch acceptance | Not started |
+| Security | v2.4 sections 3.4.1, 5 | `phenix-contract/src/graph/v2.rs`: offline product lattice, source-ceiling and inspectable-literal checks | Not connected to artifact attestation, compiler, composition grants or root admission; declassification and endorsement authorization absent | V0 foundation, enforce in V1 | Exhaustive finite lattice laws, both ceilings, literal bounds/reference negatives; not native acceptance | In progress, not integrated |
+| Scheduler | v2.4 section 6 | Working graph-v1 executor | Typed readiness, closure/failure precedence and bounded deferred execution | V1/V2/V4 through existing dispatcher/tickets | No v2 scheduler acceptance | Not started |
+| SDK/macros | v2.4 section 7 | Existing M1 `Operation`, graph-v1 authoring | Typed graph/subgraph authoring and temporary lowering bridge | V5 | Existing APIs are not v2 acceptance | Not started |
+| Plugin state/exposure | Plugin state ownership | Ordinary plugin fields and M1 selected property contracts | Explicit normative opt-in publication amendment and concrete authoring trials | Preserve private ownership; no global state registry | No new exposure acceptance | Not started |
+| Providers/auth | Provider responsibility audit | Existing selected provider contracts/runtime | Consolidate stacked shared-host lineage and auth parity | #1139-#1156; reconcile #1143/#1145, do not combine competing #1136 auth | Refresh each exact-head product gate before integration | In progress, unmerged stack |
+| Sessions/frontends | Basic/P1 contracts | Working graph-v1 Basic/session/frontend path | Model-before-session control, auth restoration, graph-v2 P1 parity | #1158, #1160 -> #1161; V5 | No graph-v2 product acceptance | In progress, unmerged P1 fixes |
+| Testing | v2.4 section 9 | M1 conformance and new offline security unit tests | Native V1 and full property/negative/product gates | V0 through V7 | #1164 exact head `76fc59da16b6552373d43ff452e1de98c8f08d94` CI green; evidence stack remains unmerged | In progress |
+
+Remaining architectural question: repository documents still label v2.4 a
+proposal; this implementation follows the requested target without changing
+that review status or claiming approval of unfinished interfaces. Source-ceiling
+helpers require trusted callers and do not turn plugin self-description into
+authority. No graph-v1 path or persistence implementation is removed.
+
 P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
 The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
 merged at `b7017042`. Its first authoritative 4×2-builder release,
