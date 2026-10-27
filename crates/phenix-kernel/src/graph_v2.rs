@@ -562,7 +562,12 @@ mod live_session_handoff_tests {
     /// An explicit test-only trust root; never used for mutable production
     /// packages. The native ELF and embedded metadata are independently checked.
     fn packaged_session(native: &Path) -> String {
-        let image = fs::read(native).unwrap();
+        let path = if native.is_absolute() {
+            native.to_path_buf()
+        } else {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(native)
+        };
+        let image = fs::read(&path).unwrap();
         let descriptor = extract(&image).unwrap();
         let path = std::env::temp_dir().join(format!(
             "phenix-native-graph-v2-session-{}",
