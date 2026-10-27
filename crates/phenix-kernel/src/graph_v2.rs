@@ -312,13 +312,19 @@ impl Prepared {
                 .is_none()
             {
                 return Err(Failure::new(
-                    Code::MissingBinding, "selected V0 operation absent",
+                    Code::MissingBinding,
+                    "selected V0 operation absent",
                 ));
             }
             if !self.permits(owner, key)
-                || !self.grants.contains_key(&(owner.to_owned(), key.to_owned()))
+                || !self
+                    .grants
+                    .contains_key(&(owner.to_owned(), key.to_owned()))
             {
-                return Err(Failure::new(Code::Denied, "V0 operation lacks prepared grant"));
+                return Err(Failure::new(
+                    Code::Denied,
+                    "V0 operation lacks prepared grant",
+                ));
             }
             Ok(selected)
         })?;
@@ -330,16 +336,29 @@ impl Prepared {
                 continue;
             }
             let chosen = &selected_graph.selected[&node.id];
-            let prepared = self.operations.get(&(chosen.provider.clone(), chosen.key()))
+            let prepared = self
+                .operations
+                .get(&(chosen.provider.clone(), chosen.key()))
                 .ok_or_else(|| Failure::new(Code::MissingBinding, "selected operation vanished"))?;
             if prepared.schema.request != node.inputs[0].schema
-                || prepared.schema.response != node.outputs.iter()
-                    .find(|port| port.name == "ok").unwrap().schema
-                || prepared.schema.error != node.outputs.iter()
-                    .find(|port| port.name == "err").unwrap().schema
+                || prepared.schema.response
+                    != node
+                        .outputs
+                        .iter()
+                        .find(|port| port.name == "ok")
+                        .unwrap()
+                        .schema
+                || prepared.schema.error
+                    != node
+                        .outputs
+                        .iter()
+                        .find(|port| port.name == "err")
+                        .unwrap()
+                        .schema
             {
                 return Err(Failure::new(
-                    Code::SchemaRejected, "selected V0 node ABI schema mismatch",
+                    Code::SchemaRejected,
+                    "selected V0 node ABI schema mismatch",
                 ));
             }
         }
@@ -657,16 +676,29 @@ mod live_session_handoff_tests {
 
         let prepared = crate::resolve::Prepared::prepare(composition(package, true)).unwrap();
         let mut forged = topology.clone();
-        let node = forged.nodes.iter_mut()
-            .find(|node| node.id.ends_with("/session.admit")).unwrap();
-        node.outputs.iter_mut().find(|port| port.name == "ok").unwrap().schema =
-            Prompt::SCHEMA.owned().unwrap();
-        let module = forged.modules.iter_mut().find(|module| module.id == "session").unwrap();
+        let node = forged
+            .nodes
+            .iter_mut()
+            .find(|node| node.id.ends_with("/session.admit"))
+            .unwrap();
+        node.outputs
+            .iter_mut()
+            .find(|port| port.name == "ok")
+            .unwrap()
+            .schema = Prompt::SCHEMA.owned().unwrap();
+        let module = forged
+            .modules
+            .iter_mut()
+            .find(|module| module.id == "session")
+            .unwrap();
         module.exits[0].schema = Prompt::SCHEMA.owned().unwrap();
         assert!(forged.normalized().is_ok());
         assert!(matches!(
             prepared.compile_flow_v2(&forged),
-            Err(Failure { code: Code::SchemaRejected, .. })
+            Err(Failure {
+                code: Code::SchemaRejected,
+                ..
+            })
         ));
         let selected_graph = prepared.compile_flow_v2(&topology).unwrap();
         let kernel = prepared.load().unwrap();
