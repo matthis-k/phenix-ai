@@ -49,6 +49,10 @@ class Search:
                 "example.transform.apply@1/apply", {"query": "stale"}
             )["text"]], self.calls)
         self.previous_host = host
+        if request.text == "undeclared":
+            return SearchResults([host.invoke(
+                "example.unsupported@1/call", {"query": "test"}
+            )["text"]], self.calls)
         result = host.invoke(
             "example.transform.apply@1/apply",
             {"query": request.text},
