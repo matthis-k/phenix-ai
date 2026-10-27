@@ -7,3 +7,10 @@ license.workspace = true
 [dependencies]
 native-abi-contract.workspace = true
 libloading.workspace = true
+
+[features]
+hot-reload-adapter = ["dep:hot-lib-reloader"]
+
+[dependencies.hot-lib-reloader]
+version = "0.8.2"
+optional = true
