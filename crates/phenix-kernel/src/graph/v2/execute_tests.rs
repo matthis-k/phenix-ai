@@ -29,6 +29,28 @@ fn review_port_input_visits_only_relevant_candidates() {
     );
 }
 
+// Review-only closure diagnostics: a non-selected external source closes its
+// Flow candidates with the causal reason InactiveSource, not an anonymous Closed.
+#[test]
+fn review_closed_flow_identifies_inactive_source_reason() {
+    let graph = readiness_join(InputReadiness::Optional);
+    let mut wave = Wave::new(&graph, "alpha/alternative").unwrap();
+    wave.deliver(
+        &graph,
+        &scope(&["resource"]),
+        "alpha/source",
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(wave.arrivals["alpha/a"], Resolution::Closed));
+    let edge_diagnostic = format!("{:?}", wave.arrivals["alpha/a"]);
+    assert!(
+        edge_diagnostic.contains("InactiveSource"),
+        "closed candidate lost its inactive-source reason: {edge_diagnostic}"
+    );
+}
+
 // Review-only edge-diagnostic probe: an unhandled domain error should retain
 // typed causal provenance on the failed downstream Flow candidate.
 #[test]
