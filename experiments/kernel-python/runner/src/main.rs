@@ -129,10 +129,16 @@ fn main() {
         );
     }
     // An undeclared method is never callable, even though it exists in Python.
-    for input in ["private", "raise", "wrong-result", "enrich:stale"] {
+    for input in ["private", "raise", "wrong-result"] {
         let failure = root.invoke(&text(input)).unwrap_err();
         assert_eq!(failure.code, Code::PluginFailed, "{input}: {failure}");
     }
+    // A retained host facade from a completed call has no live authority:
+    // preserve the Denied category rather than masking it as PluginFailed.
+    assert_eq!(
+        root.invoke(&text("enrich:stale")).unwrap_err().code,
+        Code::Denied
+    );
     // Request cannot bypass the ABI's declared Text schema.
     assert_eq!(
         root.invoke(&Value::Bool(true)).unwrap_err().code,
