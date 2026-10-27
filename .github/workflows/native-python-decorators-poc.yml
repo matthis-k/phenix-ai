@@ -1,0 +1,66 @@
+name: Decorated Python plugin ABI authoring proof
+on:
+  pull_request:
+    paths:
+      - "experiments/native-abi/ergonomic-python/**"
+      - ".github/workflows/native-python-decorators-poc.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  annotated-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile native hosting shared library and independent ABI consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3-config --includes --embed --ldflags
+          python3 -m compileall -q experiments/native-abi/ergonomic-python/python
+          cc -std=c11 -Wall -Wextra -Werror -fPIC -shared \
+            -o /tmp/libphenix_decorated_python.so \
+            experiments/native-abi/ergonomic-python/native/python_adapter.c \
+            $(python3-config --includes --embed --ldflags) -pthread
+          cc -std=c11 -Wall -Wextra -Werror \
+            -o /tmp/phenix_annotated_python_test \
+            experiments/native-abi/ergonomic-python/native/test_ergonomic.c -ldl
+      - name: Test annotated Python authoring, contracts, host forwarding and failures
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/experiments/native-abi/ergonomic-python/python
+        run: |
+          set -euo pipefail
+          /tmp/phenix_annotated_python_test /tmp/libphenix_decorated_python.so
+          python3 - <<'PY'
+          import json
+          from phenix import ValidationError, plugin, expose, manifest, check
+          from demo_search import Search, Query
+          m = json.loads(manifest(Search))
+          assert m["plugin"] == "example.search"
+          assert "private_method" not in m["operations"]
+          assert m["operations"]["query"]["request"]["record"] == {"text": "str", "limit": "int"}
+          assert m["operations"]["query"]["response"]["record"]["matches"] == {"list": "str"}
+          assert list(m["operations"]) == sorted(m["operations"])
+          assert check({"text": "x", "limit": 3}, Query) == Query("x", 3)
+          try:
+              check({"text": "x", "limit": True}, Query)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError("bool must not silently pass for int")
+          try:
+              @plugin("example.bad")
+              class MissingTypes:
+                  @expose
+                  def bad(self, value): return value
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError("invalid export must fail annotation")
+          print("PASS: Python annotation schema manifest and authoring checks")
+          PY
