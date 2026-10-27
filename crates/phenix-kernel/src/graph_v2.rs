@@ -518,7 +518,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod live_session_handoff_tests {
     use super::*;
@@ -566,7 +565,8 @@ mod live_session_handoff_tests {
         let image = fs::read(native).unwrap();
         let descriptor = extract(&image).unwrap();
         let path = std::env::temp_dir().join(format!(
-            "phenix-native-graph-v2-session-{}", std::process::id()
+            "phenix-native-graph-v2-session-{}",
+            std::process::id()
         ));
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("session.so"), &image).unwrap();
@@ -579,7 +579,11 @@ mod live_session_handoff_tests {
             artifact_sha256: digest(&image),
             descriptor_sha256: digest(&descriptor),
         };
-        fs::write(path.join("package.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+        fs::write(
+            path.join("package.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
         path.to_str().unwrap().to_owned()
     }
 
@@ -625,7 +629,13 @@ mod live_session_handoff_tests {
         let denied = crate::resolve::Prepared::prepare(composition(package.clone(), false))
             .unwrap()
             .compile_flow_v2(&topology);
-        assert!(matches!(denied, Err(Failure { code: Code::Denied, .. })));
+        assert!(matches!(
+            denied,
+            Err(Failure {
+                code: Code::Denied,
+                ..
+            })
+        ));
 
         let prepared = crate::resolve::Prepared::prepare(composition(package, true)).unwrap();
         let selected_graph = prepared.compile_flow_v2(&topology).unwrap();
@@ -633,28 +643,43 @@ mod live_session_handoff_tests {
 
         for (prompt, expected_run) in [("hello", "fixture-run-1"), ("next", "fixture-run-2")] {
             let root = kernel.admit_default_root().unwrap();
-            let result = root.run_flow_v2(
-                &selected_graph, "phenix.shell.prompt",
-                &Prompt { text: prompt.into() }.to_value(),
-            ).unwrap();
+            let result = root
+                .run_flow_v2(
+                    &selected_graph,
+                    "phenix.shell.prompt",
+                    &Prompt {
+                        text: prompt.into(),
+                    }
+                    .to_value(),
+                )
+                .unwrap();
             let (_, value) = result.terminal.iter().next().unwrap();
             let turn = SessionTurn::from_value(value.clone()).unwrap();
             assert_eq!(turn.session, "fixture-session-1");
             assert_eq!(turn.run, expected_run);
             assert_eq!(turn.text, prompt);
-            assert_eq!(result.trace.iter()
-                .filter(|step| step.kind == TraceKindV2::Handoff)
-                .count(), 1);
+            assert_eq!(
+                result
+                    .trace
+                    .iter()
+                    .filter(|step| step.kind == TraceKindV2::Handoff)
+                    .count(),
+                1
+            );
             assert!(!format!("{:?}", result.trace).contains(prompt));
         }
         let root = kernel.admit_default_root().unwrap();
-        let result = root.run_flow_v2(
-            &selected_graph, "phenix.shell.prompt",
-            &Prompt { text: "  ".into() }.to_value(),
-        ).unwrap();
-        assert!(result.trace.iter().any(|step|
-            step.kind == TraceKindV2::InvokeDomainError
-        ));
+        let result = root
+            .run_flow_v2(
+                &selected_graph,
+                "phenix.shell.prompt",
+                &Prompt { text: "  ".into() }.to_value(),
+            )
+            .unwrap();
+        assert!(result
+            .trace
+            .iter()
+            .any(|step| step.kind == TraceKindV2::InvokeDomainError));
         assert_eq!(result.terminal.len(), 1);
     }
 }
