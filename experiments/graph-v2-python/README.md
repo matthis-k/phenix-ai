@@ -20,3 +20,7 @@ Both explicit graph wiring **Source → Python Invoke → Rust Invoke** and a ne
 ## Local Linux acceptance
 
 Run the CI recipe in `.github/workflows/graph-v2-python-language-adapter.yml`; it needs Rust 1.96.1, Python development headers/libpython, GNU objcopy and the normal Phenix root workspace build. The graph test runner is a separate Cargo workspace and leaves production crates unchanged.
+
+## Known intentionally red regression
+
+Direct Rust provider `panic` currently produces logical `PluginFailed` without marking the ticket native-quiescent. The graph stays in `Draining` and retains one physical lease. This branch intentionally preserves the failing test; production acceptance requires fixing the native completion/lifetime semantics, not bypassing the test.
