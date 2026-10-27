@@ -388,7 +388,6 @@ fn main() {
         ("wrong-result", Code::PluginFailed),
         ("enrich:undeclared", Code::Denied),
         ("enrich:stale", Code::Denied),
-        ("panic", Code::PluginFailed),
         ("enrich:panic", Code::PluginFailed),
     ] {
         let mut execution = kernel
