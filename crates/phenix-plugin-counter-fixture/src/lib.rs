@@ -17,7 +17,7 @@ pub enum CounterError {
 }
 
 #[phenix_sdk::contract(id = "fixture.counter@1")]
-pub trait Counter {
+pub trait CounterApi {
     fn increase(&mut self, change: Increase) -> Result<CounterValue, CounterError>;
     fn read(&self) -> Result<CounterValue, CounterError>;
 }
@@ -25,30 +25,33 @@ pub trait Counter {
 #[phenix_sdk::plugin(
     id = "phenix.fixture.counter",
     version = "1.0.0",
-    define(Counter),
-    provide(Counter, slot = "Counter")
+    define(CounterApi),
+    provide(CounterApi, slot = "Counter")
 )]
 mod plugin {
     use super::*;
 
     #[derive(Default)]
-    pub struct State {
+    #[state]
+    pub struct Counter {
         value: u64,
     }
 
-    #[provide(Counter::increase)]
-    fn increase(state: &mut State, change: Increase) -> Result<CounterValue, CounterError> {
-        let value = state
-            .value
-            .checked_add(change.by)
-            .ok_or(CounterError::Overflow)?;
-        state.value = value;
-        Ok(CounterValue { value })
-    }
+    impl Counter {
+        #[provide(CounterApi::increase)]
+        pub fn increase(&mut self, change: Increase) -> Result<CounterValue, CounterError> {
+            let value = self
+                .value
+                .checked_add(change.by)
+                .ok_or(CounterError::Overflow)?;
+            self.value = value;
+            Ok(CounterValue { value })
+        }
 
-    #[provide(Counter::read)]
-    fn read(state: &mut State) -> CounterValue {
-        CounterValue { value: state.value }
+        #[provide(CounterApi::read)]
+        pub fn read(&self) -> CounterValue {
+            CounterValue { value: self.value }
+        }
     }
 
     #[cfg(test)]
@@ -57,20 +60,20 @@ mod plugin {
 
         #[test]
         fn state_is_private_and_failed_transition_is_atomic() {
-            let mut state = State::default();
-            assert_eq!(read(&mut state).value, 0);
+            let mut state = Counter::default();
+            assert_eq!(state.read().value, 0);
             assert_eq!(
-                increase(&mut state, Increase { by: u64::MAX })
+                state.increase(Increase { by: u64::MAX })
                     .unwrap()
                     .value,
                 u64::MAX
             );
             assert_eq!(
-                increase(&mut state, Increase { by: 1 }),
+                state.increase(Increase { by: 1 }),
                 Err(CounterError::Overflow)
             );
-            assert_eq!(read(&mut state).value, u64::MAX);
-            let other = State::default();
+            assert_eq!(state.read().value, u64::MAX);
+            let other = Counter::default();
             assert_eq!(other.value, 0);
         }
     }
@@ -87,8 +90,8 @@ pub fn topology() -> Result<phenix_sdk::graph_v2::GraphContributionV2, phenix_sd
         module.exit("increase", submitted)
     })?;
     let counter = graph.module("counter", 1, |module| {
-        let increase = module.invoke::<Counter::increase>("increase")?;
-        let read = module.invoke::<Counter::read>("read")?;
+        let increase = module.invoke::<CounterApi::increase>("increase")?;
+        let read = module.invoke::<CounterApi::read>("read")?;
         module.entry("increase", increase.input())?;
         module.entry("read", read.input())?;
         module.exit("count", increase.ok())?;
@@ -127,7 +130,7 @@ mod contract_tests {
             matches!(
                 &node.kind,
                 NodeKindV2::Invoke { operation, .. }
-                    if operation == Counter::increase::KEY
+                    if operation == CounterApi::increase::KEY
             )
         }));
         let counter = graph
@@ -154,7 +157,7 @@ mod contract_tests {
         assert_eq!(operation.request, Increase::SCHEMA.owned().unwrap());
         assert_eq!(operation.response, CounterValue::SCHEMA.owned().unwrap());
         assert_eq!(operation.error, CounterError::SCHEMA.owned().unwrap());
-        assert_eq!(Counter::increase::KEY, "fixture.counter@1/increase");
+        assert_eq!(CounterApi::increase::KEY, "fixture.counter@1/increase");
         let original = Increase { by: 17 };
         let encoded = original.to_value().encode().unwrap();
         assert_eq!(

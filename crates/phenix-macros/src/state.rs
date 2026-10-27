@@ -16,6 +16,7 @@ fn arguments(
     signature: &syn::Signature,
     request_allowed: bool,
     host_allowed: bool,
+    state_type: &syn::Ident,
 ) -> syn::Result<(proc_macro2::TokenStream, bool)> {
     let mut roles = std::collections::BTreeSet::new();
     let mut arguments = Vec::new();
@@ -42,7 +43,7 @@ fn arguments(
                     .map(|segment| segment.ident.to_string())
                     .as_deref()
                 {
-                    Some("State") => ("state", quote!(state)),
+                    Some(name) if name == state_type.to_string() => ("state", quote!(state)),
                     Some("Host") if host_allowed && reference.mutability.is_none() => {
                         ("host", quote!(&host))
                     }
@@ -250,6 +251,115 @@ pub fn expand(
     let (_, items) = module.content.as_mut().ok_or_else(|| {
         syn::Error::new(module.ident.span(), "state plugin needs an inline module")
     })?;
+    // Domain-first syntax: an annotated ordinary Rust struct and its inherent
+    // methods are the source of plugin-owned state and exported operations.
+    // Existing free handler declarations continue to work unchanged.
+    let mut selected_state: Option<syn::Ident> = None;
+    for item in items.iter_mut() {
+        if let syn::Item::Struct(domain) = item {
+            let mut marked = false;
+            domain.attrs.retain(|attr| {
+                if attr.path().is_ident("state") {
+                    marked = true;
+                    false
+                } else {
+                    true
+                }
+            });
+            if marked {
+                if selected_state.is_some() {
+                    return Err(syn::Error::new(domain.span(), "duplicate #[state] owner"));
+                }
+                selected_state = Some(domain.ident.clone());
+            }
+        }
+    }
+    let state_ident = selected_state
+        .clone()
+        .unwrap_or_else(|| syn::Ident::new("State", module.ident.span()));
+    if selected_state.is_some()
+        && items.iter().any(|item| {
+            matches!(item, syn::Item::Struct(domain) if domain.ident == "State"
+                && domain.ident != state_ident)
+        })
+    {
+        return Err(syn::Error::new(
+            module.ident.span(),
+            "annotated state cannot coexist with legacy State",
+        ));
+    }
+    let mut generated_handlers = Vec::new();
+    for item in items.iter_mut() {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        for member in &mut implementation.items {
+            let syn::ImplItem::Fn(method) = member else {
+                continue;
+            };
+            let positions: Vec<_> = method
+                .attrs
+                .iter()
+                .enumerate()
+                .filter(|(_, attribute)| attribute.path().is_ident("provide"))
+                .map(|(index, _)| index)
+                .collect();
+            if positions.is_empty() {
+                continue;
+            }
+            if positions.len() != 1
+                || implementation.trait_.is_some()
+                || !implementation.generics.params.is_empty()
+                || implementation.generics.where_clause.is_some()
+                || !matches!(
+                    implementation.self_ty.as_ref(),
+                    Type::Path(path) if path.qself.is_none()
+                        && path.path.is_ident(&state_ident)
+                )
+                || method.sig.asyncness.is_some()
+                || method.sig.unsafety.is_some()
+                || method.sig.constness.is_some()
+                || method.sig.abi.is_some()
+                || !method.sig.generics.params.is_empty()
+                || method.sig.generics.where_clause.is_some()
+            {
+                return Err(syn::Error::new(
+                    method.span(),
+                    "#[provide] method needs a synchronous inherent impl on the plugin's state type",
+                ));
+            }
+            let attr = method.attrs.remove(positions[0]);
+            let operation: syn::Type = attr.parse_args()?;
+            let mut inputs = method.sig.inputs.iter();
+            let Some(syn::FnArg::Receiver(receiver)) = inputs.next() else {
+                return Err(syn::Error::new(method.sig.span(), "exported method needs borrowed self"));
+            };
+            if receiver.reference.is_none() || receiver.colon_token.is_some() {
+                return Err(syn::Error::new(receiver.span(), "exported method needs &self or &mut self"));
+            }
+            let (request, argument) = match (inputs.next(), inputs.next()) {
+                (None, None) => (quote!(), quote!()),
+                (Some(syn::FnArg::Typed(param)), None) => {
+                    let ty = &param.ty;
+                    (quote!(, request: #ty), quote!(request))
+                }
+                _ => return Err(syn::Error::new(method.sig.span(), "exported method needs at most one typed request")),
+            };
+            let output = &method.sig.output;
+            let name = &method.sig.ident;
+            let generated = syn::Ident::new(
+                &format!("__phenix_export_{}", generated_handlers.len()),
+                name.span(),
+            );
+            generated_handlers.push(syn::parse2::<syn::ItemFn>(quote! {
+                #[provide(#operation)]
+                fn #generated(state: &mut #state_ident #request) #output {
+                    state.#name(#argument)
+                }
+            })?);
+        }
+    }
+    items.extend(generated_handlers.into_iter().map(syn::Item::Fn));
     let mut state = false;
     let mut properties = Vec::new();
     let mut property_symbols = Vec::new();
@@ -265,7 +375,7 @@ pub fn expand(
     let mut stop = None;
     for item in items.iter_mut() {
         match item {
-            syn::Item::Struct(s) if s.ident == "State" => {
+            syn::Item::Struct(s) if s.ident == state_ident => {
                 if state
                     || !s.generics.params.is_empty()
                     || !matches!(s.fields, syn::Fields::Named(_) | syn::Fields::Unit)
@@ -488,7 +598,7 @@ pub fn expand(
                         let lifecycle =
                             attr.path().is_ident("start") || attr.path().is_ident("stop");
                         let (arguments, has_request) =
-                            arguments(&function.sig, request_allowed, !lifecycle)?;
+                            arguments(&function.sig, request_allowed, !lifecycle, &state_ident)?;
                         if attr.path().is_ident("start") || attr.path().is_ident("stop") {
                             if !matches!(attr.meta, Meta::Path(_)) {
                                 return Err(syn::Error::new(
@@ -618,7 +728,7 @@ pub fn expand(
         pub static PHENIX_GRAPH: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = GRAPH_METADATA.native_section();
     });
     let generated = quote! {
-        impl State {
+        impl #state_ident {
             #(#owned_fields)*
         }
         #graph_descriptor
@@ -629,14 +739,14 @@ pub fn expand(
         pub static PHENIX_DESCRIPTOR: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = METADATA.native_section();
         pub mod imports { #[allow(unused_imports)] use super::*; #(#imports)* }
         pub mod properties { #[allow(unused_imports)] use super::*; #(#property_symbols)* }
-        struct __Instance { state: State, initialized: bool, poisoned: bool }
+        struct __Instance { state: #state_ident, initialized: bool, poisoned: bool }
         fn __failure(error: ::phenix_sdk::Failure) -> ::phenix_sdk::abi::Reply { ::phenix_sdk::abi::Reply::value(2, error.to_value()) }
         fn __invalid(message: &str) -> ::phenix_sdk::Failure { ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, message) }
         unsafe extern "C" fn __create(out: *mut *mut ::std::ffi::c_void) -> ::phenix_sdk::abi::Reply {
             ::phenix_sdk::live::boundary(|| {
                 if out.is_null() { return __failure(__invalid("null instance output")); }
                 unsafe { *out = ::std::ptr::null_mut(); }
-                let state = State::default();
+                let state = #state_ident::default();
                 unsafe { *out = Box::into_raw(Box::new(__Instance { state, initialized: false, poisoned: false })).cast(); }
                 ::phenix_sdk::abi::Reply::value(0, ::phenix_sdk::Value::Null)
             })
