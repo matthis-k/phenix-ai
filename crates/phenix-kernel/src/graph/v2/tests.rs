@@ -328,6 +328,9 @@ fn join_direct_switch_exclusion_and_nested_unknown() {
         "wrong rejection: {}",
         failure.message
     );
+    required_many[0].nodes.reverse();
+    required_many[0].edges.reverse();
+    assert_eq!(run(&required_many, &p).unwrap_err(), failure);
     let mut optional = d.clone();
     readiness_join(&mut optional, InputReadiness::Optional);
     assert_eq!(

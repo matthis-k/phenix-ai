@@ -7,7 +7,7 @@ const MAX_ROOT_VALUES: usize = 16_384;
 const MAX_ROOT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROOT_NODES: usize = 4_096;
 
-// Review-branch-only measurement: deterministic work count, not wall-clock timing.
+// Deterministic work count, not wall-clock timing.
 #[cfg(test)]
 thread_local! {
     static PORT_INPUT_EDGE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -21,6 +21,21 @@ enum Resolution {
     Value(Option<Value>, BTreeSet<String>),
     Closed,
     Failed,
+}
+
+// Private scheduler diagnostics, never exposed as plugin payloads or authority.
+#[derive(Clone, Debug, PartialEq)]
+enum TerminalCause {
+    InactiveSource {
+        source: String,
+    },
+    Closed {
+        node: String,
+    },
+    Domain {
+        node: String,
+        value: std::rc::Rc<Value>,
+    },
 }
 
 #[derive(Clone)]
@@ -52,6 +67,11 @@ pub(in crate::graph) struct Wave {
     nodes: BTreeMap<String, (String, NodeDecl)>,
     edges: BTreeMap<String, EdgeDecl>,
     arrivals: BTreeMap<String, Resolution>,
+    // Keep diagnostic provenance separate from readiness and authority evidence.
+    // Original incoming causes remain available after canonical propagation.
+    terminal_causes: BTreeMap<String, TerminalCause>,
+    domain_causes: BTreeMap<String, TerminalCause>,
+    input_edges: BTreeMap<(String, String), Vec<String>>,
     started: BTreeSet<String>,
     done: BTreeSet<String>,
     resources: BTreeMap<String, BTreeSet<String>>,
@@ -94,6 +114,9 @@ impl Wave {
             nodes,
             edges,
             arrivals,
+            terminal_causes: BTreeMap::new(),
+            domain_causes: BTreeMap::new(),
+            input_edges: graph.input_edges.clone(),
             started: BTreeSet::new(),
             done: BTreeSet::new(),
             resources: BTreeMap::new(),
@@ -115,6 +138,33 @@ impl Wave {
         if self.done.contains(node) {
             return Ok(());
         }
+        let terminal_cause = self
+            .domain_causes
+            .get(node)
+            .cloned()
+            .or_else(|| {
+                if selected.is_some() {
+                    return None;
+                }
+                self.edges.iter().find_map(|(id, edge)| {
+                    if matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node)
+                        && matches!(self.arrivals[id], Resolution::Failed) == failed
+                        && matches!(self.arrivals[id], Resolution::Closed | Resolution::Failed)
+                    {
+                        self.terminal_causes.get(id).cloned()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| match &self.nodes[node].1.kind {
+                NodeKind::Source { source } if source != &self.source => {
+                    TerminalCause::InactiveSource {
+                        source: source.clone(),
+                    }
+                }
+                _ => TerminalCause::Closed { node: node.into() },
+            });
         if let Some((_, value)) = selected {
             self.values += 1;
             self.bytes = self
@@ -224,6 +274,8 @@ impl Wave {
                 continue;
             }
             if selected.is_none_or(|(port, _)| port != from.port) {
+                self.terminal_causes
+                    .insert(id.clone(), terminal_cause.clone());
                 self.arrivals.insert(
                     id.clone(),
                     if failed {
@@ -342,6 +394,13 @@ impl Wave {
                         ));
                     }
                 }
+                self.domain_causes.insert(
+                    node.into(),
+                    TerminalCause::Domain {
+                        node: node.into(),
+                        value: std::rc::Rc::new(value.clone()),
+                    },
+                );
                 self.deliver(graph, scope, node, None, true)?;
             }
         }
@@ -475,10 +534,15 @@ impl Wave {
         let mut unresolved = false;
         let mut failed = false;
         let mut values = Vec::new();
-        for (edge, e) in &self.edges {
+        for edge in self
+            .input_edges
+            .get(&(node.into(), port.into()))
+            .into_iter()
+            .flatten()
+        {
             #[cfg(test)]
             PORT_INPUT_EDGE_VISITS.with(|visits| visits.set(visits.get() + 1));
-            if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port) {
+            if !self.edges.contains_key(edge) {
                 continue;
             }
             match &self.arrivals[edge] {

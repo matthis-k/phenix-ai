@@ -1,35 +1,39 @@
 use super::*;
 use phenix_contract::Authority;
 
-// Review-only complexity probe: assert that adding unrelated edges cannot
-// linearly increase inspections performed by one port-input reduction.
+// Deterministic work count, not a wall-clock threshold.
 #[test]
 fn review_port_input_visits_only_relevant_candidates() {
-    let (declarations, policy) = super::super::tests::join_fixture();
-    let graph = super::super::tests::run(&declarations, &policy).unwrap();
-    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
-    let template = wave.edges["alpha/a"].clone();
+    let (mut declarations, policy) = super::super::tests::join_fixture();
     for index in 0..128 {
-        let mut unrelated = template.clone();
-        unrelated.id = format!("probe/irrelevant-{index}");
+        let mut unrelated = declarations[0].edges[0].clone();
+        unrelated.id = format!("alpha/irrelevant-{index}");
         let EdgeKind::Flow { to, .. } = &mut unrelated.kind else {
             unreachable!()
         };
-        to.node = "probe/unrelated".into();
-        wave.arrivals
-            .insert(unrelated.id.clone(), Resolution::Closed);
-        wave.edges.insert(unrelated.id.clone(), unrelated);
+        let mut node = declarations[0]
+            .nodes
+            .iter()
+            .find(|n| n.id == to.node)
+            .unwrap()
+            .clone();
+        node.id = format!("alpha/unrelated-{index}");
+        to.node = node.id.clone();
+        declarations[0].nodes.push(node);
+        declarations[0].edges.push(unrelated);
     }
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let wave = Wave::new(&graph, "alpha/submit").unwrap();
     PORT_INPUT_EDGE_VISITS.with(|visits| visits.set(0));
     let _ = wave.port_input("alpha/merge", "left").unwrap();
     let visits = PORT_INPUT_EDGE_VISITS.with(|visits| visits.get());
     assert!(
-        visits <= 8,
+        visits == 1,
         "port_input inspected {visits} edges for a port with one incoming candidate"
     );
 }
 
-// Review-only closure diagnostics: a non-selected external source closes its
+// A non-selected external source closes its
 // Flow candidates with the causal reason InactiveSource, not an anonymous Closed.
 #[test]
 fn review_closed_flow_identifies_inactive_source_reason() {
@@ -38,14 +42,15 @@ fn review_closed_flow_identifies_inactive_source_reason() {
     wave.deliver(&graph, &scope(&["resource"]), "alpha/source", None, false)
         .unwrap();
     assert!(matches!(wave.arrivals["alpha/a"], Resolution::Closed));
-    let edge_diagnostic = format!("{:?}", wave.arrivals["alpha/a"]);
-    assert!(
-        edge_diagnostic.contains("InactiveSource"),
-        "closed candidate lost its inactive-source reason: {edge_diagnostic}"
+    assert_eq!(
+        wave.terminal_causes["alpha/a"],
+        TerminalCause::InactiveSource {
+            source: "alpha/submit".into(),
+        }
     );
 }
 
-// Review-only edge-diagnostic probe: an unhandled domain error should retain
+// An unhandled domain error retains
 // typed causal provenance on the failed downstream Flow candidate.
 #[test]
 fn review_failed_flow_retains_domain_error_identity() {
@@ -71,11 +76,138 @@ fn review_failed_flow_retains_domain_error_identity() {
         wave.input("beta/second").unwrap(),
         Resolution::Failed
     ));
-    let edge_diagnostic = format!("{:?}", wave.arrivals["alpha/next"]);
-    assert!(
-        edge_diagnostic.contains(distinct_cause),
-        "failed edge lost its domain cause: {edge_diagnostic}"
+    assert_eq!(
+        wave.terminal_causes["alpha/next"],
+        TerminalCause::Domain {
+            node: "alpha/first".into(),
+            value: std::rc::Rc::new(Value::String(distinct_cause.into())),
+        }
     );
+}
+
+#[test]
+fn terminal_provenance_propagates_and_selects_failure_by_edge_id() {
+    // Two independent producers are exercised directly here; source disjointness
+    // is tested by the compiler separately.
+    let graph = readiness_join(InputReadiness::One);
+    for reverse in [false, true] {
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        let EdgeKind::Flow { from, .. } = &mut wave.edges.get_mut("alpha/b").unwrap().kind else {
+            panic!()
+        };
+        from.node = "alpha/alternative-source".into();
+        let expected = TerminalCause::Domain {
+            node: "alpha/source".into(),
+            value: std::rc::Rc::new(Value::String("first-by-edge-id".into())),
+        };
+        let mut producers = [
+            ("alpha/source", "first-by-edge-id"),
+            ("alpha/alternative-source", "second-by-edge-id"),
+        ];
+        if reverse {
+            producers.reverse();
+        }
+        for (node, value) in producers {
+            wave.nodes
+                .get_mut(node)
+                .unwrap()
+                .1
+                .execution
+                .on_domain_error = DomainErrorPolicy::SkipDependents;
+            wave.complete(
+                &graph,
+                &scope(&["resource"]),
+                node,
+                &Outcome::Domain(Value::String(value.into())),
+            )
+            .unwrap();
+        }
+        assert!(matches!(
+            wave.input("alpha/merge").unwrap(),
+            Resolution::Failed
+        ));
+        wave.deliver(&graph, &scope(&["resource"]), "alpha/merge", None, true)
+            .unwrap();
+        let outgoing = wave
+            .edges
+            .iter()
+            .find_map(|(id, e)| {
+                matches!(&e.kind, EdgeKind::Flow { from, .. } if from.node == "alpha/merge")
+                    .then_some(id)
+            })
+            .unwrap();
+        assert_eq!(wave.terminal_causes[outgoing], expected);
+        assert_eq!(wave.terminal_causes["alpha/a"], expected);
+        assert_eq!(
+            wave.terminal_causes["alpha/b"],
+            TerminalCause::Domain {
+                node: "alpha/alternative-source".into(),
+                value: std::rc::Rc::new(Value::String("second-by-edge-id".into())),
+            }
+        );
+    }
+    let mut wave = Wave::new(&graph, "alpha/alternative").unwrap();
+    wave.deliver(&graph, &scope(&["resource"]), "alpha/source", None, false)
+        .unwrap();
+    wave.deliver(&graph, &scope(&["resource"]), "alpha/merge", None, false)
+        .unwrap();
+    let outgoing = wave
+        .edges
+        .iter()
+        .find_map(|(id, e)| {
+            matches!(&e.kind, EdgeKind::Flow { from, .. } if from.node == "alpha/merge")
+                .then_some(id)
+        })
+        .unwrap();
+    assert_eq!(
+        wave.terminal_causes[outgoing],
+        TerminalCause::InactiveSource {
+            source: "alpha/submit".into()
+        }
+    );
+    assert!(!wave.input_evidence("alpha/merge").unwrap().causal);
+}
+
+#[test]
+fn late_failure_provenance_dominates_closed_required_input() {
+    let graph = readiness_join(InputReadiness::One);
+    let root = scope(&["resource"]);
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let EdgeKind::Flow { from, .. } = &mut wave.edges.get_mut("alpha/b").unwrap().kind else {
+        panic!()
+    };
+    from.node = "alpha/alternative-source".into();
+    wave.deliver(&graph, &root, "alpha/source", None, false)
+        .unwrap();
+    assert!(matches!(
+        wave.input("alpha/merge").unwrap(),
+        Resolution::Unresolved
+    ));
+    wave.nodes
+        .get_mut("alpha/alternative-source")
+        .unwrap()
+        .1
+        .execution
+        .on_domain_error = DomainErrorPolicy::SkipDependents;
+    wave.complete(
+        &graph,
+        &root,
+        "alpha/alternative-source",
+        &Outcome::Domain(Value::String("late failure".into())),
+    )
+    .unwrap();
+    assert!(matches!(
+        wave.input("alpha/merge").unwrap(),
+        Resolution::Failed
+    ));
+    wave.deliver(&graph, &root, "alpha/merge", None, true)
+        .unwrap();
+    for (id, edge) in &wave.edges {
+        if matches!(&edge.kind, EdgeKind::Flow { from, .. } if from.node == "alpha/merge") {
+            assert_eq!(wave.terminal_causes[id], wave.terminal_causes["alpha/b"]);
+            assert_ne!(wave.terminal_causes[id], wave.terminal_causes["alpha/a"]);
+        }
+    }
 }
 
 fn readiness_join(readiness: InputReadiness) -> CompiledGraph {
@@ -500,6 +632,10 @@ fn prospective_collection_counts_all_selected_edges_atomically_but_waits_for_oth
         }
         wave.arrivals
             .insert(extra.id.clone(), Resolution::Unresolved);
+        wave.input_edges
+            .get_mut(&("alpha/merge".into(), "left".into()))
+            .unwrap()
+            .push(extra.id.clone());
         wave.edges.insert(extra.id.clone(), extra);
         let result = wave.deliver(
             &graph,
@@ -548,6 +684,10 @@ fn collection_pending_candidates_retain_values_and_failure_dominates_in_both_ord
             from.node = "alpha/alternative-source".into();
             wave.arrivals
                 .insert(extra.id.clone(), Resolution::Unresolved);
+            wave.input_edges
+                .get_mut(&("alpha/merge".into(), "left".into()))
+                .unwrap()
+                .push(extra.id.clone());
             wave.edges.insert(extra.id.clone(), extra);
             if !join {
                 let (producer, _) = super::super::tests::fixture();
@@ -787,6 +927,10 @@ fn static_many_stable_edges_both_cardinality_bounds_and_failure_precedence() {
     let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
     let mut edge = wave.edges["alpha/a"].clone();
     edge.id = "alpha/0-first".into();
+    wave.input_edges
+        .get_mut(&("alpha/merge".into(), "left".into()))
+        .unwrap()
+        .insert(0, edge.id.clone());
     wave.edges.insert(edge.id.clone(), edge.clone());
     wave.arrivals
         .insert(edge.id.clone(), Resolution::Unresolved);
