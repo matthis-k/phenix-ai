@@ -1,0 +1,23 @@
+# Opt-in A/B evidence only. The canonical five-shard PR matrix and
+# trusted four-builder main release continue unchanged.
+# Once paired runs establish exact-head check/evidence parity and improve
+# latency, promote the pinned backend through the normal CI review.
+name: Graph-v2 CI single-store A/B candidate
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graph-v2-single-store-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  single-store:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.head_ref == 'ci/graph-v2-single-store-benchmark' }}
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: 1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a
