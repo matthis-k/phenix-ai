@@ -732,6 +732,13 @@ producer non-cancellation and physical draining, plus offline satisfiability,
 security, resource-intersection and canonical-wire negatives. Optional and
 StaticMany readiness remain unsupported; this is not full V2 or P1 acceptance.
 
+Discarding a late success performs no destination delivery: destination-resource
+denial must not turn that discard into an error. Potential-route authorization
+at compilation, producer invocation authority and producer resource accounting
+still apply; other runnable recipients independently retain their delivery
+checks. Unselected outgoing closures are resolved before selected payloads so
+same-producer closure cannot make this behavior depend on logical edge-ID order.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust

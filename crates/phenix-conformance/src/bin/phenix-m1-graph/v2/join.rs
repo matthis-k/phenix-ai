@@ -4,7 +4,7 @@ use super::*;
 pub(super) fn run(packages: &[String], output: &Path) {
     const SLOW: &str = "example.graph.slow@1/run";
     const FAST: &str = "example.graph-b/join-task";
-    const JOIN: &str = "example.graph-a/join";
+    const JOIN: &str = "example.graph-b/join";
     const CONSUMER: &str = "example.graph.join-consumer@1/run";
     const UNUSED: &str = "example.graph-a/join-unused";
     const UNUSED_ACTION: &str = "example.graph.v2-join-unused";
@@ -61,7 +61,7 @@ pub(super) fn run(packages: &[String], output: &Path) {
         payload: ValueSchema::Struct(BTreeMap::new()),
         security: LABEL,
     });
-    d[0].nodes.push(NodeDecl {
+    d[1].nodes.push(NodeDecl {
         id: JOIN.into(),
         kind: NodeKind::Join {
             policy: JoinPolicy::All,
@@ -171,7 +171,7 @@ pub(super) fn run(packages: &[String], output: &Path) {
         let mut policy = TrustedCompositionPolicy {
             topology: BTreeSet::from([
                 (A.into(), FAST.into()),
-                (B.into(), JOIN.into()),
+                (A.into(), JOIN.into()),
                 (A.into(), SECOND.into()),
             ]),
             ..TrustedCompositionPolicy::default()
@@ -200,7 +200,11 @@ pub(super) fn run(packages: &[String], output: &Path) {
             policy.delivery.insert(
                 (from.into(), port.into(), to.into(), into.into()),
                 FlowGrant {
-                    resources: resources.clone(),
+                    resources: if from == FIRST && to == JOIN {
+                        BTreeSet::from(["example.graph.delivery".into()])
+                    } else {
+                        resources.clone()
+                    },
                     maximum_classification: Classification::Confidential,
                 },
             );
@@ -238,6 +242,15 @@ pub(super) fn run(packages: &[String], output: &Path) {
             } else {
                 Value::map([("text", Value::String(text.into()))])
             };
+            let mut action_scope = scope.clone();
+            if text == "late-success" {
+                // The Join is already non-runnable. A discarded value must not
+                // attempt a delivery outside this narrowed destination grant.
+                action_scope
+                    .authority
+                    .resources
+                    .remove("example.graph.delivery");
+            }
             let mut run = kernel
                 .begin_action_scoped(
                     if text == "unused" {
@@ -246,7 +259,7 @@ pub(super) fn run(packages: &[String], output: &Path) {
                         ACTION
                     },
                     &payload,
-                    scope.clone(),
+                    action_scope,
                 )
                 .unwrap();
             let terminals = std::cell::Cell::new(0);
@@ -346,7 +359,7 @@ pub(super) fn run(packages: &[String], output: &Path) {
         "format": "phenix.graph-v2-join.v1", "full_V2": false, "p1_parity": false,
         "cases": { "native_join_all": true, "one_value_pending_waits": true, "assembled_fields": true,
              "native_consumer_once": true, "closed_plus_late_failure": true, "closed_plus_late_success": true,
-             "unrelated_producer_not_cancelled": true,
+             "unrelated_producer_not_cancelled": true, "discarded_delivery_needs_no_destination_access": true,
             "all_closed_success": true, "terminal_after_worker_drain": true, "wrong_labels_before_constructors": true,
             "protected_observers": true, "repeat_pumps_inert": true },
         "remaining": ["full V2", "P1 parity"]

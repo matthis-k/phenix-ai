@@ -95,12 +95,9 @@ impl Wave {
                 ));
             }
         }
-        let (owner, definition) = &self.nodes[node];
-        let inherited = self
-            .resources
-            .get(node)
-            .unwrap_or(&scope.authority.resources);
         let mut joins = BTreeSet::new();
+        // Resolve sibling closure/failure before any successful delivery. Edge ID
+        // order must not authorize a payload that this same completion discards.
         for (id, edge) in &self.edges {
             let EdgeKind::Flow { from, to } = &edge.kind else {
                 continue;
@@ -108,66 +105,87 @@ impl Wave {
             if from.node != node {
                 continue;
             }
-            let join = matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. });
-            if join {
+            if matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. }) {
                 joins.insert(to.node.clone());
             }
-            let resolution =
-                if let Some((port, value)) = selected.filter(|(port, _)| *port == from.port) {
-                    let output = definition.outputs.iter().find(|p| p.name == port).unwrap();
-                    let (target_owner, _) = &self.nodes[&to.node];
-                    let mut resources = inherited.clone();
-                    if owner != target_owner
-                        || graph.routes.get(node).unwrap_or(owner)
-                            != graph.routes.get(&to.node).unwrap_or(target_owner)
-                    {
-                        let grant = graph
-                            .policy
-                            .delivery
-                            .get(&(
-                                from.node.clone(),
-                                from.port.clone(),
-                                to.node.clone(),
-                                to.port.clone(),
-                            ))
-                            .ok_or_else(|| denied("missing exact runtime flow grant"))?;
-                        resources.retain(|r| grant.resources.contains(r));
-                        if output.security.confidentiality > grant.maximum_classification
-                            || resources.is_empty()
-                            || scope
-                                .resource
-                                .as_ref()
-                                .is_some_and(|r| !resources.contains(r))
-                        {
-                            return Err(denied("flow outside effective root resource scope"));
-                        }
-                    }
-                    self.values += 1;
-                    self.bytes = self
-                        .bytes
-                        .checked_add(value.encode()?.len())
-                        .ok_or_else(|| fail(Code::InfrastructureFailure, "graph-v2 byte limit"))?;
-                    if self.values > MAX_ROOT_VALUES || self.bytes > MAX_ROOT_BYTES {
-                        return Err(fail(
-                            Code::InfrastructureFailure,
-                            "graph-v2 root value/byte limit",
-                        ));
-                    }
-                    let payload = if join && self.join_non_runnable(&to.node)? {
-                        None
+            if selected.is_none_or(|(port, _)| port != from.port) {
+                self.arrivals.insert(
+                    id.clone(),
+                    if failed {
+                        Resolution::Failed
                     } else {
-                        Some(value.clone())
-                    };
-                    Resolution::Value(payload, resources)
-                } else if failed {
-                    Resolution::Failed
-                } else {
-                    Resolution::Closed
-                };
-            self.arrivals.insert(id.clone(), resolution);
+                        Resolution::Closed
+                    },
+                );
+            }
         }
         for join in joins {
             self.release_join_payloads(&join)?;
+        }
+        let (owner, definition) = &self.nodes[node];
+        let inherited = self
+            .resources
+            .get(node)
+            .unwrap_or(&scope.authority.resources);
+        for (id, edge) in &self.edges {
+            let EdgeKind::Flow { from, to } = &edge.kind else {
+                continue;
+            };
+            if from.node != node {
+                continue;
+            }
+            if let Some((port, value)) = selected.filter(|(port, _)| *port == from.port) {
+                if matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. })
+                    && self.join_non_runnable(&to.node)?
+                {
+                    self.arrivals
+                        .insert(id.clone(), Resolution::Value(None, inherited.clone()));
+                    continue;
+                }
+                let output = definition.outputs.iter().find(|p| p.name == port).unwrap();
+                let (target_owner, _) = &self.nodes[&to.node];
+                let mut resources = inherited.clone();
+                if owner != target_owner
+                    || graph.routes.get(node).unwrap_or(owner)
+                        != graph.routes.get(&to.node).unwrap_or(target_owner)
+                {
+                    let grant = graph
+                        .policy
+                        .delivery
+                        .get(&(
+                            from.node.clone(),
+                            from.port.clone(),
+                            to.node.clone(),
+                            to.port.clone(),
+                        ))
+                        .ok_or_else(|| denied("missing exact runtime flow grant"))?;
+                    resources.retain(|r| grant.resources.contains(r));
+                    if output.security.confidentiality > grant.maximum_classification
+                        || resources.is_empty()
+                        || scope
+                            .resource
+                            .as_ref()
+                            .is_some_and(|r| !resources.contains(r))
+                    {
+                        return Err(denied("flow outside effective root resource scope"));
+                    }
+                }
+                self.values += 1;
+                self.bytes = self
+                    .bytes
+                    .checked_add(value.encode()?.len())
+                    .ok_or_else(|| fail(Code::InfrastructureFailure, "graph-v2 byte limit"))?;
+                if self.values > MAX_ROOT_VALUES || self.bytes > MAX_ROOT_BYTES {
+                    return Err(fail(
+                        Code::InfrastructureFailure,
+                        "graph-v2 root value/byte limit",
+                    ));
+                }
+                self.arrivals.insert(
+                    id.clone(),
+                    Resolution::Value(Some(value.clone()), resources),
+                );
+            }
         }
         self.done.insert(node.into());
         Ok(())

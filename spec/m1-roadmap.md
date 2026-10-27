@@ -75,6 +75,14 @@ still required. Optional/StaticMany, patch algebra, deferred waves, SDK/lowering
 and graph-v2 P1 parity remain open. The user's single-store CI is inherited;
 no second test inventory or local full-flake rebuild is introduced.
 
+Join review correction in #1175: late discarded successes must not attempt
+destination data access. Outgoing closures now resolve before selected payloads,
+eliminating edge-order-dependent denial when the same producer closes another
+required Join input. A native cross-plugin regression narrows away the late
+value's destination resource and still requires successful producer completion,
+zero consumer calls and physical drain. Runnable recipients retain independent
+denial checks. This is not a grant exemption for actual deliveries.
+
 Remaining architectural question: repository documents still label v2.4 a
 proposal; this implementation follows the requested target without changing
 that review status or claiming approval of unfinished interfaces. Source-ceiling

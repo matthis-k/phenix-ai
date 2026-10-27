@@ -2,6 +2,157 @@ use super::*;
 use phenix_contract::Authority;
 
 #[test]
+fn discarded_join_delivery_skips_destination_checks_but_not_runnable_delivery() {
+    let value = Value::String("authorized producer result".into());
+    let root = scope(&["resource"]);
+    for sibling_closure in [false, true] {
+        for success_first in [false, true] {
+            for runnable_target in [false, true] {
+                let (mut d, mut p) = super::super::tests::join_fixture();
+                let (producer, _) = super::super::tests::fixture();
+                d[0].nodes.push(producer[0].nodes[1].clone());
+                d[0].edges.push(producer[0].edges[0].clone());
+                for (index, edge) in d[0].edges[..2].iter_mut().enumerate() {
+                    let EdgeKind::Flow { from, .. } = &mut edge.kind else {
+                        panic!()
+                    };
+                    from.node = if index == 1 || sibling_closure {
+                        "alpha/first"
+                    } else {
+                        "alpha/source"
+                    }
+                    .into();
+                    from.port = if index == 1 {
+                        "ok"
+                    } else if sibling_closure {
+                        "err"
+                    } else {
+                        "out"
+                    }
+                    .into();
+                    edge.id = if (index == 1) == success_first {
+                        "alpha/a"
+                    } else {
+                        "alpha/b"
+                    }
+                    .into();
+                }
+                for (port, input) in [("ok", "right"), ("err", "left")] {
+                    p.delivery.insert(
+                        (
+                            "alpha/first".into(),
+                            port.into(),
+                            "alpha/merge".into(),
+                            input.into(),
+                        ),
+                        FlowGrant {
+                            resources: BTreeSet::from(["other".into()]),
+                            maximum_classification: Classification::Public,
+                        },
+                    );
+                }
+                if runnable_target {
+                    let (merge, _) = super::super::tests::merge_fixture();
+                    let mut sink = merge[0]
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == "alpha/sink")
+                        .unwrap()
+                        .clone();
+                    sink.id = "alpha/runnable".into();
+                    d[0].nodes.push(sink);
+                    d[0].edges.push(EdgeDecl {
+                        id: "alpha/z-runnable".into(),
+                        kind: EdgeKind::Flow {
+                            from: OutPortRef {
+                                node: "alpha/first".into(),
+                                port: "ok".into(),
+                            },
+                            to: InPortRef {
+                                node: "alpha/runnable".into(),
+                                port: "in".into(),
+                            },
+                        },
+                    });
+                    p.delivery.insert(
+                        (
+                            "alpha/first".into(),
+                            "ok".into(),
+                            "alpha/runnable".into(),
+                            "in".into(),
+                        ),
+                        FlowGrant {
+                            resources: BTreeSet::from(["other".into()]),
+                            maximum_classification: Classification::Public,
+                        },
+                    );
+                }
+                let graph = super::super::tests::run(&d, &p).unwrap();
+                let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                wave.started.insert("alpha/first".into());
+                wave.resources
+                    .insert("alpha/first".into(), root.authority.resources.clone());
+                if !sibling_closure {
+                    wave.deliver(&graph, &root, "alpha/source", None, false)
+                        .unwrap();
+                    assert!(wave.join_non_runnable("alpha/merge").unwrap());
+                    assert!(!wave.done.contains("alpha/first"));
+                }
+                // Only the produced value fits: a discarded delivery must cost
+                // neither a second value nor a second copy of the payload bytes.
+                wave.values = MAX_ROOT_VALUES - 1;
+                wave.bytes = MAX_ROOT_BYTES - value.encode().unwrap().len();
+                let result = wave.complete(
+                    &graph,
+                    &root,
+                    "alpha/first",
+                    &Outcome::Success(value.clone()),
+                );
+                let success_edge = if success_first { "alpha/a" } else { "alpha/b" };
+                assert!(matches!(
+                    wave.arrivals[success_edge],
+                    Resolution::Value(None, _)
+                ));
+                assert_eq!(wave.values, MAX_ROOT_VALUES);
+                assert_eq!(wave.bytes, MAX_ROOT_BYTES);
+                if runnable_target {
+                    assert_eq!(result.unwrap_err().code, Code::Denied);
+                    assert!(!wave.done.contains("alpha/first"));
+                    assert!(matches!(
+                        wave.input("alpha/runnable").unwrap(),
+                        Resolution::Unresolved
+                    ));
+                } else {
+                    assert!(!result.unwrap());
+                    assert!(wave.done.contains("alpha/first"));
+                    assert!(matches!(
+                        wave.input("alpha/merge").unwrap(),
+                        Resolution::Closed
+                    ));
+                    assert!(matches!(wave.arrivals["alpha/c"], Resolution::Unresolved));
+                    // Producer-level accounting remains enforced even if every
+                    // destination discards the completion.
+                    let mut over_budget = Wave::new(&graph, "alpha/submit").unwrap();
+                    over_budget.values = MAX_ROOT_VALUES;
+                    assert_eq!(
+                        over_budget
+                            .complete(
+                                &graph,
+                                &root,
+                                "alpha/first",
+                                &Outcome::Success(value.clone())
+                            )
+                            .unwrap_err()
+                            .code,
+                        Code::InfrastructureFailure
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn join_delivery_releases_success_payloads_in_both_orders_and_when_dormant() {
     let (mut d, p) = super::super::tests::join_fixture();
     d[0].nodes
