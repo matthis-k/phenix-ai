@@ -50,6 +50,18 @@ classification, selected-resource attenuation and confidential control outcomes.
 Exact committed-head evidence and CI are required before integration; Join,
 Optional/StaticMany readiness and general classified observation remain open.
 
+CI continuation for #1173: the user-selected single-store full-DAG backend
+replaces only the automatic PR matrix execution, not its complete check
+inventory or the independent ACP/security gates. Provider
+`phenix-flake-ci` #33 merged at
+`25029578a370c0b1f57ae88881b6018ed1ac08df`; reusable workflow/runtime pins are
+updated together to that merged revision. Trusted-main remote execution keeps
+its existing pin and authority. The stale matrix-pin policy test was updated
+with adversarial wrong-pin, OIDC, publisher and reduced-inventory cases. Full
+DAG passed on `acf46e51f1081ccadc561c08d9fd11881ecbc3f8`, but that head's
+workflow-policy check failed before the fix. Do not treat it as complete
+acceptance of the final #1173 head.
+
 Remaining architectural question: repository documents still label v2.4 a
 proposal; this implementation follows the requested target without changing
 that review status or claiming approval of unfinished interfaces. Source-ceiling

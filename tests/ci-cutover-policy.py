@@ -9,8 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_SOURCE_PIN = 'c4467d7dc233ada85ea49823561ee8be57089591'
-# Explicit candidate adoption of phenix-flake-ci PR #33, independent of main.
-EXPECTED_CANDIDATE_PIN = '1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a'
+# Merged single-store backend from phenix-flake-ci PR #33, independent of main.
+EXPECTED_CANDIDATE_PIN = '25029578a370c0b1f57ae88881b6018ed1ac08df'
 
 
 def require(condition, message):

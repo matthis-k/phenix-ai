@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@25029578a370c0b1f57ae88881b6018ed1ac08df
     with:
       config: ci/flake-check-config.nix
-      library_ref: 1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a
+      library_ref: 25029578a370c0b1f57ae88881b6018ed1ac08df
