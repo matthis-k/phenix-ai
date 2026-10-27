@@ -1,0 +1,9 @@
+[package]
+name = "native-abi-consumer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+native-abi-contract.workspace = true
+libloading.workspace = true
