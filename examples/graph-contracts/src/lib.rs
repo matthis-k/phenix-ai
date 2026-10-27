@@ -85,6 +85,17 @@ pub trait Consume {
     fn run(&mut self, input: String) -> Result<String, String>;
 }
 
+#[derive(Debug, Clone, Portable)]
+pub struct JoinRequest {
+    pub fast: String,
+    pub slow: String,
+}
+
+#[contract(id = "example.graph.join-consumer@1")]
+pub trait JoinConsumer {
+    fn run(&mut self, input: JoinRequest) -> Result<String, String>;
+}
+
 #[contract(id = "example.graph.reference-source@1")]
 pub trait ReferenceSource {
     fn run(&mut self, input: Start) -> Result<phenix_sdk::live::ValueRef<String>, String>;

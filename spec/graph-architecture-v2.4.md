@@ -708,6 +708,37 @@ separately authorized classification-aware export. Native plugins receive no
 graph callback handle through ABI 3. General classified observation remains an
 explicit gap, not an implied right granted by observing root completion.
 
+**Join continuation (27 October 2026):** Partially implemented, inspected base
+`64f6274a3ad025d1440eedd354a52d99dd0df894`, owned by the M1 roadmap V2
+continuation. This extends the supported intrinsic profile without superseding
+the target semantics. Join::All has one or more named One inputs and one `out`
+whose canonical struct fields exactly match those input names and schemas. It
+is explicit assembly, not implicit partial-request invocation. Its output label
+conservatively covers every input, and successful resource scopes intersect.
+
+An unreachable required input is diagnosed as dormant. Otherwise disjoint
+source sets and direct different-case outputs of the same Switch reject as
+`UnsatisfiableJoin`. Direct same-source fanout can be proved satisfiable;
+unproven composed paths report deterministic `Satisfiability::Unknown` and still
+settle through runtime closure. No general predicate solver is implied.
+
+Required closure makes the Join permanently non-runnable immediately. Existing
+success payloads are released and late successes dropped, while terminal edge
+bookkeeping remains until all candidates settle. A late active failure wins
+over ordinary closure. Neither closure nor payload release cancels a pending
+producer. Acceptance includes native pending fan-in, typed field assembly,
+closed-plus-late-failure and closed-plus-late-success without consumer execution,
+producer non-cancellation and physical draining, plus offline satisfiability,
+security, resource-intersection and canonical-wire negatives. Optional and
+StaticMany readiness remain unsupported; this is not full V2 or P1 acceptance.
+
+Discarding a late success performs no destination delivery: destination-resource
+denial must not turn that discard into an error. Potential-route authorization
+at compilation, producer invocation authority and producer resource accounting
+still apply; other runnable recipients independently retain their delivery
+checks. Unselected outgoing closures are resolved before selected payloads so
+same-producer closure cannot make this behavior depend on logical edge-ID order.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust
