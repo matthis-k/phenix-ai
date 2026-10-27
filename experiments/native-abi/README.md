@@ -1,6 +1,6 @@
 # Native ABI and language-adapter experiment (not the Phenix runtime)
 
-Independent Cargo workspace to evaluate **cglue 0.3.5** and **stabby 72.1.16** inside two separately compiled `cdylib` plugins. Consumers do **not** link provider implementations. Both plugins expose the **same stable `extern "C"` table**, with an opaque state handle, nested request struct, error status, destruction callback and exact ABI version/table-size/schema gates.
+Independent Cargo workspace to evaluate **cglue 0.3.5** and **stabby 72.1.16** inside two separately compiled `cdylib` plugins. Consumers do **not** link provider implementations. Both Rust plugins and the independent **C language-adapter .so** expose the **same stable `extern "C"` table**, with an opaque state handle, nested request struct, error status, destruction callback and exact ABI version/table-size/schema gates.
 
 ## Run on Linux
 
@@ -22,7 +22,7 @@ cargo check --manifest-path experiments/native-abi/Cargo.toml -p native-abi-cons
 ## What this proves / does not prove
 
 - The provider's private compiled code executes through independently loaded `.so` images.
-- Both a Rust consumer and a **real C consumer** can call the same typed, version-checked function table; this is the language-adapter neutral seam.
+- Both a Rust consumer and a **real C consumer** can call the two Rust implementations and the C adapter through the same typed, version-checked function table; this is the language-adapter neutral seam.
 - Different code generations can be loaded at once, and an old instance remains callable after its public `Generation` reference is dropped; old code remains loaded while the instance holds a library lease.
 - The native provider may use Rust-specific `cglue` or `stabby` internally; **this experiment does not claim that their generated Rust trait vtables themselves are interoperable with C**. Their vtable representation is intentionally not the portable Phenix contract.
 - No automatic execution of arbitrary untrusted plugins. No Phase P1 replacement, no production hot-swap, no authority bypass, no zero-copy guarantees beyond borrowed call-scoped inputs. The `unsafe` C ABI still needs a trusted/native loader boundary.
