@@ -7,7 +7,7 @@ use std::ffi::c_void;
 
 #[stabby::stabby(checked)]
 pub trait Compute {
-    fn compute(&mut self, input: i64) -> i64;
+    extern "C" fn compute(&mut self, input: i64) -> i64;
 }
 
 #[derive(Default)]
