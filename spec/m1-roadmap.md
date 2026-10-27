@@ -30,6 +30,26 @@ The isolated rewrite #1171 is not a replacement for the working P1 composition.
 | Sessions/frontends | Basic/P1 contracts | Working graph-v1 Basic/session/frontend path | Model-before-session control, auth restoration, graph-v2 P1 parity | #1158, #1160 -> #1161; V5 | No graph-v2 product acceptance | In progress, unmerged P1 fixes |
 | Testing | v2.4 section 9 | M1 conformance and new offline security unit tests | Native V1 and full property/negative/product gates | V0 through V7 | #1164 exact head `76fc59da16b6552373d43ff452e1de98c8f08d94` CI green; evidence stack remains unmerged | In progress |
 
+Integrated base/initial-wave scope: #1172 merged at
+`12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64` after all five exact-head flake
+shards and aggregate, official ACP SDK, cache isolation, formatting and workflow
+generation passed at `1af1abfca4cc1f9bdf8972362e05f01f22324be6`
+([matrix run](https://github.com/matthis-k/phenix-ai/actions/runs/40496223602)).
+Local Nix `m1-graph`, `m1-pending`, `m1-imports`, `basic-history-verification`
+and `basic-streaming` were rerun successfully at the actual merge commit.
+This verifies the named slice and preserved current P1 fixtures, not full V0/V1
+or graph-v2 P1 acceptance. Full local `nix flake check -L --keep-going` exceeded
+20 minutes; the completed remote matrix supplies the full-gate evidence.
+
+V2 continuation: Switch and Merge::ExactlyOne are implemented on a separate
+follow-up branch, using the same private wave/GraphExecution machinery. Native
+fixtures exercise text/unit case routing, cross-source convergence, pending
+candidate waiting, late failure precedence, multiple-value rejection and
+all-closed termination. Focused tests include direct wire negatives, whole-input
+classification, selected-resource attenuation and confidential control outcomes.
+Exact committed-head evidence and CI are required before integration; Join,
+Optional/StaticMany readiness and general classified observation remain open.
+
 Remaining architectural question: repository documents still label v2.4 a
 proposal; this implementation follows the requested target without changing
 that review status or claiming approval of unfinished interfaces. Source-ceiling

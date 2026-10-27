@@ -678,6 +678,36 @@ and effective root scope. V2 completion waits for physical drain. Trusted host
 notification is suppressed for this profile. General classified observation and
 wave inspection remain separate acceptance work.
 
+**Operator continuation (27 October 2026):** Partially implemented, inspected
+base `12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64`, owned by the M1 roadmap's V2
+slice following #1172. This extends, rather than supersedes, the initial profile;
+it does not change the target decisions or claim full V2/P1 acceptance.
+Switch has one `One in: Tagged` and exhaustive case-named outputs; payloadless
+cases emit portable unit. Merge::ExactlyOne has one `One in: T` accepting a finite
+set of candidate Flow edges and one `out: T`. Other One ports remain restricted
+to at most one candidate in this implementation profile. Every candidate must
+be terminal before Merge publishes: active failure dominates closure/values,
+zero values close, and one forwards. Multiple values violate the intrinsic
+graph constraint and cause a kernel infrastructure failure; no domain-error
+value is fabricated. Switch preserves the whole control-input security bound;
+Merge input/output bounds cover every candidate, not just the selected value.
+Forwarding retains the selected value's attenuated resource scope.
+
+Acceptance includes native text/unit routing, cross-source convergence,
+pending-candidate waiting, late failure precedence, multiple-value rejection,
+all-closed termination, and independent topology/delivery denial tests, plus
+canonical wire negatives and resource/security propagation. Join and extended
+readiness remain unsupported and full V2 acceptance remains open.
+
+`GraphExecution`, its callback, completion and pump result are privileged Rust
+control-plane APIs for the trusted root owner; they may expose classified
+success/failure and timing information. They are not a selected plugin observer
+contract. Suppressing `NodeFinished` payloads does not hide those control bits.
+Any forwarding to an untrusted observer, stream or logging sink requires a
+separately authorized classification-aware export. Native plugins receive no
+graph callback handle through ABI 3. General classified observation remains an
+explicit gap, not an implied right granted by observing root completion.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust
