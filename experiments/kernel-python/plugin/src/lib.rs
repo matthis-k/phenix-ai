@@ -52,9 +52,21 @@ impl HostBridge {
     ) -> PyResult<Py<PyAny>> {
         let current = CURRENT.with(|slot| *slot.borrow());
         let Some((id, host_ptr)) = current else {
+            HOST_FAILURE.with(|slot| {
+                *slot.borrow_mut() = Some(CallError::Kernel(Failure::new(
+                    Code::Denied,
+                    "expired Phenix host handle",
+                )));
+            });
             return Err(PyPermissionError::new_err("expired Phenix host handle"));
         };
         if id != self.id {
+            HOST_FAILURE.with(|slot| {
+                *slot.borrow_mut() = Some(CallError::Kernel(Failure::new(
+                    Code::Denied,
+                    "stale Phenix host handle",
+                )));
+            });
             return Err(PyPermissionError::new_err("stale Phenix host handle"));
         }
         if operation != "example.transform.apply@1/apply" {
