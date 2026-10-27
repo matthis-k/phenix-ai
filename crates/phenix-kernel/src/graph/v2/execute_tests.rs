@@ -1,7 +1,6 @@
 use super::*;
 use phenix_contract::Authority;
 
- 
 // Review-only complexity probe: assert that adding unrelated edges cannot
 // linearly increase inspections performed by one port-input reduction.
 #[test]
@@ -17,7 +16,8 @@ fn review_port_input_visits_only_relevant_candidates() {
             unreachable!()
         };
         to.node = "probe/unrelated".into();
-        wave.arrivals.insert(unrelated.id.clone(), Resolution::Closed);
+        wave.arrivals
+            .insert(unrelated.id.clone(), Resolution::Closed);
         wave.edges.insert(unrelated.id.clone(), unrelated);
     }
     PORT_INPUT_EDGE_VISITS.with(|visits| visits.set(0));
