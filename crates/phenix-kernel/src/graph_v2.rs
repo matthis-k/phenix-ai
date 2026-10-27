@@ -517,3 +517,145 @@ mod tests {
         assert!(PreparedFlowV2::compile_with(&graph, resolved).is_err());
     }
 }
+
+
+#[cfg(test)]
+mod live_session_handoff_tests {
+    use super::*;
+    use crate::resolve::{Composition, ScopedGrant};
+    use phenix_artifact::{digest, extract, PackageRecord};
+    use phenix_basic_shell::{Prompt, Session, SessionTurn};
+    use phenix_contract::{Authority, Portable};
+    use std::{collections::BTreeSet, fs, path::Path};
+
+    fn selected() -> Selection {
+        Selection {
+            interface: "phenix.shell.session@1".into(),
+            operation: "admit".into(),
+            provider: "phenix.shell.session".into(),
+        }
+    }
+
+    fn single_stage() -> GraphContributionV2 {
+        use phenix_basic_shell::SessionAdmit;
+        use phenix_contract::graph_v2::GraphContributionV2;
+        // Imported author-facing Graph is implemented in phenix-sdk; the
+        // kernel depends on the *same canonical* contract IR, not the SDK.
+        let graph = phenix_sdk::graph::Graph::new("phenix.shell.session");
+        build_stage(graph)
+        fn build_stage(mut graph: phenix_sdk::graph::Graph) -> GraphContributionV2 {
+            let source = graph.module("frontend", 1, |m| {
+                let source = m.source::<Prompt>("prompt", "phenix.shell.prompt")?;
+                m.exit("submitted", source)
+            }).unwrap();
+            let session = graph.module("session", 1, |m| {
+                let operation = m.invoke::<SessionAdmit>("admit")?;
+                m.entry("prompt", operation.input())?;
+                m.exit("turn", operation.ok())
+            }).unwrap();
+            graph.flow(
+                source.output::<Prompt>("submitted").unwrap(),
+                session.input::<Prompt>("prompt").unwrap(),
+            );
+            graph.finish().unwrap()
+        }
+    }
+
+    /// An explicit test-only trust root; never used for mutable production
+    /// packages. The native ELF and embedded metadata are independently checked.
+    fn packaged_session(native: &Path) -> String {
+        let image = fs::read(native).unwrap();
+        let descriptor = extract(&image).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "phenix-native-graph-v2-session-{}", std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("session.so"), &image).unwrap();
+        fs::write(path.join("descriptor.bin"), &descriptor).unwrap();
+        let record = PackageRecord {
+            format: "phenix.native-package.v2".into(),
+            artifact: "session.so".into(),
+            descriptor: "descriptor.bin".into(),
+            target: "x86_64-unknown-linux-gnu".into(),
+            artifact_sha256: digest(&image),
+            descriptor_sha256: digest(&descriptor),
+        };
+        fs::write(path.join("package.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+
+    fn composition(package: String, with_graph_grant: bool) -> Composition {
+        let entry = selected();
+        let grant = |caller: &str| ScopedGrant {
+            caller: caller.into(),
+            interface: entry.interface.clone(),
+            operation: entry.operation.clone(),
+            resources: BTreeSet::new(),
+        };
+        let mut grants = vec![grant("root")];
+        if with_graph_grant {
+            grants.push(grant("phenix.shell.session"));
+        }
+        Composition {
+            format: "phenix.composition.v3".into(),
+            artifacts: vec![package],
+            definitions: Vec::new(),
+            entry: entry.clone(),
+            slots: Vec::new(),
+            grants,
+            excluded: BTreeSet::new(),
+            substitutions: Vec::new(),
+            authority: Authority {
+                operations: [entry.key()].into(),
+                resources: BTreeSet::new(),
+            },
+            resource: None,
+        }
+    }
+
+    #[test]
+    fn selected_native_session_handoff_requires_grants_and_preserves_owner_state() {
+        // Ordinary workspace tests remain portable; CI explicitly supplies
+        // the release-built fixture for this stronger native-composed gate.
+        let Ok(filename) = std::env::var("PHENIX_SESSION_FIXTURE_NATIVE") else {
+            return;
+        };
+        let package = packaged_session(Path::new(&filename));
+        let topology = single_stage();
+
+        let denied = crate::resolve::Prepared::prepare(composition(package.clone(), false))
+            .unwrap()
+            .compile_flow_v2(&topology);
+        assert!(matches!(denied, Err(Failure { code: Code::Denied, .. })));
+
+        let prepared = crate::resolve::Prepared::prepare(composition(package, true)).unwrap();
+        let selected_graph = prepared.compile_flow_v2(&topology).unwrap();
+        let kernel = prepared.load().unwrap();
+
+        for (prompt, expected_run) in [("hello", "fixture-run-1"), ("next", "fixture-run-2")] {
+            let root = kernel.admit_default_root().unwrap();
+            let result = root.run_flow_v2(
+                &selected_graph, "phenix.shell.prompt",
+                &Prompt { text: prompt.into() }.to_value(),
+            ).unwrap();
+            let (_, value) = result.terminal.iter().next().unwrap();
+            let turn = SessionTurn::from_value(value.clone()).unwrap();
+            assert_eq!(turn.session, "fixture-session-1");
+            assert_eq!(turn.run, expected_run);
+            assert_eq!(turn.text, prompt);
+            assert_eq!(result.trace.iter()
+                .filter(|step| step.kind == TraceKindV2::Handoff)
+                .count(), 1);
+            assert!(!format!("{:?}", result.trace).contains(prompt));
+        }
+        let root = kernel.admit_default_root().unwrap();
+        let result = root.run_flow_v2(
+            &selected_graph, "phenix.shell.prompt",
+            &Prompt { text: "  ".into() }.to_value(),
+        ).unwrap();
+        assert!(result.trace.iter().any(|step|
+            step.kind == TraceKindV2::InvokeDomainError
+        ));
+        assert_eq!(result.terminal.len(), 1);
+    }
+}

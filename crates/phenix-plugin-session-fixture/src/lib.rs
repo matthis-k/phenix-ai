@@ -4,6 +4,7 @@ use phenix_basic_shell::{Prompt, SessionTurn};
 #[phenix_sdk::plugin(
     id = "phenix.shell.session",
     version = "0.1.0",
+    define(phenix_basic_shell::Session),
     provide(phenix_basic_shell::Session, slot = "Session")
 )]
 mod plugin {

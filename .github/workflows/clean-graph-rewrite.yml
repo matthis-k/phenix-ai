@@ -19,10 +19,12 @@ jobs:
           components: rustfmt
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
-      - name: Test selected clean workspace
-        run: cargo test --workspace
       - name: Build native plugin fixtures
         run: cargo build --release -p phenix-plugin-model-fixture -p phenix-plugin-tool-reverse -p phenix-plugin-counter-fixture -p phenix-plugin-session-fixture
+      - name: Test selected clean workspace and native graph-v2 session handoff
+        env:
+          PHENIX_SESSION_FIXTURE_NATIVE: target/release/libphenix_plugin_session_fixture.so
+        run: cargo test --workspace
       - name: Verify four native fixture libraries
         run: |
           test -f target/release/libphenix_plugin_model_fixture.so

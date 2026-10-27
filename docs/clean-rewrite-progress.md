@@ -110,3 +110,9 @@ A new behavior-free `phenix-basic-shell` crate authors the 12-module scaffold be
 - Add `phenix-plugin-session-fixture`, a normal Rust `Sessions` domain object exposing `Session::admit` through a single annotation. The first valid prompt opens a session and a run; subsequent prompts keep the session and increment the run. Empty prompts are rejected without state changes.
 - Replace the shell's hand-written SessionAdmit marker with one shared generated operation from the actual source-owned contract. SessionTurn now carries session and run identity, so the downstream handoff does not drop it silently at the first boundary.
 - CI must test domain behavior, shared ABI signatures and four native fixtures. This remains a fixture with local sequential identities, not durable P1 session/journal/restart semantics.
+
+## 2026-10-27 R12 selected native graph-v2 gate
+
+- Build all four fixture shared libraries *before* the workspace tests. The kernel test packages the release-built session fixture, validates ELF/descriptor digests, prepares a selected composition with explicit root and plugin graph grants, compiles a one-hop graph-v2 source/module handoff and invokes the real loaded native ABI through the existing dispatcher.
+- Acceptance expectations: denied owner grant rejects at graph compilation; valid requests preserve a single native domain instance across admitted roots; empty prompt propagates as typed domain failure; trace contains no input bytes.
+- CI must be green at the exact new SHA. This gate proves a **one-hop native composed graph-v2 flow**, not the 12-stage Basic shell as a whole, nor durability/pending/cancellation.
