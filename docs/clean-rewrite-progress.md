@@ -116,3 +116,9 @@ A new behavior-free `phenix-basic-shell` crate authors the 12-module scaffold be
 - Build all four fixture shared libraries *before* the workspace tests. The kernel test packages the release-built session fixture, validates ELF/descriptor digests, prepares a selected composition with explicit root and plugin graph grants, compiles a one-hop graph-v2 source/module handoff and invokes the real loaded native ABI through the existing dispatcher.
 - Acceptance expectations: denied owner grant rejects at graph compilation; valid requests preserve a single native domain instance across admitted roots; empty prompt propagates as typed domain failure; trace contains no input bytes.
 - CI must be green at the exact new SHA. This gate proves a **one-hop native composed graph-v2 flow**, not the 12-stage Basic shell as a whole, nor durability/pending/cancellation.
+
+## 2026-10-27 R13 per-node ABI schema and trace context hardening
+
+- **Before:** graph-v2 admission validated an operation schema by finding the first graph node with its operation key, which could be incorrect when the same operation appears at multiple subgraph positions. Trace steps were payload-redacted but the completed trace lacked explicit root/wave metadata.
+- **Change:** validate *every selected invoke node* against the ABI operation schema by its exact node ID, not by operation-key coincidence. Attach admitted root ID, optional pinned generation and V0 wave number to the returned trace envelope, leaving trace entries free of payload text.
+- **Regression:** the live session fixture mutates a graph node and its public module output coherently; structural validation allows it, while selected native ABI compilation must reject it with SchemaRejected. Native roots must annotate their emitted trace envelope.

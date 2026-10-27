@@ -36,6 +36,12 @@ pub struct TraceEntryV2 {
 }
 #[derive(Debug)]
 pub struct FlowRunV2 {
+    /// Admitted native root (zero only in pure traversal unit tests).
+    pub root: u64,
+    /// Generation identity is available when the root is pinned.
+    pub generation: Option<String>,
+    /// V0 contains precisely one finite wave.
+    pub wave: u64,
     pub trace: Vec<TraceEntryV2>,
     /// Logical terminal outputs are returned to the trusted caller, not emitted
     /// as part of a trace or observation log.
@@ -199,7 +205,13 @@ impl PreparedFlowV2 {
             )?;
             emitted.insert(node.id.as_str());
         }
-        Ok(FlowRunV2 { trace, terminal })
+        Ok(FlowRunV2 {
+            root: 0,
+            generation: None,
+            wave: 0,
+            trace,
+            terminal,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -276,7 +288,7 @@ impl Prepared {
                 "graph owner is not selected",
             ));
         }
-        PreparedFlowV2::compile_with(graph, |owner, selector, key| {
+        let selected_graph = PreparedFlowV2::compile_with(graph, |owner, selector, key| {
             let provider = if selector.is_empty() {
                 owner.to_owned()
             } else {
@@ -294,48 +306,44 @@ impl Prepared {
                 operation: operation.into(),
                 provider,
             };
-            let prepared = self
+            if self
                 .operations
                 .get(&(selected.provider.clone(), key.to_owned()))
-                .ok_or_else(|| {
-                    Failure::new(Code::MissingBinding, "selected V0 operation absent")
-                })?;
-            let original = graph.nodes.iter().find(|node| {
-                matches!(&node.kind, NodeKindV2::Invoke { operation, .. } if operation == key)
-            }).ok_or_else(|| invalid("missing original V0 operation"))?;
-            if prepared.schema.request != original.inputs[0].schema
-                || prepared.schema.response
-                    != original
-                        .outputs
-                        .iter()
-                        .find(|port| port.name == "ok")
-                        .unwrap()
-                        .schema
-                || prepared.schema.error
-                    != original
-                        .outputs
-                        .iter()
-                        .find(|port| port.name == "err")
-                        .unwrap()
-                        .schema
+                .is_none()
             {
                 return Err(Failure::new(
-                    Code::SchemaRejected,
-                    "selected V0 ABI schema mismatch",
+                    Code::MissingBinding, "selected V0 operation absent",
                 ));
             }
             if !self.permits(owner, key)
-                || !self
-                    .grants
-                    .contains_key(&(owner.to_owned(), key.to_owned()))
+                || !self.grants.contains_key(&(owner.to_owned(), key.to_owned()))
             {
-                return Err(Failure::new(
-                    Code::Denied,
-                    "V0 operation lacks prepared grant",
-                ));
+                return Err(Failure::new(Code::Denied, "V0 operation lacks prepared grant"));
             }
             Ok(selected)
-        })
+        })?;
+        // Two nodes may legitimately invoke the same operation with different
+        // module positions. Validate each node against the selected ABI,
+        // never the first other node that happened to share its operation key.
+        for node in &selected_graph.plan.nodes {
+            if !matches!(node.kind, NodeKindV2::Invoke { .. }) {
+                continue;
+            }
+            let chosen = &selected_graph.selected[&node.id];
+            let prepared = self.operations.get(&(chosen.provider.clone(), chosen.key()))
+                .ok_or_else(|| Failure::new(Code::MissingBinding, "selected operation vanished"))?;
+            if prepared.schema.request != node.inputs[0].schema
+                || prepared.schema.response != node.outputs.iter()
+                    .find(|port| port.name == "ok").unwrap().schema
+                || prepared.schema.error != node.outputs.iter()
+                    .find(|port| port.name == "err").unwrap().schema
+            {
+                return Err(Failure::new(
+                    Code::SchemaRejected, "selected V0 node ABI schema mismatch",
+                ));
+            }
+        }
+        Ok(selected_graph)
     }
 }
 impl Root<'_> {
@@ -347,12 +355,15 @@ impl Root<'_> {
         event: &str,
         request: &Value,
     ) -> Result<FlowRunV2, Failure> {
-        graph.walk(event, request, |selected, value| {
+        let mut result = graph.walk(event, request, |selected, value| {
             match self.call_graph(&graph.plan.contributor, selected, value, false)? {
                 Call::Ready(result) => Ok(result),
                 Call::Pending(_) => Err(invalid("V0 cannot suspend a native invocation")),
             }
-        })
+        })?;
+        result.root = self.id;
+        result.generation = self.generation_identity().map(str::to_owned);
+        Ok(result)
     }
 }
 
@@ -645,6 +656,18 @@ mod live_session_handoff_tests {
         ));
 
         let prepared = crate::resolve::Prepared::prepare(composition(package, true)).unwrap();
+        let mut forged = topology.clone();
+        let node = forged.nodes.iter_mut()
+            .find(|node| node.id.ends_with("/session.admit")).unwrap();
+        node.outputs.iter_mut().find(|port| port.name == "ok").unwrap().schema =
+            Prompt::SCHEMA.owned().unwrap();
+        let module = forged.modules.iter_mut().find(|module| module.id == "session").unwrap();
+        module.exits[0].schema = Prompt::SCHEMA.owned().unwrap();
+        assert!(forged.normalized().is_ok());
+        assert!(matches!(
+            prepared.compile_flow_v2(&forged),
+            Err(Failure { code: Code::SchemaRejected, .. })
+        ));
         let selected_graph = prepared.compile_flow_v2(&topology).unwrap();
         let kernel = prepared.load().unwrap();
 
@@ -660,6 +683,8 @@ mod live_session_handoff_tests {
                     .to_value(),
                 )
                 .unwrap();
+            assert_eq!(result.root, root.id);
+            assert_eq!(result.wave, 0);
             let (_, value) = result.terminal.iter().next().unwrap();
             let turn = SessionTurn::from_value(value.clone()).unwrap();
             assert_eq!(turn.session, "fixture-session-1");
