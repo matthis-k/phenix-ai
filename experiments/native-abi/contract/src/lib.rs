@@ -85,6 +85,9 @@ pub fn score(request: Request) -> Result<i64, u32> {
     if request.query.len > MAX_INPUT || (request.query.len != 0 && request.query.ptr.is_null()) {
         return Err(STATUS_INVALID);
     }
+    if request.options.mode != 0 { 
+        return Err(STATUS_INVALID);
+    }
     let bytes = if request.query.len == 0 {
         &[][..]
     } else {
