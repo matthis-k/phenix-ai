@@ -394,11 +394,26 @@ fn main() {
         let mut execution = kernel
             .begin_action_scoped(ACTION, &request(input), scope.clone())
             .unwrap();
-        assert_eq!(execution.pump(|_| {}).unwrap_err().code, code, "{input}");
+        let mut settled = false;
+        for _ in 0..64 {
+            match execution.pump(|_| {}) {
+                Err(failure) => {
+                    assert_eq!(failure.code, code, "{input}: {failure}");
+                    settled = true;
+                    break;
+                }
+                Ok(GraphStatus::Pending | GraphStatus::Draining) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Ok(GraphStatus::Finished) => panic!("{input}: expected a failed graph"),
+            }
+        }
+        assert!(settled, "{input}: graph failed to finish draining");
         assert!(
             matches!(execution.completion(), Some(GraphCompletion::Failure(f)) if f.code == code)
         );
         drop(execution);
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0, "{input}");
     }
     let mut execution = kernel
         .begin_action_scoped(ACTION, &request(""), scope.clone())
