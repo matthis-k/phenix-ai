@@ -1,8 +1,15 @@
-//! Offline graph-v2 security primitives, not integrated enforcement.
+//! Bounded offline graph-v2 base declarations and security primitives.
+//!
+//! The supported profile is Source, Invoke, Constant, Flow and Order. Other
+//! intrinsic/deferred declarations are typed but explicitly rejected. Patches
+//! are empty-only. This is not full V0 or a graph compiler/runtime integration.
 //!
 //! These checks do not attest metadata, authorize delivery or reference access,
 //! grant declassification/endorsement, or wire graph-v2 into the kernel.
 use crate::{Code, Failure, Value, ValueSchema};
+
+mod declarations;
+pub use declarations::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Classification {

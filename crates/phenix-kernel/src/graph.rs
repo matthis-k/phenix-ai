@@ -1,5 +1,6 @@
 //! Offline graph composition and serial action execution through the dispatcher.
 //! The graph uses the shared DAG ordering algorithm but owns graph semantics.
+pub mod v2;
 use crate::{
     dag,
     resolve::Selection,
