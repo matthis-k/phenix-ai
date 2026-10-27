@@ -36,6 +36,17 @@ that review status or claiming approval of unfinished interfaces. Source-ceiling
 helpers require trusted callers and do not turn plugin self-description into
 authority. No graph-v1 path or persistence implementation is removed.
 
+V0 security foundation evidence: [#1172](https://github.com/matthis-k/phenix-ai/pull/1172),
+implementation commit `a9087986f366f9a7c8a77d29d199edccafb23176`.
+At that exact commit, `cargo test -p phenix-contract` passed 16 unit and four
+integration tests inside `nix develop`; warnings-denied all-target contract
+Clippy, new-module Rustfmt and
+`nix build .#checks.x86_64-linux.m1-reference-wire --no-link -L` passed.
+`devenv test` could not start because the executable is unavailable.
+`nix flake check -L` evaluated 231 checks but exceeded the local command limits
+on both attempts (200 and 600 seconds). This is not full-gate acceptance.
+Remote exact-head CI and review remain required; no merge or P1 parity is claimed.
+
 P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
 The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
 merged at `b7017042`. Its first authoritative 4×2-builder release,
