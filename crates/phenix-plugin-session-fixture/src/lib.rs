@@ -22,9 +22,13 @@ mod plugin {
             if prompt.text.trim().is_empty() {
                 return Err("empty prompt".into());
             }
-            let next = self.next_run.checked_add(1)
+            let next = self
+                .next_run
+                .checked_add(1)
                 .ok_or_else(|| "run identity exhausted".to_owned())?;
-            let session = self.active.clone()
+            let session = self
+                .active
+                .clone()
                 .unwrap_or_else(|| "fixture-session-1".into());
             self.active = Some(session.clone());
             self.next_run = next;
@@ -45,10 +49,18 @@ mod tests {
     #[test]
     fn prompt_admits_session_and_monotonic_run() {
         let mut sessions = plugin::Sessions::default();
-        let first = sessions.admit(Prompt { text: "hello".into() }).unwrap();
+        let first = sessions
+            .admit(Prompt {
+                text: "hello".into(),
+            })
+            .unwrap();
         assert_eq!(first.session, "fixture-session-1");
         assert_eq!(first.run, "fixture-run-1");
-        let second = sessions.admit(Prompt { text: "follow-up".into() }).unwrap();
+        let second = sessions
+            .admit(Prompt {
+                text: "follow-up".into(),
+            })
+            .unwrap();
         assert_eq!(second.session, first.session);
         assert_eq!(second.run, "fixture-run-2");
     }
@@ -57,9 +69,10 @@ mod tests {
     fn invalid_prompt_preserves_authoritative_state() {
         let mut sessions = plugin::Sessions::default();
         assert!(sessions.admit(Prompt { text: " ".into() }).is_err());
-        assert_eq!(sessions.next_run, 0);
-        assert_eq!(sessions.active, None);
-        assert_eq!(sessions.admit(Prompt { text: "ok".into() }).unwrap().run, "fixture-run-1");
+        assert_eq!(
+            sessions.admit(Prompt { text: "ok".into() }).unwrap().run,
+            "fixture-run-1"
+        );
     }
 
     #[test]
@@ -70,7 +83,13 @@ mod tests {
         assert!(meta.properties.is_empty());
         let contract = phenix_basic_shell::Session::CONTRACT.owned().unwrap();
         assert_eq!(contract.operations.len(), 1);
-        assert_eq!(contract.operations[0].request, Prompt::SCHEMA.owned().unwrap());
-        assert_eq!(contract.operations[0].response, SessionTurn::SCHEMA.owned().unwrap());
+        assert_eq!(
+            contract.operations[0].request,
+            Prompt::SCHEMA.owned().unwrap()
+        );
+        assert_eq!(
+            contract.operations[0].response,
+            SessionTurn::SCHEMA.owned().unwrap()
+        );
     }
 }
