@@ -76,10 +76,64 @@ mod plugin {
     }
 }
 
+/// Plugin-owned graph-v2 topology (offline V0; not yet an executable descriptor).
+/// Uses exactly the same operation markers and Portable types as the ABI.
+pub fn topology() -> Result<phenix_sdk::graph_v2::GraphContributionV2, phenix_sdk::Failure> {
+    use phenix_sdk::graph::Graph;
+
+    let mut graph = Graph::new("phenix.fixture.counter");
+    let ingress = graph.module("ingress", 1, |module| {
+        let submitted = module.source::<Increase>("submitted", "fixture.counter.submitted")?;
+        module.exit("increase", submitted)
+    })?;
+    let counter = graph.module("counter", 1, |module| {
+        let increase = module.invoke::<Counter::increase>("increase")?;
+        let read = module.invoke::<Counter::read>("read")?;
+        module.entry("increase", increase.input())?;
+        module.entry("read", read.input())?;
+        module.exit("count", increase.ok())?;
+        module.exit("snapshot", read.ok())?;
+        Ok(())
+    })?;
+    graph.flow(
+        ingress.output::<Increase>("increase")?,
+        counter.input::<Increase>("increase")?,
+    );
+    graph.finish()
+}
+
 #[cfg(test)]
 mod contract_tests {
     use super::*;
     use phenix_sdk::{ContractMetadata, Operation, Value};
+
+    #[test]
+    fn module_topology_reuses_local_operation_and_type_signatures() {
+        use phenix_sdk::graph_v2::NodeKindV2;
+
+        let graph = topology().unwrap();
+        assert_eq!(graph.modules.len(), 2);
+        assert_eq!(graph.nodes.len(), 3);
+        assert_eq!(graph.lowered_flows().unwrap().len(), 1);
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, NodeKindV2::Invoke { .. }))
+                .count(),
+            2
+        );
+        assert!(graph.nodes.iter().any(|node| {
+            matches!(
+                &node.kind,
+                NodeKindV2::Invoke { operation, .. }
+                    if operation == Counter::increase::KEY
+            )
+        }));
+        let counter = graph.modules.iter().find(|module| module.id == "counter").unwrap();
+        assert!(counter.entries.iter().any(|port| port.name == "increase"));
+        assert!(counter.exits.iter().any(|port| port.name == "count"));
+    }
 
     #[test]
     fn local_signature_generates_abi_contract_metadata() {
