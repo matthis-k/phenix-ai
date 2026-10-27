@@ -626,6 +626,58 @@ sequenceDiagram
 
 ### 5.2 Explicit graph mutation authorization
 
+#### Base-profile implementation boundary (27 October 2026)
+
+**Status:** Partially implemented, not V0 acceptance. **Inspected base:**
+`167b60eab86e1b6b140c6a5f17de5285bba3280f`. **Scope:** canonical offline
+base declarations and trusted preparation, owned by the M1 roadmap and
+[PR #1172](https://github.com/matthis-k/phenix-ai/pull/1172).
+**Supersession:** no target decisions or graph-v1 runtime behavior superseded.
+**Acceptance:** canonical/negative tests plus exact-head native V1 and existing
+P1 gates; unit tests alone do not close this boundary.
+
+The initial implementation accepts Source, Invoke, Constant, Flow and Order
+with One inputs. Other intrinsics/readiness, deferred admissions and nonempty
+patch lists reject explicitly, rather than acquiring substitute semantics.
+Declarations use the existing canonical `Value` wire format with fixed root
+fields `format`, `contributor`, `sources`, `nodes`, `edges`, `patches` and format
+`phenix.graph.v2`. Declaration and port order normalize before encoding;
+decoding rejects noncanonical order, unknown fields and discriminants.
+
+Verified native graph bytes must match their artifact owner. Trusted v2
+preparation uses the existing M1 resolver and stores the compiled plan in the
+prepared generation; the legacy preparation profile rejects v2 metadata and
+the v2 profile rejects mixed v1/v2 graph contributions until lowering is tested.
+Existing package metadata does not attest native security labels. Therefore
+the trusted host must supply exact operation/source label attestations and both
+source-owner and composition ceilings independently of authored declarations.
+Missing attestations fail closed; they are not inferred from plugin metadata.
+Declassification and endorsement are unsupported and reject in this profile.
+
+Base-edge authoring is also topology mutation: an edge contributor touching a
+foreign node needs an explicit topology authorization for that target, including
+Order edges. This is independent of selected-operation grants and exact
+endpoint-pair delivery grants. Offline authorization is only a potential-route
+check; it does not replace effective-root/resource enforcement at delivery.
+Reference delivery still cannot grant reference access.
+
+An initial graph dependency-depth cap of 256 bounds traversal of the shared DAG
+algorithm. Aggregate declaration bytes and contribution/source/node/edge counts
+are checked before resolution/traversal using existing canonical wire limits.
+These are conservative initial-profile limits, not measured P1 release defaults.
+
+The initial runtime uses the existing `GraphExecution`, admitted `Root`, selected
+dispatcher and pending tickets, with private per-edge readiness for one initial
+wave. It bounds admitted nodes at 4,096, produced/delivered values at 16,384 and
+accounted value bytes at 16 MiB per root. These limits are explicit test-profile
+backstops, not measured release defaults. Dormant inputs close; Order alone does
+not activate a node, and active Source vertices honor their Order dependencies.
+Delivery intersects trusted flow resources with inherited operation resources
+and effective root scope. V2 completion waits for physical drain. Trusted host
+`steps()` retains results; the existing payload-bearing `NodeFinished` observer
+notification is suppressed for this profile. General classified observation and
+wave inspection remain separate acceptance work.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust

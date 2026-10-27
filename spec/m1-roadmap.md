@@ -10,6 +10,56 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Graph-v2 implementation-gap matrix (27 October 2026)
+
+Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.
+This is the canonical graph-v2 gap matrix within the existing M1 tracker.
+The v2.4 target does not establish implementation or product acceptance.
+The isolated rewrite #1171 is not a replacement for the working P1 composition.
+
+| Area | Spec reference | Current code | Gap | Migration | Verification | PR/status |
+| --- | --- | --- | --- | --- | --- | --- |
+| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, artifact graph section parser | Base-profile canonical Source/Invoke/Constant/Flow/Order declarations implemented; other intrinsics, readiness, deferred and patches explicitly reject | V0, retain v1 | Canonical permutation, malformed metadata, ownership, bounds and unsupported-profile unit tests; native packaged acceptance pending | In progress |
+| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave Source/Invoke/Constant delivery implemented; multiple waves, joins and deferred admission remain absent | V0/V1 | Native initial-wave success/domain/pending/cancel/drain fixture passes locally; exact-head Nix/CI pending | In progress |
+| Graph patches | v2.4 section 4 | No v2 patch engine | Exact deterministic patch algebra and exports | V3, after V1 | No patch acceptance | Not started |
+| Security | v2.4 sections 3.4.1, 5 | Offline product lattice and `phenix-kernel/src/graph/v2.rs` trusted composition policy | Artifact ownership and selected schemas checked; independent topology/delivery grants and trusted label attestations checked offline. Runtime delivery and declassification/endorsement authorization remain absent | V0 foundation, enforce in V1 | Lattice, ceilings, references, foreign topology, delivery, label mismatch and protected constant-control negatives; native acceptance pending | In progress, not integrated |
+| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Initial-wave One inputs and bounded values/bytes/nodes implemented; general operators and deferred execution remain absent | V1/V2/V4 through existing dispatcher/tickets | Native returned-value delivery, pending-before-forwarding, no duplicates, cancellation/physical drain and narrowed delivery fixture; full gate pending | In progress |
+| SDK/macros | v2.4 section 7 | Existing M1 `Operation`, graph-v1 authoring | Typed graph/subgraph authoring and temporary lowering bridge | V5 | Existing APIs are not v2 acceptance | Not started |
+| Plugin state/exposure | Plugin state ownership | Ordinary plugin fields and M1 selected property contracts | Explicit normative opt-in publication amendment and concrete authoring trials | Preserve private ownership; no global state registry | No new exposure acceptance | Not started |
+| Providers/auth | Provider responsibility audit | Existing selected provider contracts/runtime | Consolidate stacked shared-host lineage and auth parity | #1139-#1156; reconcile #1143/#1145, do not combine competing #1136 auth | Refresh each exact-head product gate before integration | In progress, unmerged stack |
+| Sessions/frontends | Basic/P1 contracts | Working graph-v1 Basic/session/frontend path | Model-before-session control, auth restoration, graph-v2 P1 parity | #1158, #1160 -> #1161; V5 | No graph-v2 product acceptance | In progress, unmerged P1 fixes |
+| Testing | v2.4 section 9 | M1 conformance and new offline security unit tests | Native V1 and full property/negative/product gates | V0 through V7 | #1164 exact head `76fc59da16b6552373d43ff452e1de98c8f08d94` CI green; evidence stack remains unmerged | In progress |
+
+Remaining architectural question: repository documents still label v2.4 a
+proposal; this implementation follows the requested target without changing
+that review status or claiming approval of unfinished interfaces. Source-ceiling
+helpers require trusted callers and do not turn plugin self-description into
+authority. No graph-v1 path or persistence implementation is removed.
+
+V0 security foundation evidence: [#1172](https://github.com/matthis-k/phenix-ai/pull/1172),
+implementation commit `a9087986f366f9a7c8a77d29d199edccafb23176`.
+At that exact commit, `cargo test -p phenix-contract` passed 16 unit and four
+integration tests inside `nix develop`; warnings-denied all-target contract
+Clippy, new-module Rustfmt and
+`nix build .#checks.x86_64-linux.m1-reference-wire --no-link -L` passed.
+`devenv test` could not start because the executable is unavailable.
+`nix flake check -L` evaluated 231 checks but exceeded the local command limits
+on both attempts (200 and 600 seconds). This is not full-gate acceptance.
+Remote exact-head CI and review remain required; no merge or P1 parity is claimed.
+
+Base-plan milestone: `c11fe1a226a24b529a45366a5b170b21a722dcfb`.
+Native delivery milestone: `72933c2a28f202bbd9234c1f42a619f5f7dbe057`.
+At the latter exact commit, focused contract/artifact/kernel tests (25 + 2 + 36
+unit tests and four contract integration tests), warnings-denied Clippy and
+workspace formatting passed. Nix `m1-graph` passed the existing native graph-v1
+suite plus the initial-wave v2 fixture. Nix `m1-pending`, `m1-imports`,
+`basic-history-verification` and `basic-streaming` also passed. The product checks
+prove preserved current P1 behavior in their selected fixture scope, not v2 P1
+parity. Follow-up native tests cover authorized reference delivery with denied
+dereference and kernel failure remaining outside domain `err` routing; their
+exact committed-head verification is recorded in #1172. Full V0/V1 acceptance,
+classified observation, later operators/waves and product migration remain open.
+
 P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
 The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
 merged at `b7017042`. Its first authoritative 4×2-builder release,
