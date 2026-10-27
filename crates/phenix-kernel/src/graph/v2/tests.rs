@@ -311,6 +311,22 @@ fn join_direct_switch_exclusion_and_nested_unknown() {
         .unwrap_err()
         .message
         .contains("Switch case exclusion"));
+    // Review regression: a required StaticMany(min=1) on the other branch
+    // cannot coexist with the required One input in the same wave.
+    // Both candidates are *direct* mutually exclusive Switch case outputs,
+    // not an arbitrary predicate or nested Switch requiring a solver.
+    let mut required_many = d.clone();
+    readiness_join(
+        &mut required_many,
+        InputReadiness::StaticMany { min: 1, max: 1 },
+    );
+    let failure = run(&required_many, &p).expect_err(
+        "direct exclusive Switch outputs must make Join::All unsatisfiable even with required StaticMany",
+    );
+    assert!(
+        failure.message.contains("Switch case exclusion"),
+        "wrong rejection: {}", failure.message
+    );
     let mut optional = d.clone();
     readiness_join(&mut optional, InputReadiness::Optional);
     assert_eq!(
