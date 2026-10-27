@@ -73,6 +73,14 @@ A summarizer never directly changes the canonical journal. A model-produced tool
 
 Prefer a few cohesive manager plugins with small contributions over one crate per graph node. Retain one canonical implementation of each mechanism.
 
+## As-built graph-v2 execution checkpoint (2026-10-27)
+
+The empty Basic shell is now concrete: 12 typed subgraphs and three separate source events; success-path wiring has nine structural edges and a single model-result fan-out to journal and observer. Kernel `graph_v2::PreparedFlowV2` validates typed handoffs, exact-node selected ABI schemas, prepared ownership/grants, rejects multiple producers at a V0 invoke port, and routes one finite wave through the existing native dispatcher. Its `FlowRunV2` returns private terminal values separately from redacted trace entries; the envelope records admitted root, pinned generation when present, and V0 wave.
+
+**Verified native smoke test:** `phenix-plugin-session-fixture` contains ordinary stateful domain code for automatic session admission and typed errors. CI builds its ABI-3 shared library, packages and verifies it, prepares selected root and graph-owner grants and executes a graph-v2 `Source → Session` flow against the actual native plugin. Distinct roots reuse owner state within the same loaded kernel. A missing graph grant or selected ABI schema mismatch is rejected before native invocation. [Exact-head CI run](https://github.com/matthis-k/phenix-ai/actions/runs/40478042749) for `f47cd4d3621b766cbad8edacadd562a5b86a44c2` passed full clean workspace tests and four native fixture builds.
+
+**Not established:** the 12-stage graph is exercised using controlled in-process handlers, not 12 selected loaded native plugins. V0 cannot yet express conditional selection (tool call versus answer or compaction decision), fan-in joins, bounded deferred next waves, native pending/cancellation, durable session storage, production auth/model selections or UI/ACP parity. The graph topology is not yet emitted or authenticated as a self-contained offline native graph-v2 artifact descriptor. No production plugin was merged into `main`.
+
 ## Migration and test gates
 
 1. **Purge and baseline:** pinned reference branch, no old plugin crate present, small fixtures compile against SDK and public contracts. Only clean workspace Cargo tests count initially.

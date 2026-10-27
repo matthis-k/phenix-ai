@@ -1,6 +1,6 @@
 # Plugin author experience: usage-first contract
 
-**Status:** design target for the isolated graph-v2 rewrite. The current M1 SDK and two fixture plugins compile, but the graph-v2 author API and native executor described below are not complete. Latest normative graph proposal: [v2.4](../spec/graph-architecture-v2.4.md).
+**Status:** design target for the isolated graph-v2 rewrite. Domain-method macros and typed graph-v2 V0 authoring compile; selected one-wave kernel graph execution has a verified ABI-3 session-plugin handoff. Full graph-v2 artifact packaging, deferred waves and Basic/P1 parity remain incomplete. Latest normative graph proposal: [v2.4](../spec/graph-architecture-v2.4.md).
 
 ## The guiding constraint
 
@@ -182,3 +182,7 @@ Do not copy the old framework, catalog multiplexer, manual plugin wiring, graph-
 ## Non-goals for the first vertical slice
 
 No speculative fully generic workflow DSL, automatic permission widening, implicit values for missing request fields, extra graph manager plugin, second dispatcher, dynamic native Rust trait ABI, or claim that the new branch is P1-ready. `nix flake check` on the legacy product is not a clean graph-v2 acceptance test.
+
+### Native V0 checkpoint
+
+The domain-first session fixture is now a real selected native plugin, not merely a structural example. `Sessions::admit` owns its two Rust fields and exposes its operation with `#[provide(Session::admit)]`. A separately authored graph-v2 source event enters the session subgraph and the kernel verifies selection, grants, ABI schemas and effects through its single dispatcher. The emitted trace envelope includes root and wave identity and hashes, not prompt bytes. The [exact-commit CI](https://github.com/matthis-k/phenix-ai/actions/runs/40478042749) proves this one-hop native path only. The broader 12-module shell remains a typed topology and controlled-handler test fixture.
