@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
         close_loaded(bad);
     }
 
-    positive(next, "one two", 115, 2); /* old and new generations still live */
+    positive(next, "one two", 116, 2); /* old and new generations still live */
     next.destroy(next.context);
     old.destroy(old.context);
     separate.destroy(separate.context);
