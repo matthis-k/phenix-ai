@@ -67,3 +67,12 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Evidence:** `cargo fmt --all -- --check`, `cargo test --workspace`, and native fixture builds passed at `3f059c33`: [CI run](https://github.com/matthis-k/phenix-ai/actions/runs/40424288316). Earlier formatter check failed at `585cad9c` and tests failed at `52324d37`.
 - **Top-down simplification:** the public `Graph::flow` now returns `()` because the typed edge cannot fail during declaration. Module-local `flow` retains a Result for cross-owner mistakes. Stable edge IDs are derived from logical port names rather than Rust Debug output; unknown `internal` nodes return an error instead of a fabricated ID.
 - **Unverified at this update:** exact-head CI for the ergonomics follow-up; native graph-v2 invocation, selected grants, closure/wave semantics and P1 parity remain unimplemented.
+
+## 2026-10-27 R6 local source graph topology and verification
+
+- **Before:** the new Counter plugin owned its Portable types, contract operations and Rust State, but graph-v2 topology was not yet authored by that same plugin.
+- **Change:** define `topology()` within `phenix-plugin-counter-fixture` using the actual `phenix_sdk::graph::Graph` V0 authoring API. Its ingress Source, Counter module Invokes and entry/exit ports derive schemas and operation keys from local Rust types and `Counter::increase/read`. Add offline IR and lowered-flow tests.
+- **Discovered:** one test assertion required standard rustfmt wrapping. Initial CI failed at formatting, corrected in follow-up commit.
+- **Verified:** commit `6fe95f96a2532500084967c2554315f26674683d`: `cargo fmt --all -- --check`, `cargo test --workspace`, and build/existence of three native cdylibs passed in [clean Rust CI](https://github.com/matthis-k/phenix-ai/actions/runs/40425100834).
+- **Scope limit:** this is **plugin-owned graph authoring and structural validation**, not portable graph-v2 descriptor packaging, selected native Flow execution, or live P1 end-to-end acceptance. The ABI contract and private State parts have independent fixture tests.
+- **Next cycle:** derive/emit offline graph-v2 metadata from the plugin-owned topology without a manual second descriptor; then compile/admit selected operations and test root/grants/pending/cancellation and parity against the reference.

@@ -54,6 +54,6 @@ Avoid a fixed plugin count. Optimize **small author surface and clear responsibi
 
 ## Current checkpoint
 
-- **C0:** two minimal native fixtures and Cargo tests exist; native composition through the kernel is still unverified.
-- **C1:** module boundaries and graph-v2 proposals exist in the spec, but do not yet compile through the public SDK.
+- **C0:** three minimal native fixtures and Cargo tests exist; Counter owns its types, signatures and State; native composition through the kernel is still unverified.
+- **C1:** typed graph-v2 V0 module boundaries now compile through the public SDK and the Counter source, but graph descriptor embedding, authority and native graph execution are still unimplemented.
 - **C2-C6:** planned, not implemented on the clean rewrite.

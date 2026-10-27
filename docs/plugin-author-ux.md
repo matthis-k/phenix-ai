@@ -56,7 +56,7 @@ mod plugin {
 }
 ~~~
 
-This is the *implemented* contract/types/state authoring shape. The graph topology part remains *planned* until the typed graph-v2 SDK can author executable modules from the same operation markers. Do not add old graph-v1 annotations to make the example appear more complete.
+This is the **implemented contract/types/state authoring shape**. The same fixture also authors a typed graph-v2 V0 module topology in `topology()`, using the locally generated `Counter::increase` and `Counter::read` operation markers, and exposes public module ports and an internal node ID. Its source and structural schema tests pass. **The graph is not yet embedded as a native graph-v2 artifact descriptor or executed by the kernel.** Do not add old graph-v1 annotations to make the example appear more complete.
 
 For cross-plugin use, publish a single domain-owned definition source and import it through a selected contract binding. Shared Rust definitions can be packaged without copying their identity, schema or methods into a central registry. A private struct does not need to implement Portable unless it crosses a contract/graph boundary.
 
