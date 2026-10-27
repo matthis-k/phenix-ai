@@ -1,0 +1,58 @@
+name: Real kernel Python adapter conformance
+on:
+  pull_request:
+    paths:
+      - "experiments/kernel-python/**"
+      - ".github/workflows/native-python-kernel-verification.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.1"
+          components: rustfmt
+      - name: Compile Python-hosted native plugin and existing Rust provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          cargo build --manifest-path experiments/kernel-python/Cargo.toml -p phenix-python-host-fixture
+          cargo build --manifest-path examples/Cargo.toml -p example-provider
+          cargo fmt --manifest-path experiments/kernel-python/Cargo.toml --all --check
+      - name: Package both independent plugins with the real offline Phenix descriptor extractor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/phenix-python-package/lib /tmp/phenix-rust-package/lib
+          cp experiments/kernel-python/target/debug/libphenix_python_host_fixture.so /tmp/phenix-python-package/lib/plugin.so
+          cp examples/target/debug/libexample_provider.so /tmp/phenix-rust-package/lib/plugin.so
+          for pkg in /tmp/phenix-python-package /tmp/phenix-rust-package; do
+            cargo run -q --manifest-path Cargo.toml -p phenix-artifact --bin phenix-describe -- "$pkg/lib/plugin.so" "$pkg/descriptor.bin" > "$pkg/digests.json"
+            python3 - "$pkg" <<'PY'
+          import json, pathlib, sys
+          pkg = pathlib.Path(sys.argv[1])
+          digests = json.loads((pkg / "digests.json").read_text())
+          record = {
+              "format": "phenix.native-package.v2",
+              "artifact": "lib/plugin.so",
+              "descriptor": "descriptor.bin",
+              "target": "x86_64-unknown-linux-gnu",
+              **digests,
+          }
+          (pkg / "package.json").write_text(json.dumps(record, sort_keys=True))
+          PY
+          done
+      - name: Verify live selected authorization, result typing, errors and lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path experiments/kernel-python/Cargo.toml -p phenix-python-kernel-verification -- \
+            /tmp/phenix-python-package /tmp/phenix-rust-package
