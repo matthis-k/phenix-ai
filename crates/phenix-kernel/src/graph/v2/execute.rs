@@ -7,7 +7,13 @@ const MAX_ROOT_VALUES: usize = 16_384;
 const MAX_ROOT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROOT_NODES: usize = 4_096;
 
+// Review-branch-only measurement: deterministic work count, not wall-clock timing.
+#[cfg(test)]
+static PORT_INPUT_EDGE_VISITS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 enum Resolution {
     Unresolved,
     // None retains successful terminal bookkeeping only for a non-runnable consumer.
@@ -469,6 +475,8 @@ impl Wave {
         let mut failed = false;
         let mut values = Vec::new();
         for (edge, e) in &self.edges {
+            #[cfg(test)]
+            PORT_INPUT_EDGE_VISITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port) {
                 continue;
             }
