@@ -85,7 +85,7 @@ pub fn score(request: Request) -> Result<i64, u32> {
     if request.query.len > MAX_INPUT || (request.query.len != 0 && request.query.ptr.is_null()) {
         return Err(STATUS_INVALID);
     }
-    if request.options.mode != 0 { 
+    if request.options.mode != 0 {
         return Err(STATUS_INVALID);
     }
     let bytes = if request.query.len == 0 {
@@ -95,7 +95,10 @@ pub fn score(request: Request) -> Result<i64, u32> {
         unsafe { std::slice::from_raw_parts(request.query.ptr, request.query.len) }
     };
     let text = std::str::from_utf8(bytes).map_err(|_| STATUS_INVALID)?;
-    let word_count = text.split_whitespace().count().min(request.options.maximum as usize);
+    let word_count = text
+        .split_whitespace()
+        .count()
+        .min(request.options.maximum as usize);
     (word_count as i64)
         .checked_mul(request.options.multiplier)
         .ok_or(STATUS_INVALID)
@@ -113,16 +116,53 @@ mod tests {
             schema: SCHEMA_ID,
         };
         assert_eq!(validate(valid), Ok(()));
-        assert_eq!(validate(ApiHeader { version: 2, ..valid }), Err(CompatibilityError::Version));
-        assert_eq!(validate(ApiHeader { table_bytes: 1, ..valid }), Err(CompatibilityError::TableSize));
-        assert_eq!(validate(ApiHeader { schema: 0, ..valid }), Err(CompatibilityError::Schema));
+        assert_eq!(
+            validate(ApiHeader {
+                version: 2,
+                ..valid
+            }),
+            Err(CompatibilityError::Version)
+        );
+        assert_eq!(
+            validate(ApiHeader {
+                table_bytes: 1,
+                ..valid
+            }),
+            Err(CompatibilityError::TableSize)
+        );
+        assert_eq!(
+            validate(ApiHeader { schema: 0, ..valid }),
+            Err(CompatibilityError::Schema)
+        );
     }
 
     #[test]
     fn nested_request_is_bounded_and_checked() {
         let words = b"one two three";
-        let options = Options { multiplier: 5, maximum: 2, mode: 0 };
-        assert_eq!(score(Request { query: ByteSlice { ptr: words.as_ptr(), len: words.len() }, options }), Ok(10));
-        assert_eq!(score(Request { query: ByteSlice { ptr: std::ptr::null(), len: 1 }, options }), Err(STATUS_INVALID));
+        let options = Options {
+            multiplier: 5,
+            maximum: 2,
+            mode: 0,
+        };
+        assert_eq!(
+            score(Request {
+                query: ByteSlice {
+                    ptr: words.as_ptr(),
+                    len: words.len()
+                },
+                options
+            }),
+            Ok(10)
+        );
+        assert_eq!(
+            score(Request {
+                query: ByteSlice {
+                    ptr: std::ptr::null(),
+                    len: 1
+                },
+                options
+            }),
+            Err(STATUS_INVALID)
+        );
     }
 }
