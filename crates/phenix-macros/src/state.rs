@@ -274,8 +274,53 @@ pub fn expand(
             }
         }
     }
+    // Inherent #[provide] methods already identify their Rust state owner.
+    // Inferring it avoids requiring domain structs to carry a Phenix marker.
+    let mut inferred_state: Option<syn::Ident> = None;
+    for item in items.iter() {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        if !implementation.items.iter().any(|member| {
+            matches!(member, syn::ImplItem::Fn(method)
+                if method.attrs.iter().any(|attr| attr.path().is_ident("provide")))
+        }) {
+            continue;
+        }
+        let Type::Path(owner) = implementation.self_ty.as_ref() else {
+            return Err(syn::Error::new(
+                implementation.self_ty.span(),
+                "exported methods require a local nominal state type",
+            ));
+        };
+        let Some(name) = owner.path.get_ident() else {
+            return Err(syn::Error::new(
+                owner.span(),
+                "exported methods require a simple local state type",
+            ));
+        };
+        if let Some(previous) = &inferred_state {
+            if previous != name {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "multiple exported state owners; use one domain owner or separate plugins",
+                ));
+            }
+        } else {
+            inferred_state = Some(name.clone());
+        }
+    }
+    if let (Some(explicit), Some(inferred)) = (&selected_state, &inferred_state) {
+        if explicit != inferred {
+            return Err(syn::Error::new(
+                inferred.span(),
+                "explicit state owner disagrees with exported methods",
+            ));
+        }
+    }
     let state_ident = selected_state
         .clone()
+        .or(inferred_state)
         .unwrap_or_else(|| syn::Ident::new("State", module.ident.span()));
     if selected_state.is_some()
         && items.iter().any(|item| {
@@ -841,7 +886,6 @@ mod domain_method_tests {
         let module: ItemMod = syn::parse_quote! {
             mod plugin {
                 #[derive(Default)]
-                #[state]
                 struct Counter { value: u64 }
 
                 impl Counter {
@@ -875,6 +919,56 @@ mod domain_method_tests {
         assert!(generated.contains("let state = Counter :: default"));
         assert!(generated.contains("state : Counter"));
         assert!(!generated.contains("struct State"));
+    }
+
+    #[test]
+    fn inferred_state_owner_needs_no_annotation() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct Meter { total: u64 }
+                impl Meter {
+                    #[provide(MeterApi::add)]
+                    fn add(&mut self, by: u64) -> u64 {
+                        self.total += by;
+                        self.total
+                    }
+                }
+            }
+        };
+        let generated = expand(
+            quote!(id = "test.meter", provide(MeterApi, slot = "Meter")),
+            module,
+        )
+        .unwrap()
+        .to_string();
+        assert!(generated.contains("state : Meter"));
+        assert!(generated.contains("let state = Meter :: default"));
+        assert!(generated.contains("state . add (request)"));
+        assert!(!generated.contains("struct State"));
+    }
+
+    #[test]
+    fn distinct_inferred_owners_report_ambiguity() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct Left;
+                #[derive(Default)]
+                struct Right;
+                impl Left {
+                    #[provide(Api::first)]
+                    fn first(&self) -> u64 { 1 }
+                }
+                impl Right {
+                    #[provide(Api::second)]
+                    fn second(&self) -> u64 { 2 }
+                }
+            }
+        };
+        let error = expand(quote!(id = "test.domain", provide(Api, slot = "Api")), module)
+            .unwrap_err();
+        assert!(error.to_string().contains("multiple exported state owners"));
     }
 
     #[test]

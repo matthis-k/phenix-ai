@@ -32,7 +32,6 @@ mod plugin {
     use super::*;
 
     #[derive(Default)]
-    #[state]
     pub struct Counter {
         value: u64,
     }
