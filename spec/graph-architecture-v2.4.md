@@ -666,6 +666,18 @@ algorithm. Aggregate declaration bytes and contribution/source/node/edge counts
 are checked before resolution/traversal using existing canonical wire limits.
 These are conservative initial-profile limits, not measured P1 release defaults.
 
+The initial runtime uses the existing `GraphExecution`, admitted `Root`, selected
+dispatcher and pending tickets, with private per-edge readiness for one initial
+wave. It bounds admitted nodes at 4,096, produced/delivered values at 16,384 and
+accounted value bytes at 16 MiB per root. These limits are explicit test-profile
+backstops, not measured release defaults. Dormant inputs close; Order alone does
+not activate a node, and active Source vertices honor their Order dependencies.
+Delivery intersects trusted flow resources with inherited operation resources
+and effective root scope. V2 completion waits for physical drain. Trusted host
+`steps()` retains results; the existing payload-bearing `NodeFinished` observer
+notification is suppressed for this profile. General classified observation and
+wave inspection remain separate acceptance work.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust

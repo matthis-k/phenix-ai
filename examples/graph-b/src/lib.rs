@@ -1,4 +1,4 @@
-use example_graph_contracts::{Start, Task};
+use example_graph_contracts::{Consume, Start, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -20,12 +20,31 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
 #[plugin(
     id = "example.graph-b",
     define(Task),
+    define(Consume),
     provide(Task, slot = "task"),
+    provide(Consume, slot = "consume"),
     profile = "state",
     graph(GRAPH)
 )]
 mod provider {
     use super::*;
+    #[provide(Consume::run)]
+    fn consume(_state: &mut State, input: String) -> CallResult<String, String> {
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_B_CONSUME_WITNESS") {
+            use std::io::Write;
+            writeln!(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap(),
+                "called"
+            )
+            .unwrap();
+        }
+        Ok(format!("consumed:{input}"))
+    }
+
     #[derive(Default)]
     struct State {
         #[get(id = "result")]

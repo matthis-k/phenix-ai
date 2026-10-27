@@ -1,9 +1,10 @@
-//! Offline base-profile compilation only, not artifact graph-v2 verification or
-//! runtime admission. Supports ExternalAction, Source, Invoke, Constant, Flow and
-//! Order. No patches, declassification, endorsement, scheduler or root claims.
+//! Offline base-profile compilation and private initial-wave readiness inside
+//! the existing GraphExecution. Supports ExternalAction, Source, Invoke, Constant,
+//! Flow and Order. No patches, declassification, endorsement or alternate runtime.
 use crate::{dag, resolve::Prepared};
 use phenix_contract::{graph::v2::*, Code, Failure, OperationSchema, Value, MAX_BYTES, MAX_COUNT};
 use std::collections::{BTreeMap, BTreeSet};
+pub(super) mod execute;
 
 /// Base-profile longest Flow+Order path, counting vertices. Bounds recursion in
 /// the shared DAG sorter without changing its established deterministic order.
@@ -211,6 +212,7 @@ fn compile(
         return Err(invalid("duplicate graph-v2 contributor"));
     }
     let mut nodes = BTreeMap::new();
+    let mut actions = BTreeSet::new();
     let mut routes = BTreeMap::new();
     let mut operation_grants = BTreeMap::new();
     let mut predecessors = BTreeMap::<String, BTreeSet<String>>::new();
@@ -223,6 +225,11 @@ fn compile(
             ));
         }
         for source in &declaration.sources {
+            if let SourceKind::ExternalAction { action } = &source.kind {
+                if !actions.insert(action.clone()) {
+                    return Err(invalid("duplicate graph-v2 action"));
+                }
+            }
             if source.owner != declaration.contributor || !attested(&source.owner) {
                 return Err(denied("source package owner mismatch"));
             }

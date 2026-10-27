@@ -5,7 +5,7 @@ const PUBLIC: PortSecurity = PortSecurity {
     confidentiality: Classification::Public,
     integrity: IntegrityClass::Untrusted,
 };
-fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
+pub(super) fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
     let execution = ExecutionPolicy {
         on_domain_error: DomainErrorPolicy::RouteErr,
     };
@@ -119,7 +119,10 @@ fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
     }
     (declarations, policy)
 }
-fn run(d: &[GraphContributionV2], p: &TrustedCompositionPolicy) -> Result<CompiledGraph, Failure> {
+pub(super) fn run(
+    d: &[GraphContributionV2],
+    p: &TrustedCompositionPolicy,
+) -> Result<CompiledGraph, Failure> {
     compile(
         d,
         p,
@@ -207,6 +210,9 @@ fn order_does_not_connect_disconnected_sources() {
     let (mut d, mut p) = fixture();
     let mut independent = d[0].sources[0].clone();
     independent.id = "alpha/independent".into();
+    independent.kind = SourceKind::ExternalAction {
+        action: "independent".into(),
+    };
     p.sources.insert(independent.id.clone(), PUBLIC);
     d[0].sources.push(independent);
     let mut dormant = d[0].nodes[0].clone();
