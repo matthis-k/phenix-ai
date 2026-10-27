@@ -10,6 +10,7 @@ members = [
     "crates/phenix-plugin-tool-reverse",
     "crates/phenix-plugin-counter-fixture",
     "crates/phenix-basic-shell",
+    "crates/phenix-plugin-session-fixture",
 ]
 resolver = "2"
 

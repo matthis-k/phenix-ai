@@ -104,3 +104,9 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 ## Basic empty-subgraph composition: R10
 
 A new behavior-free `phenix-basic-shell` crate authors the 12-module scaffold before restoring domain business logic: three independent typed roots (startup, authentication, prompt), session admission, memory recall, context assembly, budget admission, model invocation, journal commit and observation. Module declarations are deliberately out of execution order. A model reply fans out to journal and observer without repeating the model node. Test assertions pin the typed module boundaries, lowered flows and rejected schema mutation. This is **offline structural** acceptance only, and deliberately not a new executor or production plugin; native selection/authority/execution tracing must be verified before declaring flow parity.
+
+## 2026-10-27 R11 first restored domain behavior
+
+- Add `phenix-plugin-session-fixture`, a normal Rust `Sessions` domain object exposing `Session::admit` through a single annotation. The first valid prompt opens a session and a run; subsequent prompts keep the session and increment the run. Empty prompts are rejected without state changes.
+- Replace the shell's hand-written SessionAdmit marker with one shared generated operation from the actual source-owned contract. SessionTurn now carries session and run identity, so the downstream handoff does not drop it silently at the first boundary.
+- CI must test domain behavior, shared ABI signatures and four native fixtures. This remains a fixture with local sequential identities, not durable P1 session/journal/restart semantics.

@@ -9,6 +9,8 @@ pub struct Prompt {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Portable)]
 pub struct SessionTurn {
+    pub session: String,
+    pub run: String,
     pub text: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Portable)]
@@ -65,12 +67,11 @@ macro_rules! shell_operation {
 }
 
 // These markers are type signatures for later domain plugins, not pretend handlers.
-shell_operation!(
-    SessionAdmit,
-    "phenix.shell.session@1/admit",
-    Prompt,
-    SessionTurn
-);
+#[phenix_sdk::contract(id = "phenix.shell.session@1")]
+pub trait Session {
+    fn admit(&mut self, prompt: Prompt) -> Result<SessionTurn, String>;
+}
+pub use Session::admit as SessionAdmit;
 shell_operation!(
     Recall,
     "phenix.shell.recall@1/search",

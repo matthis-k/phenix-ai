@@ -371,16 +371,25 @@ mod tests {
     }
     fn wrapped(key: &str, value: &Value) -> Result<Outcome, Failure> {
         let value = match value {
-            Value::Map(fields) => fields.values().next().unwrap().clone(),
+            Value::Map(fields) => fields
+                .get("text")
+                .or_else(|| fields.get("generation"))
+                .or_else(|| fields.get("provider"))
+                .ok_or_else(|| invalid("missing typed shell input field"))?
+                .clone(),
             _ => return Err(invalid("not a shell payload")),
         };
         let output = match key {
+            "phenix.shell.session@1/admit" => Value::map([
+                ("session", Value::String("fixture-session-1".into())),
+                ("run", Value::String("fixture-run-1".into())),
+                ("text", value),
+            ]),
             "phenix.shell.journal@1/commit"
             | "phenix.shell.observer@1/record"
             | "phenix.shell.auth@1/authenticate" => Value::map([("accepted", Value::Bool(true))]),
             "phenix.shell.lifecycle@1/initialize" => Value::map([("generation", value)]),
-            "phenix.shell.session@1/admit"
-            | "phenix.shell.recall@1/search"
+            "phenix.shell.recall@1/search"
             | "phenix.shell.context@1/assemble"
             | "phenix.shell.budget@1/measure"
             | "phenix.shell.model@1/complete" => Value::map([("text", value)]),
