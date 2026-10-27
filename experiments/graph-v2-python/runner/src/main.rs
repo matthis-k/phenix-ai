@@ -408,7 +408,12 @@ fn main() {
                 Ok(GraphStatus::Finished) => panic!("{input}: expected a failed graph"),
             }
         }
-        assert!(settled, "{input}: graph failed to finish draining: {} (completion: {:?})", kernel.inspect(), execution.completion());
+        assert!(
+            settled,
+            "{input}: graph failed to finish draining: {} (completion: {:?})",
+            kernel.inspect(),
+            execution.completion()
+        );
         assert!(
             matches!(execution.completion(), Some(GraphCompletion::Failure(f)) if f.code == code)
         );
