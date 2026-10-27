@@ -38,6 +38,22 @@ pub struct Observed {
     pub accepted: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Portable)]
+pub struct CompactionRequest {
+    pub context: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Portable)]
+pub struct CompactedContext {
+    pub context: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Portable)]
+pub struct ToolBatch {
+    pub calls: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Portable)]
+pub struct ToolResults {
+    pub results: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Portable)]
 pub struct AuthRequest {
     pub provider: String,
 }
@@ -96,6 +112,19 @@ shell_operation!(
     AdmittedRequest,
     Reply
 );
+shell_operation!(
+    Compact,
+    "phenix.shell.compaction@1/compact",
+    CompactionRequest,
+    CompactedContext
+);
+shell_operation!(Tools, "phenix.shell.tools@1/execute", ToolBatch, ToolResults);
+shell_operation!(
+    Reconcile,
+    "phenix.shell.reconcile@1/commit",
+    ToolResults,
+    SessionTurn
+);
 shell_operation!(Commit, "phenix.shell.journal@1/commit", Reply, Committed);
 shell_operation!(Observe, "phenix.shell.observer@1/record", Reply, Observed);
 shell_operation!(
@@ -153,6 +182,24 @@ pub fn topology() -> Result<GraphContributionV2, Failure> {
     let prompt = graph.module("frontend", 1, |module| {
         let source = module.source::<Prompt>("prompt", "phenix.shell.prompt")?;
         module.exit("submitted", source)
+    })?;
+    // These branches have stable typed interfaces but deliberately NO
+    // activation edges in V0. A future typed Switch/Deferred wave must choose
+    // their entry and reconcile effects before returning to session.
+    let _compaction = graph.module("compaction", 1, |module| {
+        let op = module.invoke::<Compact>("compact")?;
+        module.entry("request", op.input())?;
+        module.exit("context", op.ok())
+    })?;
+    let _tools = graph.module("tools", 1, |module| {
+        let op = module.invoke::<Tools>("execute")?;
+        module.entry("batch", op.input())?;
+        module.exit("results", op.ok())
+    })?;
+    let _reconcile = graph.module("reconcile", 1, |module| {
+        let op = module.invoke::<Reconcile>("commit")?;
+        module.entry("results", op.input())?;
+        module.exit("next_turn", op.ok())
     })?;
     let auth = graph.module("auth", 1, |module| {
         let op = module.invoke::<Authenticate>("authenticate")?;
@@ -221,8 +268,8 @@ mod tests {
     #[test]
     fn typed_basic_shell_preserves_subgraphs_and_exact_handoffs() {
         let plan = topology().unwrap();
-        assert_eq!(plan.modules.len(), 12);
-        assert_eq!(plan.nodes.len(), 12);
+        assert_eq!(plan.modules.len(), 15);
+        assert_eq!(plan.nodes.len(), 15);
         assert_eq!(plan.flows.len(), 9);
         assert_eq!(plan.lowered_flows().unwrap().len(), 9);
         assert_eq!(
@@ -237,7 +284,7 @@ mod tests {
                 .iter()
                 .filter(|n| matches!(n.kind, NodeKindV2::Invoke { .. }))
                 .count(),
-            9
+            12
         );
         assert!(plan
             .flows
@@ -254,6 +301,23 @@ mod tests {
             .filter(|edge| edge.from.node == "phenix.basic.shell/model.complete")
             .count();
         assert_eq!(fanout, 2);
+    }
+
+    #[test]
+    fn deferred_branches_are_inspectable_but_inactive_until_switch_exists() {
+        let plan = topology().unwrap();
+        let targets = ["compaction", "tools", "reconcile"];
+        let edges = plan.lowered_flows().unwrap();
+        for id in targets {
+            let module = plan.modules.iter().find(|module| module.id == id).unwrap();
+            assert_eq!(module.entries.len(), 1);
+            assert_eq!(module.exits.len(), 1);
+            assert_eq!(module.members.len(), 1);
+            assert!(!edges.iter().any(|edge| {
+                module.members.contains(&edge.to.node)
+                    || module.members.contains(&edge.from.node)
+            }));
+        }
     }
 
     #[test]

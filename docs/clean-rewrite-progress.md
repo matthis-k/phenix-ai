@@ -129,3 +129,9 @@ A new behavior-free `phenix-basic-shell` crate authors the 12-module scaffold be
 - **Native handoff assertions:** real ABI-3 plugin loading, selected root/grants, `Source → Session` dispatch, two distinct admitted roots sharing the instance, monotonically increasing fixture run ID, domain-error propagation, redacted digests, root/wave trace envelope, and rejection of both missing graph grant and ABI-incompatible module output.
 - **Simulation acceptance:** 12-module Basic shell exercised by same kernel graph traversal with controlled handlers for exact seven-step prompt success flow, single model-result fan-out, separate startup/auth roots, schema mismatch, ambiguous dataflow and error stop.
 - **Still blocked:** selected/native multi-module Basic composition, static graph-v2 artifact emission before dlopen, Switch/Join/Deferred, tools and compaction branches, root cancellation/pending, restart/auto-selected auth/model and ACP/Neovim parity. Only session admission domain logic has been reintroduced to the new shell; the other domain behavior remains intentionally absent.
+
+## 2026-10-27 R15 conditional/deferred domain outlines
+
+- **Before:** graph-v2 V0's shell documented conditional compaction/tool paths but did not expose their module interfaces in the inspectable plan.
+- **Change:** add typed but *unconnected* compaction, tool batch and result reconciliation subgraphs. Assert that none is accidentally activated on a prompt success wave. No branch lies about Switch/Join/Deferred support and no placeholder method performs persistence or live effects.
+- **Next:** implement selected and authorized Switch/Join/Deferred with wave/root lifetime before connecting these branches to model output and adding their business implementations.
