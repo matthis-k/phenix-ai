@@ -2,7 +2,7 @@
 //! selected native provider dispatch, verified metadata and explicit failure gates.
 use phenix_artifact::{digest, extract_graph_v2, VerifiedPackage};
 use phenix_contract::{
-    graph::v2::*, Authority, Code, ScopedRequest, Value, ValueSchema, NATIVE_SECTION_BYTES,
+    graph::v2::*, Authority, Code, OperationSchema, ScopedRequest, Value, ValueSchema, NATIVE_SECTION_BYTES,
 };
 use phenix_kernel::{
     graph::{v2::{FlowGrant, OperationSecurity, SourceOwnerPolicy, TrustedCompositionPolicy},
@@ -278,7 +278,7 @@ fn main() {
             .err().unwrap().code,
         Code::SchemaRejected,
     );
-    drop(kernel);
+    kernel.shutdown().unwrap();
     // Independent restricted composition: nested Python -> host import denied.
     let mut denied = base.clone();
     denied.grants.retain(|g| !(g.caller == PY && g.interface == "example.transform.apply@1"));
