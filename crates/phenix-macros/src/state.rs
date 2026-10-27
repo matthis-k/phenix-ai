@@ -966,8 +966,11 @@ mod domain_method_tests {
                 }
             }
         };
-        let error = expand(quote!(id = "test.domain", provide(Api, slot = "Api")), module)
-            .unwrap_err();
+        let error = expand(
+            quote!(id = "test.domain", provide(Api, slot = "Api")),
+            module,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("multiple exported state owners"));
     }
 

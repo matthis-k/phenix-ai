@@ -85,3 +85,11 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Additional checks authored:** procedural macro positive and rejection tests for domain methods, invalid receivers, wrong impl owner, async handler and duplicate `#[state]`; their exact-head result awaits CI.
 - **Ergonomics correction:** domain-focused modules and structs, without framework-mandated state/types/logic files. V2.4 D36 clarifies separation of Rust method calls from typed graph Flow edges.
 - **Next:** remove redundant explicit local interface signature repetition where safely inferable, then package plugin-authored typed graph-v2 metadata before native load; test authorized selected routing and failure paths. Do not treat runtime graph compilation as merely a proc-macro change.
+
+## 2026-10-27 R8 inferred Rust state owner
+
+- **Before:** the domain-oriented `Counter` fixture required both an inherent `#[provide]` method and a redundant `#[state]` marker on the struct.
+- **Change:** infer the plugin-owned state type from a unique local inherent `impl` exporting annotated methods. An explicit `#[state]` remains optional; multiple distinct owners reject with a specific error. Keep a legacy free-handler `State` fallback until other free handlers migrate.
+- **Fixture:** delete the Counter `#[state]` marker; retain exactly the same ABI contract, graph-v2 V0 topology and Rust behavior.
+- **Testing:** added macro expansion and ambiguity tests; the initial run failed Rust formatting on one assertion before tests. The corrected commit must be verified independently.
+- **Limit:** native graph-v2 execution and packaging are still absent. State inference is authoring ergonomics, not an extension of native state lifetime or graph authority.

@@ -39,7 +39,6 @@ mod plugin {
     use super::*;
 
     #[derive(Default)]
-    #[state]
     pub struct Counter { value: u64 }
 
     impl Counter {
@@ -61,7 +60,9 @@ mod plugin {
 }
 ~~~
 
-This is **implemented** through a plugin module macro that recognizes `#[state]` on a domain struct and `#[provide(...)]` on its inherent methods. The original Rust methods remain callable in ordinary tests. The macro creates native ABI handler wrappers, metadata and typed port signatures. The domain struct need not be named `State` or moved into a separate `state.rs` file.
+This is **implemented** through a plugin module macro that infers its state owner from a unique inherent `impl` containing `#[provide(...)]` methods. The original Rust methods remain callable in ordinary tests. The macro creates native ABI handler wrappers, metadata and typed port signatures. The domain struct needs neither a `#[state]` marker nor a conventional `State` name or file. An explicit `#[state]` is optional; multiple independently exported state owners currently reject, rather than being silently combined.
+
+**State ownership inference:** ordinary annotated inherent methods select one local Rust owner automatically. A plugin with no stateful handlers needs no state declaration. The default construction mechanism currently requires the owner to implement `Default`. Plugins that export unrelated methods from multiple owners require an explicit composition design; the current macro gives a targeted ambiguity error, not a guessed owner. `#[state]` remains an optional compatibility/override annotation, not the standard authoring path.
 
 **Graph/dataflow is the remaining authoring integration:** describe selected edges and module exports declaratively, referring to these same contract method markers and inferred request/response/error types. Prefer simple typed `graph.flow(a.ok(), b.input())` authoring for nontrivial graphs and proc-macro packaging of that authored topology. Do not make authors repeat schemas or write a second ABI descriptor. A connection is not evidence of permission, a scheduling order, or a stream grant. The compiler must still validate selection, labels, joins, finite waves and patches. Offline typed graph-V0 authoring works today; embedding an offline graph-v2 descriptor and native execution remain separate unimplemented gates.
 

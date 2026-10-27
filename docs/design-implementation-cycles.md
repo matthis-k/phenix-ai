@@ -22,7 +22,7 @@ Start from one plugin-owned contract and its request/response/error structs. Der
 
 ### Ergonomics feedback from the domain fixture
 
-Do not mistake four *things a plugin can own* for four source-file layers. The domain must still make sense if Phenix is not present. Use ordinary structs and inherent methods. Phenix `#[state]` marks the owner and `#[provide]` marks exported methods; domain algorithms remain callable in standard Rust tests. Explicit public contract traits are presently necessary when defining a shared signature and are a remaining duplication target. The dataflow macro/metadata bridge must consume the generated operation markers and port schemas, rather than rediscovering domain structs from arbitrary method calls.
+Do not mistake four *things a plugin can own* for four source-file layers. The domain must still make sense if Phenix is not present. Use ordinary structs and inherent methods. Phenix infers a unique state owner from inherent methods marked `#[provide]`, so `#[state]` is not required; domain algorithms remain callable in standard Rust tests. Explicit public contract traits are presently necessary when defining a shared signature and are a remaining duplication target. The dataflow macro/metadata bridge must consume the generated operation markers and port schemas, rather than rediscovering domain structs from arbitrary method calls.
 
 ## Phase B: bottom up, build only what's needed
 
