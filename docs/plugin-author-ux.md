@@ -8,6 +8,58 @@ A domain plugin declares **what it uniquely owns**, not how the kernel registers
 
 A graph module is a collection of nodes with a **small stable public interface**. Its internal nodes remain inspectable and patchable for advanced users. An interface is not a capability grant or another runtime executor.
 
+### Four plugin-owned source parts
+
+A self-contained plugin may declare **graph topology, private Rust State, contract operation signatures, and domain type definitions**. The SDK derives ABI-3 entrypoints, canonical contract descriptors, portable serialization and future graph-v2 port metadata from those declarations. These four roles must not become four plugin frameworks or require repeated author-written schemas.
+
+An executable source-owned example is checked in at `crates/phenix-plugin-counter-fixture/src/lib.rs`. Its entire domain type and signature definition is local:
+
+~~~rust
+#[derive(phenix_sdk::Portable)]
+pub struct Increase { pub by: u64 }
+#[derive(phenix_sdk::Portable)]
+pub struct CounterValue { pub value: u64 }
+#[derive(phenix_sdk::Portable)]
+pub enum CounterError { Overflow }
+
+#[phenix_sdk::contract(id = "fixture.counter@1")]
+pub trait Counter {
+    fn increase(&mut self, change: Increase) -> Result<CounterValue, CounterError>;
+    fn read(&self) -> Result<CounterValue, CounterError>;
+}
+
+#[phenix_sdk::plugin(
+    id = "phenix.fixture.counter",
+    version = "1.0.0",
+    define(Counter),
+    provide(Counter, slot = "Counter")
+)]
+mod plugin {
+    use super::*;
+    #[derive(Default)]
+    pub struct State { value: u64 }
+
+    #[provide(Counter::increase)]
+    fn increase(state: &mut State, change: Increase)
+        -> Result<CounterValue, CounterError>
+    {
+        let value = state.value.checked_add(change.by)
+            .ok_or(CounterError::Overflow)?;
+        state.value = value;
+        Ok(CounterValue { value })
+    }
+
+    #[provide(Counter::read)]
+    fn read(state: &mut State) -> CounterValue {
+        CounterValue { value: state.value }
+    }
+}
+~~~
+
+This is the *implemented* contract/types/state authoring shape. The graph topology part remains *planned* until the typed graph-v2 SDK can author executable modules from the same operation markers. Do not add old graph-v1 annotations to make the example appear more complete.
+
+For cross-plugin use, publish a single domain-owned definition source and import it through a selected contract binding. Shared Rust definitions can be packaged without copying their identity, schema or methods into a central registry. A private struct does not need to implement Portable unless it crosses a contract/graph boundary.
+
 ### Target author-facing examples
 
 These are *illustrative desired call sites*, not implemented macros:
@@ -54,7 +106,7 @@ graph.patch("my-ranker")
 
 No author writes a manual native ABI table, operation codec, singleton catalog, cross-plugin mutex, session bootstrap, callback poller, graph wave scheduler, or infrastructure-specific event dispatcher.
 
-### Three types of contribution, not three runtimes
+### Three contribution roles within one plugin, not separate runtimes
 
 | Kind | Plugin author supplies | Shared machinery supplies |
 | --- | --- | --- |

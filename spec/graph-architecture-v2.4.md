@@ -42,6 +42,7 @@
 | D32 | A mandatory hard-budget claim is a composition acceptance constraint | Unmediated cost effects invalidate any hard-enforcement claim |
 | D33 | Graph modules expose stable typed entry/exit interfaces while leaving their internal nodes inspectable and patchable | Ordinary composition stays simple without removing advanced customization |
 | D34 | Module boundaries are compile-time metadata; editing an internal node requires ordinary graph mutation authority and exact preconditions | No second scheduler, hidden plugin state, or authority bypass |
+| D35 | Plugin packages own authored graph topology, private State, domain type definitions and provided/required operation signatures; SDK generates matching portable ABI and contract metadata from their source | Single source of truth, no hand-synchronized schemas or registries |
 
 ### 0.1 Historical implementation snapshot (25 October 2026; verify against current code)
 
@@ -96,6 +97,32 @@ flowchart TB
 | `phenix-kernel::graph::execute` | Root/activation-local values, readiness, switch/join/merge, pending lifecycle | Plugin business state |
 | `phenix-kernel::runtime` | ABI 3 selected invocation, root authority, cancellation, physical lease safety | Interpreting agent/model provider responses |
 | Native plugins | Contract handlers and private Rust state | Other plugins' state or kernel scheduling |
+
+### 1.2 Self-contained plugin authoring
+
+A plugin package owns **four concerns**: authored graph topology; authoritative internal state (if stateful); provided and required type signatures; and the domain-specific type definitions used by those signatures. They belong to one cohesive source package and may be split across Rust source files for readability. They are not four separate plugins or kernel subsystems.
+
+The source types are canonical. `Portable` derives portable schemas and encoding. `#[contract]` derives operation markers, request/response/error schemas and contract signatures. `#[plugin]` derives offline metadata, provide/require bindings and the ABI-3 invocation table. The planned typed graph authoring API must reuse those exact contract markers, schemas and owned handler identities, not retype the fields or maintain a parallel descriptor. An author should never hand-write ABI structs, value codecs, operation routing tables or duplicate contract schemas.
+
+**The plugin defines what crosses the ABI; the SDK owns how.** All plugins share M1's wire format, authority, selected invocation and lifecycle mechanisms. A plugin's contract definitions are portable and inspectable before native loading. Private Rust State stays authoritative inside its owner; an exposed property is a checked observation, and durable storage is a persistence mechanism, not a substitute source of truth.
+
+Domain contracts may be consumed by other plugins through selected, granted imports. A shared interface should have one source owner, with a reusable definitions-only crate or derived metadata view when necessary. That is distribution of a plugin-owned signature, not a second source of the same type. Importing a type never grants its provider, invokes its operation or shares its State.
+
+Suggested source layout, optional for small plugins:
+
+~~~text
+plugin-memory/
+  src/lib.rs          plugin declaration
+  src/types.rs        domain types and portable definitions
+  src/contracts.rs    exported/imported operation signatures
+  src/state.rs        private Rust state and transitions
+  src/graph.rs        typed module topology with public ports and patchable internals
+  src/logic.rs        domain algorithms
+~~~
+
+A stateless one-operation plugin can use one file. A declaration-only plugin may omit native handlers and State. Complex modules can expose stable interface ports while preserving patchable internals. In all cases, topology remains authored by plugins; the kernel only composes, verifies and executes it.
+
+**Acceptance:** a plugin defining its own contract and types generates the exact ABI descriptor; signatures round-trip through Portable; handler state remains private; failed transitions leave owner state unchanged; duplicate or incompatible declarations reject before loading; native selected invocation and typed graph topology each have independent integration tests. The counter fixture on the rewrite proves the first group once its CI passes; it does not yet prove graph-v2 execution.
 
 ## 2. Data model — authored graph and compiled plan
 

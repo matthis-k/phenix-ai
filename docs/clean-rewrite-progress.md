@@ -49,3 +49,12 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Domain logic:** port algorithmic pieces from the reference as needed; do not retain its framework or import the retired crates for convenience.
 - **Verification:** Git tree purge verified by diff; compiling tests for this exact commit are initially not run. The legacy flake remains intentionally incompatible with this rewrite.
 - **Next:** implement only the canonical graph-v2 minimal module/Flow authoring slice and run author-facing fixture tests, then native selected dispatch.
+
+
+## 2026-10-27 R5 source-owned types, signatures and State
+
+- **Before:** two clean fixtures depended on externally defined P1 contracts and did not demonstrate locally owned ABI contract/types with private Rust State.
+- **Design:** graph architecture v2.4 D35 and §1.2 establish one plugin as owner of topology, private State, operation signatures and domain types. Generated ABI and contract metadata reuse those declarations; no duplicate author-facing schemas.
+- **Implementation:** counter fixture with local Portable request/response/error, two contract operations, private State, atomic checked transition and generated native metadata; Cargo and native CI updated to include three fixtures.
+- **Verification:** first clean CI run failed at Rust formatting before tests; format corrected in next commit. Exact-head unit/build and native ABI invocation outcomes must be recorded separately.
+- **Remaining:** no compiling graph-v2 topology declaration from plugin-owned operations, no native composed graph test, no P1 equivalence.

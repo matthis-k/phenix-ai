@@ -16,6 +16,10 @@ Start from what a plugin author or a graph consumer types. Define its public por
 | C5 | Memory and compaction module attachment | Verified retrieval; changed candidate admitted after CAS+remeasure | Evidence and checkpoints, meter |
 | C6 | Advanced internal graph patch without public API break | Exact precondition and authority checks, traceable patch | Offline patch compilation and provenance |
 
+### C0 extension: source-owned contracts and State
+
+Start from one plugin-owned contract and its request/response/error structs. Derive Portable and operation signatures, then inspect the actual ABI metadata. Test State mutations, isolation and error atomicity. Only after this compiles should the graph authoring cycle wire the same typed contract operations into module interfaces. Do not add duplicate registry entries or author-written ABI metadata to satisfy the compiler.
+
 ## Phase B: bottom up, build only what's needed
 
 For each call site:

@@ -31,6 +31,10 @@ There is no graph-v1 compatibility promise for new plugin graph declarations. Do
 
 These are *logical graph fragments*, not a mandate for one native crate per row. Shared domain managers own their live state. Concrete declaration plugins contain only registrations; algorithm plugins implement domain-specific operations. Policy and serialization live in shared Rust libraries when useful. Storage and journals remain durable domain services, not a general plugin state replacement.
 
+## Plugin source ownership
+
+A plugin declares its own graph topology, private State, operation signatures and domain type definitions. These remain together in the owning plugin source, with ABI and contract schemas generated from that same source. Shared interfaces are published as reusable definition views rather than copied into a central domain registry. The self-contained counter fixture proves local types/signatures/state but not graph-v2 topology. See [plugin author UX](plugin-author-ux.md).
+
 ## Module interfaces and editable internals
 
 The latest target contract is [v2.4 §2.4 and §7.4](../spec/graph-architecture-v2.4.md): each logical module declares stable typed Entry/Exit ports for ordinary composition. Internal nodes and logical edges remain inspectable and explicitly patchable under normal graph mutation and flow authorization. Module interfaces are compile-time boundaries, not additional native plugins, roots, or schedulers. Advanced patches pin the module revision and targeted topology. Changes to internals preserve exported types/security and must pass behavioral parity tests.
@@ -64,7 +68,7 @@ A summarizer never directly changes the canonical journal. A model-produced tool
 - `crates/phenix-kernel/`: the sole graph compiler, scheduler, dispatcher, authority and generation manager.
 - `crates/phenix-sdk/` and `crates/phenix-macros/`: generated typed declarations; no domain registry.
 - `crates/phenix-basic-contracts/`: existing typed Model/Tools/Session compatibility baseline for small verification fixtures.
-- `crates/phenix-plugin-model-fixture/` and `crates/phenix-plugin-tool-reverse/`: first small, credential-free test plugins. Neither is in a production composition.
+- `crates/phenix-plugin-model-fixture/` and `crates/phenix-plugin-tool-reverse/`: small credential-free test plugins. The source-owned counter fixture is also test-only, and no fixture is in a production composition.
 - Future domain managers and policies are added only when a native graph composition can exercise them.
 
 Prefer a few cohesive manager plugins with small contributions over one crate per graph node. Retain one canonical implementation of each mechanism.

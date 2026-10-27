@@ -6,5 +6,6 @@ Target: [graph architecture v2.4](spec/graph-architecture-v2.4.md). Start with t
 
 - [Architecture and domain graph layout](docs/clean-graph-plan.md)
 - [Implementation and verification ledger](docs/clean-rewrite-progress.md)
+- [Self-contained plugin author UX](docs/plugin-author-ux.md)
 
-Initial Cargo workspace contains only kernel/ABI/SDK/contracts and two minimal test plugins. Legacy Nix product wiring is intentionally pending replacement; do not deploy this branch to Neovim.
+Initial Cargo workspace contains only kernel/ABI/SDK/contracts and three minimal test plugins. Legacy Nix product wiring is intentionally pending replacement; do not deploy this branch to Neovim.
