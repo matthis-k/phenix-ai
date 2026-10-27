@@ -325,7 +325,8 @@ fn join_direct_switch_exclusion_and_nested_unknown() {
     );
     assert!(
         failure.message.contains("Switch case exclusion"),
-        "wrong rejection: {}", failure.message
+        "wrong rejection: {}",
+        failure.message
     );
     let mut optional = d.clone();
     readiness_join(&mut optional, InputReadiness::Optional);
