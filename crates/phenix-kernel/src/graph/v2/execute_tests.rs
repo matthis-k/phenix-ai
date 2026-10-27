@@ -1,6 +1,67 @@
 use super::*;
 use phenix_contract::Authority;
 
+ 
+// Review-only complexity probe: assert that adding unrelated edges cannot
+// linearly increase inspections performed by one port-input reduction.
+#[test]
+fn review_port_input_visits_only_relevant_candidates() {
+    let (declarations, policy) = super::super::tests::join_fixture();
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let template = wave.edges["alpha/a"].clone();
+    for index in 0..128 {
+        let mut unrelated = template.clone();
+        unrelated.id = format!("probe/irrelevant-{index}");
+        let EdgeKind::Flow { to, .. } = &mut unrelated.kind else {
+            unreachable!()
+        };
+        to.node = "probe/unrelated".into();
+        wave.arrivals.insert(unrelated.id.clone(), Resolution::Closed);
+        wave.edges.insert(unrelated.id.clone(), unrelated);
+    }
+    PORT_INPUT_EDGE_VISITS.with(|visits| visits.set(0));
+    let _ = wave.port_input("alpha/merge", "left").unwrap();
+    let visits = PORT_INPUT_EDGE_VISITS.with(|visits| visits.get());
+    assert!(
+        visits <= 8,
+        "port_input inspected {visits} edges for a port with one incoming candidate"
+    );
+}
+
+// Review-only edge-diagnostic probe: an unhandled domain error should retain
+// typed causal provenance on the failed downstream Flow candidate.
+#[test]
+fn review_failed_flow_retains_domain_error_identity() {
+    let (mut declarations, policy) = super::super::tests::fixture();
+    declarations[0]
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "alpha/first")
+        .unwrap()
+        .execution
+        .on_domain_error = DomainErrorPolicy::SkipDependents;
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let distinct_cause = "domain-cause-42";
+    wave.complete(
+        &graph,
+        &scope(&["resource"]),
+        "alpha/first",
+        &Outcome::Domain(Value::String(distinct_cause.into())),
+    )
+    .unwrap();
+    assert!(matches!(
+        wave.input("beta/second").unwrap(),
+        Resolution::Failed
+    ));
+    let edge_diagnostic = format!("{:?}", wave.arrivals["alpha/next"]);
+    assert!(
+        edge_diagnostic.contains(distinct_cause),
+        "failed edge lost its domain cause: {edge_diagnostic}"
+    );
+}
+
 fn readiness_join(readiness: InputReadiness) -> CompiledGraph {
     use phenix_contract::ValueSchema;
     let (mut d, p) = super::super::tests::join_fixture();
