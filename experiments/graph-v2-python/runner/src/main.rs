@@ -313,7 +313,13 @@ fn main() {
     bad_policy.delivery.clear();
     verify_negative(base.clone(), &bad_policy, Code::Denied);
     let mut bad_policy = trusted.clone();
-    bad_policy.delivery.values_mut().next().unwrap().resources.clear();
+    bad_policy
+        .delivery
+        .values_mut()
+        .next()
+        .unwrap()
+        .resources
+        .clear();
     verify_negative(base.clone(), &bad_policy, Code::Denied);
     let mut bad_policy = trusted.clone();
     bad_policy.sources.clear();
