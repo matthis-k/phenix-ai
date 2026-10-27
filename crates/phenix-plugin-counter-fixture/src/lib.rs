@@ -34,6 +34,8 @@ mod plugin {
     #[derive(Default)]
     pub struct Counter {
         value: u64,
+        // Ordinary private domain state does not require Portable or field annotations.
+        history: std::collections::VecDeque<u64>,
     }
 
     impl Counter {
@@ -44,6 +46,7 @@ mod plugin {
                 .checked_add(change.by)
                 .ok_or(CounterError::Overflow)?;
             self.value = value;
+            self.history.push_back(value);
             Ok(CounterValue { value })
         }
 
@@ -70,8 +73,11 @@ mod plugin {
                 Err(CounterError::Overflow)
             );
             assert_eq!(state.read().value, u64::MAX);
+            assert_eq!(state.history.len(), 1);
+            assert_eq!(state.history.front(), Some(&u64::MAX));
             let other = Counter::default();
             assert_eq!(other.value, 0);
+            assert!(other.history.is_empty());
         }
     }
 }
@@ -147,6 +153,8 @@ mod contract_tests {
         assert_eq!(metadata.definitions.len(), 1);
         assert_eq!(metadata.definitions[0].contract, "fixture.counter@1");
         assert_eq!(metadata.provides.len(), 1);
+        // Unannotated instance fields never become public ABI state properties.
+        assert!(metadata.properties.is_empty());
         assert_eq!(metadata.provides[0].contract, "fixture.counter@1");
         assert_eq!(metadata.definitions[0].operations.len(), 2);
         let operation = &metadata.definitions[0].operations[0];

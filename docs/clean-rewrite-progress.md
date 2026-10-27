@@ -93,3 +93,10 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Fixture:** delete the Counter `#[state]` marker; retain exactly the same ABI contract, graph-v2 V0 topology and Rust behavior.
 - **Testing:** added macro expansion and ambiguity tests; the initial run failed Rust formatting on one assertion before tests. The corrected commit must be verified independently.
 - **Limit:** native graph-v2 execution and packaging are still absent. State inference is authoring ergonomics, not an extension of native state lifetime or graph authority.
+
+## 2026-10-27 R9 default plugin instance fields
+
+- **Intent:** instance fields on the plugin's domain owner are automatically native-private state, whether or not each field is ABI-portable; exports are method-level operations, not automatic field publication.
+- **As-built:** the current inline-module plugin macro already holds the full owner struct as the generated ABI instance; inferred-owner `Counter` has no `#[state]` and unannotated fields remain normal Rust values. Direct `#[plugin] struct` syntax is **not implemented**, because the attribute cannot inspect sibling inherent impls. No unsupported claim that it does.
+- **Test addition:** add an ordinary private `VecDeque<u64>` history field, mutate it through the domain method, check overflow atomicity and per-instance independence, and assert the generated descriptor contains no public state properties. V2.4 D38 documents the default.
+- **Verification:** exact SHA/workflow result must be checked after this commit; no graph-v2 runtime execution claimed.
