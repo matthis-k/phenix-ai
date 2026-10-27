@@ -8,6 +8,7 @@ members = [
     "crates/phenix-basic-contracts",
     "crates/phenix-plugin-model-fixture",
     "crates/phenix-plugin-tool-reverse",
+    "crates/phenix-plugin-counter-fixture",
 ]
 resolver = "2"
 

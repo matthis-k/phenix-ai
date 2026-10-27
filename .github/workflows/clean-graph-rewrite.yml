@@ -22,8 +22,9 @@ jobs:
       - name: Test selected clean workspace
         run: cargo test --workspace
       - name: Build native plugin fixtures
-        run: cargo build --release -p phenix-plugin-model-fixture -p phenix-plugin-tool-reverse
-      - name: Verify exactly two native fixture libraries
+        run: cargo build --release -p phenix-plugin-model-fixture -p phenix-plugin-tool-reverse -p phenix-plugin-counter-fixture
+      - name: Verify three native fixture libraries
         run: |
           test -f target/release/libphenix_plugin_model_fixture.so
           test -f target/release/libphenix_plugin_tool_reverse.so
+          test -f target/release/libphenix_plugin_counter_fixture.so
