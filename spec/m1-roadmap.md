@@ -47,6 +47,19 @@ Clippy, new-module Rustfmt and
 on both attempts (200 and 600 seconds). This is not full-gate acceptance.
 Remote exact-head CI and review remain required; no merge or P1 parity is claimed.
 
+Base-plan milestone: `c11fe1a226a24b529a45366a5b170b21a722dcfb`.
+Native delivery milestone: `72933c2a28f202bbd9234c1f42a619f5f7dbe057`.
+At the latter exact commit, focused contract/artifact/kernel tests (25 + 2 + 36
+unit tests and four contract integration tests), warnings-denied Clippy and
+workspace formatting passed. Nix `m1-graph` passed the existing native graph-v1
+suite plus the initial-wave v2 fixture. Nix `m1-pending`, `m1-imports`,
+`basic-history-verification` and `basic-streaming` also passed. The product checks
+prove preserved current P1 behavior in their selected fixture scope, not v2 P1
+parity. Follow-up native tests cover authorized reference delivery with denied
+dereference and kernel failure remaining outside domain `err` routing; their
+exact committed-head verification is recorded in #1172. Full V0/V1 acceptance,
+classified observation, later operators/waves and product migration remain open.
+
 P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
 The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
 merged at `b7017042`. Its first authoritative 4×2-builder release,

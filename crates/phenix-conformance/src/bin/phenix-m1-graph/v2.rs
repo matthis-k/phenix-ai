@@ -14,6 +14,8 @@ const SECOND: &str = "example.graph-b/consumer";
 const SOURCE: &str = "example.graph-a/source";
 const ACTION: &str = "example.graph.v2-submit";
 const CONSUME: &str = "example.graph.consume@1/run";
+const REFERENCE_SOURCE: &str = "example.graph.reference-source@1/run";
+const REFERENCE_CONSUMER: &str = "example.graph.reference-consumer@1/run";
 const LABEL: PortSecurity = PortSecurity {
     confidentiality: Classification::Confidential,
     integrity: IntegrityClass::Untrusted,
@@ -168,8 +170,58 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
         ("pending", true, false),
         ("domain", false, true),
         ("cancel", true, false),
+        ("reference-delivery-without-read-authority", false, false),
+        ("kernel-failure-not-domain-err", false, true),
     ] {
-        let d = declarations(slow, err);
+        let reference = name == "reference-delivery-without-read-authority";
+        let kernel_failure = name == "kernel-failure-not-domain-err";
+        let producer = if reference {
+            REFERENCE_SOURCE
+        } else if slow {
+            "example.graph.slow@1/run"
+        } else {
+            KEY
+        };
+        let consume = if reference {
+            REFERENCE_CONSUMER
+        } else {
+            CONSUME
+        };
+        let mut d = declarations(slow, err);
+        if reference {
+            // Use the actual SDK-generated selected operation schemas, never a
+            // hand-built reference or a guessed schema identity.
+            for (index, key) in [(0, producer), (1, consume)] {
+                let package = phenix_artifact::VerifiedPackage::verify_trusted_read_only(
+                    Path::new(&packages[index]),
+                )
+                .unwrap();
+                let (contract, operation) = key.rsplit_once('/').unwrap();
+                let schema = package
+                    .metadata()
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.contract == contract)
+                    .unwrap()
+                    .operations
+                    .iter()
+                    .find(|schema| schema.name == operation)
+                    .unwrap();
+                let node = &mut d[index].nodes[0];
+                node.kind = NodeKind::Invoke {
+                    selector: String::new(),
+                    operation: key.into(),
+                };
+                node.inputs[0].schema = schema.request.clone();
+                node.outputs[0].schema = schema.error.clone();
+                node.outputs[1].schema = schema.response.clone();
+                if index == 0 {
+                    assert!(matches!(schema.response, ValueSchema::Ref(_)));
+                } else {
+                    assert_eq!(schema.request, d[0].nodes[0].outputs[1].schema);
+                }
+            }
+        }
         let artifacts = packages
             .iter()
             .zip(&d)
@@ -180,11 +232,6 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             .collect();
         let result = "example.graph-a.property.result".to_owned();
         let resources = BTreeSet::from([result.clone(), "example.graph.delivery".into()]);
-        let producer = if slow {
-            "example.graph.slow@1/run"
-        } else {
-            KEY
-        };
         let set = format!(
             "{}/set",
             phenix_contract::property_contract(A, "result").unwrap()
@@ -196,14 +243,14 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
         let operations = BTreeSet::from([
             KEY.into(),
             producer.into(),
-            CONSUME.into(),
+            consume.into(),
             set.clone(),
             get.clone(),
         ]);
         let grants = [
             ("root", KEY),
             (A, producer),
-            (B, CONSUME),
+            (B, consume),
             (A, set.as_str()),
             (A, get.as_str()),
         ]
@@ -217,7 +264,11 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
                 resources: if key == set || key == get {
                     BTreeSet::from([result.clone()])
                 } else if caller == B {
-                    BTreeSet::from(["example.graph.delivery".into()])
+                    BTreeSet::from([if reference {
+                        result.clone()
+                    } else {
+                        "example.graph.delivery".into()
+                    }])
                 } else {
                     resources.clone()
                 },
@@ -243,6 +294,24 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             },
             resource: None,
         };
+        if reference {
+            assert!(composition.slots.is_empty());
+            assert!(composition
+                .grants
+                .iter()
+                .filter(|grant| grant.caller == B)
+                .all(
+                    |grant| grant.interface == "example.graph.reference-consumer@1"
+                        && grant.operation == "run"
+                ));
+            let b =
+                phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&packages[1]))
+                    .unwrap();
+            assert!(
+                b.metadata().requires.is_empty(),
+                "B must have no selected property import"
+            );
+        }
         let mut policy = TrustedCompositionPolicy::default();
         policy.topology.insert((A.into(), SECOND.into()));
         policy.source_owners.insert(
@@ -253,7 +322,7 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             },
         );
         policy.sources.insert(SOURCE.into(), LABEL);
-        for (owner, key) in [(A, producer), (B, CONSUME)] {
+        for (owner, key) in [(A, producer), (B, consume)] {
             policy.operations.insert(
                 (owner.into(), key.into()),
                 OperationSecurity {
@@ -271,7 +340,11 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
                 "in".into(),
             ),
             FlowGrant {
-                resources: BTreeSet::from(["example.graph.delivery".into()]),
+                resources: BTreeSet::from([if reference {
+                    result.clone()
+                } else {
+                    "example.graph.delivery".into()
+                }]),
                 maximum_classification: Classification::Confidential,
             },
         );
@@ -329,7 +402,9 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             authority: composition.authority.clone(),
             resource: None,
         };
-        let input = if err {
+        let input = if kernel_failure {
+            "kernel-a"
+        } else if err {
             "domain"
         } else if name == "cancel" {
             "slow-drain"
@@ -356,7 +431,38 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
                 terminals += 1;
             }
         };
-        let first = execution.pump(&mut observe).unwrap();
+        let first = execution.pump(&mut observe);
+        if kernel_failure {
+            assert_eq!(first.unwrap_err().code, Code::PluginFailed);
+            assert!(
+                matches!(execution.completion(), Some(GraphCompletion::Failure(failure))
+                if failure.code == Code::PluginFailed && failure.message == "kernel failure fixture a")
+            );
+            assert!(
+                execution.steps().is_empty(),
+                "kernel failure became a domain result"
+            );
+            assert_eq!(
+                fs::read_to_string(&consumer).unwrap_or_default(),
+                before,
+                "kernel failure invoked the err consumer"
+            );
+            assert_eq!(terminals, 1);
+            assert_eq!(kernel.inspect()["calls"], 1);
+            assert_eq!(kernel.inspect()["live_state"]["epoch"], 0);
+            assert_eq!(
+                execution
+                    .pump(|_| panic!("duplicate failure event"))
+                    .unwrap_err()
+                    .code,
+                Code::PluginFailed
+            );
+            drop(execution);
+            kernel.shutdown().unwrap();
+            cases.push(name.into());
+            continue;
+        }
+        let first = first.unwrap();
         if slow {
             assert_eq!(first, GraphStatus::Pending);
             assert!(execution.steps().is_empty());
@@ -398,6 +504,28 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             assert_eq!(execution.completion(), Some(GraphCompletion::Cancelled));
             assert!(execution.steps().is_empty());
             assert_eq!(fs::read_to_string(&consumer).unwrap_or_default(), before);
+        } else if reference {
+            assert_eq!(execution.completion(), Some(GraphCompletion::Success));
+            assert_eq!(execution.steps().len(), 2);
+            assert_eq!(execution.steps()[0].node, FIRST);
+            assert!(
+                matches!(
+                    execution.steps()[0].outcome,
+                    Outcome::Success(Value::Ref(_))
+                ),
+                "producer did not return a live reference"
+            );
+            assert_eq!(execution.steps()[1].node, SECOND);
+            assert_eq!(
+                execution.steps()[1].outcome,
+                Outcome::Success(Value::String("denied-read".into()))
+            );
+            assert_eq!(
+                fs::read_to_string(&consumer).unwrap(),
+                format!("{before}denied-read\n")
+            );
+            assert_eq!(kernel.inspect()["calls"], 2);
+            assert_eq!(kernel.inspect()["live_state"]["epoch"], 1);
         } else {
             assert_eq!(execution.steps().len(), 2);
             let produced = if err { "domain fixture" } else { input };

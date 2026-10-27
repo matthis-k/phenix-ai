@@ -1,4 +1,4 @@
-use example_graph_contracts::{Consume, Start, Task};
+use example_graph_contracts::{Consume, ReferenceConsumer, Start, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -21,13 +21,43 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     id = "example.graph-b",
     define(Task),
     define(Consume),
+    define(ReferenceConsumer),
     provide(Task, slot = "task"),
     provide(Consume, slot = "consume"),
+    provide(ReferenceConsumer, slot = "reference_consumer"),
     profile = "state",
     graph(GRAPH)
 )]
 mod provider {
     use super::*;
+    #[provide(ReferenceConsumer::run)]
+    fn reference_consumer(
+        _state: &mut State,
+        host: &live::Host<'_>,
+        input: live::ValueRef<String>,
+    ) -> CallResult<String, String> {
+        assert!(
+            matches!(
+                input.read(host),
+                Err(live::AccessError::State(ValueAccessError::Denied))
+            ),
+            "reference delivery must not grant read authority"
+        );
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_B_CONSUME_WITNESS") {
+            use std::io::Write;
+            writeln!(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap(),
+                "denied-read"
+            )
+            .unwrap();
+        }
+        Ok("denied-read".into())
+    }
+
     #[provide(Consume::run)]
     fn consume(_state: &mut State, input: String) -> CallResult<String, String> {
         if let Some(path) = std::env::var_os("PHENIX_GRAPH_B_CONSUME_WITNESS") {

@@ -85,6 +85,16 @@ pub trait Consume {
     fn run(&mut self, input: String) -> Result<String, String>;
 }
 
+#[contract(id = "example.graph.reference-source@1")]
+pub trait ReferenceSource {
+    fn run(&mut self, input: Start) -> Result<phenix_sdk::live::ValueRef<String>, String>;
+}
+
+#[contract(id = "example.graph.reference-consumer@1")]
+pub trait ReferenceConsumer {
+    fn run(&mut self, input: phenix_sdk::live::ValueRef<String>) -> Result<String, String>;
+}
+
 #[contract(id = "example.graph.slow@1")]
 pub trait SlowTask {
     fn run(&mut self, input: Start) -> Result<String, String>;
