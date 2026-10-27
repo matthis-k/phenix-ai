@@ -237,7 +237,7 @@ impl GraphContributionV2 {
         }
         let mut nodes = BTreeSet::new();
         for node in &self.nodes {
-            if !identifier(&node.id)
+            if !crate::valid_node_key(&node.id)
                 || !node.id.starts_with(&format!("{}/", self.contributor))
                 || !nodes.insert(node.id.as_str())
             {
