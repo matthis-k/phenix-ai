@@ -832,6 +832,110 @@ pub fn expand(
 }
 
 #[cfg(test)]
+mod domain_method_tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn domain_methods_generate_abi_hooks_without_free_function_wrappers() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                #[state]
+                struct Counter { value: u64 }
+
+                impl Counter {
+                    #[provide(CounterApi::increase)]
+                    fn increase(&mut self, change: u64) -> Result<u64, String> {
+                        self.value += change;
+                        Ok(self.value)
+                    }
+
+                    #[provide(CounterApi::read)]
+                    fn read(&self) -> u64 { self.value }
+                }
+            }
+        };
+        let generated = expand(
+            quote!(id = "test.counter", define(CounterApi), provide(CounterApi, slot = "Counter")),
+            module,
+        )
+        .unwrap()
+        .to_string();
+        assert!(generated.contains("struct Counter"));
+        assert!(generated.contains("impl Counter"));
+        assert!(generated.contains("__phenix_export_0"));
+        assert!(generated.contains("__phenix_export_1"));
+        assert!(generated.contains("state . increase (request)"));
+        assert!(generated.contains("state . read ()"));
+        assert!(generated.contains("let state = Counter :: default"));
+        assert!(generated.contains("state : Counter"));
+        assert!(!generated.contains("struct State"));
+    }
+
+    #[test]
+    fn inappropriate_inherent_method_exports_reject() {
+        for module in [
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    struct Other;
+                    impl Other {
+                        #[provide(CounterApi::read)]
+                        fn read(&self) -> u64 { 0 }
+                    }
+                }
+            },
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    impl Counter {
+                        #[provide(CounterApi::read)]
+                        async fn read(&self) -> u64 { 0 }
+                    }
+                }
+            },
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    impl Counter {
+                        #[provide(CounterApi::read)]
+                        fn read(self) -> u64 { 0 }
+                    }
+                }
+            },
+        ] {
+            assert!(expand(
+                quote!(id = "test.counter", provide(CounterApi, slot = "Counter")),
+                module,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn duplicate_state_owner_rejects() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                #[state]
+                struct Left;
+                #[derive(Default)]
+                #[state]
+                struct Right;
+            }
+        };
+        assert!(expand(quote!(id = "test.counter"), module).is_err());
+    }
+}
+
+#[cfg(test)]
 mod owned_state_tests {
     use super::*;
 

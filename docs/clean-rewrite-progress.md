@@ -76,3 +76,12 @@ Before advancing R1/R2 to verified, test the checked-out exact rewrite SHA; rebu
 - **Verified:** commit `6fe95f96a2532500084967c2554315f26674683d`: `cargo fmt --all -- --check`, `cargo test --workspace`, and build/existence of three native cdylibs passed in [clean Rust CI](https://github.com/matthis-k/phenix-ai/actions/runs/40425100834).
 - **Scope limit:** this is **plugin-owned graph authoring and structural validation**, not portable graph-v2 descriptor packaging, selected native Flow execution, or live P1 end-to-end acceptance. The ABI contract and private State parts have independent fixture tests.
 - **Next cycle:** derive/emit offline graph-v2 metadata from the plugin-owned topology without a manual second descriptor; then compile/admit selected operations and test root/grants/pending/cancellation and parity against the reference.
+
+## 2026-10-27 R7 domain-first Rust ergonomics
+
+- **Before:** the counter fixture used manual free-standing handler functions and a generic `State` struct, while author documentation prescribed separate `types.rs`, `state.rs` and `logic.rs` layers.
+- **Implementation:** extend `#[phenix_sdk::plugin]` parsing to accept `#[state]` on an ordinary domain struct and `#[provide]` on its inherent methods. The macro generates handlers internally using the existing ABI table; the original methods remain standard Rust. Rewrite Counter to this form.
+- **Verified checkpoint:** `657c46716132953075e70a6fd277b12f478a19ec`, [clean Rust CI](https://github.com/matthis-k/phenix-ai/actions/runs/40429667895): formatting, workspace tests, three native fixture builds passed. This confirms annotation expansion, typed contract metadata, offline graph topology tests and native cdylib compilation, **not** actual native graph-v2 dispatch.
+- **Additional checks authored:** procedural macro positive and rejection tests for domain methods, invalid receivers, wrong impl owner, async handler and duplicate `#[state]`; their exact-head result awaits CI.
+- **Ergonomics correction:** domain-focused modules and structs, without framework-mandated state/types/logic files. V2.4 D36 clarifies separation of Rust method calls from typed graph Flow edges.
+- **Next:** remove redundant explicit local interface signature repetition where safely inferable, then package plugin-authored typed graph-v2 metadata before native load; test authorized selected routing and failure paths. Do not treat runtime graph compilation as merely a proc-macro change.

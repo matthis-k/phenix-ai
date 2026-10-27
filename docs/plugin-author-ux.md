@@ -8,11 +8,11 @@ A domain plugin declares **what it uniquely owns**, not how the kernel registers
 
 A graph module is a collection of nodes with a **small stable public interface**. Its internal nodes remain inspectable and patchable for advanced users. An interface is not a capability grant or another runtime executor.
 
-### Four plugin-owned source parts
+### Domain-first Rust and thin Phenix annotations
 
-A self-contained plugin may declare **graph topology, private Rust State, contract operation signatures, and domain type definitions**. The SDK derives ABI-3 entrypoints, canonical contract descriptors, portable serialization and future graph-v2 port metadata from those declarations. These four roles must not become four plugin frameworks or require repeated author-written schemas.
+**Design domain types and behavior exactly as ordinary Rust.** Keep state and its methods together in cohesive domain structs. Split files by domain responsibility only when a domain warrants it, never to satisfy a Phenix-wide `types/state/logic` convention. Private types need no ABI annotation; public contract values use `Portable`. A contract's signature is authored once per published interface and projected to ABI-3 metadata automatically.
 
-An executable source-owned example is checked in at `crates/phenix-plugin-counter-fixture/src/lib.rs`. Its entire domain type and signature definition is local:
+This fixture implements ordinary methods, with minimal annotations for selected exports:
 
 ~~~rust
 #[derive(phenix_sdk::Portable)]
@@ -22,43 +22,52 @@ pub struct CounterValue { pub value: u64 }
 #[derive(phenix_sdk::Portable)]
 pub enum CounterError { Overflow }
 
+// Temporary explicit shared-interface signature; target is to infer it from
+// annotated methods when the plugin owns the interface.
 #[phenix_sdk::contract(id = "fixture.counter@1")]
-pub trait Counter {
+pub trait CounterApi {
     fn increase(&mut self, change: Increase) -> Result<CounterValue, CounterError>;
     fn read(&self) -> Result<CounterValue, CounterError>;
 }
 
 #[phenix_sdk::plugin(
     id = "phenix.fixture.counter",
-    version = "1.0.0",
-    define(Counter),
-    provide(Counter, slot = "Counter")
+    define(CounterApi),
+    provide(CounterApi, slot = "Counter")
 )]
 mod plugin {
     use super::*;
+
     #[derive(Default)]
-    pub struct State { value: u64 }
+    #[state]
+    pub struct Counter { value: u64 }
 
-    #[provide(Counter::increase)]
-    fn increase(state: &mut State, change: Increase)
-        -> Result<CounterValue, CounterError>
-    {
-        let value = state.value.checked_add(change.by)
-            .ok_or(CounterError::Overflow)?;
-        state.value = value;
-        Ok(CounterValue { value })
-    }
+    impl Counter {
+        #[provide(CounterApi::increase)]
+        pub fn increase(&mut self, change: Increase)
+            -> Result<CounterValue, CounterError>
+        {
+            let next = self.value.checked_add(change.by)
+                .ok_or(CounterError::Overflow)?;
+            self.value = next;
+            Ok(CounterValue { value: next })
+        }
 
-    #[provide(Counter::read)]
-    fn read(state: &mut State) -> CounterValue {
-        CounterValue { value: state.value }
+        #[provide(CounterApi::read)]
+        pub fn read(&self) -> CounterValue {
+            CounterValue { value: self.value }
+        }
     }
 }
 ~~~
 
-This is the **implemented contract/types/state authoring shape**. The same fixture also authors a typed graph-v2 V0 module topology in `topology()`, using the locally generated `Counter::increase` and `Counter::read` operation markers, and exposes public module ports and an internal node ID. Its source and structural schema tests pass. **The graph is not yet embedded as a native graph-v2 artifact descriptor or executed by the kernel.** Do not add old graph-v1 annotations to make the example appear more complete.
+This is **implemented** through a plugin module macro that recognizes `#[state]` on a domain struct and `#[provide(...)]` on its inherent methods. The original Rust methods remain callable in ordinary tests. The macro creates native ABI handler wrappers, metadata and typed port signatures. The domain struct need not be named `State` or moved into a separate `state.rs` file.
 
-For cross-plugin use, publish a single domain-owned definition source and import it through a selected contract binding. Shared Rust definitions can be packaged without copying their identity, schema or methods into a central registry. A private struct does not need to implement Portable unless it crosses a contract/graph boundary.
+**Graph/dataflow is the remaining authoring integration:** describe selected edges and module exports declaratively, referring to these same contract method markers and inferred request/response/error types. Prefer simple typed `graph.flow(a.ok(), b.input())` authoring for nontrivial graphs and proc-macro packaging of that authored topology. Do not make authors repeat schemas or write a second ABI descriptor. A connection is not evidence of permission, a scheduling order, or a stream grant. The compiler must still validate selection, labels, joins, finite waves and patches. Offline typed graph-V0 authoring works today; embedding an offline graph-v2 descriptor and native execution remain separate unimplemented gates.
+
+A cohesive plugin can be a **single Rust file**. Larger plugins should split on business/domain boundaries, e.g. `memory/recall.rs` for a recall engine with its records and methods, and `memory/evidence.rs` for evidence storage with its records and methods. A `types.rs`, `state.rs` or `logic.rs` split is never a Phenix requirement.
+
+For sharing ABI-facing contracts with other plugins, publish one source-owned interface definition or generated definitions-only dependency. Do not move all domain structs into a central global contract crate.
 
 ### Target author-facing examples
 
@@ -144,7 +153,7 @@ Every family below describes one domain owner or a replaceable concrete adapter.
 
 ### Ergonomics acceptance
 
-1. A single stateless operation needs one handler, not a manually authored State or registration table.
+1. A single stateless operation needs one ordinary function and an export annotation, not a manually authored State or registration table.
 2. A provider definition carries no transport, OAuth flow, token store or model enumeration implementation.
 3. The Basic agent loop contains policy and typed node wiring, not scheduling infrastructure or handwritten cross-plugin sync.
 4. A module author can connect two selected operations with one typed `flow` call; a consumer can connect modules without knowing any internal node IDs.

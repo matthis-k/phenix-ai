@@ -20,6 +20,10 @@ Start from what a plugin author or a graph consumer types. Define its public por
 
 Start from one plugin-owned contract and its request/response/error structs. Derive Portable and operation signatures, then inspect the actual ABI metadata. Test State mutations, isolation and error atomicity. Only after this compiles should the graph authoring cycle wire the same typed contract operations into module interfaces. Do not add duplicate registry entries or author-written ABI metadata to satisfy the compiler.
 
+### Ergonomics feedback from the domain fixture
+
+Do not mistake four *things a plugin can own* for four source-file layers. The domain must still make sense if Phenix is not present. Use ordinary structs and inherent methods. Phenix `#[state]` marks the owner and `#[provide]` marks exported methods; domain algorithms remain callable in standard Rust tests. Explicit public contract traits are presently necessary when defining a shared signature and are a remaining duplication target. The dataflow macro/metadata bridge must consume the generated operation markers and port schemas, rather than rediscovering domain structs from arbitrary method calls.
+
 ## Phase B: bottom up, build only what's needed
 
 For each call site:

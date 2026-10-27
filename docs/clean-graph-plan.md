@@ -33,7 +33,7 @@ These are *logical graph fragments*, not a mandate for one native crate per row.
 
 ## Plugin source ownership
 
-A plugin declares its own graph topology, private State, operation signatures and domain type definitions. These remain together in the owning plugin source, with ABI and contract schemas generated from that same source. Shared interfaces are published as reusable definition views rather than copied into a central domain registry. The self-contained counter fixture proves locally authored types/signatures/state **and typed V0 graph topology**, with offline validation. Portable graph-v2 artifact packaging and native graph execution remain pending. See [plugin author UX](plugin-author-ux.md).
+Plugin packages define graph topology and ABI-facing contracts, but **domain structs own their own state, types and methods as ordinary Rust**. Do not impose separate `state.rs`, `logic.rs` or `types.rs` layers. The plugin annotation marks the native owner and exports existing inherent methods; the typed graph builder consumes their generated operation signatures. The Counter fixture compiles domain-method annotations and offline typed topology. Portable graph-v2 artifact packaging and native graph execution remain pending. See [plugin author UX](plugin-author-ux.md).
 
 ## Module interfaces and editable internals
 

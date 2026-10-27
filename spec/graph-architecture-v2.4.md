@@ -43,6 +43,7 @@
 | D33 | Graph modules expose stable typed entry/exit interfaces while leaving their internal nodes inspectable and patchable | Ordinary composition stays simple without removing advanced customization |
 | D34 | Module boundaries are compile-time metadata; editing an internal node requires ordinary graph mutation authority and exact preconditions | No second scheduler, hidden plugin state, or authority bypass |
 | D35 | Plugin packages own authored graph topology, private State, domain type definitions and provided/required operation signatures; SDK generates matching portable ABI and contract metadata from their source | Single source of truth, no hand-synchronized schemas or registries |
+| D36 | Plugin source layout follows Rust domain cohesion; Phenix annotations adapt existing domain structs and methods instead of requiring distinct types/state/logic layers | Domain-first author UX, no framework-dictated files or wrappers |
 
 ### 0.1 Historical implementation snapshot (25 October 2026; verify against current code)
 
@@ -108,19 +109,9 @@ The source types are canonical. `Portable` derives portable schemas and encoding
 
 Domain contracts may be consumed by other plugins through selected, granted imports. A shared interface should have one source owner, with a reusable definitions-only crate or derived metadata view when necessary. That is distribution of a plugin-owned signature, not a second source of the same type. Importing a type never grants its provider, invokes its operation or shares its State.
 
-Suggested source layout, optional for small plugins:
+**Rust domain cohesion determines source layout**, not the plugin system. A small counter or parser can live entirely in `lib.rs`. A complex memory plugin may have `recall.rs` with a `RecallEngine` struct, its internal state, records, and methods, and `evidence.rs` with an `EvidenceStore` struct and its own records and methods. Do not prescribe `types.rs`, `state.rs`, and `logic.rs` as separate integration layers. ABI-facing contract types can live alongside the domain that publishes them, and may be exposed through a generated/reused interface crate for other plugins.
 
-~~~text
-plugin-memory/
-  src/lib.rs          plugin declaration
-  src/types.rs        domain types and portable definitions
-  src/contracts.rs    exported/imported operation signatures
-  src/state.rs        private Rust state and transitions
-  src/graph.rs        typed module topology with public ports and patchable internals
-  src/logic.rs        domain algorithms
-~~~
-
-A stateless one-operation plugin can use one file. A declaration-only plugin may omit native handlers and State. Complex modules can expose stable interface ports while preserving patchable internals. In all cases, topology remains authored by plugins; the kernel only composes, verifies and executes it.
+Ordinary inherent domain methods may be marked for Phenix runtime export. The proc macro adapts the handler, schema, metadata and ABI entrypoint without altering the method's Rust semantics. Graph topology likewise belongs to the plugin, but the graph author should connect typed operation ports, not repeat value definitions or write imperative kernel scheduling. An authored `Flow` is a typed edge, never an inferred authority grant. The graph macro/packager must preserve declared interface/internal port relationships and emit inspectable static graph metadata **before loading**. Domain methods are not implicitly graph-connected just because they call one another in Rust.
 
 **Acceptance:** a plugin defining its own contract and types generates the exact ABI descriptor; signatures round-trip through Portable; handler state remains private; failed transitions leave owner state unchanged; duplicate or incompatible declarations reject before loading; native selected invocation and typed graph topology each have independent integration tests. The counter fixture on the rewrite proves the first group once its CI passes; it does not yet prove graph-v2 execution.
 
