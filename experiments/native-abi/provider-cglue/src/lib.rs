@@ -23,7 +23,11 @@ impl Compute for PrivateState {
     }
 }
 
-unsafe extern "C" fn invoke(context: *mut c_void, request: Request, response: *mut Response) -> u32 {
+unsafe extern "C" fn invoke(
+    context: *mut c_void,
+    request: Request,
+    response: *mut Response,
+) -> u32 {
     if context.is_null() || response.is_null() {
         return STATUS_INVALID;
     }
