@@ -259,7 +259,7 @@ mod tests {
     fn a_wrong_handoff_type_fails_before_any_native_execution() {
         let plan = topology().unwrap();
         let journal = plan.modules.iter().find(|m| m.id == "journal").unwrap();
-        assert_ne!(journal.entries[0].schema, Prompt::SCHEMA.owned().unwrap());
+        assert_ne!(journal.entries[0].schema, Committed::SCHEMA.owned().unwrap());
         let mut broken = plan;
         broken
             .modules
@@ -267,7 +267,7 @@ mod tests {
             .find(|m| m.id == "journal")
             .unwrap()
             .entries[0]
-            .schema = Prompt::SCHEMA.owned().unwrap();
+            .schema = Committed::SCHEMA.owned().unwrap();
         assert!(broken.normalized().is_err());
     }
 
