@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "experiments/graph-v2-python/**"
+      - "crates/phenix-contract/**"
       - ".github/workflows/graph-v2-python-language-adapter.yml"
   workflow_dispatch:
 permissions:
@@ -25,17 +26,19 @@ jobs:
           set -euo pipefail
           python3 --version
           rustc --version
-          objcopy --version | head -1
           cargo fmt --manifest-path experiments/graph-v2-python/Cargo.toml --all --check
+          cargo test -p phenix-contract
           cargo build --manifest-path experiments/graph-v2-python/Cargo.toml --workspace
-          cargo build --manifest-path examples/Cargo.toml -p example-provider
+          cargo build --release --manifest-path experiments/graph-v2-python/Cargo.toml --workspace
+          strip --strip-all experiments/graph-v2-python/target/release/libphenix_python_host_fixture.so
+          strip --strip-all experiments/graph-v2-python/target/release/libphenix_graph_provider_fixture.so
       - name: Package both independent ABI-3 libraries using Phenix offline descriptor extractor
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/phenix-v2-python-package/lib /tmp/phenix-v2-rust-package/lib
-          cp experiments/graph-v2-python/target/debug/libphenix_python_host_fixture.so /tmp/phenix-v2-python-package/lib/plugin.so
-          cp examples/target/debug/libexample_provider.so /tmp/phenix-v2-rust-package/lib/plugin.so
+          cp experiments/graph-v2-python/target/release/libphenix_python_host_fixture.so /tmp/phenix-v2-python-package/lib/plugin.so
+          cp experiments/graph-v2-python/target/release/libphenix_graph_provider_fixture.so /tmp/phenix-v2-rust-package/lib/plugin.so
           for pkg in /tmp/phenix-v2-python-package /tmp/phenix-v2-rust-package; do
             cargo run -q --manifest-path Cargo.toml -p phenix-artifact --bin phenix-describe -- "$pkg/lib/plugin.so" "$pkg/descriptor.bin" > "$pkg/digests.json"
             python3 - "$pkg" <<'PY'

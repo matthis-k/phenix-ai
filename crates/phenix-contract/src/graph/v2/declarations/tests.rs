@@ -333,6 +333,48 @@ fn sample() -> GraphContributionV2 {
         patches: vec![],
     }
 }
+
+#[test]
+fn native_section_normalizes_frames_and_zero_pads() {
+    let graph = sample();
+    let section = graph.native_section().unwrap();
+    assert_eq!(section.len(), crate::NATIVE_SECTION_BYTES);
+    let len = u32::from_be_bytes(section[..4].try_into().unwrap()) as usize;
+    assert_eq!(
+        &section[4..4 + len],
+        graph.normalized().unwrap().encode().unwrap()
+    );
+    assert_eq!(
+        GraphContributionV2::decode(&section[4..4 + len]).unwrap(),
+        graph.normalized().unwrap()
+    );
+    assert!(section[4 + len..].iter().all(|b| *b == 0));
+    let mut permuted = graph.clone();
+    permuted.nodes.reverse();
+    permuted.edges.reverse();
+    assert_eq!(section, permuted.native_section().unwrap());
+    permuted.nodes.push(permuted.nodes[0].clone());
+    assert!(permuted.native_section().is_err());
+}
+
+#[test]
+fn native_section_rejects_valid_but_oversize_declaration() {
+    let mut graph = sample();
+    let template = graph
+        .nodes
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::Invoke { .. }))
+        .unwrap()
+        .clone();
+    for i in 0..600 {
+        let mut node = template.clone();
+        node.id = format!("demo/extra-{i:04}");
+        graph.nodes.push(node);
+    }
+    let encoded = graph.normalized().unwrap().encode().unwrap();
+    assert!(encoded.len() > crate::NATIVE_SECTION_BYTES - 4);
+    assert!(graph.native_section().is_err());
+}
 fn constant() -> NodeDecl {
     NodeDecl {
         id: "demo/constant".into(),

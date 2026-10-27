@@ -188,6 +188,19 @@ fn selector_valid(selector: &str) -> bool {
 }
 
 impl GraphContributionV2 {
+    /// Encode a normalized declaration for link-time `.phenix.graph` embedding.
+    /// This is self-description only; verification and trusted grants remain separate.
+    pub fn native_section(&self) -> Result<[u8; crate::NATIVE_SECTION_BYTES], Failure> {
+        let bytes = self.normalized()?.encode()?;
+        if bytes.len() > crate::NATIVE_SECTION_BYTES - 4 {
+            return Err(bad("graph-v2 contribution exceeds native section capacity"));
+        }
+        let mut section = [0; crate::NATIVE_SECTION_BYTES];
+        section[..4].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
+        section[4..4 + bytes.len()].copy_from_slice(&bytes);
+        Ok(section)
+    }
+
     pub fn normalized(&self) -> Result<Self, Failure> {
         let mut result = self.clone();
         result.sources.sort_by(|a, b| a.id.cmp(&b.id));
