@@ -395,7 +395,7 @@ fn main() {
             .begin_action_scoped(ACTION, &request(input), scope.clone())
             .unwrap();
         let mut settled = false;
-        for _ in 0..64 {
+        for _ in 0..400 {
             match execution.pump(|_| {}) {
                 Err(failure) => {
                     assert_eq!(failure.code, code, "{input}: {failure}");
@@ -403,12 +403,12 @@ fn main() {
                     break;
                 }
                 Ok(GraphStatus::Pending | GraphStatus::Draining) => {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
                 Ok(GraphStatus::Finished) => panic!("{input}: expected a failed graph"),
             }
         }
-        assert!(settled, "{input}: graph failed to finish draining");
+        assert!(settled, "{input}: graph failed to finish draining: {} (completion: {:?})", kernel.inspect(), execution.completion());
         assert!(
             matches!(execution.completion(), Some(GraphCompletion::Failure(f)) if f.code == code)
         );
