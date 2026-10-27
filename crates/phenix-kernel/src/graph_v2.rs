@@ -565,7 +565,9 @@ mod live_session_handoff_tests {
         let path = if native.is_absolute() {
             native.to_path_buf()
         } else {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(native)
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(native)
         };
         let image = fs::read(&path).unwrap();
         let descriptor = extract(&image).unwrap();
