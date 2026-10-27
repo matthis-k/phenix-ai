@@ -34,13 +34,14 @@ static void run(const char *path) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 3);
+    assert(argc == 4);
     assert(sizeof(PhenixApiHeader) == 16);
     assert(sizeof(PhenixByteSlice) == 16);
     assert(sizeof(PhenixPublicApi) == 24);
     assert(sizeof(PhenixOpaqueObject) == 24);
     run(argv[1]);
     run(argv[2]);
-    puts("C language adapter smoke: both independently compiled Rust providers passed");
+    run(argv[3]);
+    puts("C language adapter smoke: two Rust providers and a C language adapter passed");
     return 0;
 }
