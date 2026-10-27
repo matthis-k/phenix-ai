@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 mod join;
 #[path = "v2/operators.rs"]
 mod operators;
+#[path = "v2/readiness.rs"]
+mod readiness;
 
 const A: &str = "example.graph-a";
 const B: &str = "example.graph-b";
@@ -607,4 +609,5 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
     fs::write(output.join("graph-v2-evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.graph-v2-evidence.v1", "acceptance":"V1 partial", "p1_parity":false, "cases":cases, "limits":["initial finite wave only", "no operators, patches or deferred waves", "no SDK or P1 migration parity"]})).unwrap()).unwrap();
     operators::run(packages, output);
     join::run(packages, output);
+    readiness::run(packages, output);
 }

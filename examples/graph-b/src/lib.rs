@@ -1,4 +1,7 @@
-use example_graph_contracts::{Consume, JoinConsumer, JoinRequest, ReferenceConsumer, Start, Task};
+use example_graph_contracts::{
+    Consume, JoinConsumer, JoinRequest, ManyConsumer, NestedOptionalConsumer, OptionalConsumer,
+    ReferenceConsumer, Start, Task,
+};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -23,15 +26,70 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(Consume),
     define(JoinConsumer),
     define(ReferenceConsumer),
+    define(OptionalConsumer),
+    define(ManyConsumer),
+    define(NestedOptionalConsumer),
     provide(Task, slot = "task"),
     provide(Consume, slot = "consume"),
     provide(JoinConsumer, slot = "join_consumer"),
     provide(ReferenceConsumer, slot = "reference_consumer"),
+    provide(OptionalConsumer, slot = "optional_consumer"),
+    provide(ManyConsumer, slot = "many_consumer"),
+    provide(NestedOptionalConsumer, slot = "nested_optional_consumer"),
     profile = "state",
     graph(GRAPH)
 )]
 mod provider {
     use super::*;
+    fn readiness_witness() {
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_B_READINESS_WITNESS") {
+            use std::io::Write;
+            writeln!(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap(),
+                "called"
+            )
+            .unwrap();
+        }
+    }
+
+    #[provide(OptionalConsumer::run)]
+    fn optional_consumer(
+        state: &mut State,
+        host: &live::Host<'_>,
+        input: Option<String>,
+    ) -> CallResult<String, String> {
+        // Delivery must not restore the broader root's B property authority.
+        assert!(matches!(
+            state.result.read(host),
+            Err(live::AccessError::State(ValueAccessError::Denied))
+        ));
+        assert!(matches!(
+            state.result.edit(host),
+            Err(live::AccessError::State(ValueAccessError::Denied))
+        ));
+        readiness_witness();
+        Ok(format!("optional:{input:?}"))
+    }
+
+    #[provide(ManyConsumer::run)]
+    fn many_consumer(_state: &mut State, input: Vec<String>) -> CallResult<String, String> {
+        readiness_witness();
+        Ok(format!("many:{input:?}"))
+    }
+
+    #[provide(NestedOptionalConsumer::run)]
+    fn nested_optional_consumer(
+        _state: &mut State,
+        input: Option<Option<String>>,
+    ) -> CallResult<String, String> {
+        readiness_witness();
+        Ok(format!("nested:{input:?}"))
+    }
+
     #[provide(JoinConsumer::run)]
     fn join_consumer(_state: &mut State, input: JoinRequest) -> CallResult<String, String> {
         assert_eq!(input.fast, "join-value");

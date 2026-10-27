@@ -1,6 +1,766 @@
 use super::*;
 use phenix_contract::Authority;
 
+fn readiness_join(readiness: InputReadiness) -> CompiledGraph {
+    use phenix_contract::ValueSchema;
+    let (mut d, p) = super::super::tests::join_fixture();
+    let join = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/merge")
+        .unwrap();
+    join.inputs[0].readiness = readiness;
+    join.inputs[0].schema = match readiness {
+        InputReadiness::Optional => ValueSchema::Option(Box::new(ValueSchema::String)),
+        InputReadiness::StaticMany { .. } => ValueSchema::List(Box::new(ValueSchema::String)),
+        InputReadiness::One => ValueSchema::String,
+    };
+    let schema = ValueSchema::Struct(
+        join.inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.schema.clone()))
+            .collect(),
+    );
+    join.outputs[0].schema = schema.clone();
+    let sink = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/sink")
+        .unwrap();
+    sink.inputs[0].schema = schema.clone();
+    sink.outputs[0].schema = schema;
+    super::super::tests::run(&d, &p).unwrap()
+}
+
+#[test]
+fn resource_free_readiness_preserves_explicit_empty_authority() {
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 1 },
+    ] {
+        let graph = readiness_join(readiness);
+        for present in [false, true] {
+            for selected_resource in [false, true] {
+                let mut root = scope(&[]);
+                if !selected_resource {
+                    root.resource = None;
+                }
+                let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                let payload = Value::String("raw".into());
+                wave.deliver(
+                    &graph,
+                    &root,
+                    "alpha/source",
+                    present.then_some(("out", &payload)),
+                    false,
+                )
+                .unwrap();
+                assert_eq!(wave.closure["alpha/a"].resources, Some(BTreeSet::new()));
+                let input = wave.port_input("alpha/merge", "left");
+                if selected_resource {
+                    assert_eq!(input.err().unwrap().code, Code::Denied);
+                } else {
+                    let Resolution::Value(Some(value), resources) = input.unwrap() else {
+                        panic!()
+                    };
+                    assert!(resources.is_empty());
+                    assert_eq!(
+                        value,
+                        if present {
+                            Value::List(vec![payload])
+                        } else if readiness == InputReadiness::Optional {
+                            Value::Null
+                        } else {
+                            Value::List(vec![])
+                        }
+                    );
+                }
+            }
+        }
+        // A relevant One input anchors an unconnected absence without adding rights.
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        wave.edges.remove("alpha/a");
+        wave.arrivals.remove("alpha/a");
+        let mut root = scope(&[]);
+        root.resource = None;
+        wave.deliver(
+            &graph,
+            &root,
+            "alpha/source",
+            Some(("out", &Value::String("anchor".into()))),
+            false,
+        )
+        .unwrap();
+        let Resolution::Value(Some(Value::Map(fields)), resources) =
+            wave.input("alpha/merge").unwrap()
+        else {
+            panic!()
+        };
+        assert!(resources.is_empty());
+        assert_eq!(
+            fields["left"],
+            if readiness == InputReadiness::Optional {
+                Value::Null
+            } else {
+                Value::List(vec![])
+            }
+        );
+    }
+}
+
+#[test]
+fn disjoint_same_owner_causal_scopes_intersect_to_empty_without_restoring_root() {
+    let graph = readiness_join(InputReadiness::Optional);
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let EdgeKind::Flow { from, .. } = &mut wave.edges.get_mut("alpha/b").unwrap().kind else {
+        panic!()
+    };
+    from.node = "alpha/alternative-source".into();
+    wave.resources
+        .insert("alpha/source".into(), BTreeSet::from(["left".into()]));
+    wave.resources.insert(
+        "alpha/alternative-source".into(),
+        BTreeSet::from(["right".into()]),
+    );
+    let mut root = scope(&["left", "right", "root-only"]);
+    root.resource = None;
+    wave.deliver(&graph, &root, "alpha/source", None, false)
+        .unwrap();
+    wave.deliver(
+        &graph,
+        &root,
+        "alpha/alternative-source",
+        Some(("out", &Value::String("anchor".into()))),
+        false,
+    )
+    .unwrap();
+    let Resolution::Value(_, resources) = wave.input("alpha/merge").unwrap() else {
+        panic!()
+    };
+    assert!(resources.is_empty());
+    assert_eq!(
+        wave.input_evidence("alpha/merge").unwrap().resources,
+        Some(BTreeSet::new())
+    );
+}
+
+#[test]
+fn resource_free_scope_does_not_bypass_cross_boundary_flow_policy() {
+    let mut graph = readiness_join(InputReadiness::Optional);
+    graph.routes.insert("alpha/merge".into(), "foreign".into());
+    for input in ["left", "right"] {
+        graph.policy.delivery.insert(
+            (
+                "alpha/source".into(),
+                "out".into(),
+                "alpha/merge".into(),
+                input.into(),
+            ),
+            FlowGrant {
+                resources: BTreeSet::from(["resource".into()]),
+                maximum_classification: Classification::Public,
+            },
+        );
+    }
+    let mut root = scope(&[]);
+    root.resource = None;
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    wave.deliver(&graph, &root, "alpha/source", None, false)
+        .unwrap();
+    assert_eq!(wave.closure["alpha/a"].resources, Some(BTreeSet::new()));
+    assert!(!wave.closure["alpha/a"].authorized);
+    assert_eq!(
+        wave.port_input("alpha/merge", "left").err().unwrap().code,
+        Code::Denied
+    );
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    assert_eq!(
+        wave.deliver(
+            &graph,
+            &root,
+            "alpha/source",
+            Some(("out", &Value::String("raw".into()))),
+            false
+        )
+        .unwrap_err()
+        .code,
+        Code::Denied
+    );
+}
+
+#[test]
+fn cross_source_closure_authority_is_root_bounded_before_aggregate_intersection() {
+    for causal_origin in [false, true] {
+        for root_has_grant in [false, true] {
+            for selected_resource in [false, true] {
+                let mut graph = readiness_join(InputReadiness::Optional);
+                graph
+                    .routes
+                    .insert("alpha/alternative-source".into(), "foreign".into());
+                graph.policy.delivery.insert(
+                    (
+                        "alpha/alternative-source".into(),
+                        "out".into(),
+                        "alpha/merge".into(),
+                        "left".into(),
+                    ),
+                    FlowGrant {
+                        resources: BTreeSet::from(["b".into()]),
+                        maximum_classification: Classification::Public,
+                    },
+                );
+                let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                let EdgeKind::Flow { from, .. } = &mut wave.edges.get_mut("alpha/a").unwrap().kind
+                else {
+                    panic!()
+                };
+                from.node = "alpha/alternative-source".into();
+                wave.resources
+                    .insert("alpha/source".into(), BTreeSet::from(["a".into()]));
+                if causal_origin {
+                    // Even an origin bound must be re-intersected with this root.
+                    wave.resources.insert(
+                        "alpha/alternative-source".into(),
+                        BTreeSet::from(["b".into()]),
+                    );
+                }
+                let root = ScopedRequest {
+                    authority: Authority {
+                        operations: BTreeSet::new(),
+                        resources: if root_has_grant {
+                            BTreeSet::from(["a".into(), "b".into()])
+                        } else {
+                            BTreeSet::from(["a".into()])
+                        },
+                    },
+                    resource: selected_resource.then(|| "a".into()),
+                };
+                wave.deliver(
+                    &graph,
+                    &root,
+                    "alpha/source",
+                    Some(("out", &Value::String("anchor".into()))),
+                    false,
+                )
+                .unwrap();
+                assert!(matches!(
+                    wave.input("alpha/merge").unwrap(),
+                    Resolution::Unresolved
+                ));
+                wave.deliver(&graph, &root, "alpha/alternative-source", None, false)
+                    .unwrap();
+                let evidence = &wave.closure["alpha/a"];
+                assert_eq!(evidence.causal, causal_origin);
+                assert_eq!(
+                    evidence.resources,
+                    Some(if root_has_grant {
+                        BTreeSet::from(["b".into()])
+                    } else {
+                        BTreeSet::new()
+                    })
+                );
+                assert_eq!(evidence.authorized, root_has_grant && !selected_resource);
+                let input = wave.input("alpha/merge");
+                if root_has_grant && !selected_resource {
+                    let Resolution::Value(Some(Value::Map(fields)), resources) = input.unwrap()
+                    else {
+                        panic!()
+                    };
+                    assert_eq!(fields["left"], Value::Null);
+                    assert!(resources.is_empty());
+                } else {
+                    assert_eq!(input.err().unwrap().code, Code::Denied);
+                }
+                // The same denied control is not an access when One closes.
+                wave.nodes.get_mut("alpha/merge").unwrap().1.inputs[0].readiness =
+                    InputReadiness::One;
+                assert!(matches!(
+                    wave.input("alpha/merge").unwrap(),
+                    Resolution::Closed
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn prospective_collection_cardinality_drops_only_known_non_runnable_deliveries() {
+    let payload = Value::String("never delivered outside scope".into());
+    let root = scope(&["resource"]);
+    for (min, max) in [(0, 0), (2, 2), (1, 1)] {
+        for join in [false, true] {
+            for anchor_first in [false, true] {
+                for failed_anchor in [false, true] {
+                    let mut graph = readiness_join(InputReadiness::StaticMany { min, max });
+                    graph.routes.insert("alpha/source".into(), "foreign".into());
+                    graph.policy.delivery.insert(
+                        (
+                            "alpha/source".into(),
+                            "out".into(),
+                            "alpha/merge".into(),
+                            "left".into(),
+                        ),
+                        FlowGrant {
+                            resources: BTreeSet::from(["other".into()]),
+                            maximum_classification: Classification::Public,
+                        },
+                    );
+                    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                    if join {
+                        let EdgeKind::Flow { from, .. } =
+                            &mut wave.edges.get_mut("alpha/b").unwrap().kind
+                        else {
+                            panic!()
+                        };
+                        from.node = "alpha/alternative-source".into();
+                        wave.resources.insert(
+                            "alpha/alternative-source".into(),
+                            root.authority.resources.clone(),
+                        );
+                        if anchor_first {
+                            wave.deliver(
+                                &graph,
+                                &root,
+                                "alpha/alternative-source",
+                                (!failed_anchor).then_some(("out", &payload)),
+                                failed_anchor,
+                            )
+                            .unwrap();
+                        }
+                    } else {
+                        let (producer, _) = super::super::tests::fixture();
+                        wave.nodes.get_mut("alpha/merge").unwrap().1.kind =
+                            producer[0].nodes[1].kind.clone();
+                        wave.nodes
+                            .get_mut("alpha/merge")
+                            .unwrap()
+                            .1
+                            .inputs
+                            .truncate(1);
+                        wave.edges.remove("alpha/b");
+                        wave.arrivals.remove("alpha/b");
+                    }
+                    wave.values = MAX_ROOT_VALUES - 1;
+                    wave.bytes = MAX_ROOT_BYTES - payload.encode().unwrap().len();
+                    let result = wave.deliver(
+                        &graph,
+                        &root,
+                        "alpha/source",
+                        Some(("out", &payload)),
+                        false,
+                    );
+                    if min == 1 {
+                        // Unknown/runnable consumers retain ordinary eager delivery checks.
+                        assert_eq!(result.unwrap_err().code, Code::Denied);
+                        assert!(matches!(wave.arrivals["alpha/a"], Resolution::Unresolved));
+                        continue;
+                    }
+                    result.unwrap();
+                    assert!(matches!(
+                        wave.arrivals["alpha/a"],
+                        Resolution::Value(None, _)
+                    ));
+                    assert_eq!(wave.values, MAX_ROOT_VALUES);
+                    assert_eq!(wave.bytes, MAX_ROOT_BYTES);
+                    if join && !anchor_first {
+                        assert!(matches!(
+                            wave.input("alpha/merge").unwrap(),
+                            Resolution::Unresolved
+                        ));
+                        wave.values = 1;
+                        wave.bytes = payload.encode().unwrap().len();
+                        wave.deliver(
+                            &graph,
+                            &root,
+                            "alpha/alternative-source",
+                            (!failed_anchor).then_some(("out", &payload)),
+                            failed_anchor,
+                        )
+                        .unwrap();
+                    }
+                    let input = wave.input("alpha/merge").unwrap();
+                    if join && failed_anchor {
+                        assert!(matches!(input, Resolution::Failed));
+                    } else {
+                        assert!(matches!(input, Resolution::Closed));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn prospective_collection_counts_all_selected_edges_atomically_but_waits_for_other_producers() {
+    for same_producer in [false, true] {
+        let mut graph = readiness_join(InputReadiness::StaticMany { min: 0, max: 1 });
+        graph.routes.insert("alpha/source".into(), "foreign".into());
+        graph.policy.delivery.insert(
+            (
+                "alpha/source".into(),
+                "out".into(),
+                "alpha/merge".into(),
+                "left".into(),
+            ),
+            FlowGrant {
+                resources: BTreeSet::from(["other".into()]),
+                maximum_classification: Classification::Public,
+            },
+        );
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        // Keep the unrelated required anchor pending, independently of collection terminality.
+        let EdgeKind::Flow { from, .. } = &mut wave.edges.get_mut("alpha/b").unwrap().kind else {
+            panic!()
+        };
+        from.node = "alpha/alternative-source".into();
+        let mut extra = wave.edges["alpha/a"].clone();
+        extra.id = "alpha/extra".into();
+        if !same_producer {
+            let EdgeKind::Flow { from, .. } = &mut extra.kind else {
+                panic!()
+            };
+            from.node = "alpha/alternative-source".into();
+        }
+        wave.arrivals
+            .insert(extra.id.clone(), Resolution::Unresolved);
+        wave.edges.insert(extra.id.clone(), extra);
+        let result = wave.deliver(
+            &graph,
+            &scope(&["resource"]),
+            "alpha/source",
+            Some(("out", &Value::String("raw".into()))),
+            false,
+        );
+        if same_producer {
+            result.unwrap();
+            assert!(matches!(
+                wave.arrivals["alpha/a"],
+                Resolution::Value(None, _)
+            ));
+            assert!(matches!(
+                wave.arrivals["alpha/extra"],
+                Resolution::Value(None, _)
+            ));
+            assert!(matches!(
+                wave.input("alpha/merge").unwrap(),
+                Resolution::Unresolved
+            ));
+            assert_eq!(wave.values, 1);
+        } else {
+            assert_eq!(result.unwrap_err().code, Code::Denied);
+            assert!(matches!(wave.arrivals["alpha/a"], Resolution::Unresolved));
+            assert!(matches!(
+                wave.arrivals["alpha/extra"],
+                Resolution::Unresolved
+            ));
+        }
+    }
+}
+
+#[test]
+fn collection_pending_candidates_retain_values_and_failure_dominates_in_both_orders() {
+    for join in [false, true] {
+        for failure_first in [false, true] {
+            let graph = readiness_join(InputReadiness::StaticMany { min: 2, max: 2 });
+            let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+            let mut extra = wave.edges["alpha/a"].clone();
+            extra.id = "alpha/extra".into();
+            let EdgeKind::Flow { from, .. } = &mut extra.kind else {
+                panic!()
+            };
+            from.node = "alpha/alternative-source".into();
+            wave.arrivals
+                .insert(extra.id.clone(), Resolution::Unresolved);
+            wave.edges.insert(extra.id.clone(), extra);
+            if !join {
+                let (producer, _) = super::super::tests::fixture();
+                wave.nodes.get_mut("alpha/merge").unwrap().1.kind =
+                    producer[0].nodes[1].kind.clone();
+                wave.nodes
+                    .get_mut("alpha/merge")
+                    .unwrap()
+                    .1
+                    .inputs
+                    .truncate(1);
+                wave.edges.remove("alpha/b");
+                wave.arrivals.remove("alpha/b");
+            }
+            let root = scope(&["resource"]);
+            if failure_first {
+                wave.deliver(&graph, &root, "alpha/alternative-source", None, true)
+                    .unwrap();
+                assert!(matches!(
+                    wave.input("alpha/merge").unwrap(),
+                    Resolution::Unresolved
+                ));
+            }
+            wave.deliver(
+                &graph,
+                &root,
+                "alpha/source",
+                Some(("out", &Value::String("raw".into()))),
+                false,
+            )
+            .unwrap();
+            if !failure_first {
+                assert!(matches!(
+                    wave.arrivals["alpha/a"],
+                    Resolution::Value(Some(_), _)
+                ));
+                assert!(matches!(
+                    wave.input("alpha/merge").unwrap(),
+                    Resolution::Unresolved
+                ));
+                wave.deliver(&graph, &root, "alpha/alternative-source", None, true)
+                    .unwrap();
+            }
+            assert!(matches!(
+                wave.input("alpha/merge").unwrap(),
+                Resolution::Failed
+            ));
+            assert!(!wave.started.contains("alpha/merge"));
+        }
+    }
+}
+
+#[test]
+fn optional_and_many_wait_for_terminality_and_preserve_complete_values() {
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 2 },
+    ] {
+        let graph = readiness_join(readiness);
+        for present in [false, true] {
+            let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+            wave.arrivals.insert(
+                "alpha/a".into(),
+                if present {
+                    Resolution::Value(
+                        Some(Value::String("raw".into())),
+                        BTreeSet::from(["resource".into()]),
+                    )
+                } else {
+                    Resolution::Closed
+                },
+            );
+            assert!(matches!(
+                wave.input("alpha/merge").unwrap(),
+                Resolution::Unresolved
+            ));
+            wave.arrivals.insert(
+                "alpha/b".into(),
+                Resolution::Value(
+                    Some(Value::String("anchor".into())),
+                    BTreeSet::from(["resource".into()]),
+                ),
+            );
+            let Resolution::Value(Some(Value::Map(fields)), resources) =
+                wave.input("alpha/merge").unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(resources, BTreeSet::from(["resource".into()]));
+            assert_eq!(
+                fields["left"],
+                if present {
+                    Value::List(vec![Value::String("raw".into())])
+                } else if matches!(readiness, InputReadiness::Optional) {
+                    Value::Null
+                } else {
+                    Value::List(vec![])
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn absence_intersects_causal_control_and_denies_only_observable_synthesis() {
+    let graph = readiness_join(InputReadiness::Optional);
+    for authorized in [false, true] {
+        for overlap in [false, true] {
+            let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+            wave.arrivals.insert("alpha/a".into(), Resolution::Closed);
+            wave.closure.insert(
+                "alpha/a".into(),
+                ClosureEvidence {
+                    resources: Some(BTreeSet::from([
+                        if overlap { "resource" } else { "other" }.into()
+                    ])),
+                    authorized,
+                    causal: true,
+                },
+            );
+            wave.arrivals.insert(
+                "alpha/b".into(),
+                Resolution::Value(
+                    Some(Value::String("anchor".into())),
+                    BTreeSet::from(["resource".into()]),
+                ),
+            );
+            let input = wave.input("alpha/merge");
+            assert_eq!(input.is_ok(), authorized);
+            if authorized {
+                let Resolution::Value(_, resources) = input.unwrap() else {
+                    panic!()
+                };
+                assert_eq!(
+                    resources,
+                    if overlap {
+                        BTreeSet::from(["resource".into()])
+                    } else {
+                        BTreeSet::new()
+                    }
+                );
+            }
+            // A required closure makes optional control unobservable.
+            wave.arrivals.insert("alpha/b".into(), Resolution::Closed);
+            assert!(matches!(
+                wave.input("alpha/merge").unwrap(),
+                Resolution::Closed
+            ));
+            wave.arrivals.insert("alpha/b".into(), Resolution::Failed);
+            assert!(matches!(
+                wave.input("alpha/merge").unwrap(),
+                Resolution::Failed
+            ));
+        }
+    }
+}
+
+#[test]
+fn closed_delivery_projects_exact_grants_without_eager_access_or_root_restore() {
+    for resources in [vec!["resource"], vec!["other"]] {
+        let mut graph = readiness_join(InputReadiness::Optional);
+        // Isolate runtime projection at a selected-provider boundary.
+        graph.routes.insert("alpha/merge".into(), "foreign".into());
+        for input in ["left", "right"] {
+            graph.policy.delivery.insert(
+                (
+                    "alpha/source".into(),
+                    "out".into(),
+                    "alpha/merge".into(),
+                    input.into(),
+                ),
+                FlowGrant {
+                    resources: resources.iter().map(|r| (*r).into()).collect(),
+                    maximum_classification: Classification::Public,
+                },
+            );
+        }
+        let root = scope(&["resource", "other", "root-only"]);
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        wave.deliver(&graph, &root, "alpha/source", None, false)
+            .unwrap();
+        assert_eq!(
+            wave.closure["alpha/a"].resources,
+            Some(resources.iter().map(|r| (*r).into()).collect())
+        );
+        assert!(matches!(
+            wave.input("alpha/merge").unwrap(),
+            Resolution::Closed
+        ));
+        // A real retained input now makes the optional absence observable.
+        wave.arrivals.insert(
+            "alpha/b".into(),
+            Resolution::Value(
+                Some(Value::String("anchor".into())),
+                BTreeSet::from(["resource".into()]),
+            ),
+        );
+        wave.closure.remove("alpha/b");
+        assert_eq!(wave.input("alpha/merge").is_ok(), resources == ["resource"]);
+        let fresh = Wave::new(&graph, "alpha/alternative").unwrap();
+        assert!(fresh.closure.is_empty());
+        assert!(fresh.causes.is_empty());
+    }
+}
+
+#[test]
+fn inactive_evidence_is_not_an_activation_bound_and_nested_options_wrap_once() {
+    let graph = readiness_join(InputReadiness::Optional);
+    let mut wave = Wave::new(&graph, "alpha/alternative").unwrap();
+    wave.deliver(&graph, &scope(&["resource"]), "alpha/source", None, false)
+        .unwrap();
+    assert!(!wave.closure["alpha/a"].causal);
+    assert!(wave.closure["alpha/a"].resources.is_none());
+    assert!(!wave.input_evidence("alpha/merge").unwrap().causal);
+    assert_eq!(
+        wave.port_input("alpha/merge", "left").err().unwrap().code,
+        Code::Denied
+    );
+    // The reducer preserves a raw inner None as Some(None), not outer None.
+    wave.nodes.get_mut("alpha/merge").unwrap().1.inputs[0].schema =
+        phenix_contract::ValueSchema::Option(Box::new(phenix_contract::ValueSchema::Option(
+            Box::new(phenix_contract::ValueSchema::String),
+        )));
+    wave.arrivals.insert(
+        "alpha/a".into(),
+        Resolution::Value(Some(Value::Null), BTreeSet::from(["resource".into()])),
+    );
+    wave.closure.remove("alpha/a");
+    assert!(
+        matches!(wave.port_input("alpha/merge", "left").unwrap(), Resolution::Value(Some(Value::List(values)), _) if values == vec![Value::Null])
+    );
+}
+
+#[test]
+fn static_many_stable_edges_both_cardinality_bounds_and_failure_precedence() {
+    let graph = readiness_join(InputReadiness::StaticMany { min: 1, max: 1 });
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let mut edge = wave.edges["alpha/a"].clone();
+    edge.id = "alpha/0-first".into();
+    wave.edges.insert(edge.id.clone(), edge.clone());
+    wave.arrivals
+        .insert(edge.id.clone(), Resolution::Unresolved);
+    wave.arrivals.insert(
+        "alpha/a".into(),
+        Resolution::Value(
+            Some(Value::String("last".into())),
+            BTreeSet::from(["resource".into()]),
+        ),
+    );
+    assert!(matches!(
+        wave.port_input("alpha/merge", "left").unwrap(),
+        Resolution::Unresolved
+    ));
+    wave.arrivals.insert(
+        edge.id.clone(),
+        Resolution::Value(
+            Some(Value::String("first".into())),
+            BTreeSet::from(["resource".into()]),
+        ),
+    );
+    assert!(matches!(
+        wave.port_input("alpha/merge", "left").unwrap(),
+        Resolution::Closed
+    ));
+    wave.nodes.get_mut("alpha/merge").unwrap().1.inputs[0].readiness =
+        InputReadiness::StaticMany { min: 0, max: 2 };
+    let Resolution::Value(Some(Value::List(values)), _) =
+        wave.port_input("alpha/merge", "left").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        values,
+        vec![Value::String("first".into()), Value::String("last".into())]
+    );
+    wave.nodes.get_mut("alpha/merge").unwrap().1.inputs[0].readiness =
+        InputReadiness::StaticMany { min: 1, max: 1 };
+    wave.arrivals.insert("alpha/a".into(), Resolution::Closed);
+    wave.arrivals.insert(edge.id.clone(), Resolution::Closed);
+    assert!(matches!(
+        wave.port_input("alpha/merge", "left").unwrap(),
+        Resolution::Closed
+    ));
+    wave.arrivals.insert(edge.id, Resolution::Failed);
+    assert!(matches!(
+        wave.port_input("alpha/merge", "left").unwrap(),
+        Resolution::Failed
+    ));
+}
+
 #[test]
 fn discarded_join_delivery_skips_destination_checks_but_not_runnable_delivery() {
     let value = Value::String("authorized producer result".into());
@@ -902,6 +1662,9 @@ fn order_only_constant_is_dormant_and_err_routes_actual_domain_value() {
     );
     let graph = super::super::tests::run(&d, &p).unwrap();
     let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    // Model the scope retained when pump_v2 selects this invocation.
+    wave.resources
+        .insert("alpha/first".into(), BTreeSet::from(["resource".into()]));
     wave.complete(
         &graph,
         &scope(&["resource"]),
@@ -981,6 +1744,10 @@ fn producer_output_not_source_and_repeated_completion_is_inert() {
     )
     .unwrap();
     let output = Outcome::Success(Value::String("actual producer".into()));
+    let Resolution::Value(_, resources) = wave.input("alpha/first").unwrap() else {
+        panic!()
+    };
+    wave.resources.insert("alpha/first".into(), resources);
     wave.complete(&graph, &scope, "alpha/first", &output)
         .unwrap();
     assert!(

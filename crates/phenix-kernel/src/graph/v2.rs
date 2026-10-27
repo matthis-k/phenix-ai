@@ -353,7 +353,7 @@ fn compile(
                         .iter()
                         .find(|p| p.name == to.port)
                         .ok_or_else(|| invalid("missing input port"))?;
-                    if output.schema != input.schema {
+                    if &output.schema != input.candidate_schema()? {
                         return Err(fail(Code::SchemaRejected, "flow schema mismatch"));
                     }
                     if !output.security.can_flow_to(input.security) {
@@ -410,9 +410,10 @@ fn compile(
                 .copied()
                 .unwrap_or(0)
                 > 1
+                && !matches!(input.readiness, InputReadiness::StaticMany { .. })
                 && !matches!(node.kind, NodeKind::Merge { .. })
             {
-                return Err(invalid("One input permits at most one candidate"));
+                return Err(invalid("One/Optional input permits at most one candidate"));
             }
         }
     }
@@ -432,6 +433,12 @@ fn compile(
         let incoming: Vec<_> = node
             .inputs
             .iter()
+            .filter(|input| {
+                matches!(
+                    input.readiness,
+                    InputReadiness::One | InputReadiness::StaticMany { min: 1.., .. }
+                )
+            })
             .map(|input| {
                 declarations
                     .iter()
@@ -456,16 +463,28 @@ fn compile(
                     .collect()
             })
             .collect();
-        if reachable.iter().any(BTreeSet::is_empty) {
+        if source_reachability[&node.id].is_empty() || reachable.iter().any(BTreeSet::is_empty) {
             join_satisfiability.insert(node.id.clone(), Satisfiability::Dormant);
             continue;
         }
-        let mut common = reachable[0].clone();
-        for sources in &reachable[1..] {
+        let mut common = source_reachability[&node.id].clone();
+        for sources in &reachable {
             common.retain(|source| sources.contains(source));
         }
         let mut switch_cases = BTreeMap::new();
-        for from in incoming.iter().flatten() {
+        for from in node
+            .inputs
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.readiness,
+                    InputReadiness::One | InputReadiness::StaticMany { min: 1.., .. }
+                )
+            })
+            .zip(&incoming)
+            .filter(|(p, _)| p.readiness == InputReadiness::One)
+            .flat_map(|(_, edges)| edges)
+        {
             if matches!(nodes[&from.node].1.kind, NodeKind::Switch { .. })
                 && switch_cases
                     .insert(&from.node, &from.port)
@@ -477,10 +496,14 @@ fn compile(
         if common.is_empty() {
             return Err(invalid("UnsatisfiableJoin: disjoint input sources"));
         }
-        let status = if incoming
+        let status = if node
+            .inputs
             .iter()
-            .flatten()
-            .all(|from| matches!(nodes[&from.node].1.kind, NodeKind::Source { .. }))
+            .all(|p| p.readiness == InputReadiness::One)
+            && incoming
+                .iter()
+                .flatten()
+                .all(|from| matches!(nodes[&from.node].1.kind, NodeKind::Source { .. }))
         {
             Satisfiability::ProvenSatisfiable
         } else {

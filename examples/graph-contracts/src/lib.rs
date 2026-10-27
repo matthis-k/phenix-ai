@@ -85,6 +85,21 @@ pub trait Consume {
     fn run(&mut self, input: String) -> Result<String, String>;
 }
 
+#[contract(id = "example.graph.optional@1")]
+pub trait OptionalConsumer {
+    fn run(&mut self, input: Option<String>) -> Result<String, String>;
+}
+
+#[contract(id = "example.graph.many@1")]
+pub trait ManyConsumer {
+    fn run(&mut self, input: Vec<String>) -> Result<String, String>;
+}
+
+#[contract(id = "example.graph.nested-optional@1")]
+pub trait NestedOptionalConsumer {
+    fn run(&mut self, input: Option<Option<String>>) -> Result<String, String>;
+}
+
 #[derive(Debug, Clone, Portable)]
 pub struct JoinRequest {
     pub fast: String,

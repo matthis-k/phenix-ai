@@ -16,6 +16,173 @@ fn input(name: &str, schema: ValueSchema) -> InputPort {
 }
 
 #[test]
+fn readiness_candidates_unwrap_once_and_wire_is_strict() {
+    for (readiness, outer) in [
+        (InputReadiness::One, 0),
+        (InputReadiness::Optional, 1),
+        (
+            InputReadiness::StaticMany {
+                min: 0,
+                max: u32::MAX,
+            },
+            2,
+        ),
+    ] {
+        for inner in [
+            ValueSchema::String,
+            ValueSchema::Option(Box::new(ValueSchema::String)),
+            ValueSchema::List(Box::new(ValueSchema::String)),
+        ] {
+            let mut g = sample();
+            let p = &mut g.nodes[1].inputs[0];
+            p.readiness = readiness;
+            p.schema = match outer {
+                1 => ValueSchema::Option(Box::new(inner.clone())),
+                2 => ValueSchema::List(Box::new(inner.clone())),
+                _ => inner.clone(),
+            };
+            assert_eq!(p.candidate_schema().unwrap(), &inner);
+            let bytes = g.encode().unwrap();
+            assert_eq!(
+                GraphContributionV2::decode(&bytes)
+                    .unwrap()
+                    .encode()
+                    .unwrap(),
+                bytes
+            );
+        }
+    }
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 2 },
+        InputReadiness::StaticMany { min: 3, max: 2 },
+    ] {
+        let mut p = input("in", ValueSchema::String);
+        p.readiness = readiness;
+        assert!(p.candidate_schema().is_err());
+        p.schema = ValueSchema::List(Box::new(ValueSchema::String));
+        if readiness != (InputReadiness::StaticMany { min: 0, max: 2 }) {
+            assert!(p.candidate_schema().is_err());
+        }
+    }
+    let valid = Value::map([
+        ("kind", string("static-many")),
+        ("min", Value::U64(0)),
+        ("max", Value::U64(2)),
+    ]);
+    let mut invalid = vec![
+        Value::Null,
+        string("static-many"),
+        Value::map([("kind", string("optional"))]),
+    ];
+    for (key, value) in [
+        ("min", None),
+        ("max", None),
+        ("kind", None),
+        ("extra", Some(Value::Null)),
+        ("min", Some(Value::I64(0))),
+        ("max", Some(Value::U64(u64::from(u32::MAX) + 1))),
+        ("min", Some(Value::U64(3))),
+    ] {
+        let mut f = fields(valid.clone()).unwrap();
+        if let Some(value) = value {
+            f.insert(key.into(), value);
+        } else {
+            f.remove(key);
+        }
+        invalid.push(Value::Map(f));
+    }
+    let mut g = sample();
+    g.nodes[1].inputs[0].schema = ValueSchema::List(Box::new(ValueSchema::String));
+    g.nodes[1].inputs[0].readiness = InputReadiness::StaticMany { min: 0, max: 2 };
+    for readiness in invalid {
+        let mut root = wire(&g);
+        let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+            panic!()
+        };
+        let Value::Map(node) = &mut nodes[0] else {
+            panic!()
+        };
+        let Value::List(inputs) = node.get_mut("inputs").unwrap() else {
+            panic!()
+        };
+        let Value::Map(input) = &mut inputs[0] else {
+            panic!()
+        };
+        input.insert("readiness".into(), readiness);
+        rejects(root);
+    }
+}
+
+#[test]
+fn join_retains_full_readiness_schemas_and_conservative_labels() {
+    let inputs = vec![
+        InputPort {
+            readiness: InputReadiness::Optional,
+            ..input("maybe", ValueSchema::Option(Box::new(ValueSchema::String)))
+        },
+        InputPort {
+            readiness: InputReadiness::StaticMany { min: 0, max: 5 },
+            ..input("many", ValueSchema::List(Box::new(ValueSchema::String)))
+        },
+    ];
+    let mut node = constant();
+    node.kind = NodeKind::Join {
+        policy: JoinPolicy::All,
+    };
+    node.inputs = inputs;
+    node.outputs[0].schema = ValueSchema::Struct(
+        node.inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.schema.clone()))
+            .collect(),
+    );
+    let mut g = sample();
+    g.edges.clear();
+    g.nodes = vec![node];
+    assert!(g.encode().is_ok());
+    g.nodes[0].inputs[0].security.confidentiality = Classification::Secret;
+    assert!(g.encode().is_err());
+    g.nodes[0].outputs[0].security.confidentiality = Classification::Secret;
+    assert!(g.encode().is_ok());
+    g.nodes[0].outputs[0].schema = ValueSchema::Struct(
+        g.nodes[0]
+            .inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.candidate_schema().unwrap().clone()))
+            .collect(),
+    );
+    assert!(g.encode().is_err());
+}
+
+#[test]
+fn merge_remains_one_even_with_matching_wrapped_schemas() {
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 2 },
+    ] {
+        let schema = if readiness == InputReadiness::Optional {
+            ValueSchema::Option(Box::new(ValueSchema::String))
+        } else {
+            ValueSchema::List(Box::new(ValueSchema::String))
+        };
+        let mut node = constant();
+        node.kind = NodeKind::Merge {
+            policy: MergePolicy::ExactlyOne,
+        };
+        node.inputs = vec![InputPort {
+            readiness,
+            ..input("in", schema.clone())
+        }];
+        node.outputs[0].schema = schema;
+        let mut g = sample();
+        g.edges.clear();
+        g.nodes = vec![node];
+        assert!(g.encode().is_err());
+    }
+}
+
+#[test]
 fn switch_merge_roundtrip_permutations_and_security() {
     let schema = ValueSchema::Tagged(std::collections::BTreeMap::from([
         ("empty".into(), None),
@@ -558,7 +725,7 @@ fn unsupported_profiles_fail_explicitly() {
     ] {
         let mut g = sample();
         g.nodes[1].inputs[0].readiness = readiness;
-        assert!(g.encode().unwrap_err().message.contains("unsupported"));
+        assert!(g.encode().is_err());
     }
     let mut g = sample();
     g.sources[0].kind = SourceKind::DeferredEntry;
