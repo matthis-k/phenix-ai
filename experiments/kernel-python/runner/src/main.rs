@@ -65,7 +65,7 @@ fn main() {
     let mut unbound = policy.clone();
     unbound.slots.clear();
     assert_eq!(
-        Prepared::prepare(unbound).unwrap_err().code,
+        Prepared::prepare(unbound).err().unwrap().code,
         Code::MissingBinding
     );
 
@@ -73,7 +73,7 @@ fn main() {
     let mut wrong = policy.clone();
     wrong.slots[0].provider = ADAPTER.into();
     assert_eq!(
-        Prepared::prepare(wrong).unwrap_err().code,
+        Prepared::prepare(wrong).err().unwrap().code,
         Code::MissingBinding
     );
 
@@ -91,7 +91,7 @@ fn main() {
     fs::write(work.join("tampered/lib/plugin.so"), bytes).unwrap();
     let mut tampered = policy.clone();
     tampered.artifacts[0] = work.join("tampered").to_string_lossy().into();
-    assert_eq!(Prepared::prepare(tampered).unwrap_err().code, Code::ArtifactInvalid);
+    assert_eq!(Prepared::prepare(tampered).err().unwrap().code, Code::ArtifactInvalid);
 
     let prepared = Prepared::prepare(policy.clone()).expect("offline ABI-3 composition verification");
     let kernel = prepared.load().expect("load compiled native and Python runtime plugin");
