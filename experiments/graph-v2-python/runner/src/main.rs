@@ -28,6 +28,7 @@ const SOURCE: &str = "example.python-host/source";
 const ACTION: &str = "python.v2-submit";
 const RUN: &str = "example.consumer@1/run";
 const TRANSFORM: &str = "example.transform.apply@1/apply";
+const RESOURCE: &str = "example.python.flow";
 const SECURITY: PortSecurity = PortSecurity {
     confidentiality: Classification::Public,
     integrity: IntegrityClass::Untrusted,
@@ -207,7 +208,7 @@ fn grant(caller: &str, key: &str) -> ScopedGrant {
         caller: caller.into(),
         interface: s.interface,
         operation: s.operation,
-        resources: BTreeSet::new(),
+        resources: BTreeSet::from([RESOURCE.into()]),
     }
 }
 fn compose(packages: [String; 2]) -> Composition {
@@ -231,7 +232,7 @@ fn compose(packages: [String; 2]) -> Composition {
         ],
         authority: Authority {
             operations: [RUN.into(), TRANSFORM.into()].into(),
-            resources: BTreeSet::new(),
+            resources: BTreeSet::from([RESOURCE.into()]),
         },
         excluded: BTreeSet::new(),
         substitutions: vec![],
@@ -262,7 +263,7 @@ fn trust() -> TrustedCompositionPolicy {
     trusted.delivery.insert(
         (PY_NODE.into(), "ok".into(), RS_NODE.into(), "in".into()),
         FlowGrant {
-            resources: BTreeSet::new(),
+            resources: BTreeSet::from([RESOURCE.into()]),
             maximum_classification: Classification::Public,
         },
     );
@@ -310,6 +311,9 @@ fn main() {
     verify_negative(base.clone(), &bad_policy, Code::Denied);
     let mut bad_policy = trusted.clone();
     bad_policy.delivery.clear();
+    verify_negative(base.clone(), &bad_policy, Code::Denied);
+    let mut bad_policy = trusted.clone();
+    bad_policy.delivery.values_mut().next().unwrap().resources.clear();
     verify_negative(base.clone(), &bad_policy, Code::Denied);
     let mut bad_policy = trusted.clone();
     bad_policy.sources.clear();
