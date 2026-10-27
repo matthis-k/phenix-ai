@@ -538,27 +538,26 @@ mod live_session_handoff_tests {
 
     fn single_stage() -> GraphContributionV2 {
         use phenix_basic_shell::SessionAdmit;
-        use phenix_contract::graph_v2::GraphContributionV2;
-        // Imported author-facing Graph is implemented in phenix-sdk; the
-        // kernel depends on the *same canonical* contract IR, not the SDK.
-        let graph = phenix_sdk::graph::Graph::new("phenix.shell.session");
-        build_stage(graph)
-        fn build_stage(mut graph: phenix_sdk::graph::Graph) -> GraphContributionV2 {
-            let source = graph.module("frontend", 1, |m| {
+        // The SDK lowers the same public typed author API into canonical IR.
+        let mut graph = phenix_sdk::graph::Graph::new("phenix.shell.session");
+        let source = graph
+            .module("frontend", 1, |m| {
                 let source = m.source::<Prompt>("prompt", "phenix.shell.prompt")?;
                 m.exit("submitted", source)
-            }).unwrap();
-            let session = graph.module("session", 1, |m| {
+            })
+            .unwrap();
+        let session = graph
+            .module("session", 1, |m| {
                 let operation = m.invoke::<SessionAdmit>("admit")?;
                 m.entry("prompt", operation.input())?;
                 m.exit("turn", operation.ok())
-            }).unwrap();
-            graph.flow(
-                source.output::<Prompt>("submitted").unwrap(),
-                session.input::<Prompt>("prompt").unwrap(),
-            );
-            graph.finish().unwrap()
-        }
+            })
+            .unwrap();
+        graph.flow(
+            source.output::<Prompt>("submitted").unwrap(),
+            session.input::<Prompt>("prompt").unwrap(),
+        );
+        graph.finish().unwrap()
     }
 
     /// An explicit test-only trust root; never used for mutable production
