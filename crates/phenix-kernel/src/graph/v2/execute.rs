@@ -195,14 +195,39 @@ impl Wave {
         Ok(matches!(outcome, Outcome::Domain(_)) && policy == DomainErrorPolicy::FailRoot)
     }
 
-    fn input(&self, node: &str) -> Resolution {
-        self.edges
-            .iter()
-            .find_map(|(edge, e)| match &e.kind {
-                EdgeKind::Flow { to, .. } if to.node == node => Some(self.arrivals[edge].clone()),
-                _ => None,
-            })
-            .unwrap_or(Resolution::Closed)
+    fn input(&self, node: &str) -> Result<Resolution, Failure> {
+        let port = &self.nodes[node].1.inputs[0].name;
+        let mut unresolved = false;
+        let mut failed = false;
+        let mut values = Vec::new();
+        for (edge, e) in &self.edges {
+            if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && &to.port == port)
+            {
+                continue;
+            }
+            match &self.arrivals[edge] {
+                Resolution::Unresolved => unresolved = true,
+                Resolution::Failed => failed = true,
+                Resolution::Value(value, resources) => values.push((value, resources)),
+                Resolution::Closed => {}
+            }
+        }
+        // Publish nothing until every candidate is terminal, including failures.
+        if unresolved {
+            return Ok(Resolution::Unresolved);
+        }
+        if failed {
+            return Ok(Resolution::Failed);
+        }
+        match values.as_slice() {
+            [] => Ok(Resolution::Closed),
+            [(value, resources)] => Ok(Resolution::Value((*value).clone(), (*resources).clone())),
+            // Intrinsic graph-constraint violation, not a declared operation error.
+            _ => Err(fail(
+                Code::InfrastructureFailure,
+                "graph-v2 Merge ExactlyOne cardinality violated",
+            )),
+        }
     }
 
     fn order_ready(&self, graph: &CompiledGraph, node: &str) -> bool {
@@ -214,6 +239,40 @@ impl Wave {
             !graph.source_reachability[predecessor].contains(&self.source)
                 || self.done.contains(predecessor)
         })
+    }
+
+    fn route_intrinsic(
+        &mut self,
+        graph: &CompiledGraph,
+        scope: &ScopedRequest,
+        node: &NodeDecl,
+        request: &Value,
+        resources: BTreeSet<String>,
+    ) -> Result<(), Failure> {
+        self.resources.insert(node.id.clone(), resources);
+        let (port, value) = match &node.kind {
+            NodeKind::Switch { .. } => {
+                if !node.inputs[0].schema.accepts(request) {
+                    return Err(invalid("invalid Switch value"));
+                }
+                let Value::Map(cases) = request else {
+                    unreachable!()
+                };
+                let (case, payload) = cases.iter().next().unwrap();
+                let phenix_contract::ValueSchema::Tagged(schemas) = &node.inputs[0].schema else {
+                    unreachable!()
+                };
+                let value = if schemas[case].is_none() {
+                    Value::Map(BTreeMap::new())
+                } else {
+                    payload.clone()
+                };
+                (case.as_str(), value)
+            }
+            NodeKind::Merge { .. } => ("out", request.clone()),
+            _ => unreachable!(),
+        };
+        self.deliver(graph, scope, &node.id, Some((port, &value)), false)
     }
 }
 
@@ -250,7 +309,7 @@ impl GraphExecution<'_> {
                 self.waiting.remove(id);
                 continue;
             }
-            let input = wave.input(id);
+            let input = wave.input(id)?;
             match input {
                 Resolution::Unresolved => continue,
                 Resolution::Closed | Resolution::Failed => {
@@ -271,6 +330,11 @@ impl GraphExecution<'_> {
                     if let NodeKind::Constant { value } = &node.kind {
                         wave.resources.insert(id.clone(), resources);
                         wave.deliver(graph, &self.root.scope, id, Some(("out", value)), false)?;
+                        self.waiting.remove(id);
+                        continue;
+                    }
+                    if matches!(node.kind, NodeKind::Switch { .. } | NodeKind::Merge { .. }) {
+                        wave.route_intrinsic(graph, &self.root.scope, &node, &request, resources)?;
                         self.waiting.remove(id);
                         continue;
                     }

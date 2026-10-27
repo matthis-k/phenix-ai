@@ -1,6 +1,6 @@
 //! Offline base-profile compilation and private initial-wave readiness inside
 //! the existing GraphExecution. Supports ExternalAction, Source, Invoke, Constant,
-//! Flow and Order. No patches, declassification, endorsement or alternate runtime.
+//! Switch, Merge, Flow and Order. No patches or alternate runtime.
 use crate::{dag, resolve::Prepared};
 use phenix_contract::{graph::v2::*, Code, Failure, OperationSchema, Value, MAX_BYTES, MAX_COUNT};
 use std::collections::{BTreeMap, BTreeSet};
@@ -397,6 +397,7 @@ fn compile(
                 .copied()
                 .unwrap_or(0)
                 > 1
+                && !matches!(node.kind, NodeKind::Merge { .. })
             {
                 return Err(invalid("One input permits at most one candidate"));
             }

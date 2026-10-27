@@ -420,6 +420,10 @@ pub struct GraphStep {
 
 /// Borrowed serial execution updates for a trusted host observer.
 /// Delivery retains the admitted root; buffering and replay belong to consumers.
+/// These privileged control-plane callbacks can reveal classified control outcomes
+/// and timing, even without payloads. Only the trusted root owner may receive them;
+/// forwarding to untrusted logging, plugins or streams requires a separately
+/// authorized, classification-aware export. This is not a plugin observer API.
 #[derive(Debug)]
 pub struct GraphUpdate<'a> {
     pub root: u64,
@@ -720,6 +724,11 @@ fn state_hook_requests(
 
 /// Readiness bookkeeping around one existing Root and its Ticket handles.
 /// The host controls polling; no timeout or busy loop is imposed by the kernel.
+/// All callbacks and results are privileged control-plane data for the trusted
+/// root owner and may reveal classified control outcomes. Never forward them to
+/// untrusted logging, plugins or streams without a separately authorized,
+/// classification-aware export. Suppressing v2 NodeFinished updates avoids
+/// automatic raw-payload exposure, not success/failure or timing disclosure.
 pub struct GraphExecution<'a> {
     v2: Option<v2::execute::Wave>,
     root: Root<'a>,
@@ -765,9 +774,15 @@ impl GraphExecution<'_> {
         (epoch.0, changed)
     }
 
+    /// Privileged results for the trusted root owner, including classified payloads
+    /// and control outcomes. Untrusted export requires separate classification-aware
+    /// authorization, even when NodeFinished callbacks are suppressed.
     pub fn steps(&self) -> &[GraphStep] {
         &self.completed
     }
+    /// Privileged terminal outcome for the trusted root owner. Success, failure and
+    /// completion timing may reveal classified branches; payload suppression does
+    /// not make this safe for untrusted export without separate authorization.
     pub fn completion(&self) -> Option<GraphCompletion<'_>> {
         self.terminal.then_some({
             if let Some(failure) = &self.failure {
@@ -937,6 +952,10 @@ impl GraphExecution<'_> {
         Ok(true)
     }
 
+    /// Advance execution for the trusted root owner. Callbacks, returned status,
+    /// errors and timing may reveal classified control outcomes. Do not forward
+    /// them to untrusted logging, plugins or streams without a separately authorized,
+    /// classification-aware export; suppressing payload updates is not full secrecy.
     pub fn pump(
         &mut self,
         mut observe: impl FnMut(&GraphUpdate<'_>),
