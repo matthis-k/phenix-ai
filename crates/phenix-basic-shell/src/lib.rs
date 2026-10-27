@@ -65,15 +65,50 @@ macro_rules! shell_operation {
 }
 
 // These markers are type signatures for later domain plugins, not pretend handlers.
-shell_operation!(SessionAdmit, "phenix.shell.session@1/admit", Prompt, SessionTurn);
-shell_operation!(Recall, "phenix.shell.recall@1/search", SessionTurn, Evidence);
-shell_operation!(Assemble, "phenix.shell.context@1/assemble", Evidence, ModelContext);
-shell_operation!(Measure, "phenix.shell.budget@1/measure", ModelContext, AdmittedRequest);
-shell_operation!(Complete, "phenix.shell.model@1/complete", AdmittedRequest, Reply);
+shell_operation!(
+    SessionAdmit,
+    "phenix.shell.session@1/admit",
+    Prompt,
+    SessionTurn
+);
+shell_operation!(
+    Recall,
+    "phenix.shell.recall@1/search",
+    SessionTurn,
+    Evidence
+);
+shell_operation!(
+    Assemble,
+    "phenix.shell.context@1/assemble",
+    Evidence,
+    ModelContext
+);
+shell_operation!(
+    Measure,
+    "phenix.shell.budget@1/measure",
+    ModelContext,
+    AdmittedRequest
+);
+shell_operation!(
+    Complete,
+    "phenix.shell.model@1/complete",
+    AdmittedRequest,
+    Reply
+);
 shell_operation!(Commit, "phenix.shell.journal@1/commit", Reply, Committed);
 shell_operation!(Observe, "phenix.shell.observer@1/record", Reply, Observed);
-shell_operation!(Authenticate, "phenix.shell.auth@1/authenticate", AuthRequest, AuthOutcome);
-shell_operation!(Initialize, "phenix.shell.lifecycle@1/initialize", Begin, Ready);
+shell_operation!(
+    Authenticate,
+    "phenix.shell.auth@1/authenticate",
+    AuthRequest,
+    AuthOutcome
+);
+shell_operation!(
+    Initialize,
+    "phenix.shell.lifecycle@1/initialize",
+    Begin,
+    Ready
+);
 
 /// Subgraphs are declared independently. Boundary aliases remain typed, not nodes.
 /// Declaration order intentionally differs from dataflow order.
@@ -137,16 +172,43 @@ pub fn topology() -> Result<GraphContributionV2, Failure> {
         module.exit("begin", source)
     })?;
 
-    graph.flow(prompt.output::<Prompt>("submitted")?, session.input::<Prompt>("prompt")?);
-    graph.flow(session.output::<SessionTurn>("turn")?, memory.input::<SessionTurn>("turn")?);
-    graph.flow(memory.output::<Evidence>("evidence")?, context.input::<Evidence>("evidence")?);
-    graph.flow(context.output::<ModelContext>("context")?, budget.input::<ModelContext>("context")?);
-    graph.flow(budget.output::<AdmittedRequest>("request")?, model.input::<AdmittedRequest>("request")?);
+    graph.flow(
+        prompt.output::<Prompt>("submitted")?,
+        session.input::<Prompt>("prompt")?,
+    );
+    graph.flow(
+        session.output::<SessionTurn>("turn")?,
+        memory.input::<SessionTurn>("turn")?,
+    );
+    graph.flow(
+        memory.output::<Evidence>("evidence")?,
+        context.input::<Evidence>("evidence")?,
+    );
+    graph.flow(
+        context.output::<ModelContext>("context")?,
+        budget.input::<ModelContext>("context")?,
+    );
+    graph.flow(
+        budget.output::<AdmittedRequest>("request")?,
+        model.input::<AdmittedRequest>("request")?,
+    );
     // A single typed reply fans out. No second model execution.
-    graph.flow(model.output::<Reply>("reply")?, commit.input::<Reply>("reply")?);
-    graph.flow(model.output::<Reply>("reply")?, observe.input::<Reply>("reply")?);
-    graph.flow(auth_source.output::<AuthRequest>("request")?, auth.input::<AuthRequest>("request")?);
-    graph.flow(begin.output::<Begin>("begin")?, lifecycle.input::<Begin>("begin")?);
+    graph.flow(
+        model.output::<Reply>("reply")?,
+        commit.input::<Reply>("reply")?,
+    );
+    graph.flow(
+        model.output::<Reply>("reply")?,
+        observe.input::<Reply>("reply")?,
+    );
+    graph.flow(
+        auth_source.output::<AuthRequest>("request")?,
+        auth.input::<AuthRequest>("request")?,
+    );
+    graph.flow(
+        begin.output::<Begin>("begin")?,
+        lifecycle.input::<Begin>("begin")?,
+    );
     graph.finish()
 }
 
@@ -162,14 +224,32 @@ mod tests {
         assert_eq!(plan.nodes.len(), 12);
         assert_eq!(plan.flows.len(), 9);
         assert_eq!(plan.lowered_flows().unwrap().len(), 9);
-        assert_eq!(plan.nodes.iter().filter(|n| matches!(n.kind, NodeKindV2::Source { .. })).count(), 3);
-        assert_eq!(plan.nodes.iter().filter(|n| matches!(n.kind, NodeKindV2::Invoke { .. })).count(), 9);
-        assert!(plan.flows.iter().all(|flow| matches!(flow.from, OutRefV2::ModuleExit { .. })));
+        assert_eq!(
+            plan.nodes
+                .iter()
+                .filter(|n| matches!(n.kind, NodeKindV2::Source { .. }))
+                .count(),
+            3
+        );
+        assert_eq!(
+            plan.nodes
+                .iter()
+                .filter(|n| matches!(n.kind, NodeKindV2::Invoke { .. }))
+                .count(),
+            9
+        );
+        assert!(plan
+            .flows
+            .iter()
+            .all(|flow| matches!(flow.from, OutRefV2::ModuleExit { .. })));
         for module in &plan.modules {
             assert_eq!(module.revision, 1);
             assert_eq!(module.members.len(), 1);
         }
-        let fanout = plan.lowered_flows().unwrap().into_iter()
+        let fanout = plan
+            .lowered_flows()
+            .unwrap()
+            .into_iter()
             .filter(|edge| edge.from.node == "phenix.basic.shell/model.complete")
             .count();
         assert_eq!(fanout, 2);
@@ -181,8 +261,13 @@ mod tests {
         let journal = plan.modules.iter().find(|m| m.id == "journal").unwrap();
         assert_ne!(journal.entries[0].schema, Prompt::SCHEMA.owned().unwrap());
         let mut broken = plan;
-        broken.modules.iter_mut().find(|m| m.id == "journal").unwrap().entries[0].schema =
-            Prompt::SCHEMA.owned().unwrap();
+        broken
+            .modules
+            .iter_mut()
+            .find(|m| m.id == "journal")
+            .unwrap()
+            .entries[0]
+            .schema = Prompt::SCHEMA.owned().unwrap();
         assert!(broken.normalized().is_err());
     }
 
