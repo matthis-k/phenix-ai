@@ -63,9 +63,7 @@ mod plugin {
             let mut state = Counter::default();
             assert_eq!(state.read().value, 0);
             assert_eq!(
-                state.increase(Increase { by: u64::MAX })
-                    .unwrap()
-                    .value,
+                state.increase(Increase { by: u64::MAX }).unwrap().value,
                 u64::MAX
             );
             assert_eq!(

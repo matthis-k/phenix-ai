@@ -332,10 +332,16 @@ pub fn expand(
             let operation: syn::Type = attr.parse_args()?;
             let mut inputs = method.sig.inputs.iter();
             let Some(syn::FnArg::Receiver(receiver)) = inputs.next() else {
-                return Err(syn::Error::new(method.sig.span(), "exported method needs borrowed self"));
+                return Err(syn::Error::new(
+                    method.sig.span(),
+                    "exported method needs borrowed self",
+                ));
             };
             if receiver.reference.is_none() || receiver.colon_token.is_some() {
-                return Err(syn::Error::new(receiver.span(), "exported method needs &self or &mut self"));
+                return Err(syn::Error::new(
+                    receiver.span(),
+                    "exported method needs &self or &mut self",
+                ));
             }
             let (request, argument) = match (inputs.next(), inputs.next()) {
                 (None, None) => (quote!(), quote!()),
@@ -343,7 +349,12 @@ pub fn expand(
                     let ty = &param.ty;
                     (quote!(, request: #ty), quote!(request))
                 }
-                _ => return Err(syn::Error::new(method.sig.span(), "exported method needs at most one typed request")),
+                _ => {
+                    return Err(syn::Error::new(
+                        method.sig.span(),
+                        "exported method needs at most one typed request",
+                    ))
+                }
             };
             let output = &method.sig.output;
             let name = &method.sig.ident;
