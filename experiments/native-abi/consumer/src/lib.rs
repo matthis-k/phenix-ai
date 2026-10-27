@@ -99,8 +99,8 @@ impl Instance {
 }
 
 pub fn smoke(paths: &[PathBuf]) -> Result<(), String> {
-    if paths.len() != 2 {
-        return Err("expected paths to the two independently compiled .so files".into());
+    if paths.len() != 3 {
+        return Err("expected two Rust .so providers and one native language adapter".into());
     }
     for path in paths {
         let old = Generation::open(path)?;
