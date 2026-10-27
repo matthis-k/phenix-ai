@@ -5,6 +5,181 @@ const PUBLIC: PortSecurity = PortSecurity {
     confidentiality: Classification::Public,
     integrity: IntegrityClass::Untrusted,
 };
+
+pub(super) fn join_fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
+    let (mut d, p) = merge_fixture();
+    let join = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/merge")
+        .unwrap();
+    join.kind = NodeKind::Join {
+        policy: JoinPolicy::All,
+    };
+    join.inputs[0].name = "left".into();
+    let mut right = join.inputs[0].clone();
+    right.name = "right".into();
+    join.inputs.push(right);
+    let schema = ValueSchema::Struct(
+        join.inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.schema.clone()))
+            .collect(),
+    );
+    join.outputs[0].schema = schema.clone();
+    let sink = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/sink")
+        .unwrap();
+    sink.inputs[0].schema = schema.clone();
+    sink.outputs[0].schema = schema;
+    for edge in &mut d[0].edges {
+        if let EdgeKind::Flow { from, to } = &mut edge.kind {
+            if edge.id == "alpha/a" {
+                to.port = "left".into();
+            }
+            if edge.id == "alpha/b" {
+                from.node = "alpha/source".into();
+                to.port = "right".into();
+            }
+        }
+    }
+    (d, p)
+}
+
+#[test]
+fn join_sources_dormancy_order_and_candidate_limits() {
+    let (mut d, p) = join_fixture();
+    let graph = run(&d, &p).unwrap();
+    assert_eq!(
+        graph.join_satisfiability()["alpha/merge"],
+        Satisfiability::ProvenSatisfiable
+    );
+    d[0].nodes.reverse();
+    d[0].edges.reverse();
+    assert_eq!(graph.identity(), run(&d, &p).unwrap().identity());
+    assert_eq!(
+        graph.join_satisfiability(),
+        run(&d, &p).unwrap().join_satisfiability()
+    );
+    let (mut d, p) = join_fixture();
+    let EdgeKind::Flow { from, .. } = &mut d[0].edges[1].kind else {
+        panic!()
+    };
+    from.node = "alpha/alternative-source".into();
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/order".into(),
+        kind: EdgeKind::Order {
+            before: "alpha/source".into(),
+            after: "alpha/alternative-source".into(),
+        },
+    });
+    assert!(run(&d, &p)
+        .unwrap_err()
+        .message
+        .contains("disjoint input sources"));
+    d[0].edges.remove(1);
+    assert_eq!(
+        run(&d, &p).unwrap().join_satisfiability()["alpha/merge"],
+        Satisfiability::Dormant
+    );
+    let (mut d, p) = join_fixture();
+    let mut duplicate = d[0].edges[0].clone();
+    duplicate.id = "alpha/duplicate".into();
+    d[0].edges.push(duplicate);
+    assert!(run(&d, &p).unwrap_err().message.contains("at most one"));
+}
+
+#[test]
+fn join_direct_switch_exclusion_and_nested_unknown() {
+    let (mut d, mut p) = join_fixture();
+    let tagged = ValueSchema::Tagged(BTreeMap::from([
+        ("one".into(), Some(ValueSchema::String)),
+        ("two".into(), Some(ValueSchema::String)),
+    ]));
+    d[0].sources[0].payload = tagged.clone();
+    d[0].nodes[0].outputs[0].schema = tagged.clone();
+    let mut switch = d[0].nodes[2].clone();
+    switch.id = "alpha/switch".into();
+    switch.kind = NodeKind::Switch {
+        tagged_schema: tagged.id().unwrap(),
+    };
+    switch.inputs = vec![InputPort {
+        name: "in".into(),
+        schema: tagged,
+        readiness: InputReadiness::One,
+        security: PUBLIC,
+    }];
+    switch.outputs = ["one", "two"]
+        .into_iter()
+        .map(|name| OutputPort {
+            name: name.into(),
+            schema: ValueSchema::String,
+            security: PUBLIC,
+        })
+        .collect();
+    d[0].nodes.push(switch);
+    for edge in &mut d[0].edges[..2] {
+        let EdgeKind::Flow { from, to } = &mut edge.kind else {
+            panic!()
+        };
+        from.node = "alpha/switch".into();
+        from.port = if to.port == "left" { "one" } else { "two" }.into();
+    }
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/start".into(),
+        kind: EdgeKind::Flow {
+            from: OutPortRef {
+                node: "alpha/source".into(),
+                port: "out".into(),
+            },
+            to: InPortRef {
+                node: "alpha/switch".into(),
+                port: "in".into(),
+            },
+        },
+    });
+    assert!(run(&d, &p)
+        .unwrap_err()
+        .message
+        .contains("Switch case exclusion"));
+    let mut merge = d[0].nodes[3].clone();
+    merge.id = "alpha/intermediate".into();
+    merge.inputs[0].schema = ValueSchema::String;
+    merge.outputs[0].schema = ValueSchema::String;
+    d[0].nodes.push(merge);
+    let EdgeKind::Flow { to, .. } = &mut d[0].edges[1].kind else {
+        panic!()
+    };
+    to.node = "alpha/intermediate".into();
+    to.port = "in".into();
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/nested".into(),
+        kind: EdgeKind::Flow {
+            from: OutPortRef {
+                node: "alpha/intermediate".into(),
+                port: "out".into(),
+            },
+            to: InPortRef {
+                node: "alpha/merge".into(),
+                port: "right".into(),
+            },
+        },
+    });
+    let graph = run(&d, &p).unwrap();
+    assert_eq!(
+        graph.join_satisfiability()["alpha/merge"],
+        Satisfiability::Unknown
+    );
+    d[0].nodes.reverse();
+    d[0].edges.reverse();
+    p.topology.clear();
+    assert_eq!(
+        graph.join_satisfiability(),
+        run(&d, &p).unwrap().join_satisfiability()
+    );
+}
 pub(super) fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
     let execution = ExecutionPolicy {
         on_domain_error: DomainErrorPolicy::RouteErr,

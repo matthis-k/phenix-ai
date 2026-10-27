@@ -330,7 +330,26 @@ impl GraphContributionV2 {
                         ));
                     }
                 }
-                NodeKind::Join { .. } => return Err(bad("unsupported graph-v2 intrinsic")),
+                NodeKind::Join {
+                    policy: JoinPolicy::All,
+                } => {
+                    let fields = node
+                        .inputs
+                        .iter()
+                        .map(|p| (p.name.clone(), p.schema.clone()))
+                        .collect();
+                    if node.inputs.is_empty()
+                        || node.outputs.len() != 1
+                        || node.outputs[0].name != "out"
+                        || node.outputs[0].schema != ValueSchema::Struct(fields)
+                        || node
+                            .inputs
+                            .iter()
+                            .any(|p| !p.security.can_flow_to(node.outputs[0].security))
+                    {
+                        return Err(bad("Join All requires named One inputs and exact struct out without security downgrade"));
+                    }
+                }
             }
         }
         for edge in &self.edges {
@@ -587,7 +606,9 @@ fn encode_node(n: &NodeDecl) -> Result<Value, Failure> {
         NodeKind::Merge {
             policy: MergePolicy::ExactlyOne,
         } => Value::map([("kind", string("merge")), ("policy", string("exactly-one"))]),
-        _ => return Err(bad("unsupported graph-v2 intrinsic")),
+        NodeKind::Join {
+            policy: JoinPolicy::All,
+        } => Value::map([("kind", string("join")), ("policy", string("all"))]),
     };
     let inputs = n
         .inputs
@@ -655,6 +676,12 @@ fn decode_node(value: Value) -> Result<NodeDecl, Failure> {
             policy: match text(&mut k, "policy")?.as_str() {
                 "exactly-one" => MergePolicy::ExactlyOne,
                 _ => return Err(bad("unsupported Merge policy")),
+            },
+        },
+        "join" => NodeKind::Join {
+            policy: match text(&mut k, "policy")?.as_str() {
+                "all" => JoinPolicy::All,
+                _ => return Err(bad("unsupported Join policy")),
             },
         },
         _ => return Err(bad("unknown or unsupported graph-v2 intrinsic")),

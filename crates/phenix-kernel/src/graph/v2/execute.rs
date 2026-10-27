@@ -10,7 +10,8 @@ const MAX_ROOT_NODES: usize = 4_096;
 #[derive(Clone)]
 enum Resolution {
     Unresolved,
-    Value(Value, BTreeSet<String>),
+    // None retains successful terminal bookkeeping only for a non-runnable Join.
+    Value(Option<Value>, BTreeSet<String>),
     Closed,
     Failed,
 }
@@ -99,12 +100,17 @@ impl Wave {
             .resources
             .get(node)
             .unwrap_or(&scope.authority.resources);
+        let mut joins = BTreeSet::new();
         for (id, edge) in &self.edges {
             let EdgeKind::Flow { from, to } = &edge.kind else {
                 continue;
             };
             if from.node != node {
                 continue;
+            }
+            let join = matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. });
+            if join {
+                joins.insert(to.node.clone());
             }
             let resolution =
                 if let Some((port, value)) = selected.filter(|(port, _)| *port == from.port) {
@@ -147,13 +153,21 @@ impl Wave {
                             "graph-v2 root value/byte limit",
                         ));
                     }
-                    Resolution::Value(value.clone(), resources)
+                    let payload = if join && self.join_non_runnable(&to.node)? {
+                        None
+                    } else {
+                        Some(value.clone())
+                    };
+                    Resolution::Value(payload, resources)
                 } else if failed {
                     Resolution::Failed
                 } else {
                     Resolution::Closed
                 };
             self.arrivals.insert(id.clone(), resolution);
+        }
+        for join in joins {
+            self.release_join_payloads(&join)?;
         }
         self.done.insert(node.into());
         Ok(())
@@ -196,13 +210,94 @@ impl Wave {
     }
 
     fn input(&self, node: &str) -> Result<Resolution, Failure> {
-        let port = &self.nodes[node].1.inputs[0].name;
+        let definition = &self.nodes[node].1;
+        if !matches!(definition.kind, NodeKind::Join { .. }) {
+            let input = self.port_input(node, &definition.inputs[0].name)?;
+            if matches!(input, Resolution::Value(None, _)) {
+                return Err(fail(
+                    Code::InfrastructureFailure,
+                    "graph-v2 runnable input payload released",
+                ));
+            }
+            return Ok(input);
+        }
+        let non_runnable = self.join_non_runnable(node)?;
+        let mut fields = BTreeMap::new();
+        let mut resources: Option<BTreeSet<String>> = None;
+        let mut unresolved = false;
+        let mut failed = false;
+        for port in &definition.inputs {
+            match self.port_input(node, &port.name)? {
+                Resolution::Unresolved => unresolved = true,
+                Resolution::Failed => failed = true,
+                Resolution::Closed => {}
+                Resolution::Value(Some(value), scope) => {
+                    fields.insert(port.name.clone(), value);
+                    if let Some(resources) = &mut resources {
+                        resources.retain(|r| scope.contains(r));
+                    } else {
+                        resources = Some(scope);
+                    }
+                }
+                Resolution::Value(None, _) if non_runnable => {}
+                Resolution::Value(None, _) => {
+                    return Err(fail(
+                        Code::InfrastructureFailure,
+                        "graph-v2 runnable Join payload released",
+                    ))
+                }
+            }
+        }
+        if unresolved {
+            Ok(Resolution::Unresolved)
+        } else if failed {
+            Ok(Resolution::Failed)
+        } else if non_runnable {
+            Ok(Resolution::Closed)
+        } else {
+            let resources = resources.ok_or_else(|| {
+                fail(
+                    Code::InfrastructureFailure,
+                    "graph-v2 Join resources absent",
+                )
+            })?;
+            Ok(Resolution::Value(Some(Value::Map(fields)), resources))
+        }
+    }
+
+    // Terminal arrivals never change: once a required input closes, this remains
+    // true even while other producers are pending. No upstream cancellation.
+    fn join_non_runnable(&self, node: &str) -> Result<bool, Failure> {
+        for port in &self.nodes[node].1.inputs {
+            // Join inputs have at most one candidate. No candidate is dormant
+            // closure, not a missing success payload or an unresolved producer.
+            if self.edges.iter().filter(|(_, e)| matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port.name))
+                .all(|(id, _)| matches!(self.arrivals[id], Resolution::Closed)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn release_join_payloads(&mut self, node: &str) -> Result<(), Failure> {
+        if self.join_non_runnable(node)? {
+            for (id, edge) in &self.edges {
+                if matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node) {
+                    if let Some(Resolution::Value(payload, _)) = self.arrivals.get_mut(id) {
+                        *payload = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn port_input(&self, node: &str, port: &str) -> Result<Resolution, Failure> {
         let mut unresolved = false;
         let mut failed = false;
         let mut values = Vec::new();
         for (edge, e) in &self.edges {
-            if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && &to.port == port)
-            {
+            if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port) {
                 continue;
             }
             match &self.arrivals[edge] {
@@ -269,7 +364,7 @@ impl Wave {
                 };
                 (case.as_str(), value)
             }
-            NodeKind::Merge { .. } => ("out", request.clone()),
+            NodeKind::Merge { .. } | NodeKind::Join { .. } => ("out", request.clone()),
             _ => unreachable!(),
         };
         self.deliver(graph, scope, &node.id, Some((port, &value)), false)
@@ -324,6 +419,12 @@ impl GraphExecution<'_> {
                     continue;
                 }
                 Resolution::Value(request, mut resources) => {
+                    let request = request.ok_or_else(|| {
+                        fail(
+                            Code::InfrastructureFailure,
+                            "graph-v2 runnable request payload released",
+                        )
+                    })?;
                     if !wave.order_ready(graph, id) {
                         continue;
                     }
@@ -333,7 +434,10 @@ impl GraphExecution<'_> {
                         self.waiting.remove(id);
                         continue;
                     }
-                    if matches!(node.kind, NodeKind::Switch { .. } | NodeKind::Merge { .. }) {
+                    if matches!(
+                        node.kind,
+                        NodeKind::Switch { .. } | NodeKind::Merge { .. } | NodeKind::Join { .. }
+                    ) {
                         wave.route_intrinsic(graph, &self.root.scope, &node, &request, resources)?;
                         self.waiting.remove(id);
                         continue;

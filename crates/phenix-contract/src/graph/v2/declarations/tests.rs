@@ -552,13 +552,6 @@ fn constants_require_unit_one_start_and_public_untrusted_literal() {
 
 #[test]
 fn unsupported_profiles_fail_explicitly() {
-    {
-        let mut g = sample();
-        g.nodes[1].kind = NodeKind::Join {
-            policy: JoinPolicy::All,
-        };
-        assert!(g.encode().unwrap_err().message.contains("unsupported"));
-    }
     for readiness in [
         InputReadiness::Optional,
         InputReadiness::StaticMany { min: 0, max: 2 },
@@ -580,6 +573,105 @@ fn unsupported_profiles_fail_explicitly() {
         next: DeferredWave::Next,
     };
     assert!(g.encode().unwrap_err().message.contains("unsupported"));
+}
+
+#[test]
+fn join_exact_struct_security_and_canonical_wire() {
+    let inputs = vec![
+        input("left", ValueSchema::String),
+        input("right", ValueSchema::Bool),
+    ];
+    let node = NodeDecl {
+        id: "demo/join".into(),
+        kind: NodeKind::Join {
+            policy: JoinPolicy::All,
+        },
+        outputs: vec![output(
+            "out",
+            ValueSchema::Struct(
+                inputs
+                    .iter()
+                    .map(|p| (p.name.clone(), p.schema.clone()))
+                    .collect(),
+            ),
+        )],
+        inputs,
+        execution: constant().execution,
+    };
+    let mut graph = GraphContributionV2 {
+        contributor: "demo".into(),
+        sources: vec![],
+        nodes: vec![node.clone()],
+        edges: vec![],
+        patches: vec![],
+    };
+    let bytes = graph.encode().unwrap();
+    assert_eq!(GraphContributionV2::decode(&bytes).unwrap(), graph);
+    graph.nodes[0].inputs.reverse();
+    assert_eq!(graph.encode().unwrap(), bytes);
+    for malformed in 0..9 {
+        graph.nodes = vec![node.clone()];
+        let n = &mut graph.nodes[0];
+        match malformed {
+            0 => n.inputs.clear(),
+            1 => n.outputs.clear(),
+            2 => n.outputs[0].name = "other".into(),
+            3 => n.outputs[0].schema = ValueSchema::String,
+            4 => n.inputs[1].schema = ValueSchema::String,
+            5 => n.inputs[1].name = "other".into(),
+            6 => n.inputs[1].security.confidentiality = Classification::Secret,
+            7 => n.outputs[0].security.integrity = IntegrityClass::Trusted,
+            _ => n.inputs[0].readiness = InputReadiness::Optional,
+        }
+        assert!(graph.encode().is_err(), "malformed {malformed}");
+    }
+    graph.nodes = vec![node.clone()];
+    for index in 0..2 {
+        let mut n = node.clone();
+        n.inputs[index].security.confidentiality = Classification::Confidential;
+        n.outputs[0].security.confidentiality = Classification::Secret;
+        graph.nodes = vec![n];
+        assert!(graph.encode().is_ok());
+        graph.nodes[0].outputs[0].security.confidentiality = Classification::Public;
+        assert!(graph.encode().is_err());
+    }
+    // A single named field is still an explicit assembled struct, not a pass-through.
+    let mut single = node.clone();
+    single.inputs.pop();
+    single.outputs[0].schema = ValueSchema::Struct(std::collections::BTreeMap::from([(
+        "left".into(),
+        ValueSchema::String,
+    )]));
+    graph.nodes = vec![single];
+    assert!(graph.encode().is_ok());
+    graph.nodes = vec![node];
+    for (key, value) in [
+        ("policy", None),
+        ("kind", None),
+        ("policy", Some(string("any"))),
+        ("policy", Some(Value::Null)),
+        ("kind", Some(string("Join"))),
+        ("extra", Some(Value::Null)),
+    ] {
+        let mut root = wire(&graph);
+        let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+            panic!()
+        };
+        let Value::Map(node) = &mut nodes[0] else {
+            panic!()
+        };
+        let Value::Map(kind) = node.get_mut("kind").unwrap() else {
+            panic!()
+        };
+        assert_eq!(kind["kind"], string("join"));
+        assert_eq!(kind["policy"], string("all"));
+        if let Some(value) = value {
+            kind.insert(key.into(), value);
+        } else {
+            kind.remove(key);
+        }
+        rejects(root);
+    }
 }
 
 #[test]

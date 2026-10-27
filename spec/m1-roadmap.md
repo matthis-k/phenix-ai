@@ -19,11 +19,11 @@ The isolated rewrite #1171 is not a replacement for the working P1 composition.
 
 | Area | Spec reference | Current code | Gap | Migration | Verification | PR/status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, artifact graph section parser | Base-profile canonical Source/Invoke/Constant/Flow/Order declarations implemented; other intrinsics, readiness, deferred and patches explicitly reject | V0, retain v1 | Canonical permutation, malformed metadata, ownership, bounds and unsupported-profile unit tests; native packaged acceptance pending | In progress |
-| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave Source/Invoke/Constant delivery implemented; multiple waves, joins and deferred admission remain absent | V0/V1 | Native initial-wave success/domain/pending/cancel/drain fixture passes locally; exact-head Nix/CI pending | In progress |
+| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, shared artifact graph section parser | Base declarations integrated by #1172; Switch/Merge/Join follow-ups implemented; extended readiness, deferred and patches explicitly reject | V0/V2, retain v1 | Canonical permutation, malformed metadata, ownership, bounds and native fixture tests; follow-up CI pending | In progress; base slice integrated |
+| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave intrinsic delivery implemented on follow-ups; multiple waves and deferred admission remain absent | V0/V1/V2 | Native Source/Invoke/Constant, Switch/Merge and Join fixtures pass locally; follow-up exact-head CI pending | In progress |
 | Graph patches | v2.4 section 4 | No v2 patch engine | Exact deterministic patch algebra and exports | V3, after V1 | No patch acceptance | Not started |
-| Security | v2.4 sections 3.4.1, 5 | Offline product lattice and `phenix-kernel/src/graph/v2.rs` trusted composition policy | Artifact ownership and selected schemas checked; independent topology/delivery grants and trusted label attestations checked offline. Runtime delivery and declassification/endorsement authorization remain absent | V0 foundation, enforce in V1 | Lattice, ceilings, references, foreign topology, delivery, label mismatch and protected constant-control negatives; native acceptance pending | In progress, not integrated |
-| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Initial-wave One inputs and bounded values/bytes/nodes implemented; general operators and deferred execution remain absent | V1/V2/V4 through existing dispatcher/tickets | Native returned-value delivery, pending-before-forwarding, no duplicates, cancellation/physical drain and narrowed delivery fixture; full gate pending | In progress |
+| Security | v2.4 sections 3.4.1, 5 | Offline product lattice, trusted composition policy and inherited-resource runtime delivery | Independent topology/delivery/operation checks implemented; intrinsic label propagation tested. Declassification/endorsement and selected classified observation remain absent | V0/V1 base integrated; V2 follow-ups | Native scoped delivery/ref-without-read negatives passed in #1172; follow-up intrinsic/control/resource tests pass locally | In progress; base slice integrated |
+| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Bounded initial-wave One inputs and typed intrinsics through Join implemented; extended readiness and deferred execution remain absent | V1/V2/V4 through existing dispatcher/tickets | Native result routing, terminality, failure precedence and physical-drain fixtures; follow-up exact-head CI pending | In progress; V1 base slice integrated |
 | SDK/macros | v2.4 section 7 | Existing M1 `Operation`, graph-v1 authoring | Typed graph/subgraph authoring and temporary lowering bridge | V5 | Existing APIs are not v2 acceptance | Not started |
 | Plugin state/exposure | Plugin state ownership | Ordinary plugin fields and M1 selected property contracts | Explicit normative opt-in publication amendment and concrete authoring trials | Preserve private ownership; no global state registry | No new exposure acceptance | Not started |
 | Providers/auth | Provider responsibility audit | Existing selected provider contracts/runtime | Consolidate stacked shared-host lineage and auth parity | #1139-#1156; reconcile #1143/#1145, do not combine competing #1136 auth | Refresh each exact-head product gate before integration | In progress, unmerged stack |
@@ -61,6 +61,19 @@ with adversarial wrong-pin, OIDC, publisher and reduced-inventory cases. Full
 DAG passed on `acf46e51f1081ccadc561c08d9fd11881ecbc3f8`, but that head's
 workflow-policy check failed before the fix. Do not treat it as complete
 acceptance of the final #1173 head.
+
+Join continuation (separate branch following #1173): named One inputs assemble
+one canonical struct, with conservative output security and intersected resource
+scope. Offline compilation rejects independent-only and direct Switch-exclusive
+combinations, diagnoses dormancy and reports Unknown for unproven composed
+paths. Native fixtures passed pending fan-in, actual field delivery, no early
+consumer invocation, required closure followed by late success/failure, producer
+non-cancellation and physical draining. Private terminal bookkeeping now releases
+payloads for non-runnable joins instead of retaining late successes. Focused
+contract/kernel tests pass locally; exact committed-head CI and integration are
+still required. Optional/StaticMany, patch algebra, deferred waves, SDK/lowering
+and graph-v2 P1 parity remain open. The user's single-store CI is inherited;
+no second test inventory or local full-flake rebuild is introduced.
 
 Remaining architectural question: repository documents still label v2.4 a
 proposal; this implementation follows the requested target without changing

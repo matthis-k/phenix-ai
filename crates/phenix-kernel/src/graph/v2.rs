@@ -1,6 +1,6 @@
 //! Offline base-profile compilation and private initial-wave readiness inside
 //! the existing GraphExecution. Supports ExternalAction, Source, Invoke, Constant,
-//! Switch, Merge, Flow and Order. No patches or alternate runtime.
+//! Switch, Merge, Join, Flow and Order. No patches or alternate runtime.
 use crate::{dag, resolve::Prepared};
 use phenix_contract::{graph::v2::*, Code, Failure, OperationSchema, Value, MAX_BYTES, MAX_COUNT};
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,6 +46,14 @@ pub struct FlowGrant {
     pub maximum_classification: Classification,
 }
 
+/// Bounded local analysis, not a solver for arbitrary operation behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Satisfiability {
+    ProvenSatisfiable,
+    Dormant,
+    Unknown,
+}
+
 /// Immutable potential-route plan. Delivery resources are static bounds, not
 /// effective root authority or permission to dereference a transported reference.
 #[derive(Debug, Clone)]
@@ -55,11 +63,16 @@ pub struct CompiledGraph {
     routes: BTreeMap<String, String>,
     predecessors: BTreeMap<String, BTreeSet<String>>,
     source_reachability: BTreeMap<String, BTreeSet<String>>,
+    join_satisfiability: BTreeMap<String, Satisfiability>,
     order: Vec<String>,
     policy: TrustedCompositionPolicy,
 }
 
 impl CompiledGraph {
+    /// Deterministic Join diagnostics keyed by authored node identity.
+    pub fn join_satisfiability(&self) -> &BTreeMap<String, Satisfiability> {
+        &self.join_satisfiability
+    }
     pub fn identity(&self) -> &str {
         &self.identity
     }
@@ -411,6 +424,70 @@ fn compile(
             source_reachability.get_mut(id).unwrap().extend(inherited);
         }
     }
+    let mut join_satisfiability = BTreeMap::new();
+    for (_, node) in nodes.values() {
+        if !matches!(node.kind, NodeKind::Join { .. }) {
+            continue;
+        }
+        let incoming: Vec<_> = node
+            .inputs
+            .iter()
+            .map(|input| {
+                declarations
+                    .iter()
+                    .flat_map(|d| &d.edges)
+                    .filter_map(|edge| match &edge.kind {
+                        EdgeKind::Flow { from, to }
+                            if to.node == node.id && to.port == input.name =>
+                        {
+                            Some(from)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let reachable: Vec<BTreeSet<String>> = incoming
+            .iter()
+            .map(|edges| {
+                edges
+                    .iter()
+                    .flat_map(|from| source_reachability[&from.node].iter().cloned())
+                    .collect()
+            })
+            .collect();
+        if reachable.iter().any(BTreeSet::is_empty) {
+            join_satisfiability.insert(node.id.clone(), Satisfiability::Dormant);
+            continue;
+        }
+        let mut common = reachable[0].clone();
+        for sources in &reachable[1..] {
+            common.retain(|source| sources.contains(source));
+        }
+        let mut switch_cases = BTreeMap::new();
+        for from in incoming.iter().flatten() {
+            if matches!(nodes[&from.node].1.kind, NodeKind::Switch { .. })
+                && switch_cases
+                    .insert(&from.node, &from.port)
+                    .is_some_and(|port| port != &from.port)
+            {
+                return Err(invalid("UnsatisfiableJoin: direct Switch case exclusion"));
+            }
+        }
+        if common.is_empty() {
+            return Err(invalid("UnsatisfiableJoin: disjoint input sources"));
+        }
+        let status = if incoming
+            .iter()
+            .flatten()
+            .all(|from| matches!(nodes[&from.node].1.kind, NodeKind::Source { .. }))
+        {
+            Satisfiability::ProvenSatisfiable
+        } else {
+            Satisfiability::Unknown
+        };
+        join_satisfiability.insert(node.id.clone(), status);
+    }
     let canonical = Value::List(
         declarations
             .iter()
@@ -437,6 +514,7 @@ fn compile(
         routes,
         predecessors,
         source_reachability,
+        join_satisfiability,
         order,
         policy: policy.clone(),
     })
