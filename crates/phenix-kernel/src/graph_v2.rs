@@ -56,7 +56,11 @@ impl PreparedFlowV2 {
         let plan = original.normalized()?;
         let mut selected = BTreeMap::new();
         for node in &plan.nodes {
-            if let NodeKindV2::Invoke { operation, selector } = &node.kind {
+            if let NodeKindV2::Invoke {
+                operation,
+                selector,
+            } = &node.kind
+            {
                 let resolved = resolve(&plan.contributor, selector, operation)?;
                 if resolved.key() != *operation {
                     return Err(invalid(format!("selection does not match {}", node.id)));
@@ -78,7 +82,11 @@ impl PreparedFlowV2 {
         for endpoints in edges.values_mut() {
             endpoints.sort();
         }
-        Ok(Self { plan, selected, edges })
+        Ok(Self {
+            plan,
+            selected,
+            edges,
+        })
     }
 
     /// One finite V0 wave. The real entrypoint on Root uses this traversal with
@@ -95,7 +103,10 @@ impl PreparedFlowV2 {
         let mut emitted = BTreeSet::new();
         let mut found = false;
         for node in &self.plan.nodes {
-            if let NodeKindV2::Source { event: source_event } = &node.kind {
+            if let NodeKindV2::Source {
+                event: source_event,
+            } = &node.kind
+            {
                 if source_event != event {
                     continue;
                 }
@@ -108,8 +119,14 @@ impl PreparedFlowV2 {
                     ));
                 }
                 Self::route(
-                    &self.edges, &mut pending, &mut terminal, &mut trace,
-                    &node.id, &output.name, input, &output.schema,
+                    &self.edges,
+                    &mut pending,
+                    &mut terminal,
+                    &mut trace,
+                    &node.id,
+                    &output.name,
+                    input,
+                    &output.schema,
                     &self.plan,
                 )?;
                 emitted.insert(node.id.as_str());
@@ -136,12 +153,14 @@ impl PreparedFlowV2 {
                 break;
             };
             let request = pending.remove(&node.id).expect("ready node input");
-            let contract = self.selected.get(&node.id).ok_or_else(|| {
-                invalid(format!("unselected operation node {}", node.id))
-            })?;
+            let contract = self
+                .selected
+                .get(&node.id)
+                .ok_or_else(|| invalid(format!("unselected operation node {}", node.id)))?;
             if !node.inputs[0].schema.accepts(&request) {
                 return Err(Failure::new(
-                    Code::SchemaRejected, "V0 handoff request schema mismatch",
+                    Code::SchemaRejected,
+                    "V0 handoff request schema mismatch",
                 ));
             }
             let outcome = invoke(contract, &request)?;
@@ -149,11 +168,15 @@ impl PreparedFlowV2 {
                 Outcome::Success(value) => ("ok", value, TraceKindV2::InvokeOk),
                 Outcome::Domain(value) => ("err", value, TraceKindV2::InvokeDomainError),
             };
-            let output = node.outputs.iter().find(|output| output.name == port)
+            let output = node
+                .outputs
+                .iter()
+                .find(|output| output.name == port)
                 .ok_or_else(|| invalid("missing selected output port"))?;
             if !output.schema.accepts(&value) {
                 return Err(Failure::new(
-                    Code::SchemaRejected, "native result violates V0 output schema",
+                    Code::SchemaRejected,
+                    "native result violates V0 output schema",
                 ));
             }
             trace.push(TraceEntryV2 {
@@ -164,8 +187,15 @@ impl PreparedFlowV2 {
                 digest: digest(&value)?,
             });
             Self::route(
-                &self.edges, &mut pending, &mut terminal, &mut trace,
-                &node.id, port, &value, &output.schema, &self.plan,
+                &self.edges,
+                &mut pending,
+                &mut terminal,
+                &mut trace,
+                &node.id,
+                port,
+                &value,
+                &output.schema,
+                &self.plan,
             )?;
             emitted.insert(node.id.as_str());
         }
@@ -184,17 +214,27 @@ impl PreparedFlowV2 {
         schema: &ValueSchema,
         plan: &GraphContributionV2,
     ) -> Result<(), Failure> {
-        let origin = PortRefV2 { node: from_node.into(), port: port.into() };
+        let origin = PortRefV2 {
+            node: from_node.into(),
+            port: port.into(),
+        };
         let digest = digest(value)?;
         if let Some(destinations) = edges.get(&origin) {
             for target in destinations {
-                let receiver = plan.nodes.iter().find(|node| node.id == target.node)
+                let receiver = plan
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == target.node)
                     .ok_or_else(|| invalid("missing selected handoff destination"))?;
-                let input = receiver.inputs.iter().find(|p| p.name == target.port)
+                let input = receiver
+                    .inputs
+                    .iter()
+                    .find(|p| p.name == target.port)
                     .ok_or_else(|| invalid("unknown selected input port"))?;
                 if input.schema != *schema || !input.schema.accepts(value) {
                     return Err(Failure::new(
-                        Code::SchemaRejected, "V0 dataflow schema mismatch",
+                        Code::SchemaRejected,
+                        "V0 dataflow schema mismatch",
                     ));
                 }
                 if pending.insert(target.node.clone(), value.clone()).is_some() {
@@ -231,40 +271,68 @@ impl Prepared {
     /// constructing an executable graph-v2 handoff plan.
     pub fn compile_flow_v2(&self, graph: &GraphContributionV2) -> Result<PreparedFlowV2, Failure> {
         if !self.packages.contains_key(&graph.contributor) {
-            return Err(Failure::new(Code::MissingBinding, "graph owner is not selected"));
+            return Err(Failure::new(
+                Code::MissingBinding,
+                "graph owner is not selected",
+            ));
         }
         PreparedFlowV2::compile_with(graph, |owner, selector, key| {
             let provider = if selector.is_empty() {
                 owner.to_owned()
             } else {
                 let identity = phenix_contract::import_identity(selector, key);
-                self.bindings.get(&(owner.to_owned(), identity)).cloned()
+                self.bindings
+                    .get(&(owner.to_owned(), identity))
+                    .cloned()
                     .ok_or_else(|| Failure::new(Code::MissingBinding, "unselected V0 import"))?
             };
-            let (interface, operation) = key.split_once('/')
+            let (interface, operation) = key
+                .split_once('/')
                 .ok_or_else(|| invalid("invalid graph-v2 operation key"))?;
             let selected = Selection {
                 interface: interface.into(),
                 operation: operation.into(),
                 provider,
             };
-            let prepared = self.operations.get(&(selected.provider.clone(), key.to_owned()))
-                .ok_or_else(|| Failure::new(Code::MissingBinding, "selected V0 operation absent"))?;
+            let prepared = self
+                .operations
+                .get(&(selected.provider.clone(), key.to_owned()))
+                .ok_or_else(|| {
+                    Failure::new(Code::MissingBinding, "selected V0 operation absent")
+                })?;
             let original = graph.nodes.iter().find(|node| {
                 matches!(&node.kind, NodeKindV2::Invoke { operation, .. } if operation == key)
             }).ok_or_else(|| invalid("missing original V0 operation"))?;
             if prepared.schema.request != original.inputs[0].schema
-                || prepared.schema.response != original.outputs.iter()
-                    .find(|port| port.name == "ok").unwrap().schema
-                || prepared.schema.error != original.outputs.iter()
-                    .find(|port| port.name == "err").unwrap().schema
+                || prepared.schema.response
+                    != original
+                        .outputs
+                        .iter()
+                        .find(|port| port.name == "ok")
+                        .unwrap()
+                        .schema
+                || prepared.schema.error
+                    != original
+                        .outputs
+                        .iter()
+                        .find(|port| port.name == "err")
+                        .unwrap()
+                        .schema
             {
-                return Err(Failure::new(Code::SchemaRejected, "selected V0 ABI schema mismatch"));
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "selected V0 ABI schema mismatch",
+                ));
             }
             if !self.permits(owner, key)
-                || !self.grants.contains_key(&(owner.to_owned(), key.to_owned()))
+                || !self
+                    .grants
+                    .contains_key(&(owner.to_owned(), key.to_owned()))
             {
-                return Err(Failure::new(Code::Denied, "V0 operation lacks prepared grant"));
+                return Err(Failure::new(
+                    Code::Denied,
+                    "V0 operation lacks prepared grant",
+                ));
             }
             Ok(selected)
         })
@@ -296,7 +364,9 @@ mod tests {
     fn resolved(_: &str, _: &str, key: &str) -> Result<Selection, Failure> {
         let (interface, operation) = key.split_once('/').unwrap();
         Ok(Selection {
-            interface: interface.into(), operation: operation.into(), provider: "mock.selected".into(),
+            interface: interface.into(),
+            operation: operation.into(),
+            provider: "mock.selected".into(),
         })
     }
     fn wrapped(key: &str, value: &Value) -> Result<Outcome, Failure> {
@@ -305,18 +375,15 @@ mod tests {
             _ => return Err(invalid("not a shell payload")),
         };
         let output = match key {
-            "phenix.shell.journal@1/commit" | "phenix.shell.observer@1/record"
-            | "phenix.shell.auth@1/authenticate" => {
-                Value::map([("accepted", Value::Bool(true))])
-            }
+            "phenix.shell.journal@1/commit"
+            | "phenix.shell.observer@1/record"
+            | "phenix.shell.auth@1/authenticate" => Value::map([("accepted", Value::Bool(true))]),
             "phenix.shell.lifecycle@1/initialize" => Value::map([("generation", value)]),
             "phenix.shell.session@1/admit"
             | "phenix.shell.recall@1/search"
             | "phenix.shell.context@1/assemble"
             | "phenix.shell.budget@1/measure"
-            | "phenix.shell.model@1/complete" => {
-                Value::map([("text", value)])
-            }
+            | "phenix.shell.model@1/complete" => Value::map([("text", value)]),
             _ => return Err(invalid(format!("unhandled shell stage {key}"))),
         };
         Ok(Outcome::Success(output))
@@ -327,19 +394,32 @@ mod tests {
         let plan = PreparedFlowV2::compile_with(&shell::topology().unwrap(), resolved).unwrap();
         let mut invoked = Vec::new();
         let secret = "SENSITIVE PROMPT PAYLOAD";
-        let result = plan.walk(
-            "phenix.shell.prompt", &Value::map([("text", Value::String(secret.into()))]),
-            |selection, request| {
-                invoked.push(selection.key());
-                wrapped(&selection.key(), request)
-            },
-        ).unwrap();
+        let result = plan
+            .walk(
+                "phenix.shell.prompt",
+                &Value::map([("text", Value::String(secret.into()))]),
+                |selection, request| {
+                    invoked.push(selection.key());
+                    wrapped(&selection.key(), request)
+                },
+            )
+            .unwrap();
         assert_eq!(invoked.len(), 7);
-        assert_eq!(invoked.iter().filter(|k| k.ends_with("/complete")).count(), 1);
+        assert_eq!(
+            invoked.iter().filter(|k| k.ends_with("/complete")).count(),
+            1
+        );
         assert_eq!(invoked.iter().filter(|k| k.ends_with("/commit")).count(), 1);
         assert_eq!(invoked.iter().filter(|k| k.ends_with("/record")).count(), 1);
         assert_eq!(result.terminal.len(), 2);
-        assert_eq!(result.trace.iter().filter(|t| t.kind == TraceKindV2::Handoff).count(), 7);
+        assert_eq!(
+            result
+                .trace
+                .iter()
+                .filter(|t| t.kind == TraceKindV2::Handoff)
+                .count(),
+            7
+        );
         assert!(!format!("{:?}", result.trace).contains(secret));
         assert!(result.trace.iter().all(|t| !t.digest.is_empty()));
     }
@@ -352,9 +432,16 @@ mod tests {
             ("phenix.shell.auth_request", "provider", "test"),
         ] {
             let mut invoked = Vec::new();
-            let result = plan.walk(event, &Value::map([(field, Value::String(text.into()))]),
-                |selection, request| { invoked.push(selection.key()); wrapped(&selection.key(), request) }
-            ).unwrap();
+            let result = plan
+                .walk(
+                    event,
+                    &Value::map([(field, Value::String(text.into()))]),
+                    |selection, request| {
+                        invoked.push(selection.key());
+                        wrapped(&selection.key(), request)
+                    },
+                )
+                .unwrap();
             assert_eq!(invoked.len(), 1);
             assert_eq!(result.terminal.len(), 1);
         }
@@ -363,32 +450,57 @@ mod tests {
     #[test]
     fn missing_event_and_wrong_payload_fail_closed() {
         let plan = PreparedFlowV2::compile_with(&shell::topology().unwrap(), resolved).unwrap();
-        assert!(plan.walk("unregistered", &Value::Null, |_, _| unreachable!()).is_err());
-        assert!(plan.walk("phenix.shell.prompt", &Value::Null, |_, _| unreachable!()).is_err());
+        assert!(plan
+            .walk("unregistered", &Value::Null, |_, _| unreachable!())
+            .is_err());
+        assert!(plan
+            .walk("phenix.shell.prompt", &Value::Null, |_, _| unreachable!())
+            .is_err());
     }
 
     #[test]
     fn domain_error_halts_success_path_without_dispatching_followups() {
         let plan = PreparedFlowV2::compile_with(&shell::topology().unwrap(), resolved).unwrap();
         let mut calls = 0;
-        let result = plan.walk(
-            "phenix.shell.prompt", &Value::map([("text", Value::String("x".into()))]),
-            |_, _| { calls += 1; Ok(Outcome::Domain(Value::String("denied".into()))) },
-        ).unwrap();
+        let result = plan
+            .walk(
+                "phenix.shell.prompt",
+                &Value::map([("text", Value::String("x".into()))]),
+                |_, _| {
+                    calls += 1;
+                    Ok(Outcome::Domain(Value::String("denied".into())))
+                },
+            )
+            .unwrap();
         assert_eq!(calls, 1);
         assert_eq!(result.terminal.len(), 1);
-        assert_eq!(result.trace.iter().filter(|t| t.kind == TraceKindV2::InvokeDomainError).count(), 1);
+        assert_eq!(
+            result
+                .trace
+                .iter()
+                .filter(|t| t.kind == TraceKindV2::InvokeDomainError)
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn forged_response_and_ambiguous_handoff_fail_closed() {
         let plan = PreparedFlowV2::compile_with(&shell::topology().unwrap(), resolved).unwrap();
-        assert!(plan.walk(
-            "phenix.shell.prompt", &Value::map([("text", Value::String("x".into()))]),
-            |_, _| Ok(Outcome::Success(Value::Null)),
-        ).is_err());
+        assert!(plan
+            .walk(
+                "phenix.shell.prompt",
+                &Value::map([("text", Value::String("x".into()))]),
+                |_, _| Ok(Outcome::Success(Value::Null)),
+            )
+            .is_err());
         let mut graph = shell::topology().unwrap();
-        let original = graph.flows.iter().find(|f| f.id.contains("memory")).unwrap().clone();
+        let original = graph
+            .flows
+            .iter()
+            .find(|f| f.id.contains("memory"))
+            .unwrap()
+            .clone();
         // Give the same consumer a second source via a different logical edge.
         let mut duplicate = original;
         duplicate.id.push_str(".duplicate");
