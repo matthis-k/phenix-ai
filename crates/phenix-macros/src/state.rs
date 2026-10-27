@@ -857,7 +857,11 @@ mod domain_method_tests {
             }
         };
         let generated = expand(
-            quote!(id = "test.counter", define(CounterApi), provide(CounterApi, slot = "Counter")),
+            quote!(
+                id = "test.counter",
+                define(CounterApi),
+                provide(CounterApi, slot = "Counter")
+            ),
             module,
         )
         .unwrap()
