@@ -26,7 +26,8 @@ impl ScopeGuard {
         let id = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
         HOST_FAILURE.with(|slot| slot.borrow_mut().take());
         let old = CURRENT.with(|slot| {
-            slot.borrow_mut().replace((id, host as *const Host<'_> as *const c_void))
+            slot.borrow_mut()
+                .replace((id, host as *const Host<'_> as *const c_void))
         });
         (Self(old), id)
     }
@@ -81,7 +82,9 @@ impl HostBridge {
             }
             Err(error) => {
                 HOST_FAILURE.with(|slot| *slot.borrow_mut() = Some(error));
-                Err(PyRuntimeError::new_err("Phenix selected provider rejected call"))
+                Err(PyRuntimeError::new_err(
+                    "Phenix selected provider rejected call",
+                ))
             }
         }
     }
@@ -93,7 +96,11 @@ impl HostBridge {
     define(example_contracts::RunContract),
     define(example_contracts::TransformContract),
     provide(example_contracts::RunContract, slot = "Run"),
-    require(example_contracts::TransformContract, slot = "Provider", provider = "example.provider")
+    require(
+        example_contracts::TransformContract,
+        slot = "Provider",
+        provider = "example.provider"
+    )
 )]
 mod python_host {
     use super::*;
@@ -123,7 +130,9 @@ mod python_host {
                 let obj = class.call0()?;
                 let identity: String = class.getattr("__phenix_plugin__")?.extract()?;
                 if identity != "example.python-host" {
-                    return Err(PyPermissionError::new_err("Python plugin identity mismatch"));
+                    return Err(PyPermissionError::new_err(
+                        "Python plugin identity mismatch",
+                    ));
                 }
                 state.object = Some(obj.unbind());
                 state.module = Some(module.unbind());
@@ -140,7 +149,8 @@ mod python_host {
                 ("query", request.text.as_str())
             };
             let function = object.getattr(method)?;
-            let exposed: bool = function.getattr("__func__")?
+            let exposed: bool = function
+                .getattr("__func__")?
                 .getattr("__phenix_exposed__")
                 .and_then(|value| value.extract())
                 .unwrap_or(false);
