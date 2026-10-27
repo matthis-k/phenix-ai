@@ -118,7 +118,12 @@ shell_operation!(
     CompactionRequest,
     CompactedContext
 );
-shell_operation!(Tools, "phenix.shell.tools@1/execute", ToolBatch, ToolResults);
+shell_operation!(
+    Tools,
+    "phenix.shell.tools@1/execute",
+    ToolBatch,
+    ToolResults
+);
 shell_operation!(
     Reconcile,
     "phenix.shell.reconcile@1/commit",
@@ -314,8 +319,7 @@ mod tests {
             assert_eq!(module.exits.len(), 1);
             assert_eq!(module.members.len(), 1);
             assert!(!edges.iter().any(|edge| {
-                module.members.contains(&edge.to.node)
-                    || module.members.contains(&edge.from.node)
+                module.members.contains(&edge.to.node) || module.members.contains(&edge.from.node)
             }));
         }
     }
