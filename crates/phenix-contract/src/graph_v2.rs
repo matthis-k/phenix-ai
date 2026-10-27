@@ -152,7 +152,9 @@ impl GraphContributionV2 {
 
     fn output(&self, from: &OutRefV2) -> Result<(PortRefV2, ValueSchema), Failure> {
         match from {
-            OutRefV2::Node(reference) => Ok((reference.clone(), self.port(reference, false)?.clone())),
+            OutRefV2::Node(reference) => {
+                Ok((reference.clone(), self.port(reference, false)?.clone()))
+            }
             OutRefV2::ModuleExit { module, port } => {
                 let output = self
                     .module(module)?
@@ -207,9 +209,7 @@ impl GraphContributionV2 {
                 });
             }
         }
-        lowered.sort_by(|a, b| {
-            (&a.from, &a.to, &a.origin).cmp(&(&b.from, &b.to, &b.origin))
-        });
+        lowered.sort_by(|a, b| (&a.from, &a.to, &a.origin).cmp(&(&b.from, &b.to, &b.origin)));
         Ok(lowered)
     }
 
@@ -229,7 +229,10 @@ impl GraphContributionV2 {
                 || !unique(module.entries.iter().map(|port| port.name.as_str()))
                 || !unique(module.exits.iter().map(|port| port.name.as_str()))
             {
-                return Err(invalid(format!("duplicate module member/interface in {}", module.id)));
+                return Err(invalid(format!(
+                    "duplicate module member/interface in {}",
+                    module.id
+                )));
             }
         }
         let mut nodes = BTreeSet::new();
@@ -242,7 +245,10 @@ impl GraphContributionV2 {
             }
             let module = self.module(&node.module)?;
             if !module.members.contains(&node.id) {
-                return Err(invalid(format!("node {} is not owned by {}", node.id, module.id)));
+                return Err(invalid(format!(
+                    "node {} is not owned by {}",
+                    node.id, module.id
+                )));
             }
             if !unique(node.inputs.iter().map(|port| port.name.as_str()))
                 || !unique(node.outputs.iter().map(|port| port.name.as_str()))
@@ -291,11 +297,17 @@ impl GraphContributionV2 {
                 .map(|node| node.id.as_str())
                 .collect();
             if members != owned {
-                return Err(invalid(format!("module {} owns stale or foreign nodes", module.id)));
+                return Err(invalid(format!(
+                    "module {} owns stale or foreign nodes",
+                    module.id
+                )));
             }
             for entry in &module.entries {
                 if !identifier(&entry.name) || entry.targets.is_empty() {
-                    return Err(invalid(format!("invalid module input {}.{}", module.id, entry.name)));
+                    return Err(invalid(format!(
+                        "invalid module input {}.{}",
+                        module.id, entry.name
+                    )));
                 }
                 let mut targets = BTreeSet::new();
                 for target in &entry.targets {
@@ -303,7 +315,10 @@ impl GraphContributionV2 {
                         || !targets.insert(target)
                         || self.port(target, true)? != &entry.schema
                     {
-                        return Err(invalid(format!("invalid module input target {}.{}", module.id, entry.name)));
+                        return Err(invalid(format!(
+                            "invalid module input target {}.{}",
+                            module.id, entry.name
+                        )));
                     }
                 }
             }
@@ -312,7 +327,10 @@ impl GraphContributionV2 {
                     || !owned.contains(exit.source.node.as_str())
                     || self.port(&exit.source, false)? != &exit.schema
                 {
-                    return Err(invalid(format!("invalid module output {}.{}", module.id, exit.name)));
+                    return Err(invalid(format!(
+                        "invalid module output {}.{}",
+                        module.id, exit.name
+                    )));
                 }
             }
         }
@@ -337,7 +355,9 @@ impl GraphContributionV2 {
         loop {
             let mut progressed = false;
             for (node, parents) in &dependencies {
-                if !complete.contains(node) && parents.iter().all(|parent| complete.contains(parent)) {
+                if !complete.contains(node)
+                    && parents.iter().all(|parent| complete.contains(parent))
+                {
                     complete.insert(*node);
                     progressed = true;
                 }
@@ -346,7 +366,9 @@ impl GraphContributionV2 {
                 break;
             }
             if !progressed {
-                return Err(invalid("instantaneous Flow cycle; use future Deferred::Next"));
+                return Err(invalid(
+                    "instantaneous Flow cycle; use future Deferred::Next",
+                ));
             }
         }
         Ok(())

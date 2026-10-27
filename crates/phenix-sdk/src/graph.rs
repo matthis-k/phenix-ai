@@ -198,11 +198,7 @@ impl Graph {
     }
 
     /// One typed Flow between logical module interfaces or concrete node ports.
-    pub fn flow<T: Portable>(
-        &mut self,
-        from: Output<T>,
-        to: Input<T>,
-    ) -> Result<(), Failure> {
+    pub fn flow<T: Portable>(&mut self, from: Output<T>, to: Input<T>) -> Result<(), Failure> {
         self.plan.flows.push(FlowV2 {
             id: format!("{:?}->{:?}", from.location, to.location),
             from: from.location,
@@ -276,11 +272,7 @@ impl ModuleBuilder<'_> {
         })
     }
 
-    pub fn source<T: Portable>(
-        &mut self,
-        local: &str,
-        event: &str,
-    ) -> Result<Output<T>, Failure> {
+    pub fn source<T: Portable>(&mut self, local: &str, event: &str) -> Result<Output<T>, Failure> {
         let node = self.node_id(local)?;
         self.plan.nodes.push(NodeDeclV2 {
             id: node.clone(),
@@ -304,11 +296,7 @@ impl ModuleBuilder<'_> {
         })
     }
 
-    pub fn flow<T: Portable>(
-        &mut self,
-        from: Output<T>,
-        to: Input<T>,
-    ) -> Result<(), Failure> {
+    pub fn flow<T: Portable>(&mut self, from: Output<T>, to: Input<T>) -> Result<(), Failure> {
         let OutRefV2::Node(ref source) = from.location else {
             return Err(invalid("internal Flow must originate inside the module"));
         };
@@ -326,11 +314,7 @@ impl ModuleBuilder<'_> {
         Ok(())
     }
 
-    pub fn entry<T: Portable>(
-        &mut self,
-        name: &str,
-        target: Input<T>,
-    ) -> Result<(), Failure> {
+    pub fn entry<T: Portable>(&mut self, name: &str, target: Input<T>) -> Result<(), Failure> {
         let InRefV2::Node(target) = target.location else {
             return Err(invalid("module entry must target an internal node"));
         };
@@ -347,17 +331,11 @@ impl ModuleBuilder<'_> {
         Ok(())
     }
 
-    pub fn exit<T: Portable>(
-        &mut self,
-        name: &str,
-        source: Output<T>,
-    ) -> Result<(), Failure> {
+    pub fn exit<T: Portable>(&mut self, name: &str, source: Output<T>) -> Result<(), Failure> {
         let OutRefV2::Node(source) = source.location else {
             return Err(invalid("module exit must use an internal node"));
         };
-        if !self.members.contains(&source.node)
-            || self.exits.iter().any(|exit| exit.name == name)
-        {
+        if !self.members.contains(&source.node) || self.exits.iter().any(|exit| exit.name == name) {
             return Err(invalid("duplicate exit or foreign source"));
         }
         self.exits.push(ModuleExitV2 {
@@ -408,7 +386,10 @@ mod tests {
             (a, b)
         };
         graph
-            .flow(a.output::<String>("result").unwrap(), b.input::<String>("query").unwrap())
+            .flow(
+                a.output::<String>("result").unwrap(),
+                b.input::<String>("query").unwrap(),
+            )
             .unwrap();
         graph.finish().unwrap()
     }
@@ -420,12 +401,17 @@ mod tests {
         assert_eq!(graph.modules.len(), 2);
         assert_eq!(graph.flows.len(), 2);
         assert_eq!(graph.lowered_flows().unwrap().len(), 2);
-        assert!(matches!(graph.flows[1].from, OutRefV2::ModuleExit { .. })
-            || matches!(graph.flows[0].from, OutRefV2::ModuleExit { .. }));
+        assert!(
+            matches!(graph.flows[1].from, OutRefV2::ModuleExit { .. })
+                || matches!(graph.flows[0].from, OutRefV2::ModuleExit { .. })
+        );
         assert_eq!(graph, fixture(true));
         let consumer = graph.modules.iter().find(|m| m.id == "consumer").unwrap();
         assert_eq!(consumer.entries[0].name, "query");
-        assert_eq!(consumer.entries[0].targets[0].node, "example.graph/consumer.second");
+        assert_eq!(
+            consumer.entries[0].targets[0].node,
+            "example.graph/consumer.second"
+        );
     }
 
     #[test]
@@ -447,7 +433,9 @@ mod tests {
     #[test]
     fn foreign_member_and_instantaneous_cycle_reject() {
         let mut graph = fixture(false);
-        graph.modules[0].members.push("example.graph/producer.first".into());
+        graph.modules[0]
+            .members
+            .push("example.graph/producer.first".into());
         assert!(graph.validate().is_err());
 
         let mut graph = fixture(false);
