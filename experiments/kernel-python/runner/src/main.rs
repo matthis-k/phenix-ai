@@ -58,7 +58,11 @@ fn composition(python: &str, rust: &str) -> Composition {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    assert_eq!(args.len(), 3, "usage: RUNNER PYTHON-PACKAGE RUST-PROVIDER-PACKAGE");
+    assert_eq!(
+        args.len(),
+        3,
+        "usage: RUNNER PYTHON-PACKAGE RUST-PROVIDER-PACKAGE"
+    );
     let policy = composition(&args[1], &args[2]);
 
     // Missing declared provider binding rejects before native code can load.
@@ -79,22 +83,37 @@ fn main() {
 
     // Exact packaged artifact hashes are checked offline, before invocation.
     let work = std::env::temp_dir().join(format!(
-        "phenix-python-kernel-verify-{}", std::process::id()
+        "phenix-python-kernel-verify-{}",
+        std::process::id()
     ));
     fs::create_dir_all(work.join("tampered/lib")).unwrap();
     let original = Path::new(&args[1]);
-    fs::copy(original.join("package.json"), work.join("tampered/package.json")).unwrap();
-    fs::copy(original.join("descriptor.bin"), work.join("tampered/descriptor.bin")).unwrap();
+    fs::copy(
+        original.join("package.json"),
+        work.join("tampered/package.json"),
+    )
+    .unwrap();
+    fs::copy(
+        original.join("descriptor.bin"),
+        work.join("tampered/descriptor.bin"),
+    )
+    .unwrap();
     let mut bytes = fs::read(original.join("lib/plugin.so")).unwrap();
     let last = bytes.len() - 1;
     bytes[last] ^= 1;
     fs::write(work.join("tampered/lib/plugin.so"), bytes).unwrap();
     let mut tampered = policy.clone();
     tampered.artifacts[0] = work.join("tampered").to_string_lossy().into();
-    assert_eq!(Prepared::prepare(tampered).err().unwrap().code, Code::ArtifactInvalid);
+    assert_eq!(
+        Prepared::prepare(tampered).err().unwrap().code,
+        Code::ArtifactInvalid
+    );
 
-    let prepared = Prepared::prepare(policy.clone()).expect("offline ABI-3 composition verification");
-    let kernel = prepared.load().expect("load compiled native and Python runtime plugin");
+    let prepared =
+        Prepared::prepare(policy.clone()).expect("offline ABI-3 composition verification");
+    let kernel = prepared
+        .load()
+        .expect("load compiled native and Python runtime plugin");
     let root = kernel.admit_default_root().unwrap();
 
     for (input, result) in [
@@ -146,7 +165,10 @@ fn main() {
         Ok(prepared) => {
             let denied_kernel = prepared.load().unwrap();
             let root = denied_kernel.admit_default_root().unwrap();
-            assert_eq!(root.invoke(&text("enrich:hello")).unwrap_err().code, Code::Denied);
+            assert_eq!(
+                root.invoke(&text("enrich:hello")).unwrap_err().code,
+                Code::Denied
+            );
             drop(root);
             denied_kernel.shutdown().unwrap();
         }
