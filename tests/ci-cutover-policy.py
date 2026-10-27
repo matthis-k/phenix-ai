@@ -9,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_SOURCE_PIN = 'c4467d7dc233ada85ea49823561ee8be57089591'
+# Explicit candidate adoption of phenix-flake-ci PR #33, independent of main.
+EXPECTED_CANDIDATE_PIN = '1f0ddeeb032c2092d8bdf0d01ad31061cf21c21a'
 
 
 def require(condition, message):
@@ -51,16 +53,27 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('ci.mkFlakeCheckConfig' in check_config, 'not using generic flake check planner')
     require('ci.rustCheckStrategy' in check_config, 'existing Rust strategy absent')
     require('shardCount = 5;' in check_config, 'existing experimental matrix was altered')
-    candidate_refs = re.findall(r'flake-checks\.yml@([0-9a-f]{40})', matrix)
+    candidate_refs = re.findall(r'flake-local-dag\.yml@([0-9a-f]{40})', matrix)
     candidate_libraries = re.findall(r'(?m)^      library_ref: ([0-9a-f]{40})$', matrix)
-    require(candidate_refs == [EXPECTED_SOURCE_PIN] and candidate_libraries == candidate_refs,
-            'unprivileged PR matrix must use the same reviewed immutable cache library')
+    require(candidate_refs == [EXPECTED_CANDIDATE_PIN] and candidate_libraries == candidate_refs,
+            'unprivileged PR DAG must use the explicit reviewed candidate workflow/runtime pin')
+    require(matrix.split('\njobs:\n', 1)[1:] == [
+        '  candidate:\n'
+        '    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@'
+        + EXPECTED_CANDIDATE_PIN + '\n'
+        '    with:\n'
+        '      config: ci/flake-check-config.nix\n'
+        '      library_ref: ' + EXPECTED_CANDIDATE_PIN + '\n'],
+        'PR candidate must only delegate the complete inventory without secrets or publishers')
+    require(matrix.split('\npermissions:\n', 1)[1:]
+            and matrix.split('\npermissions:\n', 1)[1].split('\n\n', 1)[0]
+            == '  contents: read', 'PR candidate permissions must remain read-only')
     # Preserve independent authoritative release checks until same-head remote
     # full-inventory, security and cold/warm checks are proven.
     require('branches: [main,' not in canonical and '  workflow_dispatch:' in canonical,
             'legacy canonical build still duplicates main')
     require('branches: [main,' not in matrix and '  pull_request:' in matrix,
-            'PR full-inventory matrix missing or duplicates main')
+             'PR full-inventory DAG missing or duplicates main')
     require('branches: [main,' not in dag and '  workflow_dispatch:' in dag,
             'legacy DAG still duplicates main')
     require('P1 official ACP SDK interop' in acp and 'branches: [main]' in acp,
@@ -128,10 +141,24 @@ def self_test():
              '      - ci/unknown-benchmark'),
         (8, 'save: false', 'save: true'),
         (8, 'remote-phenix-m1-x86_64-linux-', 'phenix-m1-x86_64-linux-'),
-        (6, 'flake-checks.yml@' + EXPECTED_SOURCE_PIN,
-             'flake-checks.yml@' + 'f' * 40),
-        (6, 'library_ref: ' + EXPECTED_SOURCE_PIN,
+        (6, 'flake-local-dag.yml@' + EXPECTED_CANDIDATE_PIN,
+             'flake-local-dag.yml@' + 'f' * 40),
+        (6, 'library_ref: ' + EXPECTED_CANDIDATE_PIN,
              'library_ref: ' + 'f' * 40),
+        (6, EXPECTED_CANDIDATE_PIN, EXPECTED_SOURCE_PIN),
+        (6, EXPECTED_CANDIDATE_PIN, 'f' * 40),
+        (6, 'flake-local-dag.yml@' + EXPECTED_CANDIDATE_PIN, 'flake-local-dag.yml@main'),
+        (6, 'library_ref: ' + EXPECTED_CANDIDATE_PIN, 'library_ref: main'),
+        (6, 'flake-local-dag.yml@', 'flake-checks.yml@'),
+        (6, 'matthis-k/phenix-flake-ci/', 'untrusted/phenix-flake-ci/'),
+        (6, '  contents: read', '  contents: read\n  id-token: write'),
+        (6, '    with:\n', '    permissions:\n      id-token: write\n    with:\n'),
+        (6, '    with:\n', '    secrets: inherit\n    with:\n'),
+        (6, '    with:\n', '    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n    with:\n'),
+        (6, '      config: ci/flake-check-config.nix', '      config: ci/reduced-checks.nix'),
+        (6, '      config: ci/flake-check-config.nix',
+             '      publish: true\n      config: ci/flake-check-config.nix'),
+        (6, '  candidate:\n', '  publisher:\n    runs-on: ubuntu-latest\n  candidate:\n'),
     ]
     for index, before, after in mutations:
         sample = good.copy()
