@@ -1466,7 +1466,7 @@ impl Controller {
             return Err(invalid("unknown persisted ACP session"));
         }
         if let Some(previous) = self.sessions.remove(&session) {
-            previous.shutdown().map_err(internal)?;
+            shutdown_kernel(previous).map_err(internal)?;
         }
         self.sessions.insert(session.clone(), kernel);
         let offset = self.offsets.entry(session.clone()).or_default();
@@ -1673,22 +1673,16 @@ impl Controller {
             }
         }
         for (_, kernel) in self.sessions {
-            kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+            shutdown_kernel(kernel)?;
         }
         if let Some(management) = self.management {
             management.shutdown()?;
         }
         for credential in self.credentials {
-            credential
-                .kernel
-                .shutdown()
-                .map_err(|_| "credential cleanup failed")?;
+            shutdown_kernel(credential.kernel).map_err(|_| "credential cleanup failed")?;
         }
         for resolver in self.resolvers {
-            resolver
-                .kernel
-                .shutdown()
-                .map_err(|_| "model resolver cleanup failed")?;
+            shutdown_kernel(resolver.kernel).map_err(|_| "model resolver cleanup failed")?;
         }
         Ok(())
     }
@@ -1721,6 +1715,15 @@ pub(super) fn run(
                     .map_err(|e| format!("{e:?}"))?
                     .load()
                     .map_err(|e| format!("{e:?}"))?;
+                // Legacy pull-only compositions have no begin subscriber;
+                // event-driven managers stage, register and publish themselves.
+                if let Err(startup) = activate_kernel_startup(&kernel) {
+                    let cleanup = shutdown_kernel(kernel);
+                    return Err(match cleanup {
+                        Ok(()) => startup,
+                        Err(stop) => format!("{startup}; cleanup: {stop}"),
+                    });
+                }
                 Ok(ProviderManagement { kernel, selected })
             })
             .collect::<Result<Vec<_>, _>>()?;

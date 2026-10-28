@@ -194,6 +194,13 @@ impl Prepared {
     }
 }
 impl Kernel {
+    /// The actual dependency-resolved native initialization order. Trusted
+    /// lifecycle controllers use it for post-load notifications, after all
+    /// native plugin constructors completed and the graph is usable.
+    pub fn loaded_plugin_ids(&self) -> Vec<String> {
+        self.prepared.startup_order.clone()
+    }
+
     pub fn admit_default_root(&self) -> Result<Root<'_>, Failure> {
         self.admit_root(self.prepared.entry.clone())
     }

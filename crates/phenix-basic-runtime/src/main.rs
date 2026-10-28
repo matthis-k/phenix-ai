@@ -9,7 +9,7 @@ use phenix_basic_contracts::{
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
     Submission,
 };
-use phenix_contract::{Portable, ScopedRequest, Value};
+use phenix_contract::{KernelEvent, Portable, ScopedRequest, Value};
 use phenix_kernel::{
     graph::{GraphCompletion, GraphExecution, GraphStatus},
     resolve::{Composition, Prepared, Selection},
@@ -772,7 +772,10 @@ fn run_console(
             }
         }
     }
-    kernel.shutdown().map_err(|e| format!("{e:?}"))
+    // Explicitly end the GraphExecution borrow before moving the kernel into
+    // native teardown. The loop only exits on EOF with no active root.
+    drop(active);
+    shutdown_kernel(kernel)
 }
 
 fn jsonl_session(line: &str) -> Result<String, String> {
@@ -954,7 +957,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
         }
     }
     for (_, kernel) in sessions {
-        kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+        shutdown_kernel(kernel)?;
     }
     Ok(())
 }
@@ -985,14 +988,90 @@ fn scoped_composition(composition: &Composition, resource: &str) -> Composition 
     spec
 }
 
+/// Admit the kernel-owned begin source after the composition is fully loaded.
+/// Event fan-out is handled by the ordinary graph executor. This fast path
+/// supports finite startup hooks; a future asynchronous controller must keep
+/// and pump the same GraphExecution when a startup handler remains pending.
+fn activate_kernel_lifecycle(kernel: &Kernel, event: KernelEvent) -> Result<(), String> {
+    let event_id = event.id();
+    if !kernel.has_event_subscribers(event_id) {
+        return Ok(());
+    }
+    let mut execution = kernel
+        .begin_kernel_event(event)
+        .map_err(|failure| format!("{event_id} admission: {failure:?}"))?;
+    let mut completed = false;
+    for _ in 0..1024 {
+        if execution
+            .pump(|_| {})
+            .map_err(|failure| format!("{event_id} execution: {failure:?}"))?
+            == GraphStatus::Finished
+        {
+            completed = true;
+            break;
+        }
+    }
+    if !completed {
+        execution
+            .cancel()
+            .map_err(|failure| format!("{event_id} cancellation: {failure:?}"))?;
+        return Err(
+            "startup event remained pending; asynchronous lifecycle pumping required".into(),
+        );
+    }
+    if !matches!(execution.completion(), Some(GraphCompletion::Success)) {
+        return Err(format!(
+            "{event_id} graph failed; lifecycle state not committed"
+        ));
+    }
+    Ok(())
+}
+
+/// Load notifications are a kernel concern, not a provider/session event.
+/// Native constructors and graph preparation have already completed; deliver
+/// the notifications in dependency order before the global begin trigger.
+fn activate_kernel_startup(kernel: &Kernel) -> Result<(), String> {
+    if kernel.has_event_subscribers(phenix_contract::KERNEL_PLUGIN_LOADED) {
+        for plugin in kernel.loaded_plugin_ids() {
+            activate_kernel_lifecycle(kernel, KernelEvent::PluginLoaded { plugin })?;
+        }
+    }
+    activate_kernel_lifecycle(kernel, KernelEvent::Begin)
+}
+
+fn activate_kernel_shutdown(kernel: &Kernel) -> Result<(), String> {
+    activate_kernel_lifecycle(kernel, KernelEvent::Shutdown)
+}
+
+/// Always stop native plugins, even if a plugin's shutdown event fails.
+/// Preserve both failure signals rather than silently swallowing either one.
+fn shutdown_kernel(kernel: Kernel) -> Result<(), String> {
+    let hooks = activate_kernel_shutdown(&kernel);
+    let native = kernel.shutdown().map_err(|failure| format!("{failure:?}"));
+    match (hooks, native) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(hook), Ok(())) => Err(hook),
+        (Ok(()), Err(stop)) => Err(stop),
+        (Err(hook), Err(stop)) => Err(format!("{hook}; native teardown: {stop}")),
+    }
+}
+
 fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, String> {
     let resource = phenix_basic_contracts::session_resource(session)
         .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
     let spec = scoped_composition(composition, &resource);
-    Prepared::prepare(spec)
+    let kernel = Prepared::prepare(spec)
         .map_err(|e| format!("{e:?}"))?
         .load()
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{e:?}"))?;
+    if let Err(startup) = activate_kernel_startup(&kernel) {
+        let cleanup = shutdown_kernel(kernel);
+        return Err(match cleanup {
+            Ok(()) => startup,
+            Err(stop) => format!("{startup}; cleanup: {stop}"),
+        });
+    }
+    Ok(kernel)
 }
 
 fn run() -> Result<(), String> {

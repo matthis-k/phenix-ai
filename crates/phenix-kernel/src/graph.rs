@@ -8,9 +8,9 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, standard_kernel_events, state_change_property, state_change_schema,
-    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, KernelEvent,
-    ScopedRequest, Value, ValueSchema,
+    graph_node_key, settled_event, settled_event_schema, standard_kernel_events,
+    state_change_property, state_change_schema, ActionDefinition, Code, EventDefinition, Failure,
+    GraphContribution, GraphNode, KernelEvent, ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -151,7 +151,17 @@ impl CompiledGraph {
         }
         for (id, node) in &nodes {
             for trigger in &node.definition.triggers {
-                if state_change_property(trigger).is_none() && !events.contains_key(trigger) {
+                if let Some(source) = settled_event(trigger) {
+                    let owner = event_owners.get(source).ok_or_else(|| {
+                        invalid(format!("node {id} settles absent event {source}"))
+                    })?;
+                    if owner != &node.owner {
+                        return Err(invalid(format!(
+                            "event settlement {trigger} may only be handled by declaring owner"
+                        )));
+                    }
+                } else if state_change_property(trigger).is_none() && !events.contains_key(trigger)
+                {
                     return Err(invalid(format!("node {id} has absent trigger {trigger}")));
                 }
             }
@@ -355,6 +365,13 @@ impl crate::resolve::Prepared {
                             format!("state trigger {trigger} request schema mismatch"),
                         ));
                     }
+                } else if settled_event(trigger).is_some() {
+                    if operation.schema.request != settled_event_schema() {
+                        return Err(Failure::new(
+                            Code::SchemaRejected,
+                            format!("settled hook {trigger} request schema mismatch"),
+                        ));
+                    }
                 } else if operation.schema.request != graph.events[trigger].payload {
                     return Err(Failure::new(
                         Code::SchemaRejected,
@@ -473,6 +490,20 @@ pub enum GraphCompletion<'a> {
 const MAX_SYNC_GRAPH_PUMPS: usize = 1_024;
 
 impl Kernel {
+    /// Generic host query: only activate lifecycle events with subscribers.
+    /// This is introspection, not an event grant or a new dispatch path.
+    pub fn has_event_subscribers(&self, event: &str) -> bool {
+        self.prepared.graph.as_ref().is_some_and(|graph| {
+            graph.events.contains_key(event)
+                && graph.nodes.values().any(|node| {
+                    node.definition
+                        .triggers
+                        .iter()
+                        .any(|trigger| trigger == event)
+                })
+        })
+    }
+
     /// Stage only an event authored by the currently executing plugin. The
     /// current GraphExecution will handle it as a subsequent same-root wave.
     /// No user action, provider registration, credential, or authority is
@@ -749,6 +780,7 @@ impl Kernel {
                 action: action_id.into(),
                 event: action_id.into(),
                 payload: payload.clone(),
+                wave_is_settlement: false,
                 v2: Some(wave),
                 node_requests: BTreeMap::new(),
                 state_cursor: 0,
@@ -853,6 +885,7 @@ impl Kernel {
             action: action_id.into(),
             event: event.into(),
             payload: payload.clone(),
+            wave_is_settlement: false,
             node_requests: BTreeMap::new(),
             state_cursor: epoch_cursor,
             had_domain: false,
@@ -927,6 +960,8 @@ pub struct GraphExecution<'a> {
     action: String,
     event: String,
     payload: Value,
+    /// Each emitted event has at most one synthetic owner completion wave.
+    wave_is_settlement: bool,
     /// Event nodes use the action payload; state hooks get scoped epoch data.
     node_requests: BTreeMap<String, Value>,
     state_cursor: u64,
@@ -1126,17 +1161,48 @@ impl GraphExecution<'_> {
             let Some(event) = next else { return Ok(false) };
             let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
             let active = graph.activation_order(&BTreeSet::from([event.id.clone()]))?;
-            if active.is_empty() {
-                continue;
-            }
             self.event = event.id;
             self.payload = event.payload;
+            self.wave_is_settlement = false;
+            if active.is_empty() {
+                // A zero-subscriber event still has a successful completion
+                // boundary. Its owner may have a settle hook to finalize.
+                if self.admit_settled_wave()? {
+                    return Ok(true);
+                }
+                continue;
+            }
             self.node_requests.clear();
             self.active = active;
             self.waiting = self.active.iter().cloned().collect();
             self.unsuccessful.clear();
             return Ok(true);
         }
+    }
+
+    /// Synthesize the declaring owner's completion wave only after every
+    /// event subscriber and all pending effects have finished successfully.
+    /// The owner can now commit its staged state *inside this same graph root*.
+    fn admit_settled_wave(&mut self) -> Result<bool, Failure> {
+        if self.wave_is_settlement || self.had_domain {
+            return Ok(false);
+        }
+        let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+        if !graph.event_owners.contains_key(&self.event) {
+            return Ok(false);
+        }
+        let trigger = format!("settled:{}", self.event);
+        let active = graph.project_triggers(&BTreeSet::from([trigger]))?;
+        self.wave_is_settlement = true;
+        if active.is_empty() {
+            return Ok(false);
+        }
+        self.payload = Value::map([]);
+        self.node_requests.clear();
+        self.active = active;
+        self.waiting = self.active.iter().cloned().collect();
+        self.unsuccessful.clear();
+        Ok(true)
     }
 
     /// Admit one committed epoch through the prepared state-trigger DAG.
@@ -1163,6 +1229,7 @@ impl GraphExecution<'_> {
         self.waiting = active.iter().cloned().collect();
         self.active = active;
         self.unsuccessful.clear();
+        self.wave_is_settlement = true;
         self.node_requests = node_requests;
         Ok(true)
     }
@@ -1305,9 +1372,10 @@ impl GraphExecution<'_> {
             && self.waiting.is_empty()
             && self.pending.is_empty()
         {
-            // Custom emitted events run before state watches in FIFO order.
-            // Both use this root, scheduler, cancellation and grant checks.
-            if !self.admit_custom_event_wave()? {
+            // Settlement precedes the next FIFO event, so the owner can
+            // atomically publish before observers of its readiness run.
+            // Domain failures and cancellations never admit settlement.
+            if !self.admit_settled_wave()? && !self.admit_custom_event_wave()? {
                 self.admit_state_wave()?;
             }
         }
@@ -1511,7 +1579,58 @@ mod tests {
         assert!(compile(&invalid)
             .unwrap_err()
             .message
-            .contains("plugin cannot declare kernel lifecycle events"));
+            .contains("kernel lifecycle events"));
+    }
+
+    #[test]
+    fn custom_event_settlement_is_owned_and_separate_from_fanout() {
+        let publisher = GraphContribution {
+            plugin: "publisher".into(),
+            events: vec![EventDefinition {
+                id: "publisher.populate".into(),
+                payload: ValueSchema::String,
+            }],
+            actions: vec![],
+            nodes: vec![node("commit", &["settled:publisher.populate"], &[], &[])],
+        };
+        let subscriber = contribution(
+            "subscriber",
+            false,
+            vec![node("contribute", &["publisher.populate"], &[], &[])],
+        );
+        let graph = compile(&[publisher.clone(), subscriber.clone()]).unwrap();
+        assert_eq!(
+            graph
+                .activation_order(&BTreeSet::from(["publisher.populate".into()]))
+                .unwrap(),
+            ["subscriber/contribute"]
+        );
+        assert_eq!(
+            graph
+                .project_triggers(&BTreeSet::from(["settled:publisher.populate".into()]))
+                .unwrap(),
+            ["publisher/commit"]
+        );
+        assert!(graph.actions.is_empty());
+
+        let mut spoofed = subscriber;
+        spoofed.nodes.push(node(
+            "foreign-commit",
+            &["settled:publisher.populate"],
+            &[],
+            &[],
+        ));
+        assert!(compile(&[publisher.clone(), spoofed])
+            .unwrap_err()
+            .message
+            .contains("declaring owner"));
+
+        let mut missing = publisher;
+        missing.nodes[0].triggers = vec!["settled:nonexistent.populate".into()];
+        assert!(compile(&[missing])
+            .unwrap_err()
+            .message
+            .contains("absent event"));
     }
 
     #[test]
