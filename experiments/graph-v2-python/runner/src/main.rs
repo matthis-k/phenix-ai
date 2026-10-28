@@ -377,6 +377,7 @@ fn main() {
         ("private", Code::PluginFailed),
         ("raise", Code::PluginFailed),
         ("wrong-result", Code::PluginFailed),
+        ("panic", Code::PluginFailed),
         ("enrich:undeclared", Code::Denied),
         ("enrich:stale", Code::Denied),
         ("enrich:panic", Code::PluginFailed),
