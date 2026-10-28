@@ -36,6 +36,20 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("request: String", self.compile(
             "    @expose\n    def greet(self, request: str) -> str: return request\n")["contract.rs"])
 
+    def test_image_independent_module_identity(self):
+        files = self.compile("    @expose\n    def greet(self, request: Text) -> Text: return request\n")
+        self.assertIn('getattr("uuid4")', files["lib.rs"])
+        self.assertIn("current.is(&module)", files["lib.rs"])
+        self.assertNotIn("AtomicU64", files["lib.rs"])
+
+    def test_build_imports_do_not_collide_with_dataclasses(self):
+        for name in ("Operation", "ValueSchema"):
+            files = self.compile(
+                f"    @expose\n    def greet(self, request: {name}) -> {name}: return request\n",
+                PREFIX.replace("Text", name))
+            self.assertIn(f"pub struct {name}", files["contract.rs"])
+            self.assertIn("fn main() {\n    use phenix_sdk::", files["build.rs"])
+
     def test_fail_closed(self):
         for method in [
             "    @expose\n    async def greet(self, request: Text) -> Text: return request\n",

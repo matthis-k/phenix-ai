@@ -70,3 +70,4 @@ jobs:
         run: |
           python3 -m unittest phenix_python.test_frontend
           python3 examples/python-trivial/verify.py /tmp/phenix-python-trivial
+          python3 examples/python-trivial/verify.py /tmp/phenix-python-trivial --release --strip

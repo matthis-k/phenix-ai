@@ -106,7 +106,7 @@ pub trait Api {{
         to_python = 'let argument = request.into_pyobject(py)?.into_any();'
     else:
         args = ''.join(f'request.{f.name},' for f in types[request])
-        to_python = f'let argument = module.getattr({q(request)})?.call1(({args}))?;'
+        to_python = f'let argument = _module.getattr({q(request)})?.call1(({args}))?;'
     if response == "String":
         from_python = '''if !result.is_exact_instance_of::<pyo3::types::PyString>() {
             return Err(pyo3::exceptions::PyTypeError::new_err("expected str result"));
@@ -117,7 +117,7 @@ pub trait Api {{
                          'if !field.is_exact_instance_of::<pyo3::types::PyString>() {\n'
                          'return Err(pyo3::exceptions::PyTypeError::new_err("expected str field")); }\n'
                          'field.extract::<String>()? },\n' for f in types[response])
-        from_python = f'''if !result.get_type().is(&module.getattr({q(response)})?) {{
+        from_python = f'''if !result.get_type().is(&_module.getattr({q(response)})?) {{
             return Err(pyo3::exceptions::PyTypeError::new_err("wrong result dataclass"));
         }}
         Ok({response} {{ {fields} }})'''
@@ -151,17 +151,23 @@ mod implementation {{
             phenix_sdk::Failure::new(phenix_sdk::Code::PluginFailed, error.clone())))?;
         Python::with_gil(|py| -> PyResult<{response}> {{
             if state.runtime.is_none() {{
-                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let module_name = std::ffi::CString::new(format!("_phenix_instance_{{id}}")).unwrap();
+                let id: String = py.import("uuid")?.getattr("uuid4")?.call0()?.getattr("hex")?.extract()?;
+                let module_name = format!("_phenix_instance_{{id}}");
                 let code = std::ffi::CString::new(include_str!("../runtime.py")).unwrap();
-                let module = pyo3::types::PyModule::from_code(py, &code, c"plugin.py", &module_name)?;
-                py.import("sys")?.getattr("modules")?.del_item(module_name.to_str().unwrap())?;
+                let module = pyo3::types::PyModule::new(py, &module_name)?;
+                let modules = py.import("sys")?.getattr("modules")?.downcast_into::<pyo3::types::PyDict>()?;
+                modules.set_item(&module_name, &module)?;
+                let initialized = py.run(&code, Some(&module.dict()), None);
+                // Never remove a replacement installed while authored code released the GIL.
+                if modules.get_item(&module_name)?.is_some_and(|current| current.is(&module)) {{
+                    modules.del_item(&module_name)?;
+                }}
+                initialized?;
                 let object = module.getattr({q(cls.__name__)})?.call0()?;
                 state.runtime = Some((module.unbind(), object.unbind()));
             }}
             let (module, object) = state.runtime.as_ref().unwrap();
-            let module = module.bind(py);
+            let _module = module.bind(py);
             {to_python}
             let result = object.bind(py).call_method1({q(name)}, (argument,))?;
             {from_python}
@@ -172,8 +178,8 @@ mod implementation {{
 '''
     build = f'''
 include!("contract.rs");
-use phenix_sdk::{{graph::v2::*, Operation, ValueSchema}};
 fn main() {{
+    use phenix_sdk::{{graph::v2::*, Operation as _, ValueSchema}};
     println!("cargo:rerun-if-changed=contract.rs");
     println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
     let python = std::env::var("PYO3_PYTHON").unwrap_or_else(|_| "python3".into());

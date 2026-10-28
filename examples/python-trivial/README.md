@@ -14,6 +14,22 @@ From the repository root, with Rust, a C linker and Python development libraries
 export PYTHONPATH="$PWD/tools"
 python3 -m unittest phenix_python.test_frontend
 python3 examples/python-trivial/verify.py /tmp/opencode/python-trivial-artifacts
+python3 examples/python-trivial/verify.py /tmp/opencode/python-trivial-artifacts --release --strip
+```
+
+Exact Nix environment used for the review regressions on this machine (the PATH
+assignment happens **inside** the Nix shell and preserves its Python/linker tools):
+
+```sh
+nix shell --inputs-from . nixpkgs#python313 nixpkgs#gcc nixpkgs#binutils -c bash -c '
+  export PATH="/tmp/opencode/rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin:$PATH"
+  export RUSTFLAGS="-C link-arg=-fuse-ld=bfd"
+  export PYTHONPATH="$PWD/tools"
+  python3 -m unittest phenix_python.test_frontend &&
+  cargo fmt --manifest-path examples/python-trivial/runner/Cargo.toml --check &&
+  python3 examples/python-trivial/verify.py /tmp/opencode/phenix-python-trivial/generated/review-verification &&
+  python3 examples/python-trivial/verify.py /tmp/opencode/phenix-python-trivial/generated/review-verification --release --strip
+'
 ```
 
 To generate a consumer crate directly:
@@ -45,6 +61,17 @@ rejection (`PluginFailed`) and malformed kernel request rejection
 (`SchemaRejected`). Composition authority and source/operation attestations are
 explicitly supplied by the trusted harness, never by the Python author.
 
+The `regressions` runner additionally dispatches two independently generated
+artifacts concurrently. `concurrent.py` uses top-level filesystem rendezvous and
+GIL-releasing sleeps, then checks separate global tokens and instance counters.
+It also replaces its own `sys.modules` entry and verifies cleanup leaves that
+replacement untouched. Runtime module names use Python UUIDs, not image-local
+counters; each module executes in its own dictionary. Both artifacts compile
+dataclasses named `Operation` and `ValueSchema`, which must not collide with
+build-tool imports. `scalar.py` provides actual repeated `str -> str` dispatch.
+The same assertions run against debug and release/stripped plugin artifacts;
+the kernel verification binaries themselves run in debug mode.
+
 `rust-equivalent` independently compiles the same `Text`, contract operation and
 stateful greeting in ordinary Rust SDK syntax. The harness asserts exact equality
 of both artifacts' offline canonical contract definitions. It demonstrates the
@@ -69,6 +96,12 @@ does not add a graph; the generated Python artifact is the graph execution targe
   registry or interpreter global. The CPython interpreter and imported third-party
   modules remain process-global; this is not a sandbox or arbitrary module-global
   isolation guarantee. No async, Host bridge, hot reload or cancellation support.
+- Initialize the shared process interpreter with one serialized first call before
+  concurrent calls across independent images. Independent PyO3 copies do not
+  serialize cold CPython startup; racing those first calls can abort the process.
+  The concurrency regression first invokes the scalar artifact, then concurrently
+  initializes the other two artifacts' modules. It proves concurrent module and
+  instance isolation, **not** concurrent cold interpreter startup.
 - Linux shared-library deployment with the build-selected CPython library is the
   current target. Generated glue promotes that same libpython to RTLD_GLOBAL for
   CPython extension imports under the kernel's RTLD_LOCAL plugin loading. It is
