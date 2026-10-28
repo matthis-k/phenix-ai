@@ -1,0 +1,49 @@
+# Trusted, maintainer-owned branch benchmark of the proven native Nix
+# distributed scheduler. Never trigger with pull_request / pull_request_target:
+# the Tailscale OIDC identity and ssh-ng builders must not be made available
+# to untrusted fork code. The previous read-only PR gate remains unchanged.
+name: Trusted native Nix DAG / 4 Tailscale builders
+on:
+  push:
+    branches:
+      - ci/native-four-coordinator-20261028
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: trusted-native-four-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authorized-source:
+    name: Require trusted branch and repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Admit maintainer-controlled branch only
+        env:
+          ACTUAL_REPO: ${{ github.repository }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "$ACTUAL_REPO" = "matthis-k/phenix-ai"
+          test "$ACTUAL_REF" = "refs/heads/ci/native-four-coordinator-20261028"
+          case "$ACTUAL_EVENT" in push|workflow_dispatch) ;; *) exit 1 ;; esac
+  four-builders:
+    name: Complete 86-check Nix DAG with 4 ssh-ng workers
+    needs: authorized-source
+    if: needs.authorized-source.result == 'success'
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c4467d7dc233ada85ea49823561ee8be57089591
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: c4467d7dc233ada85ea49823561ee8be57089591
+      worker_count: 4
+      slots_per_worker: 2
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}

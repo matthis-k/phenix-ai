@@ -55,3 +55,19 @@ the shared builder's isolated Nix store. The pinned CI library revision now
 re-instantiates the exact-head derivation graph locally after cache restore,
 asserts its check derivation identities are unchanged, and only then invokes
 Nix on direct .drv targets. Regression tests cover inventory drift.
+
+## Trusted Tailscale coordinator benchmark (2026-10-28)
+
+The maintainer-owned `ci/native-four-coordinator-20261028` branch runs
+`.github/workflows/trusted-native-four.yml` **on push only**. It reuses the
+already-proven pinned `phenix-flake-ci` remote backend and four Tailscale
+ssh-ng builders. One Nix coordinator schedules the entire `flake.nix` check
+DAG, so the Nix store—not a custom per-shard planner—owns shared derivations.
+The same 86-check inventory, negatives and shipping acceptance are mandatory;
+there is no hand-maintained reduced subset, build frontier or NAR join.
+
+The workflow intentionally does not run for pull requests and its source-branch
+admission is restricted to this owned GitHub branch. Never grant OIDC/Tailscale
+to fork PR code. The existing credential-free pull-request gate remains until
+this trusted native run has verified coverage, timing, and the intended
+maintainer-branch policy for the final cutover.
