@@ -23,3 +23,9 @@ Historical successful runs (different inventories/cache states):
 The target is 10–15 minutes, not a verified result for current Graph V2.
 Compare exact-head plan/output coverage and observed timings; do not
 claim a speedup, skip failed checks, or expose trusted secrets to PR code.
+
+The staged PR shared prebuild additionally restores compatible verified-main
+Nix outputs read-only from `remote-phenix-m1-*` before building new
+PR-specific derivations, while its primary key and all leaf/join caches
+remain `phenix-m1-*` and cannot publish to the trusted namespace.
+This is the change in `phenix-flake-ci` PR #35.
