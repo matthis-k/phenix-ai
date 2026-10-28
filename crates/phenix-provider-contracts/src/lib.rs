@@ -333,6 +333,93 @@ pub trait ProviderRegistrations {
     fn list(&self) -> Result<ProviderPage, ProviderError>;
 }
 
+/// Payload for the ordinary M1 graph event that collects provider declarations.
+/// A launcher must submit this event through the existing graph executor; the
+/// event itself does not confer a registry or credential grant.
+#[event(id = "phenix.providers.populate")]
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProvidersPopulate {
+    pub scope: String,
+}
+
+/// Ordinary M1 graph node entry point used by declaration contributors.
+/// The payload is identical to the existing populate event schema.
+#[contract(id = "phenix.provider.populate@1")]
+pub trait ProviderPopulate {
+    fn register(&self, event: ProvidersPopulate) -> Result<(), ProviderError>;
+}
+
+#[action(
+    id = "phenix.providers.populate-action",
+    event = "phenix.providers.populate",
+    description = "Populate the selected generation's provider catalog",
+    requires = "phenix.provider.populate@1/register"
+)]
+pub struct PopulateProviders;
+
+/// One provider declaration contributed during a graph population wave.
+/// The caller's *actual* plugin identity and grant are verified by the kernel;
+/// neither identity nor authority comes from this untrusted payload.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct ProviderRegistration {
+    pub scope: String,
+    pub provider: ProviderDescriptor,
+}
+
+/// Stages provider declarations, then publishes one verified generation snapshot.
+/// Registration is available only to explicitly authorized graph contributors;
+/// publication belongs to a separately authorized population controller.
+/// Neither operation grants model execution, credentials or entitlement.
+#[contract(id = "phenix.provider.registry@1")]
+pub trait ProviderRegistry {
+    /// Controller-only: deny catalog reads before any contributor runs.
+    fn begin(&self, request: ProviderQuery) -> Result<(), ProviderError>;
+    /// Contributor-only: stage a validated declaration during the event wave.
+    fn register(&self, request: ProviderRegistration) -> Result<(), ProviderError>;
+    /// Controller-only: commit after the entire graph completes successfully.
+    fn publish(&self, request: ProviderQuery) -> Result<ProviderPage, ProviderError>;
+    /// Controller-only: discard a failed event wave before it can be observed.
+    fn abort(&self, request: ProviderQuery) -> Result<(), ProviderError>;
+}
+
+/// Converts provider authoring data to a validated portable descriptor.
+/// The shared convention compiler implements this for ordinary Provider data;
+/// external domain crates may supply their own implementations.
+pub trait ProviderDefinition {
+    fn into_descriptor(self) -> Result<ProviderDescriptor, ProviderError>;
+}
+
+impl ProviderDefinition for ProviderDescriptor {
+    fn into_descriptor(self) -> Result<ProviderDescriptor, ProviderError> {
+        Ok(self)
+    }
+}
+
+/// Typed facade over an ordinary imported M1 contract. It does not install a
+/// registry, own plugin state, dispatch graph nodes or bypass host authority.
+pub struct Providers<'host, 'call> {
+    host: &'host Host<'call>,
+    slot: &'host str,
+    scope: &'host str,
+}
+
+impl<'host, 'call> Providers<'host, 'call> {
+    pub fn new(host: &'host Host<'call>, slot: &'host str, scope: &'host str) -> Self {
+        Self { host, slot, scope }
+    }
+
+    pub fn register(&self, provider: impl ProviderDefinition) -> CallResult<(), ProviderError> {
+        let provider = provider.into_descriptor().map_err(CallError::Domain)?;
+        self.host.invoke::<ProviderRegistry::register>(
+            self.slot,
+            &ProviderRegistration {
+                scope: self.scope.into(),
+                provider,
+            },
+        )
+    }
+}
+
 /// A provider-facing authentication operation. Interactive flows return a
 /// challenge/attempt state; a successful profile is never inferred from a
 /// bool, a stored token, or the existence of a registration.
@@ -408,6 +495,8 @@ pub trait ProviderAuth {
     profile = "definitions",
     define(ProviderCatalog),
     define(ProviderRegistrations),
+    define(ProviderRegistry),
+    define(ProviderPopulate),
     define(ProviderAuth),
     define(ProviderRuntime),
     define(ProviderCredentials),
@@ -618,7 +707,7 @@ mod tests {
     fn definition_package_has_no_executable_handler() {
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 6);
+        assert_eq!(metadata.definitions.len(), 8);
     }
 
     #[test]

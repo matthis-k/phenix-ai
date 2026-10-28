@@ -367,7 +367,7 @@
       # Generic provider host; data-only contributors never implement catalog
       # or authentication contracts.
       providerHostPluginSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-host
+        ./crates/phenix-plugin-providers
         ./crates/phenix-provider-auth-strategies
         ./crates/phenix-provider-discovery
         ./crates/phenix-provider-builtins
@@ -376,17 +376,17 @@
         ./crates/phenix-basic-contracts
       ]);
       providerHostPlugin = rust.buildRustPackage {
-        pname = "phenix-plugin-provider-host";
+        pname = "phenix-plugin-providers";
         version = "0.1.0";
         src = providerHostPluginSource;
         cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-plugin-provider-host" ];
-        cargoTestFlags = [ "-p" "phenix-plugin-provider-host" ];
+        cargoBuildFlags = [ "-p" "phenix-plugin-providers" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-providers" ];
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
         installPhase = ''
           mkdir -p $out/lib
-          cp target/*/release/libphenix_plugin_provider_host.so $out/lib/plugin.so
+          cp target/*/release/libphenix_plugin_providers.so $out/lib/plugin.so
         '';
         postFixup = ''
           ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
@@ -412,6 +412,32 @@
         installPhase = ''
           mkdir -p $out/lib
           cp target/*/release/libphenix_plugin_provider_builtins.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
+      # Minimal OpenAI declaration-only plugin: one graph on-populate hook.
+      providerOpenAiDeclarationSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-openai
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerOpenAiDeclarationPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-openai";
+        version = "0.1.0";
+        src = providerOpenAiDeclarationSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-openai" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-openai" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_openai.so $out/lib/plugin.so
         '';
         postFixup = ''
           ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
@@ -1009,9 +1035,11 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 6
+        assert len(report["definitions"]) == 8, report["definitions"]
         assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
+        assert "phenix.provider.registry@1" in report["definitions"], report
+        assert "phenix.provider.populate@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
         assert "phenix.provider.http-model-session@1" in report["definitions"]
         assert report["plugin"] == "phenix.provider-contracts"
@@ -1597,6 +1625,29 @@
         ./tests/generation-identity-v2.json
       ];
       basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
+      # Native end-to-end event population, driven by a small product test
+      # binary outside the kernel. Uses the existing GraphExecution API.
+      providerPopulationTestBinary = rust.buildRustPackage {
+        pname = "phenix-provider-population-test";
+        version = "0.1.0";
+        src = basicRuntimeSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--bin" "phenix-provider-population-test" ];
+        doCheck = false;
+        installPhase = ''
+          mkdir -p $out/bin
+          cp target/*/release/phenix-provider-population-test $out/bin/
+        '';
+      };
+      providerPopulationProductCheck = pkgs.runCommand "phenix-provider-population-product" { } ''
+        mkdir -p $out
+        ${providerPopulationTestBinary}/bin/phenix-provider-population-test \
+          ${providerHostPlugin} \
+          ${providerOpenAiDeclarationPlugin} \
+          ${providerDefinitions} > $out/verified.json
+        test -s $out/verified.json
+      '';
+
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
@@ -2868,7 +2919,10 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
+        phenix-plugin-providers = providerHostPlugin;
+        # Temporary packaging alias; same executable, not a second plugin.
         phenix-plugin-provider-host = providerHostPlugin;
+        phenix-plugin-provider-openai = providerOpenAiDeclarationPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
         phenix-plugin-provider-credential-files = providerCredentialStore;
@@ -3115,6 +3169,8 @@
         provider-secret-service = providerSecretServiceCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
+        provider-population-product = providerPopulationProductCheck;
+        provider-openai-declaration = providerOpenAiDeclarationPlugin;
         provider-host-plugin = providerHostPlugin;
         provider-host-api-key-product = providerHostApiKeyProductCheck;
         provider-openai-api = providerOpenAiApi;

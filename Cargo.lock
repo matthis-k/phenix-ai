@@ -2068,18 +2068,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-provider-host"
-version = "0.1.0"
-dependencies = [
- "phenix-basic-contracts",
- "phenix-provider-auth-strategies",
- "phenix-provider-builtins",
- "phenix-provider-discovery",
- "phenix-provider-contracts",
- "phenix-sdk",
-]
-
-[[package]]
 name = "phenix-plugin-provider-chatgpt"
 version = "0.1.0"
 dependencies = [
@@ -2106,10 +2094,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-provider-host"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-provider-auth-strategies",
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-provider-discovery",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-provider-loopback-fixture"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
+ "phenix-provider-contracts",
+ "phenix-sdk",
+]
+
+[[package]]
+name = "phenix-plugin-provider-openai"
+version = "0.1.0"
+dependencies = [
+ "phenix-provider-builtins",
  "phenix-provider-contracts",
  "phenix-sdk",
 ]
@@ -2135,6 +2144,18 @@ dependencies = [
  "phenix-provider-contracts",
  "phenix-sdk",
  "zbus-secret-service-keyring-store",
+]
+
+[[package]]
+name = "phenix-plugin-providers"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-provider-auth-strategies",
+ "phenix-provider-builtins",
+ "phenix-provider-contracts",
+ "phenix-provider-discovery",
+ "phenix-sdk",
 ]
 
 [[package]]
