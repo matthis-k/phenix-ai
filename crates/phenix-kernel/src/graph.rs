@@ -1,5 +1,6 @@
 //! Offline graph composition and serial action execution through the dispatcher.
 //! The graph uses the shared DAG ordering algorithm but owns graph semantics.
+pub mod v2;
 use crate::{
     dag,
     resolve::Selection,
@@ -447,6 +448,10 @@ pub struct GraphStep {
 
 /// Borrowed serial execution updates for a trusted host observer.
 /// Delivery retains the admitted root; buffering and replay belong to consumers.
+/// These privileged control-plane callbacks can reveal classified control outcomes
+/// and timing, even without payloads. Only the trusted root owner may receive them;
+/// forwarding to untrusted logging, plugins or streams requires a separately
+/// authorized, classification-aware export. This is not a plugin observer API.
 #[derive(Debug)]
 pub struct GraphUpdate<'a> {
     pub root: u64,
@@ -618,6 +623,11 @@ impl Kernel {
     }
 
     /// Admit pending-capable graph work. The host drives this same root with pump.
+    /// For `Prepared::prepare_graph_v2(composition, &policy)?.load()?`, action_id
+    /// names ExternalAction.action, not the source ID. This trusted host API
+    /// admits initial wave 0 only; authored sources never supply capabilities.
+    /// V2 observers receive no payload-bearing NodeFinished events. Read selected
+    /// results through trusted steps(); Finished/completion wait for physical drain.
     pub fn begin_action_scoped(
         &self,
         action_id: &str,
@@ -726,6 +736,68 @@ impl Kernel {
         pending_allowed: bool,
     ) -> Result<GraphExecution<'_>, Failure> {
         self.check_thread()?;
+        if let Some(graph) = &self.prepared.graph_v2 {
+            let source = graph
+                .declarations()
+                .iter()
+                .flat_map(|d| &d.sources)
+                .find(|s| {
+                    matches!(
+                        &s.kind,
+                        phenix_contract::graph::v2::SourceKind::ExternalAction { action }
+                            if action == action_id
+                    )
+                })
+                .ok_or_else(|| Failure::new(Code::MissingBinding, "unknown graph-v2 action"))?;
+            payload.encode()?;
+            if !source.payload.accepts(payload) {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "action payload schema mismatch",
+                ));
+            }
+            scope.authority = scope.authority.intersect(&self.prepared.authority);
+            scope.resource = scope.resource.or_else(|| self.prepared.resource.clone());
+            let entry = self.prepared.entry.clone();
+            let resources = self
+                .prepared
+                .grants
+                .get(&("root".into(), entry.key()))
+                .ok_or_else(|| Failure::new(Code::Denied, "root entry grant missing"))?;
+            scope.authority.resources.retain(|r| resources.contains(r));
+            if !scope.authority.operations.contains(&entry.key())
+                || scope
+                    .resource
+                    .as_ref()
+                    .is_some_and(|r| !scope.authority.resources.contains(r))
+            {
+                return Err(Failure::new(Code::Denied, "graph-v2 root scope denied"));
+            }
+            let wave = v2::execute::Wave::new(graph, &source.id)?;
+            let root = self.admit_scoped_root(entry, scope)?;
+            return Ok(GraphExecution {
+                root,
+                action: action_id.into(),
+                event: action_id.into(),
+                payload: payload.clone(),
+                v2: Some(wave),
+                node_requests: BTreeMap::new(),
+                state_cursor: 0,
+                had_domain: false,
+                active: Vec::new(),
+                waiting: graph.order().iter().cloned().collect(),
+                pending: BTreeMap::new(),
+                draining: Vec::new(),
+                unsuccessful: BTreeSet::new(),
+                completed: Vec::new(),
+                failure: None,
+                cancelled: false,
+                stopped: false,
+                admitted: false,
+                terminal: false,
+                pending_allowed,
+            });
+        }
         let graph = self
             .prepared
             .graph
@@ -807,6 +879,7 @@ impl Kernel {
             state.graph_emission_count = 0;
         }
         Ok(GraphExecution {
+            v2: None,
             root,
             action: action_id.into(),
             event: event.into(),
@@ -875,7 +948,13 @@ fn state_hook_requests(
 
 /// Readiness bookkeeping around one existing Root and its Ticket handles.
 /// The host controls polling; no timeout or busy loop is imposed by the kernel.
+/// All callbacks and results are privileged control-plane data for the trusted
+/// root owner and may reveal classified control outcomes. Never forward them to
+/// untrusted logging, plugins or streams without a separately authorized,
+/// classification-aware export. Suppressing v2 NodeFinished updates avoids
+/// automatic raw-payload exposure, not success/failure or timing disclosure.
 pub struct GraphExecution<'a> {
+    v2: Option<v2::execute::Wave>,
     root: Root<'a>,
     action: String,
     event: String,
@@ -922,9 +1001,15 @@ impl GraphExecution<'_> {
         (epoch.0, changed)
     }
 
+    /// Privileged results for the trusted root owner, including classified payloads
+    /// and control outcomes. Untrusted export requires separate classification-aware
+    /// authorization, even when NodeFinished callbacks are suppressed.
     pub fn steps(&self) -> &[GraphStep] {
         &self.completed
     }
+    /// Privileged terminal outcome for the trusted root owner. Success, failure and
+    /// completion timing may reveal classified branches; payload suppression does
+    /// not make this safe for untrusted export without separate authorization.
     pub fn completion(&self) -> Option<GraphCompletion<'_>> {
         self.terminal.then_some({
             if let Some(failure) = &self.failure {
@@ -952,6 +1037,30 @@ impl GraphExecution<'_> {
     ) {
         match result {
             Ok(outcome) => {
+                if let Some(wave) = &mut self.v2 {
+                    if matches!(outcome, Outcome::Domain(_)) {
+                        self.had_domain = true;
+                    }
+                    match wave.complete(
+                        self.root.kernel.prepared.graph_v2.as_ref().unwrap(),
+                        &self.root.scope,
+                        &node,
+                        &outcome,
+                    ) {
+                        Ok(stop) => self.stopped |= stop,
+                        Err(failure) => {
+                            self.failure = Some(failure);
+                            self.stopped = true;
+                        }
+                    }
+                    self.completed.push(GraphStep {
+                        node: node.clone(),
+                        outcome,
+                    });
+                    // V2 results may be protected. Only trusted steps() retains
+                    // payloads; the legacy NodeFinished observer is not used.
+                    return;
+                }
                 if matches!(outcome, Outcome::Domain(_)) {
                     self.had_domain = true;
                     self.unsuccessful.insert(node.clone());
@@ -984,7 +1093,16 @@ impl GraphExecution<'_> {
         ticket: Ticket,
         observe: &mut impl FnMut(&GraphUpdate<'_>),
     ) -> Result<(), Failure> {
-        match self.root.poll(&ticket)? {
+        let polled = match self.root.poll(&ticket) {
+            Ok(polled) => polled,
+            Err(failure) if self.v2.is_some() => {
+                self.pending.insert(node.clone(), ticket);
+                self.finish_node(node, Err(failure), observe);
+                return Ok(());
+            }
+            Err(failure) => return Err(failure),
+        };
+        match polled {
             Poll::Pending => {
                 self.pending.insert(node, ticket);
             }
@@ -1115,25 +1233,39 @@ impl GraphExecution<'_> {
         Ok(true)
     }
 
+    /// Advance execution for the trusted root owner. Callbacks, returned status,
+    /// errors and timing may reveal classified control outcomes. Do not forward
+    /// them to untrusted logging, plugins or streams without a separately authorized,
+    /// classification-aware export; suppressing payload updates is not full secrecy.
     pub fn pump(
         &mut self,
         mut observe: impl FnMut(&GraphUpdate<'_>),
     ) -> Result<GraphStatus, Failure> {
         self.root.kernel.check_thread()?;
         if !self.admitted {
-            let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
-            // Intrinsic kernel sources are deliberately NOT public actions.
-            // The execution records both identities at admission, rather
-            // than indexing the user-action map for an intrinsic event.
-            self.emit(
-                GraphEvent::Admitted {
-                    action: &self.action,
-                    event: &self.event,
-                    graph: &graph.identity,
-                    resource: self.root.scope.resource.as_deref(),
-                },
-                &mut observe,
-            );
+            if let Some(graph) = &self.root.kernel.prepared.graph_v2 {
+                self.emit(
+                    GraphEvent::Admitted {
+                        action: &self.action,
+                        event: &self.event,
+                        graph: graph.identity(),
+                        resource: self.root.scope.resource.as_deref(),
+                    },
+                    &mut observe,
+                );
+            } else {
+                let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+                // Kernel lifecycle events are not public actions.
+                self.emit(
+                    GraphEvent::Admitted {
+                        action: &self.action,
+                        event: &self.event,
+                        graph: &graph.identity,
+                        resource: self.root.scope.resource.as_deref(),
+                    },
+                    &mut observe,
+                );
+            }
             self.admitted = true;
         }
         // Poll each retained physical lease once; cleanup cannot admit nodes.
@@ -1155,65 +1287,75 @@ impl GraphExecution<'_> {
                     break;
                 }
             }
-            for node in self.active.clone() {
-                if self.stopped {
-                    break;
+            if self.v2.is_some() {
+                if let Err(failure) = self.pump_v2(&mut observe) {
+                    self.failure = Some(failure);
+                    self.stopped = true;
                 }
-                if !self.waiting.contains(&node) {
-                    continue;
-                }
-                let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
-                let predecessors = &graph.predecessors[&node];
-                if predecessors.iter().any(|id| self.unsuccessful.contains(id)) {
-                    self.waiting.remove(&node);
-                    self.unsuccessful.insert(node.clone());
-                    self.had_domain = true;
-                    self.emit(GraphEvent::NodeSkipped { node: &node }, &mut observe);
-                    continue;
-                }
-                if predecessors
-                    .iter()
-                    .any(|id| self.waiting.contains(id) || self.pending.contains_key(id))
-                {
-                    continue;
-                }
-                let compiled = &graph.nodes[&node];
-                if self
-                    .root
-                    .kernel
-                    .state
-                    .borrow()
-                    .tickets
-                    .values()
-                    .any(|r| !r.quiescent && r.selection.provider == compiled.provider)
-                {
-                    continue;
-                }
-                let (interface, operation) = compiled.definition.operation.split_once('/').unwrap();
-                let target = Selection {
-                    interface: interface.into(),
-                    operation: operation.into(),
-                    provider: compiled.provider.clone(),
-                };
-                let owner = compiled.owner.clone();
-                self.waiting.remove(&node);
-                let request = self.node_requests.get(&node).unwrap_or(&self.payload);
-                match self
-                    .root
-                    .call_graph(&owner, &target, request, self.pending_allowed)
-                {
-                    Ok(Call::Ready(outcome)) => self.finish_node(node, Ok(outcome), &mut observe),
-                    Ok(Call::Pending(ticket)) => {
-                        let ready = self.root.kernel.state.borrow().tickets[&ticket.id].logical
-                            != crate::pending::Logical::Pending;
-                        if ready {
-                            self.accept_poll(node, ticket, &mut observe)?;
-                        } else {
-                            self.emit(GraphEvent::NodePending { node: &node }, &mut observe);
-                            self.pending.insert(node, ticket);
-                        }
+            } else {
+                for node in self.active.clone() {
+                    if self.stopped {
+                        break;
                     }
-                    Err(failure) => self.finish_node(node, Err(failure), &mut observe),
+                    if !self.waiting.contains(&node) {
+                        continue;
+                    }
+                    let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+                    let predecessors = &graph.predecessors[&node];
+                    if predecessors.iter().any(|id| self.unsuccessful.contains(id)) {
+                        self.waiting.remove(&node);
+                        self.unsuccessful.insert(node.clone());
+                        self.had_domain = true;
+                        self.emit(GraphEvent::NodeSkipped { node: &node }, &mut observe);
+                        continue;
+                    }
+                    if predecessors
+                        .iter()
+                        .any(|id| self.waiting.contains(id) || self.pending.contains_key(id))
+                    {
+                        continue;
+                    }
+                    let compiled = &graph.nodes[&node];
+                    if self
+                        .root
+                        .kernel
+                        .state
+                        .borrow()
+                        .tickets
+                        .values()
+                        .any(|r| !r.quiescent && r.selection.provider == compiled.provider)
+                    {
+                        continue;
+                    }
+                    let (interface, operation) =
+                        compiled.definition.operation.split_once('/').unwrap();
+                    let target = Selection {
+                        interface: interface.into(),
+                        operation: operation.into(),
+                        provider: compiled.provider.clone(),
+                    };
+                    let owner = compiled.owner.clone();
+                    self.waiting.remove(&node);
+                    let request = self.node_requests.get(&node).unwrap_or(&self.payload);
+                    match self
+                        .root
+                        .call_graph(&owner, &target, request, self.pending_allowed)
+                    {
+                        Ok(Call::Ready(outcome)) => {
+                            self.finish_node(node, Ok(outcome), &mut observe)
+                        }
+                        Ok(Call::Pending(ticket)) => {
+                            let ready = self.root.kernel.state.borrow().tickets[&ticket.id].logical
+                                != crate::pending::Logical::Pending;
+                            if ready {
+                                self.accept_poll(node, ticket, &mut observe)?;
+                            } else {
+                                self.emit(GraphEvent::NodePending { node: &node }, &mut observe);
+                                self.pending.insert(node, ticket);
+                            }
+                        }
+                        Err(failure) => self.finish_node(node, Err(failure), &mut observe),
+                    }
                 }
             }
         }
@@ -1223,7 +1365,12 @@ impl GraphExecution<'_> {
         // A finished wave may have published watched cells. Activate their
         // hooks before declaring the admitted root terminal. Hooks can publish
         // further epochs; each is observed after its own wave settles.
-        if !self.terminal && !self.stopped && self.waiting.is_empty() && self.pending.is_empty() {
+        if self.v2.is_none()
+            && !self.terminal
+            && !self.stopped
+            && self.waiting.is_empty()
+            && self.pending.is_empty()
+        {
             // Settlement precedes the next FIFO event, so the owner can
             // atomically publish before observers of its readiness run.
             // Domain failures and cancellations never admit settlement.
@@ -1231,7 +1378,9 @@ impl GraphExecution<'_> {
                 self.admit_state_wave()?;
             }
         }
-        if !self.terminal && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
+        if !self.terminal
+            && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
+            && (self.v2.is_none() || self.draining.is_empty())
         {
             self.terminal = true;
             self.emit(
@@ -1239,12 +1388,24 @@ impl GraphExecution<'_> {
                 &mut observe,
             );
         }
+        // V2 kernel failures remain inspectable through completion(), but also
+        // fail the host pump once cancellation and physical draining are done.
+        if self.v2.is_some() && self.terminal {
+            if let Some(failure) = &self.failure {
+                return Err(failure.clone());
+            }
+        }
         Ok(if self.terminal {
             if self.draining.is_empty() {
                 GraphStatus::Finished
             } else {
                 GraphStatus::Draining
             }
+        } else if self.v2.is_some()
+            && !self.draining.is_empty()
+            && (self.stopped || self.waiting.is_empty() && self.pending.is_empty())
+        {
+            GraphStatus::Draining
         } else {
             GraphStatus::Pending
         })
