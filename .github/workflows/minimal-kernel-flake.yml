@@ -1,25 +1,13 @@
-# Untrusted PR gate: same complete flake-defined check inventory and
-# exact-head evidence, but restore the proven staged/fan-out Nix DAG.
-# Shared prebuild, parallel ready checks and dependent shipping join;
-# no Tailscale/OIDC credentials, cache publisher or reduced check list.
-# The single-runner full DAG remains available for manual diagnosis.
-name: Minimal kernel flake-aware matrix candidate
+name: "Minimal kernel flake-aware matrix candidate"
 on:
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Only the newest source commit needs PR evidence. Manual and push runs
-# retain independent identities and are never cancelled by a PR update.
-concurrency:
-  group: p1-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@b364f404e47bd25f4f69a4349f8e42620ea18dc2
+  flake-checks:
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@ada2d1a7b9e641b14cae83a8cacdd8cc63e7256d
     with:
-      config: ci/flake-check-config.nix
-      library_ref: b364f404e47bd25f4f69a4349f8e42620ea18dc2
+      config: "ci/flake-check-config.nix"
+      library_ref: "ada2d1a7b9e641b14cae83a8cacdd8cc63e7256d"

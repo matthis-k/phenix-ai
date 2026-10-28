@@ -30,27 +30,27 @@ PR-specific derivations, while its primary key and all leaf/join caches
 remain `phenix-m1-*` and cannot publish to the trusted namespace.
 The cache restoration is merged in `phenix-flake-ci` PR #35 and pinned to its immutable squash commit.
 
-## Declarative trusted push evaluation (native Tailscale four builders)
+## User-facing flake CI policy
 
-The source of truth for the native remote backend is `ci/flake-backend.nix`
-combined with `ci/render-flake-workflow.nix`, using the installed
-`phenix-flake-ci.mkFlakeCiWorkflow` API. It selects `backend = "nix-remote"`,
-`transport = "tailscale"`, `workers = 4`, `slotsPerWorker = 2`,
-`credentials = "oidc"` and an explicit owned push-branch allowlist.
-The library generates the pinned workflow
-`.github/workflows/phenix-flake-ci-generated.yml`; the verifier compares
-it byte-for-byte with the Nix output. Do not add independently maintained
-Tailscale workflow YAML or custom partition/closure handoffs.
+The entire execution policy is inside `ci/flake-check-config.nix` under
+`ci.trusted` and `ci.pullRequest`. It is consumed by one call to
+`phenix-flake-ci.mkFlakeCiWorkflows` in `ci/render-flake-workflows.nix`.
 
-This benchmark temporarily admits only the protected `main` push and
-`ci/declarative-native-four-20261028` (plus trusted manual dispatch)
-to the credentialed coordinator. Arbitrary PRs still use the separate
-read-only staged-DAG check; `pullRequest = false` remains enforced by the
-module itself. The policy tests reject additional push branches, workflow
-pin changes, OIDC on PR and modified check inventory.
+That call generates **both** `.github/workflows/phenix-flake-ci-generated.yml`
+and `.github/workflows/minimal-kernel-flake.yml`. CI compares each checked-in
+caller byte-for-byte against Nix output, using the same exact tested
+`phenix-flake-ci` source SHA for workflow calls and library checkout.
 
-After benchmarking, the temporary trusted branch should be removed from the
-policy allowlist. The eventual improvement belongs in `phenix-flake-ci`:
-provide reusable first-class trusted push branch policy and independently
-credential-free PR CI, with one declarative source of truth rather than
-per-consumer hand-authored trigger checks.
+Trusted pushes use one Nix derivation scheduler with four Tailscale ssh-ng
+builders and two slots each; no custom shared-build frontier or NAR joins.
+Untrusted pull requests run the credential-free complete staged DAG.
+
+The additional `ci/usage-first-paired-workflows-20261028` is a **temporary benchmark allowlist**
+beside protected `main`. The generated remote job guards the exact
+repository, allowed refs and event, and has no PR trigger or default manual
+dispatch. Branch naming alone is not sufficient to grant trust: GitHub
+repository write permissions, branch protections and Tailscale ACLs govern
+whether a ref is appropriate. Remove the benchmark branch after acceptance.
+
+Future backends and trust behavior belong in the typed library policy, not
+consumer-maintained GitHub Actions YAML.

@@ -6,6 +6,21 @@ in
 ci.mkFlakeCheckConfig {
   system = "x86_64-linux";
   shardCount = 5;
+  # One typed policy owns both execution paths; no separate backend YAML.
+  ci = {
+    trusted = {
+      repository = "matthis-k/phenix-ai";
+      branches = [ "main" "ci/usage-first-paired-workflows-20261028" ];
+      backend = "nix-remote";
+      remote = {
+        transport = "tailscale";
+        credentials = "oidc";
+        workers = 4;
+        slotsPerWorker = 2;
+      };
+    };
+    pullRequest.backend = "nix-dag";
+  };
   strategy = ci.rustCheckStrategy {
     workspace = "rust";
     cargoLock = "Cargo.lock";

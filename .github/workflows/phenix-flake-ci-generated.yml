@@ -3,8 +3,7 @@ on:
   push:
     branches:
       - "main"
-      - "ci/declarative-native-four-20261028"
-  workflow_dispatch:
+      - "ci/usage-first-paired-workflows-20261028"
 
 permissions:
   contents: read
@@ -12,10 +11,11 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c4467d7dc233ada85ea49823561ee8be57089591
+    if: ${{ github.repository == 'matthis-k/phenix-ai' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/usage-first-paired-workflows-20261028') }}
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@ada2d1a7b9e641b14cae83a8cacdd8cc63e7256d
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "c4467d7dc233ada85ea49823561ee8be57089591"
+      library_ref: "ada2d1a7b9e641b14cae83a8cacdd8cc63e7256d"
       worker_count: 4
       slots_per_worker: 2
     secrets:
