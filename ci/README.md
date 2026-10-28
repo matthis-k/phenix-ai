@@ -58,6 +58,12 @@ Keep write access to trusted PR head branches restricted. The Tailscale
 federated-identity grant must authorize GitHub's pull_request OIDC subject;
 a grant scoped only to main branch subjects will reject these PR jobs.
 The native workflow deliberately does not publish to shared binary cache on PRs.
+The generated native and fallback workflows now cancel older pending or active
+runs of **the same PR**, keyed by workflow name and PR number. Main pushes
+use an independent run ID and are never canceled by PR events. This prevents
+duplicate four-builder clusters when a stacked PR receives repeated events,
+but does not share compilation state globally across different PRs.
+The upstream library change is merged as phenix-flake-ci #42.
 
 The temporary benchmark branch was removed after verified end-to-end run
 [40671228754](https://github.com/matthis-k/phenix-ai/actions/runs/40671228754):
@@ -69,7 +75,7 @@ consumer-maintained GitHub Actions YAML.
 
 The paired API originally merged in `phenix-flake-ci` PR #37. Owner PR
 routing was merged in library PR #41 and is pinned to immutable squash
-commit `a0460dd78cd03478f906421844d769dddc66a69c`.
+commit `47ef08d2ad20038e0e4dfb5138d448c5c567f715`.
 Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
 

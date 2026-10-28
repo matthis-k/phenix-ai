@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "a0460dd78cd03478f906421844d769dddc66a69c"
+PIN = "47ef08d2ad20038e0e4dfb5138d448c5c567f715"
 
 def require(ok, message):
     if not ok:
@@ -49,11 +49,19 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             and "mkFlakeCiWorkflow {" not in renderer,
             "old split backend declaration reintroduced")
 
-    trusted_event = 'on:\n  pull_request:\n  push:\n    branches:\n      - "main"\n\npermissions:\n'
+    trusted_event = 'on:\n  pull_request:\n  push:\n    branches:\n      - "main"\n\nconcurrency:\n'
     require(trusted_event in trusted, "privileged trigger not restricted to exact push refs")
     require("  pull_request:" in trusted and "  pull_request_target:" not in trusted
             and "  workflow_dispatch:" not in trusted and "  workflow_run:" not in trusted,
             "privileged workflow changed trusted same-repository PR event policy")
+    concurrency = (
+        "concurrency:\n"
+        "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+        "format('pr-{0}', github.event.pull_request.number) || github.run_id }}\n"
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+    )
+    require(concurrency in trusted and concurrency in pr,
+            "missing PR-scoped workflow cancellation or push run isolation")
     require("permissions:\n  contents: read\n  id-token: write\n" in trusted,
             "OIDC permission unexpectedly altered")
     owner = ("github.repository == 'matthis-k/phenix-ai' && "
@@ -80,7 +88,9 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     require("TS_AUTHKEY:" not in trusted and "secrets: inherit" not in trusted,
             "broad credential forwarding reintroduced")
 
-    require("on:\n  pull_request:\n\npermissions:\n  contents: read\n" in pr,
+    require("on:\n  pull_request:\n\nconcurrency:\n" in pr,
+            "untrusted PR workflow trigger or cancellation changed")
+    require("permissions:\n  contents: read\n" in pr,
             "PR workflow no longer has only a read-only pull_request trigger")
     require("  push:" not in pr and "  workflow_dispatch:" not in pr
             and "  workflow_run:" not in pr and "  id-token: write" not in pr
@@ -123,6 +133,8 @@ def self_test():
         (0, '      - "main"', '      - "main"\n      - "ci/untrusted"'),
         (0, "  pull_request:", "  pull_request_target:"),
         (0, "  id-token: write", "  id-token: read"),
+        (0, "format('pr-{0}', github.event.pull_request.number)", "github.run_id"),
+        (0, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: false"),
         (0, "github.repository == 'matthis-k/phenix-ai'", "true"),
         (0, "github.ref == 'refs/heads/main'", "true"),
         (0, "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai'", "true"),
@@ -131,6 +143,8 @@ def self_test():
         (0, "flake-nix-builders.yml@" + PIN, "flake-nix-builders.yml@" + "f"*40),
         (0, "      TS_OAUTH_CLIENT_ID:", "      TS_AUTHKEY:"),
         (1, "  contents: read", "  contents: read\n  id-token: write"),
+        (1, "format('pr-{0}', github.event.pull_request.number)", "github.run_id"),
+        (1, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: false"),
         (1, "  pull_request:", "  pull_request:\n  workflow_dispatch:"),
         (1, "flake-dag-staged.yml@" + PIN, "flake-nix-builders.yml@" + PIN),
         (1, " && !(", " && ("),
