@@ -46,10 +46,10 @@ libraries = [
     ("rust-package", root / f"examples/python-trivial/rust-equivalent/target/{profile}/libphenix_rust_greeter.so"),
 ]
 for token in ("a", "b", "scalar"):
-    source = root / "examples/python-trivial/scalar.py"
+    source = root / "tools/phenix_python/testdata/scalar.py"
     if token != "scalar":
         source = work / f"concurrent-{token}.py"
-        source.write_text((root / "examples/python-trivial/concurrent.py").read_text()
+        source.write_text((root / "tools/phenix_python/testdata/concurrent.py").read_text()
                           .replace('TOKEN = "A"', f'TOKEN = "{token.upper()}"')
                           .replace("example.concurrent-a", f"example.concurrent-{token}"))
     generated = work / f"plugin-{token}"
