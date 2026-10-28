@@ -1,6 +1,7 @@
 # Temporary, branch-scoped lock calculation; removed before merging.
 name: CI library lock materialization
 on:
+  pull_request:
   push:
     branches:
       - ci/adopt-declarative-test-assertions
