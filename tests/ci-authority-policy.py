@@ -13,13 +13,19 @@ def require(ok, message):
         raise AssertionError(message)
 
 def verify(trusted, pr, canonical, old_matrix, diagnostic, fmt, acp, source):
-    require("  pull_request:" not in trusted and "  id-token: write" in trusted
-            and "flake-nix-builders.yml@" in trusted,
-            "native remote CI lost its protected push-only authority")
-    require('      - "main"' in trusted and "workflow_dispatch:" not in trusted,
-            "privileged workflow no longer has restricted push-only admission")
+    require("  pull_request:" in trusted and "  id-token: write" in trusted
+            and "flake-nix-builders.yml@" in trusted
+            and "github.event.pull_request.user.login == 'matthis-k'" in trusted
+            and "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai'" in trusted,
+            "native remote CI lost exact owner PR admission")
+    require('      - "main"' in trusted and "workflow_dispatch:" not in trusted
+            and "  pull_request_target:" not in trusted,
+            "privileged workflow no longer has restricted main/PR admission")
     require("  pull_request:" in pr and "id-token: write" not in pr
-            and "flake-dag-staged.yml@" in pr,
+            and "flake-dag-staged.yml@" in pr
+            and "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai'" in pr
+            and "github.event.pull_request.user.login == 'matthis-k'" in pr
+            and " && !(" in pr,
             "single unprivileged PR full-Nix gate removed")
     require("branches: [main," not in canonical and "  pull_request:" not in canonical
             and "  workflow_dispatch:" in canonical,
@@ -59,8 +65,11 @@ def self_test():
     mutations = [
         (0, '      - "main"', '      - "ci/unauthorized"'),
         (0, "  id-token: write", "  id-token: read"),
+        (0, "github.event.pull_request.user.login == 'matthis-k'", "true"),
+        (0, "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai'", "true"),
         (1, "  pull_request:", "  workflow_dispatch:"),
         (1, "flake-dag-staged.yml@", "flake-nix-builders.yml@"),
+        (1, " && !(", " && ("),
         (2, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (3, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (4, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),

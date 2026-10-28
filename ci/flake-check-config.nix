@@ -11,6 +11,7 @@ ci.mkFlakeCheckConfig {
     trusted = {
       repository = "matthis-k/phenix-ai";
       branches = [ "main" ];
+      pullRequestAuthors = [ "matthis-k" ];
       backend = "nix-remote";
       remote = {
         transport = "tailscale";

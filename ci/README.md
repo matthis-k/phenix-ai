@@ -4,11 +4,15 @@ The flake's `checks.x86_64-linux` is the single source of the complete check
 inventory, including native ABI, negative/security, product, Graph V2 and
 shipping acceptance. No selective test bypass is permitted.
 
-- **Untrusted PRs**: `minimal-kernel-flake.yml` invokes the pinned
+- **Other/fork PRs**: `minimal-kernel-flake.yml` invokes the pinned
   `phenix-flake-ci` staged DAG. The same exact-head derivation graph is
   planned, high-fanout dependencies are prebuilt once, ready checks run in
   parallel, and the final dependent/shipping join verifies all results.
   It has no Tailscale/OIDC credential or publisher authority.
+- **Owner PRs**: PRs authored by `matthis-k` with their head branch in
+  `matthis-k/phenix-ai` use the same native Nix coordinator and four
+  Tailscale builders, with no redundant per-shard store. PR publication is
+  disabled, and other/fork PRs remain in the credential-free staged backend.
 - **Trusted main**: the generated CI caller retains four Tailscale Nix
   builders with two slots each, and trusted cache publication.
 - **Manual diagnosis**: `minimal-kernel-dag.yml` can run the original
@@ -41,14 +45,19 @@ and `.github/workflows/minimal-kernel-flake.yml`. CI compares each checked-in
 caller byte-for-byte against Nix output, using the same exact tested
 `phenix-flake-ci` source SHA for workflow calls and library checkout.
 
-Trusted pushes use one Nix derivation scheduler with four Tailscale ssh-ng
-builders and two slots each; no custom shared-build frontier or NAR joins.
-Untrusted pull requests run the credential-free complete staged DAG.
+Trusted main pushes and same-repository PRs authored by `matthis-k` use one
+Nix derivation scheduler with four Tailscale ssh-ng builders and two slots
+each. The author allowlist is `ci.trusted.pullRequestAuthors` in the same
+Nix policy. Generated workflows contain complementary job-level admission
+and fallback predicates. No manually maintained parallel CI authority is
+allowed. All other PRs use the credential-free staged DAG.
 
-The trusted native remote builder workflow is restricted to the protected
-`main` branch, and it has no pull-request trigger or manual dispatch.
-The generating module guards the repository, exact ref and event; GitHub
-branch protections and Tailscale ACLs remain the operational trust boundary.
+The trusted caller only accepts main pushes or approved same-repo
+`pull_request` events; it never uses `pull_request_target` or manual dispatch.
+Keep write access to trusted PR head branches restricted. The Tailscale
+federated-identity grant must authorize GitHub's pull_request OIDC subject;
+a grant scoped only to main branch subjects will reject these PR jobs.
+The native workflow deliberately does not publish to shared binary cache on PRs.
 
 The temporary benchmark branch was removed after verified end-to-end run
 [40671228754](https://github.com/matthis-k/phenix-ai/actions/runs/40671228754):
@@ -58,8 +67,10 @@ passed in 4m17s on a warm cache. This result is not a cold-build benchmark.
 Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.
 
-The paired user-facing API is merged in `phenix-flake-ci` PR #37 and
-pinned to its immutable squash commit `070cb93f5972147ab0ed6efd1019e11ef6112a93`. Both generated workflows
+The paired API originally merged in `phenix-flake-ci` PR #37. Owner PR
+routing is implemented in library PR #41 and currently pinned to review
+commit `557deb346279aa92ce5c75550e2050da0761a61c`. Once merged, re-pin to its immutable merge revision.
+Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
 
 ## Automatically discovered runnable tests

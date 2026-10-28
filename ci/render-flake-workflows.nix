@@ -5,7 +5,7 @@ in
 flakeCi.mkFlakeCiWorkflows {
   ci = (import ./flake-check-config.nix).ci;
   configPath = "ci/flake-check-config.nix";
-  libraryRef = "070cb93f5972147ab0ed6efd1019e11ef6112a93";
+  libraryRef = "557deb346279aa92ce5c75550e2050da0761a61c";
   names = {
     trusted = "Phenix generated Nix CI (4 remote builders)";
     pullRequest = "Minimal kernel flake-aware matrix candidate";

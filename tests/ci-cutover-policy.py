@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "070cb93f5972147ab0ed6efd1019e11ef6112a93"
+PIN = "557deb346279aa92ce5c75550e2050da0761a61c"
 
 def require(ok, message):
     if not ok:
@@ -34,8 +34,9 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             "check policy or Rust adapter removed")
     require('repository = "matthis-k/phenix-ai";' in config,
             "trusted repository identity changed")
-    require('branches = [ "main" ];' in config,
-            "Nix trust policy must declare exact trusted branches")
+    require('branches = [ "main" ];' in config
+            and 'pullRequestAuthors = [ "matthis-k" ];' in config,
+            "Nix trust policy must declare exact trusted branches and owner PR admission")
     require('pullRequest.backend = "nix-dag";' in config,
             "untrusted backend is not the full staged DAG")
     require('backend = "nix-remote";' in config
@@ -48,17 +49,21 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             and "mkFlakeCiWorkflow {" not in renderer,
             "old split backend declaration reintroduced")
 
-    trusted_event = 'on:\n  push:\n    branches:\n      - "main"\n\npermissions:\n'
+    trusted_event = 'on:\n  pull_request:\n  push:\n    branches:\n      - "main"\n\npermissions:\n'
     require(trusted_event in trusted, "privileged trigger not restricted to exact push refs")
-    require("  pull_request:" not in trusted and "  pull_request_target:" not in trusted
+    require("  pull_request:" in trusted and "  pull_request_target:" not in trusted
             and "  workflow_dispatch:" not in trusted and "  workflow_run:" not in trusted,
-            "privileged workflow accepts an untrusted event or manual dispatch")
+            "privileged workflow changed trusted same-repository PR event policy")
     require("permissions:\n  contents: read\n  id-token: write\n" in trusted,
             "OIDC permission unexpectedly altered")
+    owner = ("github.repository == 'matthis-k/phenix-ai' && "
+             "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && "
+             "(github.event.pull_request.user.login == 'matthis-k')")
     guard = (
         "    if: ${{ github.repository == 'matthis-k/phenix-ai' && "
-        "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && "
-        "(github.ref == 'refs/heads/main') }}"
+        "(((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && "
+        "(github.ref == 'refs/heads/main')) || "
+        "(github.event_name == 'pull_request' && (" + owner + "))) }}"
     )
     require(guard in trusted, "trusted job admission lost repository/ref/event restrictions")
     require(trusted.count("flake-nix-builders.yml@" + PIN) == 1
@@ -86,6 +91,8 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             "PR full-inventory backend pin differs from reviewed library")
     require('config: "ci/flake-check-config.nix"' in pr,
             "PR check inventory diverges from trusted check inventory")
+    require("    if: ${{ github.event_name == 'pull_request' && !(" + owner + ") }}" in pr,
+            "untrusted PR fallback no longer complements the owner Nix admission")
     require("      publish:" not in pr and "secrets: inherit" not in pr,
             "PR backend may publish or inherit secrets")
 
@@ -114,21 +121,26 @@ def self_test():
     mutations = [
         (0, '      - "main"', '      - "ci/untrusted"'),
         (0, '      - "main"', '      - "main"\n      - "ci/untrusted"'),
-        (0, "on:\n  push:", "on:\n  pull_request:\n  push:"),
+        (0, "  pull_request:", "  pull_request_target:"),
         (0, "  id-token: write", "  id-token: read"),
         (0, "github.repository == 'matthis-k/phenix-ai'", "true"),
         (0, "github.ref == 'refs/heads/main'", "true"),
+        (0, "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai'", "true"),
+        (0, "github.event.pull_request.user.login == 'matthis-k'", "true"),
         (0, "worker_count: 4", "worker_count: 8"),
         (0, "flake-nix-builders.yml@" + PIN, "flake-nix-builders.yml@" + "f"*40),
         (0, "      TS_OAUTH_CLIENT_ID:", "      TS_AUTHKEY:"),
         (1, "  contents: read", "  contents: read\n  id-token: write"),
         (1, "  pull_request:", "  pull_request:\n  workflow_dispatch:"),
         (1, "flake-dag-staged.yml@" + PIN, "flake-nix-builders.yml@" + PIN),
+        (1, " && !(", " && ("),
         (1, 'config: "ci/flake-check-config.nix"', 'config: "ci/reduced.nix"'),
         (2, "mkFlakeCiWorkflows", "mkFlakeCiWorkflow"),
         (2, "libraryRef = \"" + PIN + "\";", "libraryRef = \"main\";"),
         (3, 'branches = [ "main" ];',
              'branches = [ "main" "ci/untrusted" ];'),
+        (3, 'pullRequestAuthors = [ "matthis-k" ];',
+             'pullRequestAuthors = [ "untrusted" ];'),
         (4, "m1-shipping", "not-a-real-shipping-check"),
         (5, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (6, "save: false", "save: true"),
