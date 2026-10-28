@@ -1,0 +1,54 @@
+# Maintainer-owned push branches may use the existing Tailscale/OIDC
+# distributed-Nix backend. Never run this privileged path for a pull_request,
+# pull_request_target or arbitrary workflow_run artifact.
+#
+# Fork/untrusted PRs continue through the independent read-only staged gate.
+name: Trusted Nix DAG / four Tailscale builders
+on:
+  push:
+    branches:
+      - "ci/**"
+      - "review/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: trusted-remote-nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authorize:
+    name: Require trusted origin push branch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Reject untrusted events, repositories and refs
+        env:
+          ACTUAL_REPO: ${{ github.repository }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "$ACTUAL_REPO" = "matthis-k/phenix-ai"
+          case "$ACTUAL_EVENT" in push|workflow_dispatch) ;; *) exit 1 ;; esac
+          case "$ACTUAL_REF" in
+            refs/heads/ci/*|refs/heads/review/*) ;;
+            *) exit 1 ;;
+          esac
+  four-builders:
+    name: Complete exact-head check DAG under one Nix coordinator
+    needs: authorize
+    if: needs.authorize.result == 'success'
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c4467d7dc233ada85ea49823561ee8be57089591
+    with:
+      config: ci/flake-check-config.nix
+      library_ref: c4467d7dc233ada85ea49823561ee8be57089591
+      worker_count: 4
+      slots_per_worker: 2
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}

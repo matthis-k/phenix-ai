@@ -29,3 +29,19 @@ Nix outputs read-only from `remote-phenix-m1-*` before building new
 PR-specific derivations, while its primary key and all leaf/join caches
 remain `phenix-m1-*` and cannot publish to the trusted namespace.
 The cache restoration is merged in `phenix-flake-ci` PR #35 and pinned to its immutable squash commit.
+
+## Native Tailscale remote CI for owned push branches
+
+`.github/workflows/trusted-native-nix.yml` uses the previously verified
+`phenix-flake-ci` Nix coordinator with **four** Tailscale ssh-ng builders
+(two build slots per worker), triggered only by direct pushes to `ci/**` or
+`review/**` on `matthis-k/phenix-ai`, or manual dispatch from those refs.
+It is **not** a pull-request or pull-request-target workflow. The authorize
+job checks the event, repository, and ref before enabling the Tailscale
+backend; the reusable workflow retains full exact-head DAG checks, negative
+and shipping acceptance, and trusted-only cache publishing.
+
+Fork PRs still use the credential-free staged PR gate. Do **not** remove or
+mark that gate optional until an independently verified exact-head push
+acceptance check is installed and required for internal branches. The
+main-only generated production remote workflow is unchanged.
