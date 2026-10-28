@@ -15,12 +15,20 @@ pub(crate) struct Entry {
     pub(crate) route: Option<usize>,
 }
 
+/// Immutable, generation-owned catalog. Execution routes remain indices
+/// into resolver-selected, attested imports; no declaration can supply one.
+pub(crate) struct Catalog {
+    pub(crate) tools: Vec<ToolInfo>,
+    pub(crate) routes: BTreeMap<String, Option<usize>>,
+    pub(crate) revision: u64,
+}
+
 #[derive(Default)]
 enum Phase {
     #[default]
     Idle,
     Collecting(BTreeMap<String, Entry>),
-    Published,
+    Published(Catalog),
     Aborted,
 }
 
@@ -49,6 +57,42 @@ fn valid(tool: &ToolInfo) -> bool {
 }
 
 impl Registry {
+    /// Build a fully validated, published candidate for the transitional
+    /// pull adapter. This function owns the entire candidate, so any
+    /// missing/forged/ambiguous contributor leaves the caller's live Registry
+    /// unchanged. The same begin/register/publish invariants protect event
+    /// publication; there is no second catalog type.
+    pub(crate) fn from_selected(
+        builtin: impl IntoIterator<Item = ToolInfo>,
+        catalogs: &[Vec<ToolInfo>],
+    ) -> Result<Self, BasicError> {
+        if catalogs.len() > MAX_CONTRIBUTORS {
+            return Err(reject("too many selected tool contributors"));
+        }
+        let mut candidate = Self::default();
+        candidate.begin(builtin)?;
+        for catalog in catalogs {
+            for offered in catalog {
+                candidate.register(offered.clone(), catalogs)?;
+            }
+        }
+        let tools = candidate
+            .preview()?
+            .into_iter()
+            .map(|entry| entry.info)
+            .collect::<Vec<_>>();
+        let revision = super::revision(&tools, catalogs.len());
+        candidate.publish(revision)?;
+        Ok(candidate)
+    }
+
+    pub(crate) fn selected(&self) -> Option<&Catalog> {
+        match &self.phase {
+            Phase::Published(catalog) => Some(catalog),
+            _ => None,
+        }
+    }
+
     pub(crate) fn begin(
         &mut self,
         builtin: impl IntoIterator<Item = ToolInfo>,
@@ -143,13 +187,28 @@ impl Registry {
         }
     }
 
-    pub(crate) fn publish(&mut self) -> Result<Vec<Entry>, BasicError> {
-        let Phase::Collecting(entries) = &self.phase else {
+    /// Move the validated staging map into the one immutable published
+    /// snapshot. The caller computes the revision BEFORE committing and
+    /// enqueues its ready event before this infallible transition.
+    pub(crate) fn publish(&mut self, revision: u64) -> Result<&Catalog, BasicError> {
+        if !matches!(&self.phase, Phase::Collecting(_)) {
             return Err(error(ErrorCode::Conflict, "tool population cannot publish"));
+        }
+        let Phase::Collecting(entries) = std::mem::replace(&mut self.phase, Phase::Aborted) else {
+            unreachable!("phase was collecting");
         };
-        let result = entries.values().cloned().collect();
-        self.phase = Phase::Published;
-        Ok(result)
+        let mut tools = Vec::with_capacity(entries.len());
+        let mut routes = BTreeMap::new();
+        for (id, entry) in entries {
+            routes.insert(id, entry.route);
+            tools.push(entry.info);
+        }
+        self.phase = Phase::Published(Catalog {
+            tools,
+            routes,
+            revision,
+        });
+        Ok(self.selected().expect("catalog just published"))
     }
 
     pub(crate) fn abort(&mut self) -> Result<(), BasicError> {
@@ -197,11 +256,12 @@ mod tests {
                 &[vec![info("foreign")], vec![external.clone()]],
             )
             .unwrap();
-        let published = registry.publish().unwrap();
-        assert_eq!(published.len(), 2);
-        assert_eq!(published[0].info.id, "fixture.reverse");
-        assert_eq!(published[0].route, Some(1));
-        assert_eq!(published[1].route, None);
+        let published = registry.publish(7).unwrap();
+        assert_eq!(published.tools.len(), 2);
+        assert_eq!(published.tools[0].id, "fixture.reverse");
+        assert_eq!(published.routes["fixture.reverse"], Some(1));
+        assert_eq!(published.routes["uppercase"], None);
+        assert_eq!(published.revision, 7);
         assert_eq!(
             registry.register(info("after"), &[]).unwrap_err().code,
             ErrorCode::Conflict
@@ -228,7 +288,7 @@ mod tests {
         assert!(registry
             .register(reverse.clone(), &[vec![reverse]])
             .is_err());
-        assert_eq!(registry.publish().unwrap().len(), 2);
+        assert_eq!(registry.publish(1).unwrap().tools.len(), 2);
     }
 
     #[test]
@@ -241,18 +301,77 @@ mod tests {
         registry.abort().unwrap();
         assert!(registry.blocks_pull_catalog());
         assert!(registry.begin([info("retry")]).is_err());
-        assert!(registry.publish().is_err());
+        assert!(registry.publish(1).is_err());
+    }
+
+    #[test]
+    fn published_catalog_is_single_authority_and_failure_is_terminal() {
+        let mut graph = Registry::default();
+        assert!(graph.selected().is_none());
+        graph.begin([info("uppercase")]).unwrap();
+        assert!(graph.selected().is_none());
+        let result = graph.publish(19).unwrap();
+        assert_eq!(result.revision, 19);
+        assert_eq!(result.tools[0].id, "uppercase");
+        assert_eq!(graph.selected().unwrap().routes["uppercase"], None);
+        assert!(graph.begin([info("length")]).is_err());
+        assert!(graph.publish(2).is_err());
+
+        // Direct pull admission uses begin/register/publish on this same
+        // Registry type; a published generation cannot switch to graph mode.
+        let mut pull = Registry::default();
+        pull.begin([info("uppercase")]).unwrap();
+        pull.publish(1).unwrap();
+        assert_eq!(pull.selected().unwrap().revision, 1);
+        assert!(pull.begin([info("length")]).is_err());
+
+        let mut aborted = Registry::default();
+        aborted.begin([info("uppercase")]).unwrap();
+        aborted.abort().unwrap();
+        assert!(aborted.selected().is_none());
+        assert!(aborted.begin([info("length")]).is_err());
+        assert!(aborted.publish(1).is_err());
+    }
+
+    #[test]
+    fn legacy_candidate_rejects_duplicate_and_malformed_selected_metadata() {
+        let intrinsic = info("uppercase");
+        let external = info("fixture.reverse");
+        let invalid = vec![vec![external.clone()], vec![external.clone()]];
+        assert_eq!(
+            Registry::from_selected([intrinsic.clone()], &invalid)
+                .err()
+                .unwrap()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        let mut malformed = external.clone();
+        malformed.arguments_schema = "[]".into();
+        assert_eq!(
+            Registry::from_selected([intrinsic.clone()], &[vec![malformed]])
+                .err()
+                .unwrap()
+                .code,
+            ErrorCode::InvalidInput
+        );
+
+        let good = Registry::from_selected([intrinsic], &[vec![external]]).unwrap();
+        let snapshot = good.selected().unwrap();
+        assert_eq!(snapshot.routes["fixture.reverse"], Some(0));
+        assert_eq!(snapshot.routes["uppercase"], None);
+        assert!(snapshot.revision > 0);
     }
 
     #[test]
     fn no_external_contributors_can_publish_builtin_tools() {
         let mut registry = Registry::default();
         registry.begin([info("uppercase"), info("length")]).unwrap();
-        let catalog = registry.publish().unwrap();
+        let catalog = registry.publish(1).unwrap();
         assert_eq!(
             catalog
+                .tools
                 .iter()
-                .map(|e| e.info.id.as_str())
+                .map(|e| e.id.as_str())
                 .collect::<Vec<_>>(),
             ["length", "uppercase"]
         );
