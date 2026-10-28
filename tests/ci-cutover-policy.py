@@ -53,7 +53,7 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('ci.mkFlakeCheckConfig' in check_config, 'not using generic flake check planner')
     require('ci.rustCheckStrategy' in check_config, 'existing Rust strategy absent')
     require('shardCount = 5;' in check_config, 'existing experimental matrix was altered')
-    candidate_refs = re.findall(r'flake-local-dag\.yml@([0-9a-f]{40})', matrix)
+    candidate_refs = re.findall(r'flake-dag-staged\.yml@([0-9a-f]{40})', matrix)
     candidate_libraries = re.findall(r'(?m)^      library_ref: ([0-9a-f]{40})$', matrix)
     require(candidate_refs == [EXPECTED_CANDIDATE_PIN] and candidate_libraries == candidate_refs,
             'unprivileged PR DAG must use the explicit reviewed candidate workflow/runtime pin')
@@ -67,7 +67,7 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
         'PR candidate must only delegate the complete inventory without secrets or publishers')
 
     # The slow local DAG remains manual-only, with no credential delegation.
-    fallback_refs = re.findall(r'flake-local-dag\\.yml@([0-9a-f]{40})', dag)
+    fallback_refs = re.findall(r'flake-local-dag\.yml@([0-9a-f]{40})', dag)
     fallback_libraries = re.findall(r'(?m)^      library_ref: ([0-9a-f]{40})$', dag)
     require(fallback_refs == [EXPECTED_CANDIDATE_PIN]
             and fallback_libraries == fallback_refs,
