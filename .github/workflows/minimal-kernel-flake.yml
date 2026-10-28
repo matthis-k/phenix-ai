@@ -2,13 +2,17 @@ name: "Minimal kernel flake-aware matrix candidate"
 on:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   flake-checks:
     if: ${{ github.event_name == 'pull_request' && !(github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')) }}
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@a0460dd78cd03478f906421844d769dddc66a69c
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@47ef08d2ad20038e0e4dfb5138d448c5c567f715
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "a0460dd78cd03478f906421844d769dddc66a69c"
+      library_ref: "47ef08d2ad20038e0e4dfb5138d448c5c567f715"
