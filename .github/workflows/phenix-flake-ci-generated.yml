@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - "main"
+      - "ci/declarative-native-four-20261028"
   workflow_dispatch:
 
 permissions:

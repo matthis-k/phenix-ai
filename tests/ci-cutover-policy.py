@@ -22,8 +22,8 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     # Only main's trusted push may automatically receive remote credentials.
     require('  pull_request:' not in generated, 'untrusted remote PR event')
     require('  id-token: write' in generated, 'missing OIDC permission')
-    require('on:\n  push:\n    branches:\n      - "main"\n  workflow_dispatch:' in generated,
-            'privileged remote push admission must be main-only')
+    require('on:\n  push:\n    branches:\n      - "main"\n      - "ci/declarative-native-four-20261028"\n  workflow_dispatch:' in generated,
+            'privileged remote push admission must exactly match trusted Nix policy')
     require('      worker_count: 4' in generated, 'four-builder setting missing')
     require('      slots_per_worker: 2' in generated, 'two-slot setting missing')
     require('    secrets:\n      TS_OAUTH_CLIENT_ID:' in generated,
@@ -39,6 +39,8 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     require('libraryRef = "' + EXPECTED_SOURCE_PIN + '"' in renderer,
             'Nix generator pin differs from workflow')
     require('pullRequest = false;' in renderer, 'generated policy must forbid remote PRs')
+    require('pushBranches = [ "main" "ci/declarative-native-four-20261028" ];' in renderer,
+            'remote workflow source must declare only approved trusted push refs')
     require('backend = "nix-remote";' in backend, 'selected backend drifted')
     require('workers = 4;' in backend and 'slotsPerWorker = 2;' in backend,
             'explicit measured worker/slot configuration missing')
@@ -139,7 +141,11 @@ def self_test():
     verify(*good)
     mutations = [
         (0, '      - "main"', '      - "ci/unauthorized"'),
-        (0, '      - "main"', '      - "main"\n      - "ci/temporary"'),
+        (0, '      - "ci/declarative-native-four-20261028"', '      - "ci/temporary"'),
+        (0, '      - "ci/declarative-native-four-20261028"',
+             '      - "ci/declarative-native-four-20261028"\n      - "ci/unauthorized"'),
+        (1, 'pushBranches = [ "main" "ci/declarative-native-four-20261028" ];',
+             'pushBranches = [ "main" "ci/unauthorized" ];'),
         (0, 'on:\n  push:', 'on:\n  pull_request:\n  push:'),
         (0, '      worker_count: 4', '      worker_count: 8'),
         (0, 'library_ref: "' + EXPECTED_SOURCE_PIN + '"',

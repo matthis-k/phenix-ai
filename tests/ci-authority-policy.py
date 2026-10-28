@@ -15,8 +15,9 @@ def verify(remote, canonical, matrix, dag, fmt, acp, verifier):
     # Only trusted main pushes and explicit trusted dispatch get remote OIDC.
     require('      - "main"' in remote, "trusted main push lacks complete remote CI")
     require("  pull_request:" not in remote, "remote OIDC granted to PRs")
-    # After cutover, only the protected release branch receives automatic
-    # privileged remote CI; historical staging branches must not retain OIDC.
+    # Only the protected main branch and the explicitly approved
+    # trusted benchmark branch receive remote OIDC. Never infer an
+    # untrusted pull request's push branch from arbitrary workflow input.
     before = remote.split("on:\n  push:\n    branches:\n", 1)
     require(len(before) == 2, "remote CI lacks a strict push allowlist")
     candidates = []
@@ -24,8 +25,8 @@ def verify(remote, canonical, matrix, dag, fmt, acp, verifier):
         if not line.startswith("      - "):
             break
         candidates.append(line.strip())
-    require(candidates == ['- "main"'],
-            "temporary CI staging branches still receive remote OIDC")
+    require(candidates == ['- "main"', '- "ci/declarative-native-four-20261028"'],
+            "unapproved branch received privileged remote OIDC")
 
     require("  id-token: write" in remote, "remote OIDC missing")
     require("      worker_count: 4" in remote and "      slots_per_worker: 2" in remote,
@@ -71,7 +72,7 @@ def files():
 
 def self_test():
     good = [
-        'on:\n  push:\n    branches:\n      - "main"\npermissions:\n  id-token: write\n'
+        'on:\n  push:\n    branches:\n      - "main"\n      - "ci/declarative-native-four-20261028"\npermissions:\n  id-token: write\n'
         '    uses: flake-nix-builders.yml@123\n      worker_count: 4\n      slots_per_worker: 2\n',
         "on:\n  workflow_dispatch:\n",
         "on:\n  pull_request:\n  workflow_dispatch:\npermissions:\n  contents: read\n",
@@ -86,7 +87,9 @@ def self_test():
     verify(*good)
     cases = [
         (0, '      - "main"', '      - "ci/sandbox"'),
-        (0, '      - "main"', '      - "main"\n      - "ci/temporary"'),
+        (0, '      - "ci/declarative-native-four-20261028"', '      - "ci/temporary"'),
+        (0, '      - "ci/declarative-native-four-20261028"',
+             '      - "ci/declarative-native-four-20261028"\n      - "ci/unapproved"'),
         (0, "on:\n  push:", "on:\n  pull_request:\n  push:"),
         (1, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (2, "permissions:\n  contents: read", "permissions:\n  id-token: write"),

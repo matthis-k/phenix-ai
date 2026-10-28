@@ -10,7 +10,7 @@ flakeCi.mkFlakeCiWorkflow {
   name = "Phenix generated Nix CI (4 remote builders)";
   events = {
     pullRequest = false;
-    pushBranches = [ "main" ];
+    pushBranches = [ "main" "ci/declarative-native-four-20261028" ];
     workflowDispatch = true;
   };
 }
