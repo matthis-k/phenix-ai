@@ -45,12 +45,15 @@ Trusted pushes use one Nix derivation scheduler with four Tailscale ssh-ng
 builders and two slots each; no custom shared-build frontier or NAR joins.
 Untrusted pull requests run the credential-free complete staged DAG.
 
-The additional `ci/usage-first-paired-workflows-20261028` is a **temporary benchmark allowlist**
-beside protected `main`. The generated remote job guards the exact
-repository, allowed refs and event, and has no PR trigger or default manual
-dispatch. Branch naming alone is not sufficient to grant trust: GitHub
-repository write permissions, branch protections and Tailscale ACLs govern
-whether a ref is appropriate. Remove the benchmark branch after acceptance.
+The trusted native remote builder workflow is restricted to the protected
+`main` branch, and it has no pull-request trigger or manual dispatch.
+The generating module guards the repository, exact ref and event; GitHub
+branch protections and Tailscale ACLs remain the operational trust boundary.
+
+The temporary benchmark branch was removed after verified end-to-end run
+[40671228754](https://github.com/matthis-k/phenix-ai/actions/runs/40671228754):
+all 86 Nix checks, four Tailscale builders and both post-build test packages
+passed in 4m17s on a warm cache. This result is not a cold-build benchmark.
 
 Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.

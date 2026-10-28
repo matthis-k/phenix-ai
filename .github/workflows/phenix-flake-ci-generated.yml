@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - "main"
-      - "ci/usage-first-paired-workflows-20261028"
 
 permissions:
   contents: read
@@ -11,7 +10,7 @@ permissions:
 
 jobs:
   flake-checks:
-    if: ${{ github.repository == 'matthis-k/phenix-ai' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/usage-first-paired-workflows-20261028') }}
+    if: ${{ github.repository == 'matthis-k/phenix-ai' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main') }}
     uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@070cb93f5972147ab0ed6efd1019e11ef6112a93
     with:
       config: "ci/flake-check-config.nix"

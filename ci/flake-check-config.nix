@@ -10,7 +10,7 @@ ci.mkFlakeCheckConfig {
   ci = {
     trusted = {
       repository = "matthis-k/phenix-ai";
-      branches = [ "main" "ci/usage-first-paired-workflows-20261028" ];
+      branches = [ "main" ];
       backend = "nix-remote";
       remote = {
         transport = "tailscale";

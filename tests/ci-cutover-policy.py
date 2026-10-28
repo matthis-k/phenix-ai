@@ -5,7 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = "070cb93f5972147ab0ed6efd1019e11ef6112a93"
-BENCHMARK = "ci/usage-first-paired-workflows-20261028"
 
 def require(ok, message):
     if not ok:
@@ -35,7 +34,7 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             "check policy or Rust adapter removed")
     require('repository = "matthis-k/phenix-ai";' in config,
             "trusted repository identity changed")
-    require(f'branches = [ "main" "{BENCHMARK}" ];' in config,
+    require('branches = [ "main" ];' in config,
             "Nix trust policy must declare exact trusted branches")
     require('pullRequest.backend = "nix-dag";' in config,
             "untrusted backend is not the full staged DAG")
@@ -49,10 +48,7 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             and "mkFlakeCiWorkflow {" not in renderer,
             "old split backend declaration reintroduced")
 
-    trusted_event = (
-        'on:\n  push:\n    branches:\n      - "main"\n'
-        f'      - "{BENCHMARK}"\n\npermissions:\n'
-    )
+    trusted_event = 'on:\n  push:\n    branches:\n      - "main"\n\npermissions:\n'
     require(trusted_event in trusted, "privileged trigger not restricted to exact push refs")
     require("  pull_request:" not in trusted and "  pull_request_target:" not in trusted
             and "  workflow_dispatch:" not in trusted and "  workflow_run:" not in trusted,
@@ -62,7 +58,7 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     guard = (
         "    if: ${{ github.repository == 'matthis-k/phenix-ai' && "
         "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && "
-        f"(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/{BENCHMARK}') }}}}"
+        "(github.ref == 'refs/heads/main') }}"
     )
     require(guard in trusted, "trusted job admission lost repository/ref/event restrictions")
     require(trusted.count("flake-nix-builders.yml@" + PIN) == 1
@@ -116,8 +112,8 @@ def self_test():
     good = files()
     verify(*good)
     mutations = [
-        (0, f'      - "{BENCHMARK}"', '      - "ci/untrusted"'),
-        (0, f'      - "{BENCHMARK}"', f'      - "{BENCHMARK}"\n      - "ci/untrusted"'),
+        (0, '      - "main"', '      - "ci/untrusted"'),
+        (0, '      - "main"', '      - "main"\n      - "ci/untrusted"'),
         (0, "on:\n  push:", "on:\n  pull_request:\n  push:"),
         (0, "  id-token: write", "  id-token: read"),
         (0, "github.repository == 'matthis-k/phenix-ai'", "true"),
@@ -131,7 +127,7 @@ def self_test():
         (1, 'config: "ci/flake-check-config.nix"', 'config: "ci/reduced.nix"'),
         (2, "mkFlakeCiWorkflows", "mkFlakeCiWorkflow"),
         (2, "libraryRef = \"" + PIN + "\";", "libraryRef = \"main\";"),
-        (3, f'branches = [ "main" "{BENCHMARK}" ];',
+        (3, 'branches = [ "main" ];',
              'branches = [ "main" "ci/untrusted" ];'),
         (4, "m1-shipping", "not-a-real-shipping-check"),
         (5, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
