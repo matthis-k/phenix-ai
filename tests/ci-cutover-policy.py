@@ -106,9 +106,14 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     require("      publish:" not in pr and "secrets: inherit" not in pr,
             "PR backend may publish or inherit secrets")
 
-    for check in ("p1-release-preflight", "m1-shipping", "basic-host-smoke",
+    for check in ("kernel-inspect-contract", "kernel-invalid-composition",
+                  "p1-release-preflight", "m1-shipping", "basic-host-smoke",
                   "basic-pending-http-product", "m1-imports", "m1-public-sdk"):
         require(check in flake, "missing required complete Nix check: " + check)
+    require(f'inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/{PIN}";' in flake,
+            "declarative tests must use exactly the workflow-pinned CI library")
+    require('testLib.mkTestCases' in flake and 'testLib.testAssert' in flake,
+            "declarative checks or shared assertion constructors removed")
     require("  pull_request:" not in fallback
             and "  workflow_dispatch:" in fallback
             and "id-token: write" not in fallback
