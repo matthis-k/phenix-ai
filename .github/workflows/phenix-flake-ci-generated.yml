@@ -1,9 +1,9 @@
 name: "Phenix generated Nix CI (4 remote builders)"
 on:
+  pull_request:
   push:
     branches:
       - "main"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,10 +11,11 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@c4467d7dc233ada85ea49823561ee8be57089591
+    if: ${{ github.repository == 'matthis-k/phenix-ai' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && (github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')))) }}
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@a0460dd78cd03478f906421844d769dddc66a69c
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "c4467d7dc233ada85ea49823561ee8be57089591"
+      library_ref: "a0460dd78cd03478f906421844d769dddc66a69c"
       worker_count: 4
       slots_per_worker: 2
     secrets:
