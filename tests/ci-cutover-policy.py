@@ -62,7 +62,7 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     guard = (
         "    if: ${{ github.repository == 'matthis-k/phenix-ai' && "
         "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && "
-        f"(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/{BENCHMARK}') }}"
+        f"(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/{BENCHMARK}') }}}}"
     )
     require(guard in trusted, "trusted job admission lost repository/ref/event restrictions")
     require(trusted.count("flake-nix-builders.yml@" + PIN) == 1
