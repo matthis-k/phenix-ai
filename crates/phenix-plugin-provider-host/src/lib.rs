@@ -4,6 +4,7 @@
 //! Until an executable strategy is selected, this host deliberately refuses
 //! authentication and model discovery. It never grants authority from metadata.
 
+mod auth;
 mod models;
 
 use phenix_provider_builtins::merge_registration_pages;
@@ -53,8 +54,9 @@ mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
-        CredentialIdentity, ModelQuery, ProviderAuth, ProviderCatalog, ProviderCredentials,
-        ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRegistrations,
+        AuthenticatedProfile, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
+        ModelQuery, ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery,
+        ProviderPage, ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -62,6 +64,8 @@ mod plugin {
     pub struct State {
         /// One immutable snapshot per plugin generation, not mutable Storage.
         selected: Option<Vec<ProviderDescriptor>>,
+        /// Shared, account-isolated attempt lifecycle owned by this host.
+        attempts: phenix_provider_auth_strategies::ApiKeyAttempts,
     }
 
     fn check(host: &Host<'_>, scope: &str) -> CallResult<(), ProviderError> {
@@ -174,6 +178,32 @@ mod plugin {
         )
     }
 
+    /// Revalidate selected credentials against the real declared catalog.
+    /// Stored credentials alone never constitute successful authentication.
+    fn verified_key(
+        host: &Host<'_>,
+        connection: &phenix_provider_contracts::ConnectionDescriptor,
+        identity: &CredentialIdentity,
+    ) -> CallResult<bool, ProviderError> {
+        if !auth::standard_bearer_key(connection, "api-key") || !models::can_discover(connection) {
+            return Ok(false);
+        }
+        if imports::Credentials::count(host)? != 1 {
+            return Ok(false);
+        }
+        let scope = identity.resolve_scope().map_err(CallError::Domain)?;
+        let secret = match host.invoke_scoped::<ProviderCredentials::resolve>(
+            "Credentials#0",
+            &scope,
+            identity,
+        ) {
+            Ok(value) => value,
+            Err(CallError::Domain(_)) => return Ok(false),
+            Err(failure) => return Err(failure),
+        };
+        Ok(models::discover(connection, identity.profile_id(), &secret, 256).is_ok())
+    }
+
     #[provide(ProviderCatalog::list)]
     fn list(
         state: &mut State,
@@ -284,12 +314,40 @@ mod plugin {
         host: &Host<'_>,
         request: AuthQuery,
     ) -> CallResult<AuthenticationStatus, ProviderError> {
-        check(host, &request.scope)?;
-        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
+        let account = auth::account(
+            host.resource()?.as_deref(),
+            &request.scope,
+            &request.provider_id,
+            &request.connection_id,
+        )
+        .map_err(CallError::Domain)?;
+        let connection =
+            connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
+        let profiles = if let Some(identity) = account {
+            if auth::standard_bearer_key(&connection, "api-key") {
+                let verified = verified_key(host, &connection, &identity)?;
+                vec![CredentialProfile {
+                    id: identity.profile_id().into(),
+                    label: identity.profile_id().into(),
+                    method_id: "api-key".into(),
+                    status: if verified {
+                        CredentialProfileStatus::Authenticated
+                    } else {
+                        CredentialProfileStatus::Unavailable {
+                            reason: "account credential verification unavailable".into(),
+                        }
+                    },
+                }]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
         Ok(AuthenticationStatus {
             provider_id: request.provider_id,
             connection_id: request.connection_id,
-            profiles: Vec::new(),
+            profiles,
         })
     }
 
@@ -299,18 +357,15 @@ mod plugin {
         host: &Host<'_>,
         request: AuthStart,
     ) -> CallResult<AuthChallenge, ProviderError> {
-        check(host, &request.scope)?;
-        let provider = selected_provider(state, host, &request.provider_id)?;
-        let chosen = provider
-            .connections
-            .iter()
-            .find(|item| item.id == request.connection_id)
-            .ok_or_else(|| {
-                CallError::Domain(error(
-                    ProviderErrorCode::NotFound,
-                    "unknown provider connection",
-                ))
-            })?;
+        let account = auth::account(
+            host.resource()?.as_deref(),
+            &request.scope,
+            &request.provider_id,
+            &request.connection_id,
+        )
+        .map_err(CallError::Domain)?;
+        let chosen =
+            connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
         if !chosen
             .auth_methods
             .iter()
@@ -321,9 +376,24 @@ mod plugin {
                 "authentication method not offered",
             )));
         }
+        if let Some(identity) = account {
+            if auth::standard_bearer_key(&chosen, &request.method_id)
+                && models::can_discover(&chosen)
+                && imports::Credentials::count(host)? == 1
+            {
+                return state
+                    .attempts
+                    .begin(
+                        identity,
+                        "phenix-key",
+                        "Import an API key into this authorized account and poll the attempt",
+                    )
+                    .map_err(CallError::Domain);
+            }
+        }
         Err(CallError::Domain(error(
             ProviderErrorCode::Unavailable,
-            "provider authentication backend is not installed",
+            "selected authentication strategy is not installed",
         )))
     }
 
@@ -333,12 +403,50 @@ mod plugin {
         host: &Host<'_>,
         request: AuthAttemptQuery,
     ) -> CallResult<AuthAttemptState, ProviderError> {
-        check(host, &request.scope)?;
-        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
-        Err(CallError::Domain(error(
-            ProviderErrorCode::NotFound,
-            "no authentication attempt registered",
-        )))
+        let account = auth::account(
+            host.resource()?.as_deref(),
+            &request.scope,
+            &request.provider_id,
+            &request.connection_id,
+        )
+        .map_err(CallError::Domain)?;
+        let connection =
+            connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
+        let identity = account.ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::NotFound,
+                "no authentication attempt registered",
+            ))
+        })?;
+        if !auth::standard_bearer_key(&connection, "api-key") {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::NotFound,
+                "no authentication attempt registered",
+            )));
+        }
+        if let Some(done) = state
+            .attempts
+            .check(&identity, &request.attempt_id)
+            .map_err(CallError::Domain)?
+        {
+            return Ok(done);
+        }
+        if verified_key(host, &connection, &identity)? {
+            state
+                .attempts
+                .complete(
+                    &identity,
+                    &request.attempt_id,
+                    AuthenticatedProfile {
+                        id: identity.profile_id().into(),
+                        label: identity.profile_id().into(),
+                        method_id: "api-key".into(),
+                    },
+                )
+                .map_err(CallError::Domain)
+        } else {
+            Ok(AuthAttemptState::Pending)
+        }
     }
 
     #[provide(ProviderAuth::cancel)]
@@ -347,12 +455,24 @@ mod plugin {
         host: &Host<'_>,
         request: AuthAttemptQuery,
     ) -> CallResult<AuthAttemptState, ProviderError> {
-        check(host, &request.scope)?;
-        selected_connection(state, host, &request.provider_id, &request.connection_id)?;
-        Err(CallError::Domain(error(
-            ProviderErrorCode::NotFound,
-            "no authentication attempt registered",
-        )))
+        let account = auth::account(
+            host.resource()?.as_deref(),
+            &request.scope,
+            &request.provider_id,
+            &request.connection_id,
+        )
+        .map_err(CallError::Domain)?;
+        connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
+        let identity = account.ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::NotFound,
+                "no authentication attempt registered",
+            ))
+        })?;
+        state
+            .attempts
+            .cancel(&identity, &request.attempt_id)
+            .map_err(CallError::Domain)
     }
 }
 

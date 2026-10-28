@@ -11,4 +11,5 @@ crate-type = ["cdylib", "rlib"]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-provider-contracts = { path = "../phenix-provider-contracts" }
 phenix-provider-builtins = { path = "../phenix-provider-builtins" }
+phenix-provider-auth-strategies = { path = "../phenix-provider-auth-strategies" }
 phenix-provider-discovery = { path = "../phenix-provider-discovery" }
