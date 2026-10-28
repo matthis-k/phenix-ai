@@ -364,6 +364,33 @@
         python ${./tests/workspace-product.py} ${kernel}/bin/phenix-kernel ${workspacePlugin} ${storageSqlite} ${workspaceDefinitions} ${basicDefinitions} "$out"
         test -s "$out/evidence.json"
       '';
+      # Generic provider host; data-only contributors never implement catalog
+      # or authentication contracts.
+      providerHostPluginSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-host
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerHostPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-host";
+        version = "0.1.0";
+        src = providerHostPluginSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-host" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-host" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_host.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       providerBuiltinsPluginSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-builtins
         ./crates/phenix-provider-builtins
@@ -396,10 +423,13 @@
         test -s "${providerBuiltinsPlugin}/descriptor.bin"
         test -s "${providerBuiltinsPlugin}/lib/plugin.so"
         grep -aq 'phenix.provider.builtins' "${providerBuiltinsPlugin}/descriptor.bin"
+        test -s "${providerHostPlugin}/descriptor.bin"
+        test -s "${providerHostPlugin}/lib/plugin.so"
+        grep -aq 'phenix.provider.host' "${providerHostPlugin}/descriptor.bin"
         jq -e '.format == "phenix.native-package.v2" and .artifact == "lib/plugin.so"' \
           "${providerBuiltinsPlugin}/package.json"
         python ${./tests/provider-builtins-product.py} \
-          ${kernel}/bin/phenix-kernel ${providerBuiltinsPlugin} ${providerDefinitions} "$out" ${providerOpenAiApi} ${providerCredentialStore} ${providerChatGpt}
+          ${kernel}/bin/phenix-kernel ${providerHostPlugin} ${providerBuiltinsPlugin} ${providerDefinitions} "$out" ${providerOpenAiApi} ${providerCredentialStore} ${providerChatGpt}
         touch "$out/verified"
       '';
       providerBuiltinsSource = subset (publicPaths ++ [
@@ -1653,11 +1683,17 @@
           entry = {
             interface = "phenix.provider.catalog@1";
             operation = "list";
-            provider = "phenix.provider.builtins";
+            provider = "phenix.provider.host";
           };
-          artifacts = [ "${providerBuiltinsPlugin}" ];
+          artifacts = [ "${providerHostPlugin}" "${providerBuiltinsPlugin}" ];
           definitions = [ "${providerDefinitions}" ];
-          slots = [];
+          slots = [{
+            caller = "phenix.provider.host";
+            slot = "Contributors";
+            index = 0;
+            provider = "phenix.provider.builtins";
+            export = "Registrations";
+          }];
           grants = map (binding: {
             caller = "root";
             interface = binding.interface;
@@ -1671,7 +1707,12 @@
             { interface = "phenix.provider.auth@1"; operation = "poll"; }
             { interface = "phenix.provider.auth@1"; operation = "cancel"; }
             { interface = "phenix.provider.catalog@1"; operation = "models"; }
-          ];
+          ] ++ [{
+            caller = "phenix.provider.host";
+            interface = "phenix.provider.registrations@1";
+            operation = "list";
+            resources = [ "phenix.providers.user" ];
+          }];
           excluded = [];
           substitutions = [];
           authority = {
@@ -1683,6 +1724,7 @@
               "phenix.provider.auth@1/poll"
               "phenix.provider.auth@1/cancel"
               "phenix.provider.catalog@1/models"
+              "phenix.provider.registrations@1/list"
             ];
             resources = [ "phenix.providers.user" ];
           };
@@ -1696,6 +1738,15 @@
             provider = "phenix.provider.loopback-fixture";
           };
           artifacts = [ "${c9LoopbackProvider}" ];
+          slots = [];
+          grants = builtins.filter (binding:
+            binding.caller != "phenix.provider.host"
+          ) providerManagementCompositionSpec.grants;
+          authority = providerManagementCompositionSpec.authority // {
+            operations = builtins.filter (op:
+              op != "phenix.provider.registrations@1/list"
+            ) providerManagementCompositionSpec.authority.operations;
+          };
         }));
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
@@ -2806,6 +2857,7 @@
         phenix-p1-release-preflight = p1ReleasePreflight;
         phenix-basic-contracts = basicDefinitions;
         phenix-plugin-provider-builtins = providerBuiltinsPlugin;
+        phenix-plugin-provider-host = providerHostPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
         phenix-plugin-provider-credential-files = providerCredentialStore;
@@ -3052,6 +3104,7 @@
         provider-secret-service = providerSecretServiceCheck;
         provider-builtins = providerBuiltinsCheck;
         provider-builtins-plugin = providerBuiltinsPluginCheck;
+        provider-host-plugin = providerHostPlugin;
         provider-openai-api = providerOpenAiApi;
         provider-chatgpt = providerChatGpt;
         p1-auth-launcher-product = p1AuthLauncherProductCheck;
