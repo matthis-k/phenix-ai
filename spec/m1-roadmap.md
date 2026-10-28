@@ -10,6 +10,109 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Graph-v2 implementation-gap matrix (27 October 2026)
+
+Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.
+This is the canonical graph-v2 gap matrix within the existing M1 tracker.
+The v2.4 target does not establish implementation or product acceptance.
+The isolated rewrite #1171 is not a replacement for the working P1 composition.
+
+| Area | Spec reference | Current code | Gap | Migration | Verification | PR/status |
+| --- | --- | --- | --- | --- | --- | --- |
+| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, shared artifact graph section parser | Base declarations integrated by #1172; Switch/Merge/Join follow-ups implemented; extended readiness, deferred and patches explicitly reject | V0/V2, retain v1 | Canonical permutation, malformed metadata, ownership, bounds and native fixture tests; follow-up CI pending | In progress; base slice integrated |
+| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave intrinsic delivery implemented on follow-ups; multiple waves and deferred admission remain absent | V0/V1/V2 | Native Source/Invoke/Constant, Switch/Merge and Join fixtures pass locally; follow-up exact-head CI pending | In progress |
+| Graph patches | v2.4 section 4 | No v2 patch engine | Exact deterministic patch algebra and exports | V3, after V1 | No patch acceptance | Not started |
+| Security | v2.4 sections 3.4.1, 5 | Offline product lattice, trusted composition policy and inherited-resource runtime delivery | Independent topology/delivery/operation checks implemented; intrinsic label propagation tested. Declassification/endorsement and selected classified observation remain absent | V0/V1 base integrated; V2 follow-ups | Native scoped delivery/ref-without-read negatives passed in #1172; follow-up intrinsic/control/resource tests pass locally | In progress; base slice integrated |
+| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Bounded initial-wave One inputs and typed intrinsics through Join implemented; extended readiness and deferred execution remain absent | V1/V2/V4 through existing dispatcher/tickets | Native result routing, terminality, failure precedence and physical-drain fixtures; follow-up exact-head CI pending | In progress; V1 base slice integrated |
+| SDK/macros | v2.4 section 7 | Existing M1 `Operation`, graph-v1 authoring | Typed graph/subgraph authoring and temporary lowering bridge | V5 | Existing APIs are not v2 acceptance | Not started |
+| Plugin state/exposure | Plugin state ownership | Ordinary plugin fields and M1 selected property contracts | Explicit normative opt-in publication amendment and concrete authoring trials | Preserve private ownership; no global state registry | No new exposure acceptance | Not started |
+| Providers/auth | Provider responsibility audit | Existing selected provider contracts/runtime | Consolidate stacked shared-host lineage and auth parity | #1139-#1156; reconcile #1143/#1145, do not combine competing #1136 auth | Refresh each exact-head product gate before integration | In progress, unmerged stack |
+| Sessions/frontends | Basic/P1 contracts | Working graph-v1 Basic/session/frontend path | Model-before-session control, auth restoration, graph-v2 P1 parity | #1158, #1160 -> #1161; V5 | No graph-v2 product acceptance | In progress, unmerged P1 fixes |
+| Testing | v2.4 section 9 | M1 conformance and new offline security unit tests | Native V1 and full property/negative/product gates | V0 through V7 | #1164 exact head `76fc59da16b6552373d43ff452e1de98c8f08d94` CI green; evidence stack remains unmerged | In progress |
+
+Integrated base/initial-wave scope: #1172 merged at
+`12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64` after all five exact-head flake
+shards and aggregate, official ACP SDK, cache isolation, formatting and workflow
+generation passed at `1af1abfca4cc1f9bdf8972362e05f01f22324be6`
+([matrix run](https://github.com/matthis-k/phenix-ai/actions/runs/40496223602)).
+Local Nix `m1-graph`, `m1-pending`, `m1-imports`, `basic-history-verification`
+and `basic-streaming` were rerun successfully at the actual merge commit.
+This verifies the named slice and preserved current P1 fixtures, not full V0/V1
+or graph-v2 P1 acceptance. Full local `nix flake check -L --keep-going` exceeded
+20 minutes; the completed remote matrix supplies the full-gate evidence.
+
+V2 continuation: Switch and Merge::ExactlyOne are implemented on a separate
+follow-up branch, using the same private wave/GraphExecution machinery. Native
+fixtures exercise text/unit case routing, cross-source convergence, pending
+candidate waiting, late failure precedence, multiple-value rejection and
+all-closed termination. Focused tests include direct wire negatives, whole-input
+classification, selected-resource attenuation and confidential control outcomes.
+Exact committed-head evidence and CI are required before integration; Join,
+Optional/StaticMany readiness and general classified observation remain open.
+
+CI continuation for #1173: the user-selected single-store full-DAG backend
+replaces only the automatic PR matrix execution, not its complete check
+inventory or the independent ACP/security gates. Provider
+`phenix-flake-ci` #33 merged at
+`25029578a370c0b1f57ae88881b6018ed1ac08df`; reusable workflow/runtime pins are
+updated together to that merged revision. Trusted-main remote execution keeps
+its existing pin and authority. The stale matrix-pin policy test was updated
+with adversarial wrong-pin, OIDC, publisher and reduced-inventory cases. Full
+DAG passed on `acf46e51f1081ccadc561c08d9fd11881ecbc3f8`, but that head's
+workflow-policy check failed before the fix. Do not treat it as complete
+acceptance of the final #1173 head.
+
+Join continuation (separate branch following #1173): named One inputs assemble
+one canonical struct, with conservative output security and intersected resource
+scope. Offline compilation rejects independent-only and direct Switch-exclusive
+combinations, diagnoses dormancy and reports Unknown for unproven composed
+paths. Native fixtures passed pending fan-in, actual field delivery, no early
+consumer invocation, required closure followed by late success/failure, producer
+non-cancellation and physical draining. Private terminal bookkeeping now releases
+payloads for non-runnable joins instead of retaining late successes. Focused
+contract/kernel tests pass locally; exact committed-head CI and integration are
+still required. Optional/StaticMany, patch algebra, deferred waves, SDK/lowering
+and graph-v2 P1 parity remain open. The user's single-store CI is inherited;
+no second test inventory or local full-flake rebuild is introduced.
+
+Join review correction in #1175: late discarded successes must not attempt
+destination data access. Outgoing closures now resolve before selected payloads,
+eliminating edge-order-dependent denial when the same producer closes another
+required Join input. A native cross-plugin regression narrows away the late
+value's destination resource and still requires successful producer completion,
+zero consumer calls and physical drain. Runnable recipients retain independent
+denial checks. This is not a grant exemption for actual deliveries.
+
+Remaining architectural question: repository documents still label v2.4 a
+proposal; this implementation follows the requested target without changing
+that review status or claiming approval of unfinished interfaces. Source-ceiling
+helpers require trusted callers and do not turn plugin self-description into
+authority. No graph-v1 path or persistence implementation is removed.
+
+V0 security foundation evidence: [#1172](https://github.com/matthis-k/phenix-ai/pull/1172),
+implementation commit `a9087986f366f9a7c8a77d29d199edccafb23176`.
+At that exact commit, `cargo test -p phenix-contract` passed 16 unit and four
+integration tests inside `nix develop`; warnings-denied all-target contract
+Clippy, new-module Rustfmt and
+`nix build .#checks.x86_64-linux.m1-reference-wire --no-link -L` passed.
+`devenv test` could not start because the executable is unavailable.
+`nix flake check -L` evaluated 231 checks but exceeded the local command limits
+on both attempts (200 and 600 seconds). This is not full-gate acceptance.
+Remote exact-head CI and review remain required; no merge or P1 parity is claimed.
+
+Base-plan milestone: `c11fe1a226a24b529a45366a5b170b21a722dcfb`.
+Native delivery milestone: `72933c2a28f202bbd9234c1f42a619f5f7dbe057`.
+At the latter exact commit, focused contract/artifact/kernel tests (25 + 2 + 36
+unit tests and four contract integration tests), warnings-denied Clippy and
+workspace formatting passed. Nix `m1-graph` passed the existing native graph-v1
+suite plus the initial-wave v2 fixture. Nix `m1-pending`, `m1-imports`,
+`basic-history-verification` and `basic-streaming` also passed. The product checks
+prove preserved current P1 behavior in their selected fixture scope, not v2 P1
+parity. Follow-up native tests cover authorized reference delivery with denied
+dereference and kernel failure remaining outside domain `err` routing; their
+exact committed-head verification is recorded in #1172. Full V0/V1 acceptance,
+classified observation, later operators/waves and product migration remain open.
+
 P1 is accepted on `main` at `68f46f63`; `oldmain` remains available.
 The tested CI migration [#890](https://github.com/matthis-k/phenix-ai/pull/890)
 merged at `b7017042`. Its first authoritative 4×2-builder release,

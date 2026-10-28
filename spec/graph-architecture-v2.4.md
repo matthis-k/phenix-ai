@@ -699,6 +699,119 @@ sequenceDiagram
 
 ### 5.2 Explicit graph mutation authorization
 
+#### Base-profile implementation boundary (27 October 2026)
+
+**Status:** Partially implemented, not V0 acceptance. **Inspected base:**
+`167b60eab86e1b6b140c6a5f17de5285bba3280f`. **Scope:** canonical offline
+base declarations and trusted preparation, owned by the M1 roadmap and
+[PR #1172](https://github.com/matthis-k/phenix-ai/pull/1172).
+**Supersession:** no target decisions or graph-v1 runtime behavior superseded.
+**Acceptance:** canonical/negative tests plus exact-head native V1 and existing
+P1 gates; unit tests alone do not close this boundary.
+
+The initial implementation accepts Source, Invoke, Constant, Flow and Order
+with One inputs. Other intrinsics/readiness, deferred admissions and nonempty
+patch lists reject explicitly, rather than acquiring substitute semantics.
+Declarations use the existing canonical `Value` wire format with fixed root
+fields `format`, `contributor`, `sources`, `nodes`, `edges`, `patches` and format
+`phenix.graph.v2`. Declaration and port order normalize before encoding;
+decoding rejects noncanonical order, unknown fields and discriminants.
+
+Verified native graph bytes must match their artifact owner. Trusted v2
+preparation uses the existing M1 resolver and stores the compiled plan in the
+prepared generation; the legacy preparation profile rejects v2 metadata and
+the v2 profile rejects mixed v1/v2 graph contributions until lowering is tested.
+Existing package metadata does not attest native security labels. Therefore
+the trusted host must supply exact operation/source label attestations and both
+source-owner and composition ceilings independently of authored declarations.
+Missing attestations fail closed; they are not inferred from plugin metadata.
+Declassification and endorsement are unsupported and reject in this profile.
+
+Base-edge authoring is also topology mutation: an edge contributor touching a
+foreign node needs an explicit topology authorization for that target, including
+Order edges. This is independent of selected-operation grants and exact
+endpoint-pair delivery grants. Offline authorization is only a potential-route
+check; it does not replace effective-root/resource enforcement at delivery.
+Reference delivery still cannot grant reference access.
+
+An initial graph dependency-depth cap of 256 bounds traversal of the shared DAG
+algorithm. Aggregate declaration bytes and contribution/source/node/edge counts
+are checked before resolution/traversal using existing canonical wire limits.
+These are conservative initial-profile limits, not measured P1 release defaults.
+
+The initial runtime uses the existing `GraphExecution`, admitted `Root`, selected
+dispatcher and pending tickets, with private per-edge readiness for one initial
+wave. It bounds admitted nodes at 4,096, produced/delivered values at 16,384 and
+accounted value bytes at 16 MiB per root. These limits are explicit test-profile
+backstops, not measured release defaults. Dormant inputs close; Order alone does
+not activate a node, and active Source vertices honor their Order dependencies.
+Delivery intersects trusted flow resources with inherited operation resources
+and effective root scope. V2 completion waits for physical drain. Trusted host
+`steps()` retains results; the existing payload-bearing `NodeFinished` observer
+notification is suppressed for this profile. General classified observation and
+wave inspection remain separate acceptance work.
+
+**Operator continuation (27 October 2026):** Partially implemented, inspected
+base `12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64`, owned by the M1 roadmap's V2
+slice following #1172. This extends, rather than supersedes, the initial profile;
+it does not change the target decisions or claim full V2/P1 acceptance.
+Switch has one `One in: Tagged` and exhaustive case-named outputs; payloadless
+cases emit portable unit. Merge::ExactlyOne has one `One in: T` accepting a finite
+set of candidate Flow edges and one `out: T`. Other One ports remain restricted
+to at most one candidate in this implementation profile. Every candidate must
+be terminal before Merge publishes: active failure dominates closure/values,
+zero values close, and one forwards. Multiple values violate the intrinsic
+graph constraint and cause a kernel infrastructure failure; no domain-error
+value is fabricated. Switch preserves the whole control-input security bound;
+Merge input/output bounds cover every candidate, not just the selected value.
+Forwarding retains the selected value's attenuated resource scope.
+
+Acceptance includes native text/unit routing, cross-source convergence,
+pending-candidate waiting, late failure precedence, multiple-value rejection,
+all-closed termination, and independent topology/delivery denial tests, plus
+canonical wire negatives and resource/security propagation. Join and extended
+readiness remain unsupported and full V2 acceptance remains open.
+
+`GraphExecution`, its callback, completion and pump result are privileged Rust
+control-plane APIs for the trusted root owner; they may expose classified
+success/failure and timing information. They are not a selected plugin observer
+contract. Suppressing `NodeFinished` payloads does not hide those control bits.
+Any forwarding to an untrusted observer, stream or logging sink requires a
+separately authorized classification-aware export. Native plugins receive no
+graph callback handle through ABI 3. General classified observation remains an
+explicit gap, not an implied right granted by observing root completion.
+
+**Join continuation (27 October 2026):** Partially implemented, inspected base
+`64f6274a3ad025d1440eedd354a52d99dd0df894`, owned by the M1 roadmap V2
+continuation. This extends the supported intrinsic profile without superseding
+the target semantics. Join::All has one or more named One inputs and one `out`
+whose canonical struct fields exactly match those input names and schemas. It
+is explicit assembly, not implicit partial-request invocation. Its output label
+conservatively covers every input, and successful resource scopes intersect.
+
+An unreachable required input is diagnosed as dormant. Otherwise disjoint
+source sets and direct different-case outputs of the same Switch reject as
+`UnsatisfiableJoin`. Direct same-source fanout can be proved satisfiable;
+unproven composed paths report deterministic `Satisfiability::Unknown` and still
+settle through runtime closure. No general predicate solver is implied.
+
+Required closure makes the Join permanently non-runnable immediately. Existing
+success payloads are released and late successes dropped, while terminal edge
+bookkeeping remains until all candidates settle. A late active failure wins
+over ordinary closure. Neither closure nor payload release cancels a pending
+producer. Acceptance includes native pending fan-in, typed field assembly,
+closed-plus-late-failure and closed-plus-late-success without consumer execution,
+producer non-cancellation and physical draining, plus offline satisfiability,
+security, resource-intersection and canonical-wire negatives. Optional and
+StaticMany readiness remain unsupported; this is not full V2 or P1 acceptance.
+
+Discarding a late success performs no destination delivery: destination-resource
+denial must not turn that discard into an error. Potential-route authorization
+at compilation, producer invocation authority and producer resource accounting
+still apply; other runnable recipients independently retain their delivery
+checks. Unselected outgoing closures are resolved before selected payloads so
+same-producer closure cannot make this behavior depend on logical edge-ID order.
+
 A graph patch is a *requested change*, never a capability. A composition grants authority to specific patch contributors and target scopes, for example:
 
 ```rust
