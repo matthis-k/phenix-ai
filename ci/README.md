@@ -56,5 +56,37 @@ Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.
 
 The paired user-facing API is merged in `phenix-flake-ci` PR #37 and
-pinned to its immutable squash commit `aebaaf47a6c1e1099b941802abfa0f77b9f97f3f`. Both generated workflows
+pinned to its immutable squash commit `29292dde595a11d6636c87bc5121c861cb1e1b0f`. Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
+
+## Automatically discovered runnable tests
+
+The existing complete 86-check Nix DAG remains mandatory. As an additional
+post-build test mechanism, generic `phenix-flake-ci` discovers flat
+`packages.x86_64-linux.\"test.<name>\"` packages. The native Nix coordinator
+builds their exact output closures with four Tailscale builders, then
+GitHub Actions automatically fans out one read-only job per runnable test.
+Final acceptance verifies each test's exact-head evidence.
+
+`flake.nix` exposes `test.basic-composition-smoke` and
+`test.kernel-composition-inspect` as thin scripts consuming the **existing**
+`basicRuntime`, `kernel`, and immutable `basicComposition`; they do not
+build or embed additional plugin copies. Composition semantics (bindings,
+authority, selected packages) remain Phenix-owned.
+
+The optional source-preparation convenience command accepts repeatable
+`--plugin SOURCE` flags:
+
+```sh
+python3 tools/phenix-plugin-sources.py profile.json /tmp/selected.json \\
+  --plugin ./plugins/provider --plugin ./plugins/consumer
+```
+
+The tool generates the same canonical `phenix.composition.v3` JSON with
+resolved package paths, and **does not infer** authority, grants, or bindings.
+Plugin paths resolve relative to the input configuration file.
+
+This is an opt-in migration: old Nix checks still run, and `test.*` packages
+are additional separately executed post-build tests. Cargo workspace tests
+remain in the existing complete check DAG until a compiled-test-artifact
+adapter provides strict no-recompile separation.

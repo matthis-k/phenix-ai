@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "aebaaf47a6c1e1099b941802abfa0f77b9f97f3f"
+PIN = "29292dde595a11d6636c87bc5121c861cb1e1b0f"
 BENCHMARK = "ci/usage-first-paired-workflows-20261028"
 
 def require(ok, message):

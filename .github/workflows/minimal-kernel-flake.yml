@@ -7,7 +7,7 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@aebaaf47a6c1e1099b941802abfa0f77b9f97f3f
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@29292dde595a11d6636c87bc5121c861cb1e1b0f
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "aebaaf47a6c1e1099b941802abfa0f77b9f97f3f"
+      library_ref: "29292dde595a11d6636c87bc5121c861cb1e1b0f"
