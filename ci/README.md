@@ -44,3 +44,7 @@ This is experimental until exact-head Nix outputs, 86-check inventory,
 actual build events and elapsed time match expected acceptance. The previous
 staged PR mode (#1191) remains unchanged for comparison; no privileged
 Tailscale credentials or trusted cache writer are exposed to PR code.
+
+The new backend now also discovers shared dependencies between the four build
+owners and prebuilds those once (with Nix GC roots) before compile fan-out.
+The planner rejects residual cross-owner graph overlap after this cut.

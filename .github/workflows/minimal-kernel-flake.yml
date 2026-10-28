@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-build-then-test.yml@d7b6a65c2702fa86c764a338630467930ebb3889
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-build-then-test.yml@618701fe80c572ff4504d65b22faa5df937edc1f
     with:
       config: ci/flake-check-config.nix
-      library_ref: d7b6a65c2702fa86c764a338630467930ebb3889
+      library_ref: 618701fe80c572ff4504d65b22faa5df937edc1f
