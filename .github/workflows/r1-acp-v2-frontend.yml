@@ -31,13 +31,6 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Temporary report of exact workspace lock repair
-        run: |
-          set -euo pipefail
-          cargo update --workspace
-          echo '<<<BEGIN_LOCK_DIFF>>>'
-          git diff -- Cargo.lock
-          echo '<<<END_LOCK_DIFF>>>'
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Test official v2 schema adapter, including v1 coexistence
